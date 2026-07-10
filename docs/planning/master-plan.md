@@ -44,6 +44,12 @@ implemented and verified.
   SQLite and PostgreSQL and live end-to-end. See
   [`sprint-4-rag-runtime`](../tasks/sprint-4-rag-runtime/plan.md).
 
+Control-plane authoring now provides governed create-only console forms and
+idempotent GitOps import for organizations, projects, scenarios/aliases, consumers,
+and bindings, with tenant/role enforcement and transactional audit. It is verified
+on SQLite; PostgreSQL verification remains pending. See
+[`control-plane-authoring`](../tasks/control-plane-authoring/plan.md).
+
 Not yet present: the real pgvector retriever and a real LLM provider, ingestion
 (Sprint 5), tools, agents, gated promotion/canary/rollback + evaluation, and
 deployment manifests — planned per later sprints. Providers are deterministic

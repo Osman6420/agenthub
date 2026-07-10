@@ -3,6 +3,11 @@
 {% block content %}
 <div class="card">
   <h2>{{ title }}</h2>
+  {% if create_links %}
+  <div class="actions">
+    {% for link in create_links %}<a href="{% url link.url %}">{{ link.label }}</a>{% endfor %}
+  </div>
+  {% endif %}
   {% if rows %}
   <table>
     <thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>

@@ -7,7 +7,8 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 from django.urls import reverse
 
-from apps.catalog.models import AIProject
+from apps.audit.models import AuditEvent
+from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
 
@@ -72,3 +73,75 @@ def test_platform_admin_sees_all_projects(client: Client) -> None:
     body = client.get(reverse("console:projects")).content.decode()
     assert "alpha" in body
     assert "beta" in body
+
+
+@pytest.mark.django_db
+def test_non_admin_cannot_create_organization(client: Client) -> None:
+    user = User.objects.create_user("member", password="x")  # noqa: S106
+    client.force_login(user)
+
+    response = client.post(
+        reverse("console:organization_create"),
+        {"slug": "forbidden", "name": "Forbidden", "status": "active"},
+    )
+
+    assert response.status_code == 403
+    assert not Organization.objects.filter(slug="forbidden").exists()
+
+
+@pytest.mark.django_db
+def test_org_admin_cannot_create_project_in_another_org(client: Client) -> None:
+    org_a = Organization.objects.create(slug="org-a", name="A")
+    org_b = Organization.objects.create(slug="org-b", name="B")
+    user = User.objects.create_user("admin-a", password="x")  # noqa: S106
+    OrganizationMembership.objects.create(
+        organization=org_a, user=user, role=Role.ORGANIZATION_ADMIN
+    )
+    client.force_login(user)
+
+    response = client.post(
+        reverse("console:project_create"),
+        {
+            "organization": org_b.pk,
+            "slug": "forbidden",
+            "name": "Forbidden",
+            "risk_level": "medium",
+            "status": "active",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Select a valid choice" in response.content.decode()
+    assert not AIProject.objects.filter(slug="forbidden").exists()
+
+
+@pytest.mark.django_db
+def test_scenario_author_create_is_atomic_and_audited(client: Client) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    project = AIProject.objects.create(organization=org, slug="alpha", name="Alpha")
+    user = User.objects.create_user("editor", password="x")  # noqa: S106
+    OrganizationMembership.objects.create(organization=org, user=user, role=Role.SCENARIO_EDITOR)
+    client.force_login(user)
+
+    response = client.post(
+        reverse("console:scenario_create"),
+        {
+            "project": project.pk,
+            "slug": "faq",
+            "name": "FAQ",
+            "type": "rag",
+            "visibility": "internal",
+            "risk_level": "medium",
+            "status": "draft",
+            "alias": "customer-faq",
+        },
+    )
+
+    assert response.status_code == 302
+    scenario = Scenario.objects.get(project=project, slug="faq")
+    assert ScenarioAlias.objects.filter(scenario=scenario, alias="customer-faq").exists()
+    assert AuditEvent.objects.filter(
+        action="console.scenario.create",
+        organization_id=org.pk,
+        resource_id=str(scenario.pk),
+    ).exists()

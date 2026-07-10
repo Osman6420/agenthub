@@ -47,6 +47,20 @@ Kimlik yoksa `401`, yetkisiz alias/capability'de `403`, aynı idempotency key fa
 gövdeyle `409` döner. Cevap üretimi (RAG runtime) Sprint 4'te geliyor; şu an gateway
 imzalı `ExecutionContext` üretip `accepted` döndürür.
 
+## Control-plane authoring
+
+Yetkili operatorler `/console/` altinda organization, project, scenario/alias,
+consumer ve binding kayitlarini tenant-scope create formlariyla olusturabilir.
+Reviewed YAML icin ayni create-only akis management command ile kullanilir:
+
+```powershell
+python manage.py import_control_plane --path gitops/control-plane --actor <operator-id>
+python manage.py import_control_plane --path gitops/control-plane --actor <operator-id> --dry-run
+```
+
+Ayni icerigin tekrar importu no-op'tur; ayni kimlikte farkli icerik conflict olarak
+reddedilir. Import tek transaction'da calisir ve olusturulan her kaydi audit eder.
+
 ## Belgeler
 
 - [Django hedef mimari planı — doküman revizyonu 3](agenthub-v3-django-plan.md)

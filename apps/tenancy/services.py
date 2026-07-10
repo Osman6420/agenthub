@@ -12,6 +12,7 @@ from typing import cast
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 
+from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
 
 UserLike = AbstractBaseUser | AnonymousUser
@@ -54,3 +55,67 @@ def scope_organizations(user: UserLike) -> Iterable[Organization]:
 def user_can_access_organization(user: UserLike, organization_id: int) -> bool:
     allowed = allowed_organization_ids(user)
     return allowed is None or organization_id in allowed
+
+
+# --- Write authorization (role-gated) ---------------------------------------
+# Read scope is membership-based (above); creating records additionally requires the
+# right role in the target organization. platform_admin (superuser) may do anything.
+
+_ADMIN_ROLES = frozenset({Role.ORGANIZATION_ADMIN})
+_SCENARIO_AUTHOR_ROLES = frozenset(
+    {Role.ORGANIZATION_ADMIN, Role.PROJECT_OWNER, Role.SCENARIO_EDITOR}
+)
+
+
+def user_roles_in_org(user: UserLike, organization_id: int) -> set[str]:
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    concrete = cast(AbstractBaseUser, user)
+    return set(
+        OrganizationMembership.objects.filter(
+            user_id=concrete.pk, organization_id=organization_id
+        ).values_list("role", flat=True)
+    )
+
+
+def can_create_organization(user: UserLike) -> bool:
+    """Only platform admins may create organizations."""
+    return is_platform_admin(user)
+
+
+def can_admin_org(user: UserLike, organization_id: int) -> bool:
+    return is_platform_admin(user) or bool(_ADMIN_ROLES & user_roles_in_org(user, organization_id))
+
+
+def can_author_scenarios(user: UserLike, organization_id: int) -> bool:
+    return is_platform_admin(user) or bool(
+        _SCENARIO_AUTHOR_ROLES & user_roles_in_org(user, organization_id)
+    )
+
+
+def admin_organization_ids(user: UserLike) -> set[int] | None:
+    """Organizations the user may administer (None = all, platform admin)."""
+    if is_platform_admin(user):
+        return None
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    concrete = cast(AbstractBaseUser, user)
+    return set(
+        OrganizationMembership.objects.filter(
+            user_id=concrete.pk, role__in=_ADMIN_ROLES
+        ).values_list("organization_id", flat=True)
+    )
+
+
+def author_organization_ids(user: UserLike) -> set[int] | None:
+    """Organizations where the user may author scenarios (None = all)."""
+    if is_platform_admin(user):
+        return None
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    concrete = cast(AbstractBaseUser, user)
+    return set(
+        OrganizationMembership.objects.filter(
+            user_id=concrete.pk, role__in=_SCENARIO_AUTHOR_ROLES
+        ).values_list("organization_id", flat=True)
+    )
