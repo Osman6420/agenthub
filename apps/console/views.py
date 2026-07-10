@@ -9,28 +9,37 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.http import HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.http import require_POST
 
 from apps.audit.services import record_event
 from apps.catalog.models import ScenarioAlias
 from apps.console import scoping
 from apps.console.forms import (
     BindingForm,
+    CanaryForm,
     ConsumerForm,
     OrganizationForm,
     ProjectForm,
     ScenarioForm,
 )
+from apps.evaluations.services import EvalError, run_eval
+from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
+from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.tenancy.services import (
+    UserLike,
     admin_organization_ids,
+    allowed_organization_ids,
     author_organization_ids,
     can_admin_org,
     can_author_scenarios,
     can_create_organization,
+    can_manage_releases,
     is_platform_admin,
 )
 
@@ -183,27 +192,140 @@ def artifacts(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def releases(request: HttpRequest) -> HttpResponse:
-    rows = [
+    user = request.user
+    rows = []
+    for r in scoping.scoped_releases(user).select_related("scenario__project__organization"):
+        manageable = can_manage_releases(user, r.scenario.project.organization_id)
+        pre_active = r.status in (ReleaseStatus.CANDIDATE, ReleaseStatus.CANARY)
+        rows.append(
+            {
+                "id": r.pk,
+                "org": r.scenario.project.organization.slug,
+                "scenario": r.scenario.slug,
+                "status": r.status,
+                "runtime": r.runtime_version,
+                "manifest": r.artifact_manifest_sha256[:12],
+                "can_eval": manageable and pre_active,
+                "can_promote": manageable and pre_active,
+                "can_canary": manageable and pre_active,
+                "can_rollback": manageable and r.status == ReleaseStatus.SUPERSEDED,
+            }
+        )
+
+    allowed = allowed_organization_ids(user)
+    canary_qs = ReleaseCanary.objects.filter(status=CanaryStatus.ACTIVE).select_related(
+        "scenario__project__organization", "consumer"
+    )
+    if allowed is not None:
+        canary_qs = canary_qs.filter(scenario__project__organization_id__in=allowed)
+    canaries = [
         {
-            "cols": [
-                r.scenario.project.organization.slug,
-                r.scenario.slug,
-                r.status,
-                r.runtime_version,
-                r.artifact_manifest_sha256[:12],
-            ]
+            "id": c.pk,
+            "scenario": c.scenario.slug,
+            "consumer": c.consumer.subject,
+            "release": c.release_id,
+            "expires": c.expires_at,
+            "can_stop": can_manage_releases(user, c.scenario.project.organization_id),
         }
-        for r in scoping.scoped_releases(request.user)
+        for c in canary_qs
     ]
     return render(
-        request,
-        "console/list.html",
-        {
-            "title": "Releases",
-            "headers": ["Organization", "Scenario", "Status", "Runtime", "Manifest SHA"],
-            "rows": rows,
-        },
+        request, "console/releases.html", {"title": "Releases", "rows": rows, "canaries": canaries}
     )
+
+
+def _manageable_release(user: UserLike, release_id: int) -> ScenarioRelease:
+    release = (
+        ScenarioRelease.objects.select_related("scenario__project__organization")
+        .filter(pk=release_id)
+        .first()
+    )
+    if release is None:
+        raise Http404
+    if not can_manage_releases(user, release.scenario.project.organization_id):
+        raise PermissionDenied
+    return release
+
+
+@login_required
+@require_POST
+def release_run_eval(request: HttpRequest, release_id: int) -> HttpResponse:
+    release = _manageable_release(request.user, release_id)
+    try:
+        run = run_eval(release=release, created_by=request.user.get_username())
+        messages.success(
+            request, f"Eval {run.status}: {run.passed_cases}/{run.total_cases} cases passed."
+        )
+    except EvalError as exc:
+        messages.error(request, f"Eval could not start: {exc.code}")
+    return redirect("console:releases")
+
+
+@login_required
+@require_POST
+def release_promote(request: HttpRequest, release_id: int) -> HttpResponse:
+    release = _manageable_release(request.user, release_id)
+    try:
+        promote(release=release, actor=request.user.get_username())
+        messages.success(request, f"Release {release.pk} promoted to active.")
+    except LifecycleError as exc:
+        messages.error(request, f"Promotion denied: {exc.code}")
+    return redirect("console:releases")
+
+
+@login_required
+@require_POST
+def release_rollback(request: HttpRequest, release_id: int) -> HttpResponse:
+    release = _manageable_release(request.user, release_id)
+    try:
+        rollback(scenario=release.scenario, target=release, actor=request.user.get_username())
+        messages.success(request, f"Rolled back to release {release.pk}.")
+    except LifecycleError as exc:
+        messages.error(request, f"Rollback denied: {exc.code}")
+    return redirect("console:releases")
+
+
+@login_required
+def canary_start(request: HttpRequest, release_id: int) -> HttpResponse:
+    release = _manageable_release(request.user, release_id)
+    form = CanaryForm(request.POST or None, release=release)
+    if request.method == "POST" and form.is_valid():
+        try:
+            start_canary(
+                release=release,
+                consumer=form.cleaned_data["consumer"],
+                ttl_seconds=form.cleaned_data["ttl_hours"] * 3600,
+                actor=request.user.get_username(),
+            )
+            messages.success(request, "Canary started.")
+            return redirect("console:releases")
+        except LifecycleError as exc:
+            messages.error(request, f"Canary denied: {exc.code}")
+    return render(
+        request,
+        "console/form.html",
+        {"title": f"Start canary for release {release.pk}", "form": form},
+    )
+
+
+@login_required
+@require_POST
+def canary_stop(request: HttpRequest, canary_id: int) -> HttpResponse:
+    canary = (
+        ReleaseCanary.objects.select_related("scenario__project__organization")
+        .filter(pk=canary_id)
+        .first()
+    )
+    if canary is None:
+        raise Http404
+    if not can_manage_releases(request.user, canary.scenario.project.organization_id):
+        raise PermissionDenied
+    try:
+        stop_canary(canary=canary, actor=request.user.get_username())
+        messages.success(request, "Canary stopped.")
+    except LifecycleError as exc:
+        messages.error(request, f"Stop denied: {exc.code}")
+    return redirect("console:releases")
 
 
 def _create(

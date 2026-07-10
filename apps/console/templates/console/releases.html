@@ -1,0 +1,78 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>{{ title }}</h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Organization</th><th>Scenario</th><th>Status</th>
+        <th>Runtime</th><th>Manifest</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ r.org }}</td>
+        <td>{{ r.scenario }}</td>
+        <td><span class="badge">{{ r.status }}</span></td>
+        <td>{{ r.runtime }}</td>
+        <td>{{ r.manifest }}</td>
+        <td>
+          {% if r.can_eval %}
+          <form class="inline" method="post" action="{% url 'console:release_run_eval' r.id %}">
+            {% csrf_token %}<button class="link" type="submit">Run eval</button>
+          </form>
+          {% endif %}
+          {% if r.can_promote %}
+          <form class="inline" method="post" action="{% url 'console:release_promote' r.id %}">
+            {% csrf_token %}<button class="link" type="submit">Promote</button>
+          </form>
+          {% endif %}
+          {% if r.can_canary %}<a href="{% url 'console:canary_start' r.id %}">Canary</a>{% endif %}
+          {% if r.can_rollback %}
+          <form class="inline" method="post" action="{% url 'console:release_rollback' r.id %}">
+            {% csrf_token %}<button class="link" type="submit">Rollback</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No releases in your scope.</p>
+  {% endif %}
+</div>
+
+{% if canaries %}
+<div class="card">
+  <h2>Active canaries</h2>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Scenario</th><th>Consumer</th><th>Release</th><th>Expires</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for c in canaries %}
+      <tr>
+        <td>{{ c.id }}</td>
+        <td>{{ c.scenario }}</td>
+        <td>{{ c.consumer }}</td>
+        <td>{{ c.release }}</td>
+        <td>{{ c.expires }}</td>
+        <td>
+          {% if c.can_stop %}
+          <form class="inline" method="post" action="{% url 'console:canary_stop' c.id %}">
+            {% csrf_token %}<button class="link" type="submit">Stop</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

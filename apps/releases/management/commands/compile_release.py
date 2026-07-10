@@ -25,7 +25,9 @@ from django.core.management.base import BaseCommand, CommandError
 from apps.artifacts.gitops import TYPE_BY_KIND
 from apps.audit.services import record_event
 from apps.catalog.models import Scenario
-from apps.releases.compiler import ArtifactRef, CompileError, compile_release, promote_release
+from apps.releases.authz import ReleaseAuthorizationError, resolve_release_manager
+from apps.releases.compiler import ArtifactRef, CompileError, compile_release
+from apps.releases.lifecycle import LifecycleError, promote
 
 
 class Command(BaseCommand):
@@ -110,14 +112,19 @@ class Command(BaseCommand):
         )
 
         if options["promote"]:
-            promote_release(release)
-            record_event(
-                actor_type="user",
-                actor_id=options["actor"],
-                action="release.promote",
-                outcome="success",
-                organization_id=scenario.project.organization_id,
-                resource_type="scenario_release",
-                resource_id=str(release.pk),
-            )
+            # Fail-closed: promotion now goes through the gated lifecycle, which
+            # requires an authorized release manager, a passing eval, and ready indexes.
+            try:
+                resolve_release_manager(
+                    username=options["actor"], organization_id=scenario.project.organization_id
+                )
+            except ReleaseAuthorizationError as exc:
+                raise CommandError(f"not authorized to promote: {exc.code}") from exc
+            try:
+                promote(release=release, actor=options["actor"])
+            except LifecycleError as exc:
+                raise CommandError(
+                    f"promotion denied: {exc.code}. Run `run_eval --release {release.pk}` "
+                    f"first, then `promote_release --release {release.pk}`."
+                ) from exc
             self.stdout.write(self.style.SUCCESS(f"promoted release id={release.pk} to active"))

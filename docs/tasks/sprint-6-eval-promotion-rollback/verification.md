@@ -1,9 +1,18 @@
 # Verification: sprint-6-eval-promotion-rollback
 
-Scope of this record: the first Sprint 6 increment — governed evaluation, the
-fail-closed promotion/rollback lifecycle, and manifest index-version pins. Canary
-routing, console lifecycle actions, and management commands are **not** in this
-increment and are not claimed here.
+Scope of this record: all of Sprint 6 — governed evaluation, the fail-closed
+promotion/rollback lifecycle, manifest index-version pins (increment A), and
+consumer-scoped canary routing, console lifecycle actions, and management commands
+(increment B). The two increments landed as two commits.
+
+## Cross-agent note
+
+Sprint 7 (`apps/mcp`, observability metrics/tracing) was implemented by Codex in a
+parallel session and is present, uncommitted, in the shared working tree. This Sprint 6
+work does not modify any Sprint 7 file. On the full PostgreSQL run, 8 Sprint 7 tests
+(`apps/mcp/tests`, `apps/observability/tests`) fail — they pass on SQLite and are
+Codex's to resolve; every Sprint 6 test passes on both databases (see below). The
+Sprint 6 commit stages only Sprint 6 files.
 
 ## Environment
 
@@ -48,14 +57,47 @@ change; applied cleanly on SQLite and PostgreSQL via `--create-db`.
   ids, too many cases, oversized input, unknown top-level key).
 - Authorization helper — `test_can_manage_releases_requires_release_manager_role`.
 
-## Not verified in this increment / residual risk
+## Increment B — canary routing, console actions, management commands
 
-- Consumer-scoped canary routing, console lifecycle actions, and management commands
-  are unimplemented; the gateway public path is unchanged (no candidate is reachable
-  publicly). Public canary routing requires explicit approval before implementation.
+New migration: `apps/releases/migrations/0002_releasecanary.py` (additive —
+`ReleaseCanary` with a partial-unique active canary per (scenario, consumer)). Applied
+cleanly on SQLite and PostgreSQL.
+
+Gates re-run after increment B (`.venv`, Python 3.13):
+
+| Command | Result |
+| --- | --- |
+| `ruff format --check .` / `ruff check .` | Pass |
+| `mypy .` | Pass — no issues in 170 source files |
+| `python manage.py makemigrations --check --dry-run` | Pass — no changes |
+| `pytest` (SQLite, full tree incl. Sprint 7) | 140 passed, 2 skipped |
+| Sprint 6 subset on PostgreSQL (`--create-db`) | 62 passed |
+
+The full PostgreSQL run shows 8 failures, all in Sprint 7 files
+(`apps/mcp/tests`, `apps/observability/tests`) that pass on SQLite — Codex's Sprint 7
+to resolve, unrelated to Sprint 6 (every Sprint 6 test passes on PostgreSQL).
+
+Acceptance criteria evidence (increment B):
+
+- A canary consumer routes to its eligible candidate; others stay active —
+  `test_lifecycle.py::test_canary_routes_only_the_assigned_consumer`.
+- Canary reuses the fail-closed eval gate — `test_canary_requires_passing_eval`.
+- Cross-tenant canary is denied server-side — `test_canary_rejects_cross_tenant_consumer`.
+- Time-bounding: an expired canary falls back to the active release —
+  `test_expired_canary_falls_back_to_active`.
+- Stop reverts an unused canary release to candidate — `test_stop_canary_reverts_release_to_candidate`.
+- Commands enforce release-manager auth + resolve the CLI actor —
+  `test_lifecycle_commands.py` (non-manager/unknown-actor denied; manager promotes).
+- Console actions are role-gated, POST-only, and fail safely —
+  `test_release_actions.py` (403 for non-manager; graceful 302 denial; 405 on GET).
+
+## Residual risk
+
 - Deterministic stub providers prove governance, not model/answer quality.
-- Audit persistence for denied promotions is written before the raising path; a
-  durable fail-closed audit sink is a later hardening step.
-- Concurrent promote/rollback correctness relies on `select_for_update` + the DB
-  single-active partial-unique constraint; a dedicated concurrency test is deferred to
-  the canary/console increment.
+- Audit persistence for denied promotions is written before the raising path; a durable
+  fail-closed audit sink is a later hardening step.
+- Concurrent promote/rollback/canary correctness relies on `select_for_update` + the DB
+  single-active / active-canary partial-unique constraints; a dedicated concurrency
+  test remains a follow-up.
+- Expired canaries are ignored at read time but not lazily flipped to `expired` status;
+  a sweep/command can reconcile status later (no correctness impact on routing).

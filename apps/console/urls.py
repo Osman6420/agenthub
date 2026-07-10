@@ -28,4 +28,9 @@ urlpatterns = [
     path("bindings/new/", views.binding_create, name="binding_create"),
     path("artifacts/", views.artifacts, name="artifacts"),
     path("releases/", views.releases, name="releases"),
+    path("releases/<int:release_id>/eval/", views.release_run_eval, name="release_run_eval"),
+    path("releases/<int:release_id>/promote/", views.release_promote, name="release_promote"),
+    path("releases/<int:release_id>/rollback/", views.release_rollback, name="release_rollback"),
+    path("releases/<int:release_id>/canary/", views.canary_start, name="canary_start"),
+    path("canaries/<int:canary_id>/stop/", views.canary_stop, name="canary_stop"),
 ]

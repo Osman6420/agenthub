@@ -2,20 +2,31 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario, ScenarioType
 from apps.evaluations.services import run_eval
+from apps.identity.models import Consumer
 from apps.identity.roles import Role
 from apps.ingestion.models import IndexStatus, IndexVersion, Source
 from apps.orchestration.resolver import resolve_bundle
 from apps.releases.compiler import ArtifactRef, compile_release
-from apps.releases.lifecycle import LifecycleError, promote, rollback
-from apps.releases.models import ReleaseStatus, ScenarioRelease
+from apps.releases.lifecycle import (
+    LifecycleError,
+    promote,
+    rollback,
+    start_canary,
+    stop_canary,
+)
+from apps.releases.models import CanaryStatus, ReleaseStatus, ScenarioRelease
+from apps.releases.routing import select_release
 from apps.retrieval.providers import StaticRetrievalProvider
 from apps.retrieval.types import RetrievedChunk
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -190,3 +201,91 @@ def test_can_manage_releases_requires_release_manager_role() -> None:
 
     assert can_manage_releases(manager, org.pk) is True
     assert can_manage_releases(stranger, org.pk) is False
+
+
+def _consumer(scenario: Scenario, subject: str) -> Consumer:
+    return Consumer.objects.create(
+        organization=scenario.project.organization, subject=subject, name=subject, protocol="rest"
+    )
+
+
+@pytest.mark.django_db
+def test_canary_routes_only_the_assigned_consumer() -> None:
+    scenario = _scenario()
+    assigned = _consumer(scenario, "assigned")
+    other = _consumer(scenario, "other")
+    active = _release(scenario)
+    _pass_eval(active)
+    promote(release=active, actor="alice")
+
+    candidate = _release(scenario)
+    _pass_eval(candidate)
+    start_canary(release=candidate, consumer=assigned, ttl_seconds=3600, actor="alice")
+
+    candidate.refresh_from_db()
+    assert candidate.status == ReleaseStatus.CANARY
+
+    rel, is_canary = select_release(scenario=scenario, consumer=assigned)
+    assert is_canary is True
+    assert rel is not None and rel.pk == candidate.pk
+    rel2, is_canary2 = select_release(scenario=scenario, consumer=other)
+    assert is_canary2 is False
+    assert rel2 is not None and rel2.pk == active.pk
+
+
+@pytest.mark.django_db
+def test_canary_requires_passing_eval() -> None:
+    scenario = _scenario()
+    consumer = _consumer(scenario, "c1")
+    candidate = _release(scenario)  # no eval
+    with pytest.raises(LifecycleError, match="EVAL_REQUIRED"):
+        start_canary(release=candidate, consumer=consumer, ttl_seconds=3600, actor="alice")
+
+
+@pytest.mark.django_db
+def test_canary_rejects_cross_tenant_consumer() -> None:
+    scenario = _scenario()
+    other_org = Organization.objects.create(slug="other", name="Other")
+    foreign = Consumer.objects.create(
+        organization=other_org, subject="x", name="x", protocol="rest"
+    )
+    candidate = _release(scenario)
+    _pass_eval(candidate)
+    with pytest.raises(LifecycleError, match="CANARY_CROSS_TENANT"):
+        start_canary(release=candidate, consumer=foreign, ttl_seconds=3600, actor="alice")
+
+
+@pytest.mark.django_db
+def test_expired_canary_falls_back_to_active() -> None:
+    scenario = _scenario()
+    consumer = _consumer(scenario, "c1")
+    active = _release(scenario)
+    _pass_eval(active)
+    promote(release=active, actor="alice")
+    candidate = _release(scenario)
+    _pass_eval(candidate)
+    canary = start_canary(release=candidate, consumer=consumer, ttl_seconds=3600, actor="alice")
+
+    canary.expires_at = timezone.now() - timedelta(seconds=1)
+    canary.save(update_fields=["expires_at"])
+
+    rel, is_canary = select_release(scenario=scenario, consumer=consumer)
+    assert is_canary is False
+    assert rel is not None and rel.pk == active.pk
+
+
+@pytest.mark.django_db
+def test_stop_canary_reverts_release_to_candidate() -> None:
+    scenario = _scenario()
+    consumer = _consumer(scenario, "c1")
+    candidate = _release(scenario)
+    _pass_eval(candidate)
+    canary = start_canary(release=candidate, consumer=consumer, ttl_seconds=3600, actor="alice")
+
+    stopped = stop_canary(canary=canary, actor="alice")
+
+    assert stopped.status == CanaryStatus.STOPPED
+    candidate.refresh_from_db()
+    assert candidate.status == ReleaseStatus.CANDIDATE
+    _, is_canary = select_release(scenario=scenario, consumer=consumer)
+    assert is_canary is False

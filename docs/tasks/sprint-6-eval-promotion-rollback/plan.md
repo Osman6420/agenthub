@@ -139,18 +139,26 @@ Schema removal requires separately approved destructive work.
 
 ## Status
 
-In progress. Verified on SQLite and PostgreSQL:
+Implemented and verified on SQLite and PostgreSQL (all scope delivered):
 
-- Implemented + verified: `eval_suite` artifact schema (bounded, allowlisted
-  deterministic assertions); `apps/evaluations` (EvalRun/EvalCaseResult, assertion
-  engine, isolated candidate runner with redacted audited reports); fail-closed
-  `apps/releases/lifecycle.promote` (passing-eval + tenant-owned ready-index gates)
-  and atomic `rollback`; optional manifest `index_versions` pins now resolved into the
-  runtime bundle (closes the earlier end-to-end retrieval gap); `can_manage_releases`
-  (`release_manager`/platform-admin) authorization helper.
-- Pending (next increment, needs public-routing approval for canary): consumer-scoped
-  canary routing in the gateway; operator-console lifecycle actions; and
-  `run_eval`/`promote_release`(gated)/`rollback` management commands.
+- Evaluation: `eval_suite` artifact schema (bounded, allowlisted deterministic
+  assertions); `apps/evaluations` (EvalRun/EvalCaseResult, assertion engine, isolated
+  candidate runner with redacted audited reports).
+- Lifecycle: fail-closed `apps/releases/lifecycle.promote` (passing-eval +
+  tenant-owned ready-index gates), atomic `rollback`, and consumer-scoped,
+  time-bounded `start_canary`/`stop_canary` behind the same eval gate.
+- Routing: `apps/releases/routing.select_release` routes an assigned consumer to its
+  canary after binding authorization; the gateway uses it; everyone else gets the
+  active release; expired canaries fall back. `run_rag` serves `active`/`canary` and
+  refuses raw candidates (the eval runner alone bypasses via `require_active=False`).
+- Index pins: optional manifest `index_versions` resolved into the runtime bundle
+  (closes the earlier end-to-end retrieval gap).
+- Surfaces: role-gated (`can_manage_releases`) console lifecycle actions and the
+  management commands `run_eval`, `promote_release`, `rollback_release`,
+  `start_canary`, `stop_canary`; `compile_release --promote` is now fail-closed.
+
+Canary routing changes public gateway release selection; it was implemented with
+explicit user approval.
 
 ## Completion criteria
 

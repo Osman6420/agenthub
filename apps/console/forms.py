@@ -145,3 +145,20 @@ class BindingForm(forms.ModelForm):
         if commit:
             instance.save()  # full_clean() runs here: capability allowlist + cross-org
         return instance
+
+
+class CanaryForm(forms.Form):
+    """Start-canary form: pick a consumer in the release's org and a bounded lifetime."""
+
+    consumer = forms.ModelChoiceField(queryset=Consumer.objects.none())
+    ttl_hours = forms.IntegerField(
+        min_value=1, max_value=168, initial=24, label="Canary lifetime (hours)"
+    )
+
+    def __init__(self, *args: Any, release: Any = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        if release is not None:
+            org_id = release.scenario.project.organization_id
+            cast(
+                forms.ModelChoiceField, self.fields["consumer"]
+            ).queryset = Consumer.objects.filter(organization_id=org_id)

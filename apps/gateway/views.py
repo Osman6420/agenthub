@@ -27,7 +27,8 @@ from apps.gateway.runtime import dispatch
 from apps.identity.capabilities import Capability
 from apps.identity.services import resolve_active_binding
 from apps.observability.models import UsageEvent
-from apps.releases.services import get_active_release, get_artifact_body_for_role
+from apps.releases.routing import select_release
+from apps.releases.services import get_artifact_body_for_role
 
 _QUERY_CAPABILITY = Capability.QUERY
 
@@ -136,7 +137,9 @@ class _GatewayView(APIView):
             )
 
         scenario = resolved.binding.scenario
-        release = get_active_release(scenario)
+        # Canary routing only applies after the binding above is authorized, and is
+        # scoped to this specific consumer; everyone else gets the active release.
+        release, _is_canary = select_release(scenario=scenario, consumer=consumer)
         if release is None:
             raise ApiError(
                 ErrorCode.RELEASE_NOT_AVAILABLE,

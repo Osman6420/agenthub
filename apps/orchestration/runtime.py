@@ -78,11 +78,13 @@ def run_rag(
     retrieval_provider: RetrievalProvider | None = None,
     require_active: bool = True,
 ) -> RunResult:
-    # The public gateway always requires an active release. The internal evaluation
-    # runner passes ``require_active=False`` to exercise a candidate in isolation; that
-    # path is never reachable from the public gateway (Sprint 6 threat model).
-    if require_active and release.status != ReleaseStatus.ACTIVE:
-        raise RuntimeReleaseError("release is not active")
+    # A servable release is either the active one or a canary (the gateway only routes
+    # a canary release to a consumer that holds a valid canary assignment). The internal
+    # evaluation runner passes ``require_active=False`` to exercise a raw candidate in
+    # isolation; that path is never reachable from the public gateway (Sprint 6 threat
+    # model).
+    if require_active and release.status not in (ReleaseStatus.ACTIVE, ReleaseStatus.CANARY):
+        raise RuntimeReleaseError("release is not servable")
 
     bundle = resolve_bundle(release)
     model_provider = model_provider or get_model_provider()
