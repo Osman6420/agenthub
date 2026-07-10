@@ -45,9 +45,13 @@ Baslangic kararlari:
    Kisa RAG sorgulari ASGI API process'inde senkron tamamlanir.
 8. **Tool erisimi merkezi:** Agent veya workflow, secret kullanarak dogrudan
    dis sisteme baglanmaz. Tum tool cagrilari Tool Execution Proxy'den gecer.
-9. **Django Admin ile baslama:** Ilk control-plane arayuzu Django Admin ve
-   management command'lerdir. Ozel React Flow Agent Builder sonradan ayni
-   draft ve release API'lerini kullanacak sekilde eklenir.
+9. **Ozel operator console ve LDAP ile baslama:** Ilk control-plane arayuzu, ekip
+   tarafindan gelistirilen ozel bir operator console (Django app `apps/console`)
+   ve management command'lerdir. Django Admin yonetim yuzeyi olarak kullanilmaz.
+   Insan operatorler kurumsal LDAP/Active Directory ile kimlik dogrular; dizin
+   gruplari AgentHub rollerine eslenir. Ozel React Flow Agent Builder sonradan
+   ayni draft ve release API'lerini kullanacak sekilde bu console'u genisletir.
+   Karar: [ADR-0001](docs/adr/0001-custom-console-ldap-auth.md).
 10. **Kontrolsuz agent playground kapsam disidir:** Platformda sadece kayitli,
     yetkilendirilmis, degerlendirilmis ve release edilmis scenario'lar
     calistirilir.
@@ -621,10 +625,15 @@ degistirilmez.
 
 ### 10.1 Kimlik dogrulama
 
-Insan kullanicilar OIDC/SSO ile Django'ya girer. Backend veya agent consumer'lari
-OIDC client credential, service account JWT, mTLS subject veya desteklenen
-bearer token ile dogrulanir. Gelistirme ortami icin lokal token provider olabilir;
-production'da bu provider kapali olur.
+Insan operatorler operator console'a kurumsal **LDAP/Active Directory** ile giris
+yapar (`django-auth-ldap`, LDAPS uzerinden). Dizin gruplari AgentHub rollerine
+eslenir ve operator profili (kullanici adi, e-posta, gorunen ad, roller) giriste
+dizinden senkronlanir; AgentHub operator parolasi saklamaz. LDAP ortam bazinda
+konfigure edilir; dizin olmayan ortamda (local dev, CI, test) LDAP kapalidir ve
+yerel Django hesaplariyla giris yapilir. Backend veya agent consumer'lari OIDC
+client credential, service account JWT, mTLS subject veya desteklenen bearer token
+ile dogrulanir (bu makine yolu LDAP'tan bagimsizdir). Detay:
+[ADR-0001](docs/adr/0001-custom-console-ldap-auth.md).
 
 Kimlik dogrulama sonucu minimum olarak sunlari uretir:
 
@@ -1588,11 +1597,15 @@ Postgres'te kalir.
 
 ---
 
-## 23. Django Admin ve Operasyonel Komutlar
+## 23. Operator Console ve Operasyonel Komutlar
 
-### 23.1 Django Admin yuzeyi
+### 23.1 Operator console yuzeyi
 
-Ilk internal UI asagidaki ekranlari saglar:
+Yonetim yuzeyi, ekip tarafindan gelistirilen ozel operator console'dur (Django app
+`apps/console`, server-rendered; ileride API + SPA'ya evrilir). Django Admin
+yonetim yuzeyi olarak kullanilmaz (yalnizca local dev'de acik hata ayiklama
+kolayligi olarak birakilabilir). Operatorler console'a LDAP ile giris yapar ve
+rol/tenant kapsamina gore asagidaki ekranlari gorur:
 
 - Organization, uye, consumer ve binding yonetimi.
 - Project, scenario ve alias kayitlari.
@@ -1602,8 +1615,12 @@ Ilk internal UI asagidaki ekranlari saglar:
 - Tool binding, risk seviyesi ve approval kuyugu.
 - Redacted agent run trajectory ve audit olaylari.
 
-Admin uzerinden active release body'si degistirilemez. Degisiklik draft version
-veya GitOps import ile gelir; promotion ayrik action ve rol gerektirir.
+Console her ekranda gateway ile ayni tenant-isolation ve rol/capability
+kontrollerini fail-closed uygular; dizinden gelen roller server-side dogrulanir,
+istemciden gelen rol/tenant bilgisine guvenilmez. Console uzerinden active release
+body'si degistirilemez. Degisiklik draft version veya GitOps import ile gelir;
+promotion ayrik action ve rol gerektirir. Karar:
+[ADR-0001](docs/adr/0001-custom-console-ldap-auth.md).
 
 ### 23.2 Management command katalogu
 
@@ -1647,7 +1664,9 @@ bagimsiz olceklemeyi saglar.
 - PostgreSQL, `pgvector` extension ile.
 - Redis, Celery broker/result backend ve cache icin.
 - S3 uyumlu object store, ilk ortamda MinIO olabilir.
-- Kurum OIDC/SSO provider'i.
+- Kurum LDAP/Active Directory dizini (operator console girisi icin, LDAPS).
+  `django-auth-ldap` + `python-ldap` (native `libldap`/`libsasl` image'da gerekir).
+- Consumer authN icin kurum OIDC/SSO provider'i (makine yolu; LDAP'tan bagimsiz).
 - LLM/embedding/reranker endpoint'leri veya kurum model gateway'i.
 - OTel collector, Prometheus ve Grafana.
 
@@ -1705,7 +1724,10 @@ Isler:
 1. Organization, membership, AIProject, Scenario ve ScenarioAlias modellerini ekle.
 2. OIDC subject ve service account/consumer modellerini ekle.
 3. ConsumerBinding ve capability kontrollerini uygula.
-4. Django Admin filtrelerini organization scope ile sinirla.
+4. Operator console iskeletini kur: LDAP-configurable kimlik dogrulama
+   (`django-auth-ldap`, dizin yoksa yerel hesaba dusen), login/logout ve
+   organization scope ile sinirli dashboard/list ekranlari. Django Admin yonetim
+   yuzeyi olarak devre disi birakilir (dev-only opt-in).
 5. Audit event servisinin ilk surumunu yaz.
 
 Kabul kriterleri:
@@ -1713,6 +1735,9 @@ Kabul kriterleri:
 - Bir organization digerinin project veya scenario kaydini okuyamaz.
 - Disabled consumer gateway'den cagri yapamaz.
 - Alias, organization icinde tekildir.
+- Console yalniz kimlik dogrulanmis operatore acilir ve yalniz operatorun
+  yetkili oldugu organization kayitlarini gosterir; Django Admin route'u
+  production'da kapalidir.
 
 ### Sprint 2 - Artefact registry ve release compiler
 
@@ -1876,12 +1901,13 @@ Kabul kriterleri:
 
 ### Sprint 11 - Builder ve genisleme
 
-Amac: Kontrolu kaybetmeden gorsel authoring deneyimi eklemek.
+Amac: Operator console'u, kontrolu kaybetmeden gorsel authoring deneyimiyle
+genisletmek (ayni LDAP kimlik ve rol/tenant authorization modeli uzerinde).
 
 Isler:
 
 1. Draft workflow CRUD API'si ve compiler diagnostic endpoint'leri ekle.
-2. React Flow tabanli builder istemcisini ekle.
+2. React Flow tabanli builder istemcisini operator console'a entegre et.
 3. Node form'larini contract ve registry schema'larindan uret.
 4. Validate, test, eval, publish ve trace ekranlarini ekle.
 
@@ -1890,6 +1916,8 @@ Kabul kriterleri:
 - Builder, runtime graph'i degil versioned DSL olusturur.
 - Publish, ayni compiler/eval/promotion yolunu kullanir.
 - UI, tool endpoint veya secret degerini gostermez.
+- Builder, Sprint 1 console'unun LDAP kimlik ve rol/tenant kontrollerini yeniden
+  kullanir; ayri bir kimlik/authorization yolu getirmez.
 
 ---
 

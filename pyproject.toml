@@ -1,0 +1,85 @@
+[project]
+name = "agenthub"
+version = "0.0.0"
+description = "AgentHub v3 — governed multi-tenant AI hub (RAG, workflow, agent, tools) on a Django modular monolith."
+requires-python = ">=3.13"
+license = { text = "Proprietary" }
+
+# Runtime dependencies. Kept minimal for Sprint 0; each later sprint adds only
+# what it needs (DRF in Sprint 3, pgvector in Sprint 5, LangGraph in Sprint 10, ...).
+dependencies = [
+    "Django>=5.2,<5.3",
+    "django-environ>=0.11,<0.13",
+    "celery[redis]>=5.4,<6",
+    "redis>=5.0,<6",
+    "psycopg[binary]>=3.2,<4",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-django>=4.9",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "django-stubs[compatible-mypy]>=5.1",
+    "pre-commit>=3.8",
+]
+# LDAP operator authentication (ADR-0001). Installed in the Linux runtime image;
+# not required when LDAP is disabled (local dev/CI/tests fall back to the model
+# backend). python-ldap needs native libldap/libsasl to build.
+ldap = [
+    "django-auth-ldap>=4.8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# The importable code lives in config/ and apps/; this is an application, not a
+# distributable library, so we declare the packages explicitly.
+packages = ["config", "apps"]
+
+# --- Ruff (lint + format) ---------------------------------------------------
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = ["migrations"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pyflakes / pycodestyle
+    "I",             # import sorting
+    "UP",            # pyupgrade
+    "B",             # bugbear
+    "DJ",            # flake8-django
+    "S",             # bandit-style security checks
+    "C4",            # comprehensions
+]
+# S101 (assert) is fine in tests; allow it there via per-file below.
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101"]
+# Settings use star-imports across environment files and legitimate conditional
+# (non-top-level) imports for optional backends like LDAP.
+"config/settings/*" = ["F405", "F403", "E402"]
+
+# --- Mypy -------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+plugins = ["mypy_django_plugin.main"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
+exclude = ["migrations/", "^build/"]
+
+[tool.django-stubs]
+django_settings_module = "config.settings.test"
+
+# --- Pytest -----------------------------------------------------------------
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py", "tests.py"]
+testpaths = ["apps", "tests"]
+addopts = "--strict-markers -ra"

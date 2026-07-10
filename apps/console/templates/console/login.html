@@ -1,0 +1,23 @@
+{% extends "console/base.html" %}
+{% block title %}Sign in · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card login">
+  <h2>Operator sign in</h2>
+  <p class="muted" style="font-size:13px">
+    {% if ldap_enabled %}Use your corporate directory (LDAP) credentials.
+    {% else %}LDAP is disabled in this environment; local account sign in.{% endif %}
+  </p>
+  {% if form.errors %}
+    <p style="color:#ff8a8a">Invalid credentials.</p>
+  {% endif %}
+  <form method="post">
+    {% csrf_token %}
+    <label>Username</label>
+    {{ form.username }}
+    <label>Password</label>
+    {{ form.password }}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+{% endblock %}

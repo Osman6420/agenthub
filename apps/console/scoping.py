@@ -1,0 +1,40 @@
+"""Tenant-scoped querysets for console screens.
+
+Every console list derives its scope from :func:`allowed_organization_ids` so a
+missing filter in a template can never widen what an operator sees.
+"""
+
+from __future__ import annotations
+
+from django.db.models import QuerySet
+
+from apps.catalog.models import AIProject, Scenario
+from apps.identity.models import Consumer
+from apps.tenancy.models import Organization
+from apps.tenancy.services import allowed_organization_ids
+
+UserLike = object
+
+
+def scoped_organizations(user: UserLike) -> QuerySet[Organization]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = Organization.objects.all()
+    return qs if allowed is None else qs.filter(id__in=allowed)
+
+
+def scoped_projects(user: UserLike) -> QuerySet[AIProject]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = AIProject.objects.select_related("organization")
+    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+
+
+def scoped_scenarios(user: UserLike) -> QuerySet[Scenario]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = Scenario.objects.select_related("project", "project__organization")
+    return qs if allowed is None else qs.filter(project__organization_id__in=allowed)
+
+
+def scoped_consumers(user: UserLike) -> QuerySet[Consumer]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = Consumer.objects.select_related("organization")
+    return qs if allowed is None else qs.filter(organization_id__in=allowed)

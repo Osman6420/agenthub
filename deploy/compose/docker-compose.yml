@@ -1,0 +1,113 @@
+# Local development topology for AgentHub v3 (v3 plan §24).
+# One image runs every application role; infrastructure services back them.
+name: agenthub
+
+x-app: &app
+  build:
+    context: ../..
+    dockerfile: deploy/Dockerfile
+  environment:
+    DJANGO_SETTINGS_MODULE: config.settings.local
+    DJANGO_DEBUG: "true"
+    DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0,web"
+    DATABASE_URL: postgres://agenthub:agenthub@postgres:5432/agenthub
+    REDIS_URL: redis://redis:6379/0
+    OBJECT_STORE_ENDPOINT: http://minio:9000
+    OBJECT_STORE_BUCKET: agenthub
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  volumes:
+    - ../..:/app
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: agenthub
+      POSTGRES_PASSWORD: agenthub
+      POSTGRES_DB: agenthub
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenthub -d agenthub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    <<: *app
+    command: python manage.py migrate --noinput
+    restart: "no"
+
+  web:
+    <<: *app
+    command: uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.local
+      DJANGO_DEBUG: "true"
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0,web"
+      DATABASE_URL: postgres://agenthub:agenthub@postgres:5432/agenthub
+      REDIS_URL: redis://redis:6379/0
+      OBJECT_STORE_ENDPOINT: http://minio:9000
+      OBJECT_STORE_BUCKET: agenthub
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-runtime:
+    <<: *app
+    command: celery -A config worker -Q runtime -l info --concurrency 2
+
+  worker-ingestion:
+    <<: *app
+    command: celery -A config worker -Q ingestion -l info --concurrency 2
+
+  worker-eval:
+    <<: *app
+    command: celery -A config worker -Q eval -l info --concurrency 1
+
+  beat:
+    <<: *app
+    command: celery -A config beat -l info
+
+volumes:
+  pgdata:
+  miniodata:
