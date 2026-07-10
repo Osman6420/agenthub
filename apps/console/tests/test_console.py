@@ -90,6 +90,17 @@ def test_non_admin_cannot_create_organization(client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_platform_admin_can_open_organization_create_form(client: Client) -> None:
+    root = User.objects.create_superuser("root", "root@example.com", "x")  # noqa: S106
+    client.force_login(root)
+
+    response = client.get(reverse("console:organization_create"))
+
+    assert response.status_code == 200
+    assert 'name="slug"' in response.content.decode()
+
+
+@pytest.mark.django_db
 def test_org_admin_cannot_create_project_in_another_org(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
@@ -113,6 +124,75 @@ def test_org_admin_cannot_create_project_in_another_org(client: Client) -> None:
     assert response.status_code == 200
     assert "Select a valid choice" in response.content.decode()
     assert not AIProject.objects.filter(slug="forbidden").exists()
+
+
+@pytest.mark.django_db
+def test_project_owner_is_selected_from_members_in_admin_scope(client: Client) -> None:
+    org_a = Organization.objects.create(slug="org-a", name="A")
+    org_b = Organization.objects.create(slug="org-b", name="B")
+    admin = User.objects.create_user("admin", password="x")  # noqa: S106
+    owner_a = User.objects.create_user("owner-a", password="x")  # noqa: S106
+    outsider = User.objects.create_user("outsider", password="x")  # noqa: S106
+    OrganizationMembership.objects.create(
+        organization=org_a, user=admin, role=Role.ORGANIZATION_ADMIN
+    )
+    OrganizationMembership.objects.create(organization=org_a, user=owner_a, role=Role.PROJECT_OWNER)
+    OrganizationMembership.objects.create(
+        organization=org_b, user=outsider, role=Role.PROJECT_OWNER
+    )
+    client.force_login(admin)
+
+    response = client.get(reverse("console:project_create"))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    assert 'name="owner"' in body
+    assert "owner-a" in body
+    assert "outsider" not in body
+
+    response = client.post(
+        reverse("console:project_create"),
+        {
+            "organization": org_a.pk,
+            "slug": "alpha",
+            "name": "Alpha",
+            "owner": "owner-a",
+            "risk_level": "medium",
+            "status": "active",
+        },
+    )
+    assert response.status_code == 302
+    assert AIProject.objects.get(organization=org_a, slug="alpha").owner == "owner-a"
+
+
+@pytest.mark.django_db
+def test_project_owner_must_belong_to_selected_organization(client: Client) -> None:
+    org_a = Organization.objects.create(slug="org-a", name="A")
+    org_b = Organization.objects.create(slug="org-b", name="B")
+    admin = User.objects.create_user("admin", password="x")  # noqa: S106
+    owner_b = User.objects.create_user("owner-b", password="x")  # noqa: S106
+    for organization in (org_a, org_b):
+        OrganizationMembership.objects.create(
+            organization=organization, user=admin, role=Role.ORGANIZATION_ADMIN
+        )
+    OrganizationMembership.objects.create(organization=org_b, user=owner_b, role=Role.PROJECT_OWNER)
+    client.force_login(admin)
+
+    response = client.post(
+        reverse("console:project_create"),
+        {
+            "organization": org_a.pk,
+            "slug": "forbidden-owner",
+            "name": "Forbidden owner",
+            "owner": "owner-b",
+            "risk_level": "medium",
+            "status": "active",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Selected owner is not a member" in response.content.decode()
+    assert not AIProject.objects.filter(slug="forbidden-owner").exists()
 
 
 @pytest.mark.django_db

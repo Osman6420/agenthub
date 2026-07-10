@@ -15,7 +15,7 @@ from django.db.models import QuerySet
 from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer, ConsumerBinding
-from apps.tenancy.models import Organization
+from apps.tenancy.models import Organization, OrganizationMembership
 from apps.tenancy.services import admin_organization_ids, author_organization_ids
 
 
@@ -28,8 +28,13 @@ class OrganizationForm(forms.ModelForm):
         model = Organization
         fields = ["slug", "name", "status"]
 
+    def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+
 
 class ProjectForm(forms.ModelForm):
+    owner = forms.ChoiceField(required=False, choices=())
+
     class Meta:
         model = AIProject
         fields = ["organization", "slug", "name", "owner", "risk_level", "status"]
@@ -40,6 +45,36 @@ class ProjectForm(forms.ModelForm):
         cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
             Organization.objects.all(), ids
         )
+        memberships = OrganizationMembership.objects.select_related("organization", "user")
+        if ids is not None:
+            memberships = memberships.filter(organization_id__in=ids)
+        owner_organizations: dict[str, set[str]] = {}
+        for membership in memberships:
+            username = membership.user.get_username()
+            owner_organizations.setdefault(username, set()).add(membership.organization.slug)
+        cast(forms.ChoiceField, self.fields["owner"]).choices = [
+            ("", "---------"),
+            *[
+                (username, f"{username} ({', '.join(sorted(organizations))})")
+                for username, organizations in sorted(owner_organizations.items())
+            ],
+        ]
+
+    def clean(self) -> dict[str, Any] | None:
+        cleaned_data = super().clean()
+        if cleaned_data is None:
+            return None
+        organization = cleaned_data.get("organization")
+        owner = cleaned_data.get("owner")
+        if (
+            organization
+            and owner
+            and not OrganizationMembership.objects.filter(
+                organization=organization, user__username=owner
+            ).exists()
+        ):
+            self.add_error("owner", "Selected owner is not a member of this organization.")
+        return cleaned_data
 
 
 class ScenarioForm(forms.ModelForm):

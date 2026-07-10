@@ -2,8 +2,8 @@
 
 ## Result
 
-Implemented and verified on SQLite on 2026-07-10. PostgreSQL-specific verification
-was not run in this environment.
+Implemented and verified on SQLite and PostgreSQL on 2026-07-10. The PostgreSQL
+full-suite verification was completed while validating Sprint 5.
 
 ## Evidence
 
@@ -23,12 +23,27 @@ was not run in this environment.
 - GitOps imports create-only, is idempotent for identical documents, and rejects
   unknown/cross-org references and conflicting reapply.
 - No migrations or production dependencies were added.
+- Follow-up form regression: platform admin can open organization create; project
+  owner is a dropdown sourced from memberships in the operator's admin scope; a
+  selected owner must belong to the selected organization.
+
+## Follow-up verification
+
+- SQLite full suite: 85 passed, 2 PostgreSQL-only tests skipped.
+- PostgreSQL focused console suite: 11 passed.
+- Ruff lint/format, mypy, Django check, and migration-drift check passed.
+
+## Manual UI verification
+
+The local web application is running at `http://127.0.0.1:8000` and was restarted
+after the form fixes. Manual browser confirmation of organization create and the
+project-owner dropdown is pending; record the result here without credentials.
 
 ## Environment note
 
 The checked-in `.venv` referenced a removed Microsoft Store Python 3.13 installation.
-Checks ran with the available Python 3.14 interpreter using the unchanged
-`requirements.lock`. Python 3.13 and real PostgreSQL remain verification items.
+Checks ran with the available Python 3.14 interpreter. Python 3.13 remains a separate
+verification item.
 
 ## Residual risk
 

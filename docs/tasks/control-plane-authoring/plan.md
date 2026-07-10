@@ -111,13 +111,20 @@ Revert the commit; console returns to read-only. No schema changes.
 - Write authorization is security-critical; mitigated by server-side scope checks and
   negative tests. Form queryset scoping must match the read-scope helpers.
 
+## Follow-up fixes
+
+- OrganizationForm accepts the common authenticated-user constructor contract used by
+  create views.
+- Project owner is selected from organization memberships rather than free text. The
+  submitted owner is revalidated against the selected organization server-side.
+
 ## Open questions
 
 - Edit/disable flows and approval for high-risk changes (follow-up).
 
 ## Status
 
-Implemented and verified on SQLite. PostgreSQL verification remains pending.
+Verified on SQLite and PostgreSQL, including follow-up form fixes.
 
 ## Completion criteria
 

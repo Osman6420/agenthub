@@ -17,6 +17,7 @@
 | --- | --- |
 | Non-privileged operator creates records | Writes are role-gated server-side: organization create = platform admin; org-scoped create requires the correct membership role in that org. |
 | Operator attaches a child to an org/project outside their scope | Form querysets are limited to the user's scope; the chosen parent is re-validated server-side against `allowed_organization_ids`. Client-submitted ids are never trusted. |
+| Operator assigns a project owner from another tenant | Owner choices derive from memberships in the operator's admin scope and form validation requires membership in the selected project organization. |
 | Cross-org binding (consumer in A bound to scenario in B) | Model-level clean() already rejects it; the form scopes choices and the importer validates org match. |
 | CSRF on console writes | Django CSRF middleware + `{% csrf_token %}` on every form (session-authenticated console). |
 | Alias hijack / duplicate | DB `UniqueConstraint(organization, alias)`; surfaced as a form error. |
