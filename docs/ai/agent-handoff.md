@@ -19,6 +19,13 @@ branches, stashes, and reflog. Do not infer the active task only from open IDE t
 
 Last checked: 2026-07-10, Europe/Istanbul.
 
+Record only genuinely time-varying facts here (is a server up, which ports, is MinIO
+running). Durable facts — what is implemented/verified, the canonical interpreter, and
+how to run the gates — belong in the `@`-imported verified-state of
+[`engineering-rules.md`](engineering-rules.md) so every session loads them
+automatically. This snapshot is not auto-loaded, so it must never be the only place
+such a fact is written.
+
 - Application: `http://127.0.0.1:8000`.
 - Health: `GET /v1/health/live` returned `200 {"status":"ok"}`.
 - Web process: host Python 3.14 running Uvicorn, not the Compose `web` service.
@@ -26,9 +33,12 @@ Last checked: 2026-07-10, Europe/Istanbul.
   published localhost ports. MinIO was not running at the last check.
 - Runtime logs: `.runtime/web.stdout.log` and `.runtime/web.stderr.log` (gitignored).
 - Uvicorn is started without `--reload`; source changes require a web-process restart.
-- The checked-in `.venv` references an unavailable Microsoft Store Python 3.13
-  installation. Current local verification/runtime uses `C:\Python314\python.exe`
-  with dependencies from `requirements.lock` until the Python 3.13 venv is rebuilt.
+- Interpreter: `.venv` (Python 3.13) is canonical and, after Sprint 5, again has all
+  dependencies (`boto3`/`pgvector` installed from `requirements.lock`); gates pass in it
+  on SQLite and — with the Compose database — on PostgreSQL. `C:\Python314\python.exe`
+  (Python 3.14) is a working fallback that was used during Sprint 5 while `.venv` lacked
+  those deps. The durable interpreter/dependency contract lives in the verified-state of
+  [`engineering-rules.md`](engineering-rules.md), not in this snapshot.
 
 This is an ephemeral snapshot, not a guarantee. Re-check rather than trusting it:
 
@@ -48,7 +58,7 @@ $env:DJANGO_SETTINGS_MODULE='config.settings.local'
 $env:DATABASE_URL='postgres://agenthub:agenthub@localhost:5432/agenthub'
 $env:REDIS_URL='redis://localhost:6379/0'
 $env:OBJECT_STORE_ENDPOINT='http://localhost:9000'
-C:\Python314\python.exe -m uvicorn config.asgi:application --host 127.0.0.1 --port 8000
+.venv\Scripts\python.exe -m uvicorn config.asgi:application --host 127.0.0.1 --port 8000
 ```
 
 Never record operator passwords, bearer tokens, cookies, LDAP credentials, or object
