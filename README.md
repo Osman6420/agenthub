@@ -74,6 +74,17 @@ python manage.py retry_ingestion --run 42
 Indexes are not activated automatically. Retrieval filters the signed-context tenant
 and explicitly pinned index versions.
 
+## MCP and operations
+
+Sprint 7 provides an internal/VPN MCP endpoint at `/mcp/` using the same bearer-token,
+binding, capability, release-routing, contract, runtime, usage, and audit path as REST.
+Prometheus scrapes `/internal/metrics` with a secret-backed bearer token through private
+cluster networking. Optional OTLP export is configured with an allowlisted
+`OTEL_EXPORTER_OTLP_ENDPOINT`; an empty value disables export without affecting requests.
+MCP is default-off and must be enabled only in an approved internal/VPN overlay. Draft
+OpenShift, monitoring, and runbook assets are under `deploy/openshift`,
+`deploy/monitoring`, and `docs/operations`.
+
 ## Belgeler
 
 - [Django hedef mimari planı — doküman revizyonu 3](agenthub-v3-django-plan.md)

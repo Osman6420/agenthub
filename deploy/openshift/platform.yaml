@@ -1,0 +1,212 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agenthub-web
+  labels: {app.kubernetes.io/part-of: agenthub}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agenthub-runtime
+  labels: {app.kubernetes.io/part-of: agenthub}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agenthub-ingestion
+  labels: {app.kubernetes.io/part-of: agenthub}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agenthub-eval
+  labels: {app.kubernetes.io/part-of: agenthub}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agenthub-beat
+  labels: {app.kubernetes.io/part-of: agenthub}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agenthub-web
+  labels: {app.kubernetes.io/name: agenthub-web, app.kubernetes.io/part-of: agenthub}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: agenthub-web}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: agenthub-web, app.kubernetes.io/part-of: agenthub}
+    spec:
+      serviceAccountName: agenthub-web
+      containers:
+        - name: web
+          image: agenthub-image-must-be-pinned-by-environment-overlay
+          command: ["python", "-m", "uvicorn"]
+          args: ["config.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - {name: http, containerPort: 8000}
+          envFrom:
+            - configMapRef: {name: agenthub-config}
+            - secretRef: {name: agenthub-runtime-secrets}
+          readinessProbe:
+            httpGet: {path: /v1/health/ready, port: http}
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: /v1/health/live, port: http}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agenthub-worker-runtime
+  labels: {app.kubernetes.io/name: agenthub-worker-runtime, app.kubernetes.io/part-of: agenthub}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: agenthub-worker-runtime}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: agenthub-worker-runtime, app.kubernetes.io/part-of: agenthub}
+    spec:
+      serviceAccountName: agenthub-runtime
+      containers:
+        - name: worker
+          image: agenthub-image-must-be-pinned-by-environment-overlay
+          command: ["celery", "-A", "config.celery", "worker", "-Q", "runtime"]
+          envFrom:
+            - configMapRef: {name: agenthub-config}
+            - secretRef: {name: agenthub-runtime-secrets}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agenthub-worker-ingestion
+  labels: {app.kubernetes.io/name: agenthub-worker-ingestion, app.kubernetes.io/part-of: agenthub}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: agenthub-worker-ingestion}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: agenthub-worker-ingestion, app.kubernetes.io/part-of: agenthub}
+    spec:
+      serviceAccountName: agenthub-ingestion
+      containers:
+        - name: worker
+          image: agenthub-image-must-be-pinned-by-environment-overlay
+          command: ["celery", "-A", "config.celery", "worker", "-Q", "ingestion"]
+          envFrom:
+            - configMapRef: {name: agenthub-config}
+            - secretRef: {name: agenthub-ingestion-secrets}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agenthub-worker-eval
+  labels: {app.kubernetes.io/name: agenthub-worker-eval, app.kubernetes.io/part-of: agenthub}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: agenthub-worker-eval}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: agenthub-worker-eval, app.kubernetes.io/part-of: agenthub}
+    spec:
+      serviceAccountName: agenthub-eval
+      containers:
+        - name: worker
+          image: agenthub-image-must-be-pinned-by-environment-overlay
+          command: ["celery", "-A", "config.celery", "worker", "-Q", "eval"]
+          envFrom:
+            - configMapRef: {name: agenthub-config}
+            - secretRef: {name: agenthub-runtime-secrets}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agenthub-beat
+  labels: {app.kubernetes.io/name: agenthub-beat, app.kubernetes.io/part-of: agenthub}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: agenthub-beat}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: agenthub-beat, app.kubernetes.io/part-of: agenthub}
+    spec:
+      serviceAccountName: agenthub-beat
+      containers:
+        - name: beat
+          image: agenthub-image-must-be-pinned-by-environment-overlay
+          command: ["celery", "-A", "config.celery", "beat"]
+          envFrom:
+            - configMapRef: {name: agenthub-config}
+            - secretRef: {name: agenthub-runtime-secrets}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agenthub-web
+  labels: {app.kubernetes.io/name: agenthub-web, app.kubernetes.io/part-of: agenthub}
+spec:
+  selector: {app.kubernetes.io/name: agenthub-web}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: agenthub-web
+  labels: {app.kubernetes.io/name: agenthub-web, app.kubernetes.io/part-of: agenthub}
+spec:
+  to: {kind: Service, name: agenthub-web}
+  port: {targetPort: http}
+  tls: {termination: edge, insecureEdgeTerminationPolicy: Redirect}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agenthub-config
+  labels: {app.kubernetes.io/part-of: agenthub}
+data:
+  MCP_ENABLED: "false"
+  METRICS_ENABLED: "true"
+  OTEL_SERVICE_NAME: "agenthub-web"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_EXPORTER_OTLP_ALLOWED_HOSTS: ""

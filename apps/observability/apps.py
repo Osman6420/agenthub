@@ -7,3 +7,7 @@ class ObservabilityConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.observability"
     verbose_name = "Observability"
+
+    def ready(self) -> None:
+        # Import registers bounded Celery trace-context signal handlers.
+        from apps.observability import celery_tracing, signals  # noqa: F401

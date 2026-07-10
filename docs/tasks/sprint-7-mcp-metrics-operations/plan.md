@@ -8,10 +8,10 @@ operational alerts/runbooks, and draft OpenShift deployment boundaries.
 ## Background
 
 Sprints 3–5 established the REST gateway, runtime, ingestion, and usage records.
-Sprint 6 is adding evaluated promotion, canary, and rollback. Sprint 7 exposes the
+Sprint 6 added evaluated promotion, canary, and rollback. Sprint 7 exposes the
 same governed scenarios to MCP consumers and supplies the metrics needed to operate
 those paths and assess canaries. Planning can proceed before Sprint 6 completes;
-implementation must revalidate Sprint 6's final lifecycle events and routing seams.
+implementation revalidates Sprint 6's final lifecycle events and routing seams.
 
 ## Scope
 
@@ -160,8 +160,12 @@ order; retain audit and canonical usage data.
 
 ## Status
 
-Planned; implementation waits for Sprint 6 contract revalidation and required
-security, dependency, public-interface, and network approvals.
+Verified on SQLite and PostgreSQL; live-platform validation remains a documented
+operational follow-up because cluster deployment is outside this sprint's scope. The
+project owner authorized implementation on 2026-07-10. MCP delegates to the existing
+gateway pipeline, and REST/MCP parity is verified against the completed Sprint 6 canary
+routing contract. MCP/telemetry production dependencies and the internal/VPN
+public-interface/network model were explicitly approved by the project owner.
 
 ## Completion criteria
 

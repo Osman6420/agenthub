@@ -16,6 +16,7 @@ import logging
 import redis
 from django.conf import settings
 from django.db import connections
+from django.db.migrations.executor import MigrationExecutor
 from django.db.utils import OperationalError
 from django.http import HttpRequest, JsonResponse
 
@@ -37,6 +38,16 @@ def _check_database() -> bool:
         logger.warning("readiness: database check failed", exc_info=True)
         return False
     return True
+
+
+def _check_migrations() -> bool:
+    try:
+        connection = connections["default"]
+        executor = MigrationExecutor(connection)
+        return not executor.migration_plan(executor.loader.graph.leaf_nodes())
+    except (OperationalError, ValueError):
+        logger.warning("readiness: migration check failed", exc_info=True)
+        return False
 
 
 def _check_redis() -> bool:
@@ -61,6 +72,7 @@ def ready(request: HttpRequest) -> JsonResponse:
     """
     checks = {
         "database": "ok" if _check_database() else "error",
+        "migrations": "ok" if _check_migrations() else "error",
         "redis": "ok" if _check_redis() else "error",
     }
     healthy = all(value == "ok" for value in checks.values())

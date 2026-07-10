@@ -33,6 +33,8 @@ such a fact is written.
   published localhost ports. MinIO was not running at the last check.
 - Runtime logs: `.runtime/web.stdout.log` and `.runtime/web.stderr.log` (gitignored).
 - Uvicorn is started without `--reload`; source changes require a web-process restart.
+- Sprint 7 MCP/telemetry code and dependencies are installed locally but the running
+  Uvicorn process has not been restarted or manually smoke-tested for this change.
 - Interpreter: `.venv` (Python 3.13) is canonical and, after Sprint 5, again has all
   dependencies (`boto3`/`pgvector` installed from `requirements.lock`); gates pass in it
   on SQLite and — with the Compose database — on PostgreSQL. `C:\Python314\python.exe`
@@ -86,6 +88,13 @@ Current UI evidence:
   fixed and the web process was restarted afterward.
 - Manual browser re-check of those two corrected forms is pending user confirmation;
   do not mark it manually verified until that confirmation is recorded.
+
+Current cross-agent state:
+
+- Claude completed and committed Sprint 6 as `b66843e`.
+- Codex implemented Sprint 7 without modifying Sprint 6 implementation files. Automated
+  evidence, including parity against the committed Sprint 6 canary routing contract, is
+  in the Sprint 7 verification record.
 
 ## Agent transition checklist
 

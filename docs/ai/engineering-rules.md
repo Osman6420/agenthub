@@ -20,7 +20,7 @@ Configuration must be validated, environment-neutral, and fail safely. Secrets n
 
 ## Repository-specific verified state
 
-As of 2026-07-10, Sprints 0–5 are implemented and verified (Sprint 4 adds the
+As of 2026-07-11, Sprints 0–6 are implemented and verified (Sprint 4 adds the
 `apps/retrieval` and `apps/orchestration` RAG runtime: provider interfaces with
 deterministic default providers, a release-bundle resolver, grounding/citation/
 fallback policy, and output-contract governance; the gateway now returns real
@@ -49,7 +49,7 @@ pgvector cosine retriever (`PgvectorRetrievalProvider`, now the default
 create forms and an idempotent GitOps `import_control_plane` for organizations/
 projects/scenarios/aliases/consumers/bindings.
 
-Sprint 6 is **in progress** (verified increment): governed evaluation plus a
+Sprint 6 is implemented and verified: governed evaluation plus a
 fail-closed release lifecycle. An `eval_suite` artifact (bounded cases, allowlisted
 deterministic assertions — data, not code) is validated at author time; `apps/
 evaluations` runs a candidate release against its manifest-pinned suite *in isolation*
@@ -60,18 +60,22 @@ tenant-owned pinned indexes — and `rollback` atomically restores a superseded 
 Releases can now pin `index_versions` in the manifest and the resolver feeds them to
 the retriever, so a release pinning a ready index reaches the pgvector retriever
 end-to-end (this closes the earlier always-empty `ReleaseBundle.index_versions` gap).
-Still pending in Sprint 6: consumer-scoped canary routing, operator-console lifecycle
-actions, and eval/promote/rollback management commands. Management commands today:
-`import_gitops`, `export_gitops`, `validate_artifacts`, `compile_release`,
-`create_consumer_token`, `start_ingestion`, `retry_ingestion`, `import_control_plane`.
+Consumer-scoped, time-bounded canary routing uses `select_release` only after binding
+authorization; the gateway serves active/canary releases and rejects a raw candidate.
+Role-protected operator-console lifecycle actions and the `run_eval`,
+`promote_release`, `rollback_release`, `start_canary`, and `stop_canary` commands are
+implemented. `compile_release --promote` is fail-closed. Management commands today:
+`import_gitops`, `export_gitops`, `validate_artifacts`, `compile_release`, `run_eval`,
+`promote_release`, `rollback_release`, `start_canary`, `stop_canary`,
+`create_consumer_token`, `start_ingestion`, `retry_ingestion`, and
+`import_control_plane`.
 Tooling:
 `pyproject.toml` (deps incl. DRF/jsonschema/PyYAML + `ldap` extra + ruff/mypy/pytest
 config), `requirements.lock`, `deploy/` (Dockerfile + Docker Compose for
 pgvector/Redis/MinIO and web/worker/beat), `.github/workflows/ci.yml`. The remaining
-[target design](../../agenthub-v3-django-plan.md) (real model/embedding providers,
-canary routing + release-lifecycle console/commands, workflow/agent/tools, MCP,
-metrics, OpenShift manifests) remains *planned, not implemented* and is delivered per
-later sprints. Consumer auth
+[target design](../../agenthub-v3-django-plan.md) (real model/embedding providers and
+workflow/agent/tools) remains *planned, not implemented* and is delivered per later
+sprints. Sprint 7 MCP/metrics/OpenShift assets are described below. Consumer auth
 is bearer-token only (OIDC/JWT/mTLS later); LDAP is configured but not yet validated
 against a live directory; local/CI/tests run with LDAP disabled. Repository-verified
 commands include `ruff`, `mypy`, `pytest` (SQLite and — via `config.settings.local`
@@ -90,6 +94,16 @@ and advisory-lock tests that SQLite skips also run. Redis and MinIO are not yet
 exercised by the automated suite. Management/operational commands shown in the target
 plan that are not listed above remain proposed future interfaces and must not be
 reported as executable today.
+
+Sprint 7 is implemented and verified:
+`apps.mcp` provides authenticated stateless MCP JSON-RPC/Streamable HTTP operations and
+delegates invoke/query to the existing gateway policy/routing seam; observability adds
+bounded Prometheus metrics and W3C/OTLP HTTP+Celery tracing; readiness includes migration
+state; and deployment/monitoring/runbook drafts are present. The approved production
+dependencies are `opentelemetry-api`, `opentelemetry-sdk`, the OTLP HTTP exporter, and
+`prometheus-client`. The completed Sprint 6 canary contract is covered by MCP/REST
+parity tests. Live OTel/Prometheus/Grafana/OpenShift checks remain an operational
+follow-up; do not describe the draft manifests as deployed infrastructure.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is

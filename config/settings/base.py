@@ -54,6 +54,7 @@ LOCAL_APPS = [
     "apps.orchestration",
     "apps.evaluations",
     "apps.observability",
+    "apps.mcp",
     "apps.audit",
     "apps.gateway",
     "apps.console",
@@ -64,6 +65,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "apps.gateway.middleware.RequestIDMiddleware",
+    "apps.observability.middleware.TelemetryMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -143,6 +145,19 @@ REST_FRAMEWORK = {
 # Signed ExecutionContext lifetime and request body ceiling.
 EXECUTION_CONTEXT_TTL_SECONDS = env.int("EXECUTION_CONTEXT_TTL_SECONDS", default=300)
 GATEWAY_MAX_REQUEST_BYTES = env.int("GATEWAY_MAX_REQUEST_BYTES", default=1_000_000)
+
+# --- MCP / telemetry (Sprint 7) --------------------------------------------
+MCP_ENABLED = env.bool("MCP_ENABLED", default=False)
+MCP_MAX_REQUEST_BYTES = env.int("MCP_MAX_REQUEST_BYTES", default=1_000_000)
+MCP_MAX_NESTING_DEPTH = env.int("MCP_MAX_NESTING_DEPTH", default=12)
+MCP_PROTOCOL_VERSION = env("MCP_PROTOCOL_VERSION", default="2025-06-18")
+MCP_ALLOWED_ORIGINS = env.list("MCP_ALLOWED_ORIGINS", default=[])
+METRICS_ENABLED = env.bool("METRICS_ENABLED", default=True)
+METRICS_BEARER_TOKEN = env("METRICS_BEARER_TOKEN", default="")
+OTEL_SERVICE_NAME = env("OTEL_SERVICE_NAME", default="agenthub-web")
+OTEL_EXPORTER_OTLP_ENDPOINT = env("OTEL_EXPORTER_OTLP_ENDPOINT", default="")
+OTEL_EXPORTER_OTLP_ALLOWED_HOSTS = env.list("OTEL_EXPORTER_OTLP_ALLOWED_HOSTS", default=[])
+OTEL_TRACE_SAMPLE_RATIO = env.float("OTEL_TRACE_SAMPLE_RATIO", default=0.1)
 
 # --- Runtime providers (Sprint 4) -------------------------------------------
 # Dotted paths to the model/retrieval provider callables. Empty -> deterministic

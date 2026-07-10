@@ -35,7 +35,7 @@ def test_ready_all_healthy(client: Client, monkeypatch: pytest.MonkeyPatch) -> N
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ready"
-    assert body["checks"] == {"database": "ok", "redis": "ok"}
+    assert body["checks"] == {"database": "ok", "migrations": "ok", "redis": "ok"}
 
 
 @pytest.mark.django_db
@@ -63,5 +63,5 @@ def test_ready_does_not_leak_sensitive_detail(
 
     body = response.json()
     assert set(body.keys()) == {"status", "checks"}
-    assert set(body["checks"].keys()) == {"database", "redis"}
+    assert set(body["checks"].keys()) == {"database", "migrations", "redis"}
     assert set(body["checks"].values()) <= {"ok", "error"}

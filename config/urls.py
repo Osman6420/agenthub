@@ -13,10 +13,14 @@ from django.conf import settings
 from django.urls import include, path
 from django.views.generic import RedirectView
 
+from apps.observability.views import metrics
+
 urlpatterns = [
     path("", RedirectView.as_view(pattern_name="console:dashboard", permanent=False)),
     path("console/", include("apps.console.urls")),
     path("v1/", include("apps.gateway.urls")),
+    path("mcp/", include("apps.mcp.urls")),
+    path("internal/metrics", metrics, name="metrics"),
 ]
 
 if getattr(settings, "ENABLE_DJANGO_ADMIN", False):

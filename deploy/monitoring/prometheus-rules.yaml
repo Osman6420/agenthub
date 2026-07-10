@@ -1,0 +1,30 @@
+groups:
+  - name: agenthub-sprint7
+    rules:
+      - alert: AgentHubGatewayHighErrorRate
+        expr: >-
+          sum(rate(agenthub_gateway_requests_total{status="server_error"}[5m]))
+          / clamp_min(sum(rate(agenthub_gateway_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: AgentHub gateway server error rate is above 5%
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#gateway-errors
+      - alert: AgentHubGatewayHighLatency
+        expr: >-
+          histogram_quantile(0.95,
+          sum by (le, transport, operation)
+          (rate(agenthub_gateway_request_duration_seconds_bucket[5m]))) > 2
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: AgentHub p95 latency is above two seconds
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#latency
+      - alert: AgentHubMcpDeniedSpike
+        expr: >-
+          sum(rate(agenthub_gateway_requests_total{transport="mcp",status="denied"}[10m])) > 1
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: MCP authorization denials are elevated
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#mcp-denials
