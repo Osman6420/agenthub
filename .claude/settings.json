@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "NotebookEdit",
+      "TodoWrite",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Artifact",
+      "ExitPlanMode"
+    ],
+    "ask": [
+      "Bash(git commit*)"
+    ]
+  }
+}
