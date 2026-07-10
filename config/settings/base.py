@@ -38,6 +38,10 @@ DJANGO_APPS = [
     "django.contrib.staticfiles",
 ]
 
+THIRD_PARTY_APPS = [
+    "rest_framework",
+]
+
 # Domain apps are added per sprint as they are implemented (see the v3 plan §5.2).
 LOCAL_APPS = [
     "apps.tenancy",
@@ -45,15 +49,17 @@ LOCAL_APPS = [
     "apps.catalog",
     "apps.artifacts",
     "apps.releases",
+    "apps.observability",
     "apps.audit",
     "apps.gateway",
     "apps.console",
 ]
 
-INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "apps.gateway.middleware.RequestIDMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -109,6 +115,30 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TIME_LIMIT = 60 * 30
 CELERY_TASK_SOFT_TIME_LIMIT = 60 * 25
+
+# --- Gateway / DRF ----------------------------------------------------------
+REST_FRAMEWORK = {
+    # Consumers authenticate with a bearer token; humans never use this API.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "apps.gateway.authentication.ConsumerTokenAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "apps.gateway.permissions.HasActiveConsumer",
+    ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "apps.gateway.throttling.ConsumerRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "consumer": env("GATEWAY_CONSUMER_RATE", default="120/min"),
+    },
+    "EXCEPTION_HANDLER": "apps.gateway.errors.exception_handler",
+    "UNAUTHENTICATED_USER": None,
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+}
+
+# Signed ExecutionContext lifetime and request body ceiling.
+EXECUTION_CONTEXT_TTL_SECONDS = env.int("EXECUTION_CONTEXT_TTL_SECONDS", default=300)
+GATEWAY_MAX_REQUEST_BYTES = env.int("GATEWAY_MAX_REQUEST_BYTES", default=1_000_000)
 
 # --- Object storage (S3/MinIO) ----------------------------------------------
 # Referenced by ingestion (Sprint 5). Declared here so config is validated early.

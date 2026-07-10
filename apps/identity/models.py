@@ -58,6 +58,35 @@ class Consumer(TimeStampedModel):
         return self.status == ConsumerStatus.ACTIVE
 
 
+class TokenStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    REVOKED = "revoked", "Revoked"
+
+
+class ConsumerToken(TimeStampedModel):
+    """A bearer credential for a consumer. Only the SHA-256 hash is stored.
+
+    The plaintext token is shown once at creation and never persisted. This is the
+    default credential seam; OIDC/JWT/mTLS are added later without changing callers.
+    """
+
+    consumer = models.ForeignKey(Consumer, on_delete=models.CASCADE, related_name="tokens")
+    name = models.CharField(max_length=200)
+    prefix = models.CharField(max_length=12, db_index=True)
+    token_hash = models.CharField(max_length=64, unique=True)
+    status = models.CharField(
+        max_length=16, choices=TokenStatus.choices, default=TokenStatus.ACTIVE
+    )
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"token:{self.prefix}… ({self.consumer_id})"
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == TokenStatus.ACTIVE
+
+
 class BindingStatus(models.TextChoices):
     ACTIVE = "active", "Active"
     DISABLED = "disabled", "Disabled"

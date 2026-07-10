@@ -1,14 +1,21 @@
-"""Gateway URLs. Sprint 0 exposes only health probes under ``/v1/health/``."""
+"""Gateway URLs, mounted under ``/v1/`` (v3 plan §11.3).
+
+Health probes are unauthenticated; invoke/query/runs require an authenticated
+consumer (enforced by the DRF permission).
+"""
 
 from __future__ import annotations
 
 from django.urls import path
 
-from apps.gateway import health
+from apps.gateway import health, views
 
 app_name = "gateway"
 
 urlpatterns = [
-    path("live", health.live, name="health-live"),
-    path("ready", health.ready, name="health-ready"),
+    path("health/live", health.live, name="health-live"),
+    path("health/ready", health.ready, name="health-ready"),
+    path("invoke", views.InvokeView.as_view(), name="invoke"),
+    path("query", views.QueryView.as_view(), name="query"),
+    path("runs/<str:run_id>", views.RunStatusView.as_view(), name="run-status"),
 ]

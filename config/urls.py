@@ -16,7 +16,7 @@ from django.views.generic import RedirectView
 urlpatterns = [
     path("", RedirectView.as_view(pattern_name="console:dashboard", permanent=False)),
     path("console/", include("apps.console.urls")),
-    path("v1/health/", include("apps.gateway.urls")),
+    path("v1/", include("apps.gateway.urls")),
 ]
 
 if getattr(settings, "ENABLE_DJANGO_ADMIN", False):

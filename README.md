@@ -29,6 +29,24 @@ docker compose -f deploy/compose/docker-compose.yml up --build
 # Sağlık kontrolü: GET http://localhost:8000/v1/health/live  (ve .../ready)
 ```
 
+## Public API (gateway)
+
+Consumer'lar tek giriş noktası olan gateway'i kullanır. Önce bir consumer token'ı
+oluşturun (düz metin bir kez gösterilir), sonra `POST /v1/invoke` çağırın:
+
+```powershell
+.\.venv\Scripts\python manage.py create_consumer_token --organization mcm --subject ug-backend --name demo
+# curl (bash):
+# curl -X POST http://localhost:8000/v1/invoke \
+#   -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+#   -H "Idempotency-Key: <uuid>" \
+#   -d '{"scenario_alias":"customer-information","input":{"query":"Iade nasil yapilir?"}}'
+```
+
+Kimlik yoksa `401`, yetkisiz alias/capability'de `403`, aynı idempotency key farklı
+gövdeyle `409` döner. Cevap üretimi (RAG runtime) Sprint 4'te geliyor; şu an gateway
+imzalı `ExecutionContext` üretip `accepted` döndürür.
+
 ## Belgeler
 
 - [v3 Django Planı](agenthub-v3-django-plan.md)

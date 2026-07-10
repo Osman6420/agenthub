@@ -16,6 +16,7 @@ Django==5.2.16
 django-environ==0.12.1
 django-stubs==6.0.6
 django-stubs-ext==6.0.6
+djangorestframework==3.17.1
 filelock==3.29.7
 h11==0.16.0
 httptools==0.8.0
