@@ -168,7 +168,10 @@ class _GatewayView(APIView):
             request_id=request_id,
         )
         result = dispatch(
-            execution_context=context, validated_input=input_payload, operation=self.operation
+            execution_context=context,
+            validated_input=input_payload,
+            operation=self.operation,
+            release=release,
         )
 
         body = {
@@ -177,7 +180,7 @@ class _GatewayView(APIView):
             "release_id": release.id,
             "status": result["status"],
             "output": result["output"],
-            "detail": result["detail"],
+            "usage": result["usage"],
         }
         if idem_key:
             self._store_idempotency(consumer, idem_key, request_hash, 200, body)
@@ -192,7 +195,9 @@ class _GatewayView(APIView):
             resource_id=str(scenario.id),
             request_id=request_id,
         )
-        self._record_usage_success(consumer, request_id, scenario, release, result["status"])
+        self._record_usage_success(
+            consumer, request_id, scenario, release, result["status"], result["usage"]
+        )
         return Response(body, status=200)
 
     def _check_idempotency(self, consumer: Any, key: str, request_hash: str) -> Response | None:
@@ -223,7 +228,13 @@ class _GatewayView(APIView):
             pass
 
     def _record_usage_success(
-        self, consumer: Any, request_id: str, scenario: Any, release: Any, status: str
+        self,
+        consumer: Any,
+        request_id: str,
+        scenario: Any,
+        release: Any,
+        status: str,
+        usage: dict[str, int],
     ) -> None:
         UsageEvent.objects.create(
             request_id=request_id,
@@ -233,6 +244,8 @@ class _GatewayView(APIView):
             consumer_id=consumer.id,
             operation=self.operation,
             status=status,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
         )
 
     def _record_usage(

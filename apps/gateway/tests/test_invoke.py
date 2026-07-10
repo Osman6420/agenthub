@@ -47,7 +47,7 @@ def test_invalid_token_returns_401() -> None:
 
 
 @pytest.mark.django_db
-def test_happy_path_returns_accepted(scenario_fixture: Fixture) -> None:
+def test_happy_path_returns_completed(scenario_fixture: Fixture) -> None:
     response = _client(scenario_fixture.raw_token).post(
         INVOKE,
         {"scenario_alias": scenario_fixture.alias, "input": {"query": "hi"}},
@@ -55,10 +55,13 @@ def test_happy_path_returns_accepted(scenario_fixture: Fixture) -> None:
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "accepted"
+    assert body["status"] == "completed"
     assert body["scenario_alias"] == scenario_fixture.alias
     assert body["release_id"] is not None
-    assert body["output"] is None  # runtime not wired yet
+    assert isinstance(body["output"], dict)
+    assert "answer" in body["output"]
+    assert body["output"]["sources"] == []  # no retrieval index yet
+    assert "usage" in body
     assert response["X-Request-ID"]
 
 
@@ -141,7 +144,7 @@ def test_query_facade(scenario_fixture: Fixture) -> None:
         "/v1/query", {"scenario_alias": scenario_fixture.alias, "query": "hi"}, format="json"
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "accepted"
+    assert response.json()["status"] == "completed"
 
 
 @pytest.mark.django_db

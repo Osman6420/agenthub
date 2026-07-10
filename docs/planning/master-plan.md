@@ -32,15 +32,24 @@ implemented and verified.
   hashed), alias+capability authorization, per-consumer rate limiting, idempotency,
   a standard error envelope, a signed short-lived `ExecutionContext`, and
   `POST /v1/invoke` / `POST /v1/query` / `GET /v1/runs/{id}`. Input is validated
-  against the release input contract; a `UsageEvent` and audit are recorded. A
-  runtime-facade seam returns `accepted` until the RAG runtime (Sprint 4). Verified
+  against the release input contract; a `UsageEvent` and audit are recorded. Verified
   on SQLite and PostgreSQL and live end-to-end. See
   [`sprint-3-gateway-execution-context`](../tasks/sprint-3-gateway-execution-context/plan.md).
+- Sprint 4: the synchronous RAG runtime — `retrieval` (provider interface + static
+  default) and `orchestration` (model-provider interface + deterministic stub,
+  release-bundle resolver cached by immutable release id, and the `run_rag` engine).
+  Governance: grounding threshold + fallback, runtime-generated citations, and
+  output-contract validation (invalid model output never reaches the client). The
+  gateway now returns real `completed`/fallback output with token usage. Verified on
+  SQLite and PostgreSQL and live end-to-end. See
+  [`sprint-4-rag-runtime`](../tasks/sprint-4-rag-runtime/plan.md).
 
-Not yet present: the RAG runtime and answer generation (Sprint 4), ingestion, tools,
-agents, gated promotion/canary/rollback + evaluation, and deployment manifests —
-planned per later sprints. Consumer auth is bearer-token only (OIDC/JWT/mTLS later);
-LDAP is configured but not yet validated against a live directory.
+Not yet present: the real pgvector retriever and a real LLM provider, ingestion
+(Sprint 5), tools, agents, gated promotion/canary/rollback + evaluation, and
+deployment manifests — planned per later sprints. Providers are deterministic
+defaults (no real vector/LLM call yet). Consumer auth is bearer-token only
+(OIDC/JWT/mTLS later); LDAP is configured but not yet validated against a live
+directory.
 
 ## Scope
 
@@ -63,7 +72,8 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Tenant/identity/catalog + operator console (Sprint 1) | Verified | Foundation, LDAP (prod) | [sprint-1-tenant-identity-catalog](../tasks/sprint-1-tenant-identity-catalog/plan.md) | [v3 target plan §6, §9, §23](../../agenthub-v3-django-plan.md), [ADR-0001](../adr/0001-custom-console-ldap-auth.md) | [verification.md](../tasks/sprint-1-tenant-identity-catalog/verification.md) |
 | Artifact registry + release compiler (Sprint 2) | Verified | Sprint 1 | [sprint-2-artifacts-releases](../tasks/sprint-2-artifacts-releases/plan.md) | [v3 target plan §6.3, §8](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-2-artifacts-releases/verification.md) |
 | Gateway + ExecutionContext (Sprint 3) | Verified | Sprints 1–2 | [sprint-3-gateway-execution-context](../tasks/sprint-3-gateway-execution-context/plan.md) | [v3 target plan §10, §11](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-3-gateway-execution-context/verification.md) |
-| RAG runtime (Sprint 4) | Planned in target document | Sprint 3 | Not created | [v3 target plan §13](../../agenthub-v3-django-plan.md) | Not available |
+| RAG runtime (Sprint 4) | Verified | Sprint 3 | [sprint-4-rag-runtime](../tasks/sprint-4-rag-runtime/plan.md) | [v3 target plan §13](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-4-rag-runtime/verification.md) |
+| Ingestion + pgvector index (Sprint 5) | Planned in target document | Sprint 4 | Not created | [v3 target plan §14](../../agenthub-v3-django-plan.md) | Not available |
 | Gateway and identity context | Planned in target document | Control plane, identity provider | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | RAG runtime and ingestion | Planned in target document | Model/embedding provider, pgvector, workers | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | Evaluation and release | Planned in target document | Runtime, artifact registry | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |

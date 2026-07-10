@@ -49,6 +49,8 @@ LOCAL_APPS = [
     "apps.catalog",
     "apps.artifacts",
     "apps.releases",
+    "apps.retrieval",
+    "apps.orchestration",
     "apps.observability",
     "apps.audit",
     "apps.gateway",
@@ -139,6 +141,13 @@ REST_FRAMEWORK = {
 # Signed ExecutionContext lifetime and request body ceiling.
 EXECUTION_CONTEXT_TTL_SECONDS = env.int("EXECUTION_CONTEXT_TTL_SECONDS", default=300)
 GATEWAY_MAX_REQUEST_BYTES = env.int("GATEWAY_MAX_REQUEST_BYTES", default=1_000_000)
+
+# --- Runtime providers (Sprint 4) -------------------------------------------
+# Dotted paths to the model/retrieval provider callables. Empty -> deterministic
+# built-in defaults (stub model, static retriever). The real OpenAI-compatible model
+# provider and pgvector retriever plug in here without code changes.
+RUNTIME_MODEL_PROVIDER = env("RUNTIME_MODEL_PROVIDER", default="")
+RUNTIME_RETRIEVAL_PROVIDER = env("RUNTIME_RETRIEVAL_PROVIDER", default="")
 
 # --- Object storage (S3/MinIO) ----------------------------------------------
 # Referenced by ingestion (Sprint 5). Declared here so config is validated early.

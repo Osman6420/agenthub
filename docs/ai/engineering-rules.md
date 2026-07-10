@@ -20,7 +20,13 @@ Configuration must be validated, environment-neutral, and fail safely. Secrets n
 
 ## Repository-specific verified state
 
-As of 2026-07-10, Sprints 0–3 are implemented and verified. The repository contains
+As of 2026-07-10, Sprints 0–4 are implemented and verified (Sprint 4 adds the
+`apps/retrieval` and `apps/orchestration` RAG runtime: provider interfaces with
+deterministic default providers, a release-bundle resolver, grounding/citation/
+fallback policy, and output-contract governance; the gateway now returns real
+`completed`/fallback output with token usage. No real vector/LLM call is made yet —
+providers plug in via `RUNTIME_MODEL_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.) The
+repository contains
 a bootable Django modular monolith: `config/` (settings split base/local/test/
 production, `celery.py`, `asgi.py`, `wsgi.py`, `urls.py`); the Sprint 1 control-plane
 apps `apps/tenancy`, `apps/identity`, `apps/catalog`, `apps/audit`, and the
