@@ -50,6 +50,7 @@ LOCAL_APPS = [
     "apps.artifacts",
     "apps.releases",
     "apps.retrieval",
+    "apps.ingestion",
     "apps.orchestration",
     "apps.observability",
     "apps.audit",
@@ -147,7 +148,10 @@ GATEWAY_MAX_REQUEST_BYTES = env.int("GATEWAY_MAX_REQUEST_BYTES", default=1_000_0
 # built-in defaults (stub model, static retriever). The real OpenAI-compatible model
 # provider and pgvector retriever plug in here without code changes.
 RUNTIME_MODEL_PROVIDER = env("RUNTIME_MODEL_PROVIDER", default="")
-RUNTIME_RETRIEVAL_PROVIDER = env("RUNTIME_RETRIEVAL_PROVIDER", default="")
+RUNTIME_RETRIEVAL_PROVIDER = env(
+    "RUNTIME_RETRIEVAL_PROVIDER",
+    default="apps.retrieval.providers.PgvectorRetrievalProvider",
+)
 
 # --- Object storage (S3/MinIO) ----------------------------------------------
 # Referenced by ingestion (Sprint 5). Declared here so config is validated early.
@@ -156,6 +160,11 @@ OBJECT_STORE = {
     "bucket": env("OBJECT_STORE_BUCKET", default="agenthub"),
     "region": env("OBJECT_STORE_REGION", default="us-east-1"),
 }
+
+INGESTION_HTTP_ALLOWED_HOSTS = env.list("INGESTION_HTTP_ALLOWED_HOSTS", default=[])
+INGESTION_MAX_SOURCE_BYTES = env.int("INGESTION_MAX_SOURCE_BYTES", default=10_000_000)
+INGESTION_HTTP_TIMEOUT_SECONDS = env.int("INGESTION_HTTP_TIMEOUT_SECONDS", default=15)
+INGESTION_EMBEDDING_DIMENSIONS = 64
 
 # --- Authentication / operator console (ADR-0001) ---------------------------
 # The operator console is the management surface, not Django Admin. Human operators

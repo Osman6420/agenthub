@@ -61,6 +61,19 @@ python manage.py import_control_plane --path gitops/control-plane --actor <opera
 Ayni icerigin tekrar importu no-op'tur; ayni kimlikte farkli icerik conflict olarak
 reddedilir. Import tek transaction'da calisir ve olusturulan her kaydi audit eder.
 
+## Ingestion and pgvector retrieval
+
+Sprint 5 adds tenant-owned sources/runs, staged promotable indexes, bounded HTTPS/S3
+connectors, Celery retry/dead-letter processing, and pgvector cosine retrieval:
+
+```powershell
+python manage.py start_ingestion --organization mcm --source policies
+python manage.py retry_ingestion --run 42
+```
+
+Indexes are not activated automatically. Retrieval filters the signed-context tenant
+and explicitly pinned index versions.
+
 ## Belgeler
 
 - [Django hedef mimari planı — doküman revizyonu 3](agenthub-v3-django-plan.md)
@@ -73,6 +86,7 @@ reddedilir. Import tek transaction'da calisir ve olusturulan her kaydi audit ede
 - [Security rules](docs/ai/security-rules.md)
 - [Testing rules](docs/ai/testing-rules.md)
 - [Definition of Done](docs/ai/definition-of-done.md)
+- [Coding-agent handoff and local UI smoke](docs/ai/agent-handoff.md)
 - [Master plan](docs/planning/master-plan.md)
 - [ADR index](docs/adr/README.md)
 - [Task documentation and templates](docs/tasks/README.md)

@@ -73,6 +73,48 @@ class DemoRetrievalProvider:
         ]
 
 
+class PgvectorRetrievalProvider:
+    """Cosine retrieval constrained by signed-context tenant and pinned indexes."""
+
+    def retrieve(
+        self,
+        *,
+        query: str,
+        profile: dict[str, Any],
+        organization_id: int,
+        index_versions: list[int],
+    ) -> list[RetrievedChunk]:
+        if not index_versions:
+            return []
+        from pgvector.django import CosineDistance
+
+        from apps.ingestion.models import Chunk, IndexStatus
+        from apps.ingestion.pipeline import embed_deterministic
+
+        top_k = min(max(int(profile.get("top_k", 5)), 1), 50)
+        query_vector = embed_deterministic(query)
+        rows = (
+            Chunk.objects.filter(
+                organization_id=organization_id,
+                index_version_id__in=index_versions,
+                index_version__status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
+            )
+            .select_related("document", "index_version__source")
+            .annotate(distance=CosineDistance("embedding", query_vector))
+            .order_by("distance")[:top_k]
+        )
+        return [
+            RetrievedChunk(
+                text=row.text,
+                source_id=row.index_version.source.slug,
+                source_uri=row.document.source_uri,
+                title=row.document.title,
+                score=max(0.0, 1.0 - float(row.distance)),
+            )
+            for row in rows
+        ]
+
+
 def get_retrieval_provider() -> RetrievalProvider:
     path = getattr(settings, "RUNTIME_RETRIEVAL_PROVIDER", "")
     if path:

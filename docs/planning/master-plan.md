@@ -47,11 +47,16 @@ implemented and verified.
 Control-plane authoring now provides governed create-only console forms and
 idempotent GitOps import for organizations, projects, scenarios/aliases, consumers,
 and bindings, with tenant/role enforcement and transactional audit. It is verified
-on SQLite; PostgreSQL verification remains pending. See
+on SQLite and PostgreSQL. See
 [`control-plane-authoring`](../tasks/control-plane-authoring/plan.md).
 
-Not yet present: the real pgvector retriever and a real LLM provider, ingestion
-(Sprint 5), tools, agents, gated promotion/canary/rollback + evaluation, and
+Sprint 5 now provides governed ingestion, staged pgvector/HNSW indexes, source
+advisory locks, retry/dead-letter audit, bounded HTTPS/S3 connectors, and
+tenant/pinned-index cosine retrieval. It is verified on SQLite and PostgreSQL; see
+[`sprint-5-ingestion-pgvector`](../tasks/sprint-5-ingestion-pgvector/plan.md).
+
+Not yet present: a real LLM/embedding provider, tools, agents, gated
+promotion/canary/rollback + evaluation, and
 deployment manifests — planned per later sprints. Providers are deterministic
 defaults (no real vector/LLM call yet). Consumer auth is bearer-token only
 (OIDC/JWT/mTLS later); LDAP is configured but not yet validated against a live
@@ -79,7 +84,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Artifact registry + release compiler (Sprint 2) | Verified | Sprint 1 | [sprint-2-artifacts-releases](../tasks/sprint-2-artifacts-releases/plan.md) | [v3 target plan §6.3, §8](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-2-artifacts-releases/verification.md) |
 | Gateway + ExecutionContext (Sprint 3) | Verified | Sprints 1–2 | [sprint-3-gateway-execution-context](../tasks/sprint-3-gateway-execution-context/plan.md) | [v3 target plan §10, §11](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-3-gateway-execution-context/verification.md) |
 | RAG runtime (Sprint 4) | Verified | Sprint 3 | [sprint-4-rag-runtime](../tasks/sprint-4-rag-runtime/plan.md) | [v3 target plan §13](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-4-rag-runtime/verification.md) |
-| Ingestion + pgvector index (Sprint 5) | Planned in target document | Sprint 4 | Not created | [v3 target plan §14](../../agenthub-v3-django-plan.md) | Not available |
+| Ingestion + pgvector index (Sprint 5) | Verified | Sprint 4 | [sprint-5-ingestion-pgvector](../tasks/sprint-5-ingestion-pgvector/plan.md) | [v3 target plan §14](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-5-ingestion-pgvector/verification.md) |
 | Gateway and identity context | Planned in target document | Control plane, identity provider | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | RAG runtime and ingestion | Planned in target document | Model/embedding provider, pgvector, workers | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | Evaluation and release | Planned in target document | Runtime, artifact registry | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |

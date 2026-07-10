@@ -30,4 +30,7 @@ Document application/configuration/data rollback or forward-fix triggers, compat
 
 Each runbook names symptoms, prerequisites, safe diagnostic steps, bounded remediation, verification, escalation, and owner. Production access must be least-privileged, approved, and audited.
 
-The target design mentions OpenShift, PostgreSQL/pgvector, Redis, object storage, providers, Prometheus-style metrics, and multiple Django/Celery processes; none is implemented in this repository yet.
+PostgreSQL/pgvector, Redis, object-storage configuration, and distinct Django/Celery
+process roles are implemented for local operation. OpenShift manifests,
+Prometheus-style metrics, production credentials, and production embedding/model
+adapters remain future work.
