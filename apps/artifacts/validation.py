@@ -9,8 +9,9 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
+from apps.artifacts.eval_suite import validate_eval_suite_body
 from apps.artifacts.secrets import assert_no_inline_secrets
-from apps.artifacts.types import JSON_SCHEMA_TYPES
+from apps.artifacts.types import JSON_SCHEMA_TYPES, ArtifactType
 
 
 class ArtifactValidationError(ValueError):
@@ -46,3 +47,9 @@ def validate_body(artifact_type: str, body: Any) -> None:
             Draft202012Validator.check_schema(body)
         except SchemaError as exc:
             raise ArtifactValidationError(f"invalid JSON Schema: {exc.message}") from exc
+
+    if artifact_type == ArtifactType.EVAL_SUITE:
+        try:
+            validate_eval_suite_body(body)
+        except ValueError as exc:
+            raise ArtifactValidationError(str(exc)) from exc

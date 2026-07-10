@@ -59,9 +59,17 @@ def compile_release(
     refs: list[ArtifactRef],
     runtime_version: str,
     created_by: str,
+    index_versions: list[int] | None = None,
 ) -> ScenarioRelease:
     if not refs:
         raise CompileError("a release must reference at least one artifact")
+
+    # Optional pinned retrieval indexes. Readiness/tenant checks happen at the
+    # promotion gate (Sprint 6); the retriever additionally filters by the release's
+    # organization, so a stray pin can never surface another tenant's chunks.
+    pinned_indexes = sorted({int(v) for v in (index_versions or [])})
+    if any(v <= 0 for v in pinned_indexes):
+        raise CompileError("index version ids must be positive integers")
 
     artifacts_manifest: dict[str, dict[str, object]] = {}
     for ref in refs:
@@ -82,11 +90,13 @@ def compile_release(
             "checksum": artifact.checksum,
         }
 
-    manifest = {
+    manifest: dict[str, object] = {
         "scenario_id": scenario.id,
         "runtime_version": runtime_version,
         "artifacts": artifacts_manifest,
     }
+    if pinned_indexes:
+        manifest["index_versions"] = pinned_indexes
     manifest_sha = compute_checksum(manifest)
 
     return ScenarioRelease.objects.create(

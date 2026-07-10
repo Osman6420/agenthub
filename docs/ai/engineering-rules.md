@@ -45,20 +45,31 @@ adds `apps/ingestion` (tenant-scoped `Source`s, bounded allowlisted HTTPS/S3
 connectors, parse/chunk/deterministic-embed pipeline, staged pgvector/HNSW
 `IndexVersion`s, source advisory locks, retry/dead-letter with audit) and a real
 pgvector cosine retriever (`PgvectorRetrievalProvider`, now the default
-`RUNTIME_RETRIEVAL_PROVIDER`). The retriever is verified in isolation but is **not
-yet reachable end-to-end through the gateway**: a `ScenarioRelease` cannot yet pin
-`IndexVersion`s (`ReleaseBundle.index_versions` is always empty), so gateway queries
-still fall back rather than ground on ingested content. Control-plane authoring adds
-role-gated, audited console create forms and an idempotent GitOps
-`import_control_plane` for organizations/projects/scenarios/aliases/consumers/
-bindings. Management commands: `import_gitops`, `export_gitops`, `validate_artifacts`,
-`compile_release`, `create_consumer_token`, `start_ingestion`, `retry_ingestion`,
-`import_control_plane`. Tooling:
+`RUNTIME_RETRIEVAL_PROVIDER`). Control-plane authoring adds role-gated, audited console
+create forms and an idempotent GitOps `import_control_plane` for organizations/
+projects/scenarios/aliases/consumers/bindings.
+
+Sprint 6 is **in progress** (verified increment): governed evaluation plus a
+fail-closed release lifecycle. An `eval_suite` artifact (bounded cases, allowlisted
+deterministic assertions — data, not code) is validated at author time; `apps/
+evaluations` runs a candidate release against its manifest-pinned suite *in isolation*
+(`run_rag(require_active=False)`) and persists a redacted, audited report (assertion
+type, boolean, stable reason code only). `apps/releases/lifecycle.promote` is
+fail-closed — it requires a passing eval bound to the pinned suite checksum and ready,
+tenant-owned pinned indexes — and `rollback` atomically restores a superseded release.
+Releases can now pin `index_versions` in the manifest and the resolver feeds them to
+the retriever, so a release pinning a ready index reaches the pgvector retriever
+end-to-end (this closes the earlier always-empty `ReleaseBundle.index_versions` gap).
+Still pending in Sprint 6: consumer-scoped canary routing, operator-console lifecycle
+actions, and eval/promote/rollback management commands. Management commands today:
+`import_gitops`, `export_gitops`, `validate_artifacts`, `compile_release`,
+`create_consumer_token`, `start_ingestion`, `retry_ingestion`, `import_control_plane`.
+Tooling:
 `pyproject.toml` (deps incl. DRF/jsonschema/PyYAML + `ldap` extra + ruff/mypy/pytest
 config), `requirements.lock`, `deploy/` (Dockerfile + Docker Compose for
 pgvector/Redis/MinIO and web/worker/beat), `.github/workflows/ci.yml`. The remaining
 [target design](../../agenthub-v3-django-plan.md) (real model/embedding providers,
-release-to-index pinning, workflow/agent/tools, gated evaluation/release, MCP,
+canary routing + release-lifecycle console/commands, workflow/agent/tools, MCP,
 metrics, OpenShift manifests) remains *planned, not implemented* and is delivered per
 later sprints. Consumer auth
 is bearer-token only (OIDC/JWT/mTLS later); LDAP is configured but not yet validated

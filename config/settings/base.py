@@ -52,6 +52,7 @@ LOCAL_APPS = [
     "apps.retrieval",
     "apps.ingestion",
     "apps.orchestration",
+    "apps.evaluations",
     "apps.observability",
     "apps.audit",
     "apps.gateway",

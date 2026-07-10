@@ -65,6 +65,7 @@ _ADMIN_ROLES = frozenset({Role.ORGANIZATION_ADMIN})
 _SCENARIO_AUTHOR_ROLES = frozenset(
     {Role.ORGANIZATION_ADMIN, Role.PROJECT_OWNER, Role.SCENARIO_EDITOR}
 )
+_RELEASE_MANAGER_ROLES = frozenset({Role.ORGANIZATION_ADMIN, Role.RELEASE_MANAGER})
 
 
 def user_roles_in_org(user: UserLike, organization_id: int) -> set[str]:
@@ -90,6 +91,13 @@ def can_admin_org(user: UserLike, organization_id: int) -> bool:
 def can_author_scenarios(user: UserLike, organization_id: int) -> bool:
     return is_platform_admin(user) or bool(
         _SCENARIO_AUTHOR_ROLES & user_roles_in_org(user, organization_id)
+    )
+
+
+def can_manage_releases(user: UserLike, organization_id: int) -> bool:
+    """Promote/canary/rollback requires ``release_manager`` (or platform admin)."""
+    return is_platform_admin(user) or bool(
+        _RELEASE_MANAGER_ROLES & user_roles_in_org(user, organization_id)
     )
 
 

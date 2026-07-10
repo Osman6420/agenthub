@@ -34,6 +34,9 @@ class ReleaseBundle:
 
 def _build(release: ScenarioRelease) -> ReleaseBundle:
     prompt_body = get_artifact_body_for_role(release, "prompt") or {}
+    manifest = release.manifest if isinstance(release.manifest, dict) else {}
+    raw_pins = manifest.get("index_versions", [])
+    index_versions = [int(v) for v in raw_pins if isinstance(v, int) and not isinstance(v, bool)]
     return ReleaseBundle(
         release_id=release.id,
         organization_id=release.scenario.project.organization_id,
@@ -43,6 +46,7 @@ def _build(release: ScenarioRelease) -> ReleaseBundle:
         retrieval_profile=get_artifact_body_for_role(release, "retrieval_profile") or {},
         input_contract=get_artifact_body_for_role(release, "input_contract"),
         output_contract=get_artifact_body_for_role(release, "output_contract"),
+        index_versions=index_versions,
     )
 
 

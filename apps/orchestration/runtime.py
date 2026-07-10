@@ -76,8 +76,12 @@ def run_rag(
     release: ScenarioRelease,
     model_provider: ModelProvider | None = None,
     retrieval_provider: RetrievalProvider | None = None,
+    require_active: bool = True,
 ) -> RunResult:
-    if release.status != ReleaseStatus.ACTIVE:
+    # The public gateway always requires an active release. The internal evaluation
+    # runner passes ``require_active=False`` to exercise a candidate in isolation; that
+    # path is never reachable from the public gateway (Sprint 6 threat model).
+    if require_active and release.status != ReleaseStatus.ACTIVE:
         raise RuntimeReleaseError("release is not active")
 
     bundle = resolve_bundle(release)
