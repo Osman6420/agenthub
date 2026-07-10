@@ -21,6 +21,10 @@ For every non-trivial task:
 7. Review the final diff as a staff engineer, application-security engineer, and SRE.
 8. Report evidence, checks not run, assumptions, and residual risks.
 
+For Codex/Claude transitions, follow the shared
+[`agent-handoff.md`](docs/ai/agent-handoff.md) checklist and verify its ephemeral
+runtime snapshot against live state before relying on it.
+
 If reality invalidates the plan, update it before continuing. Do not patch without an accurate plan.
 
 ## Change boundaries

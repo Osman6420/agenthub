@@ -6,6 +6,7 @@
 @docs/ai/observability-rules.md
 @docs/ai/testing-rules.md
 @docs/ai/definition-of-done.md
+@docs/ai/agent-handoff.md
 
 Plan before every non-trivial task. Use separate subagents when useful for research, tests, security, or diff review, but independently verify their output. When a failure repeats, consider proposing a durable, general rule. Keep temporary and task-specific facts out of this file.
 
