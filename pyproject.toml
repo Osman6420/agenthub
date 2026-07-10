@@ -1,7 +1,7 @@
 [project]
 name = "agenthub"
 version = "0.0.0"
-description = "AgentHub v3 — governed multi-tenant AI hub (RAG, workflow, agent, tools) on a Django modular monolith."
+description = "AgentHub — governed multi-tenant AI hub (RAG, workflow, agent, tools) on a Django modular monolith."
 requires-python = ">=3.13"
 license = { text = "Proprietary" }
 

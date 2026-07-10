@@ -49,7 +49,7 @@ imzalı `ExecutionContext` üretip `accepted` döndürür.
 
 ## Belgeler
 
-- [v3 Django Planı](agenthub-v3-django-plan.md)
+- [Django hedef mimari planı — doküman revizyonu 3](agenthub-v3-django-plan.md)
 
 ## Engineering and AI agent documentation
 

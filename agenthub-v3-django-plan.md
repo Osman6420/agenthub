@@ -1,22 +1,31 @@
-# AgentHub v3 Hedef Mimari ve Uygulama Plani
+# AgentHub Hedef Mimari ve Uygulama Plani (Dokuman Revizyonu 3)
 
-> Bu dokuman, v2 RAGaaS hedef mimarisini Django tabanli bir AgentHub'a donusturen
-> hedef mimari ve uygulama planidir. AgentHub; RAG, LLM workflow, kontrollu agent,
+> Bu dokuman, Django tabanli AgentHub hedef mimarisinin ucuncu revizyonu ve
+> uygulama planidir. Proje sifirdan kurulur; bir v2 uygulamasinin, release'inin,
+> config'inin veya onceki tasarim dokumanlarinin varligini gerektirmez. AgentHub;
+> RAG, LLM workflow, kontrollu agent,
 > tool entegrasyonu ve ozel adapter senaryolarini ayni yonetisim modeliyle
 > calistirir. Amac, farkli is birimlerinin AI projelerini ayri servisler, farkli
 > yetki modelleri ve kontrolsuz agent kurulumlari olusturmadan guvenli bicimde
 > uretime alabilmesidir.
 >
 > Tarih: 2026-07-09
+> Dokuman revizyonu: 3
 > Durum: Hedef mimari
+
+Bu dosya adindaki ve dokuman basligindaki `v3`, yalniz dokuman revizyonudur.
+Urun, public HTTP API, GitOps schema veya artefact surumu tanimlamaz. Bu surum
+alanlari kendi bagimsiz yasam dongulerine sahiptir.
 
 ---
 
 ## 1. Mimari Karar Ozeti
 
 AgentHub, kurumun AI senaryolari icin hem control plane hem de runtime
-gorevi gorur. V2'deki Control Plane, Gateway Plane, Query Runtime, Ingestion
-ve Evaluation/Release ayrimi korunur. Bu katmanlar ilk asamada ayri kod
+gorevi gorur. Onceki RAGaaS tasarim calismalarinda tanimlanan Control Plane,
+Gateway Plane, Query Runtime, Ingestion ve Evaluation/Release ayrimindan
+yararlanilir; bu, onceki bir uygulamaya teknik bagimlilik olusturmaz. Bu
+katmanlar ilk asamada ayri kod
 tabanlari veya mikroservisler olarak degil, tek bir Django projesindeki
 moduler uygulamalar olarak uygulanir.
 
@@ -89,7 +98,7 @@ Baslangic kararlari:
 | `adapter` | DSL ile ifade edilemeyen kuruma ozel entegrasyon. | Ozel operasyon servisi |
 
 Saf LLM, siniflandirma, ozetleme veya extraction senaryolari ayri bir runtime
-turune gerek duymadan `workflow` olarak modellenir. Ilk v3 runtime'i metin ve
+turune gerek duymadan `workflow` olarak modellenir. Ilk runtime metin ve
 dokuman odaklidir. Gorsel, ses veya video is yukleri sonraki asamada model
 profili, input contract'i ve ingestion adapter'i eklenerek desteklenir.
 
@@ -429,7 +438,7 @@ Adapter ekleme kosullari:
 ### 8.1 Scenario config ornegi
 
 ```yaml
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: Scenario
 metadata:
   id: mcm_musteri_bilgi
@@ -500,7 +509,7 @@ spec:
 ### 8.4 Policy profile
 
 ```yaml
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: PolicyProfile
 metadata:
   id: customer_grounded.v2
@@ -1001,7 +1010,7 @@ degisikligiyle ayni release disiplinine girer.
 ### 15.1 Workflow ornegi
 
 ```yaml
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: Workflow
 metadata:
   id: iade_yonlendirme.v1
@@ -1096,7 +1105,7 @@ ozel bir output formatter. Custom node ile tool birbirinden ayrilir:
 Bir custom node tanimi su bilgileri tasir:
 
 ```yaml
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: CustomNode
 metadata:
   id: redact_customer_data.v2
@@ -1233,7 +1242,7 @@ representation saklanir.
 ### 17.1 Tool tanimi
 
 ```yaml
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: Tool
 metadata:
   id: ticket_create.v1
@@ -1260,7 +1269,7 @@ Tool, tek basina hicbir scenario tarafindan kullanilamaz. `ToolBinding`,
 senaryo bazinda izin verir:
 
 ```yaml
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: ToolBinding
 metadata:
   id: bt_triage_ticket_create.v1
@@ -1359,7 +1368,7 @@ Approver, ham secret, raw PII veya policy ile gizlenmis tool input'unu goremez.
 ### 19.2 Memory policy ornegi
 
 ```yaml
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: MemoryPolicy
 metadata:
   id: internal_support_memory.v1
@@ -1389,7 +1398,7 @@ etiketlenmez.
 ### 20.1 Eval suite ornegi
 
 ```yaml
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: AgentEvalSuite
 metadata:
   id: bt_destek_triage.v1
@@ -1992,27 +2001,18 @@ gerektirmemelidir.
 
 ---
 
-## 28. V2'den V3'e Gecis
+## 28. Onceki Tasarim Notlarinin Durumu
 
-V2 dokumanlari planlama kaynagi olarak korunur. V3 import/migration modeli
-asagidaki eslemeyi kullanir:
+Arsivlenen RAGaaS dokumanlari tarihsel tasarim girdileridir. AgentHub'in build,
+runtime, deployment veya migration girdisi degildir. Proje, mevcut bir v2
+uygulamasi, veritabani, release, endpoint, consumer credential'i veya config
+dosyasi oldugunu varsaymaz.
 
-| V2 kavrami | V3 karsiligi |
-|---|---|
-| Project | `AIProject` + varsayilan `Scenario` |
-| Project Release | `ScenarioRelease` |
-| ProjectContext | `ExecutionContext` |
-| Config YAML | Versioned `ArtifactVersion` + GitOps kaynak dosyasi |
-| Query Runtime | `retrieval` + `orchestration` runtime facade |
-| Ingestion worker | `ingestion` Django app + Celery worker |
-| Consumer permission | `ConsumerBinding` + capability listesi |
-| Agentic workflow ek notu | `workflow`, `agent`, `tools`, `approvals` app'leri |
-
-V2 basic RAG config'i import edildiginde tek bir project ve onun varsayilan RAG
-scenario'su olusur. V2 release'i varsa yeni `ScenarioRelease` manifest'ine
-cevrilir; yoksa yeniden compile edilir. Bu gecis, mevcut endpoint veya consumer
-credential'ini sessizce degistirmez; public endpoint compatibility facade'i
-release notlariyla birlikte korunur.
+Bu plandaki modeller ve uygulama asamalari greenfield AgentHub kurulumu icindir.
+Gelecekte gercek bir legacy sistemden veri veya config aktarimi istenirse; kaynak
+sistem envanteri, contract'lari, veri siniflandirmasi, yetkilendirme modeli ve
+rollback gereksinimleri ayri bir task plani ve threat model ile ele alinir. Bu
+dokuman bugunden boyle bir import/migration yeteneginin var oldugunu iddia etmez.
 
 ---
 
@@ -2044,7 +2044,8 @@ Platform ilk production seviyesine ulastiginda su kosullari saglamalidir:
 
 ## 30. Sonuc
 
-AgentHub v3, v2'nin RAG odakli control-plane disiplinini korur; ancak onu
+AgentHub, onceki RAG odakli tasarim calismalarindaki control-plane disiplininden
+yararlanir; ancak herhangi bir onceki uygulamaya bagimli olmadan bu yaklasimi
 kurumun tum kontrollu AI senaryolari icin genisletir. Django modular monolith
 yaklasimi, baslangicta tek bir veri modeli, tek bir authorization otoritesi ve
 operasyonel basitlik saglar. Celery worker ayrimi ise ingestion, eval, workflow

@@ -14,7 +14,8 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.tenancy.models import Organization
 
-API_VERSION = "agenthub/v3"
+# GitOps schema version. It is independent from the target document revision.
+API_VERSION = "agenthub/v1"
 
 # GitOps "kind" (CamelCase) <-> ArtifactType value.
 TYPE_BY_KIND: dict[str, str] = {

@@ -2,17 +2,28 @@
 
 ## Verified current system
 
-As of 2026-07-10, the repository contains design documents only. No executable application, runtime configuration, schema, CI/CD, or deployment artifact is present. Therefore no running component, flow, or external dependency can be asserted.
+The repository contains an executable Django modular monolith. Foundation,
+tenant/identity/catalog, artifact/release, gateway/ExecutionContext, and the
+deterministic RAG runtime slices are implemented and verified. The authoritative
+milestone status and evidence links are maintained in the
+[master plan](../planning/master-plan.md).
 
-## Target architecture (not implemented)
+## Target architecture
 
-[`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) proposes a Django modular monolith whose processes expose HTTP/MCP gateway functions and run Celery-backed ingestion, evaluation, workflow, and agent work. Proposed boundaries include control plane, gateway, RAG runtime, ingestion, workflow/agent runtime, tool proxy/approval, evaluation/release, and audit. Proposed external dependencies include PostgreSQL/pgvector, Redis, object storage, identity/model providers, and OpenShift.
+[`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full
+target. Later slices—including real ingestion/vector retrieval, external model
+providers, evaluation gates, workflow/agent execution, tool proxy/approval, and
+deployment manifests—remain planned unless the master plan records verification.
 
 Major proposed flow: trusted ingress authenticates a consumer, resolves tenant/scenario capability, and creates an execution context; the pinned release drives RAG/workflow/agent execution; tool access passes through a controlled proxy; state changes and security decisions produce audit events. This is a design summary, not evidence of implementation.
 
+## Versioning baseline
+
+- The target document is revision 3; this revision number is not an AgentHub product/API version.
+- The system is implemented as a greenfield AgentHub and has no runtime, build, or migration dependency on a v2 application or the archived RAGaaS documents.
+
 ## Assumptions requiring confirmation
 
-- The v3 document is the authoritative target over the v2 RAGaaS documents.
 - A modular monolith remains the intended initial deployment boundary.
 - External providers and operational ownership have not yet been selected.
 

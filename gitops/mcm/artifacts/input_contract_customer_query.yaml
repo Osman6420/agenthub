@@ -1,4 +1,4 @@
-api_version: agenthub/v3
+api_version: agenthub/v1
 kind: InputContract
 metadata:
   organization: mcm

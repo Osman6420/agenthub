@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Track project-level intent without treating target designs as implemented behavior. Detailed target design remains in [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md).
+Track project-level intent without treating target designs as implemented behavior. Detailed target design remains in [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md); `v3` in that filename means document revision 3, not a product generation.
 
 ## Current state
 
@@ -61,7 +61,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 
 ## Assumptions
 
-- The v3 target plan supersedes v2 for intended implementation; this requires owner confirmation.
+- The target plan is a greenfield design. It does not require or assume a v2 application, release, database, configuration, or migration source.
 - Component boundaries below are planning concepts, not deployed services.
 
 ## Components
@@ -92,7 +92,7 @@ All runtime dependencies remain proposed until manifests and deployment decision
 
 1. Approve architecture and durable decisions via ADRs.
 2. Establish repository/toolchain and enforceable CI baseline.
-3. Implement and verify the first secure vertical slice defined in the v3 plan.
+3. Implement and verify the first secure vertical slice defined in the target plan.
 4. Add ingestion/evaluation/release operations with rollback evidence.
 5. Add workflow/tool/agent capabilities only after their threat models and controls are approved.
 

@@ -2,7 +2,7 @@
 
 ## Task summary
 
-Establish the AgentHub v3 Django modular-monolith foundation and an enforceable
+Establish the AgentHub Django modular-monolith foundation and an enforceable
 local/CI toolchain, per Sprint 0 of the [v3 target plan](../../../agenthub-v3-django-plan.md#25-uygulama-asamalari)
 and Milestone 2 of the [master plan](../../planning/master-plan.md). This is the
 first executable code in a previously documentation-only repository.
