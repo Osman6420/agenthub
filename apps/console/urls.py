@@ -21,4 +21,6 @@ urlpatterns = [
     path("projects/", views.projects, name="projects"),
     path("scenarios/", views.scenarios, name="scenarios"),
     path("consumers/", views.consumers, name="consumers"),
+    path("artifacts/", views.artifacts, name="artifacts"),
+    path("releases/", views.releases, name="releases"),
 ]

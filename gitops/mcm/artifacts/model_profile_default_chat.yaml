@@ -1,0 +1,12 @@
+api_version: agenthub/v3
+kind: ModelProfile
+metadata:
+  organization: mcm
+  logical_id: default_chat
+spec:
+  provider: openai_compatible
+  endpoint: https://llm.internal.example/v1
+  model: default-chat
+  # Credentials are never inlined; only a secret-manager reference is allowed.
+  api_key: secret:llm-default-token
+  timeout_seconds: 30

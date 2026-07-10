@@ -21,11 +21,18 @@ implemented and verified.
   surface). Verified on SQLite and real PostgreSQL. See
   [`sprint-1-tenant-identity-catalog`](../tasks/sprint-1-tenant-identity-catalog/plan.md)
   and [ADR-0001](../adr/0001-custom-console-ldap-auth.md).
+- Sprint 2: `artifacts` (immutable, checksummed, secret-safe versioned definitions)
+  and `releases` (compiled `ScenarioRelease` with a DB-enforced single-active
+  invariant, a deterministic manifest checksum, and a minimal atomic promote).
+  GitOps import/export + `validate_artifacts`/`compile_release` commands; console
+  Artifacts/Releases screens. Verified on SQLite and PostgreSQL; the operator flow
+  (import → validate → compile → promote) ran end-to-end. See
+  [`sprint-2-artifacts-releases`](../tasks/sprint-2-artifacts-releases/plan.md).
 
-Not yet present: the public product API/gateway and `ExecutionContext`, RAG runtime,
-ingestion, artifact versioning/release compiler, tools, agents, evaluation/release,
-and deployment manifests — planned per later sprints in the v3 target plan. LDAP is
-configured but not yet validated against a live directory.
+Not yet present: the public product API/gateway and `ExecutionContext` (Sprint 3),
+RAG runtime, ingestion, tools, agents, gated promotion/canary/rollback + evaluation,
+and deployment manifests — planned per later sprints. LDAP is configured but not yet
+validated against a live directory.
 
 ## Scope
 
@@ -46,7 +53,8 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | --- | --- | --- | --- | --- | --- |
 | Platform foundation/toolchain (Sprint 0) | Verified | Django 5.2, Celery, PostgreSQL/pgvector, Redis, MinIO | [sprint-0-foundation](../tasks/sprint-0-foundation/plan.md) | [v3 target plan §5, §24](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-0-foundation/verification.md) |
 | Tenant/identity/catalog + operator console (Sprint 1) | Verified | Foundation, LDAP (prod) | [sprint-1-tenant-identity-catalog](../tasks/sprint-1-tenant-identity-catalog/plan.md) | [v3 target plan §6, §9, §23](../../agenthub-v3-django-plan.md), [ADR-0001](../adr/0001-custom-console-ldap-auth.md) | [verification.md](../tasks/sprint-1-tenant-identity-catalog/verification.md) |
-| Gateway + ExecutionContext (Sprint 3) | Planned in target document | Sprint 1 | Not created | [v3 target plan §10, §11](../../agenthub-v3-django-plan.md) | Not available |
+| Artifact registry + release compiler (Sprint 2) | Verified | Sprint 1 | [sprint-2-artifacts-releases](../tasks/sprint-2-artifacts-releases/plan.md) | [v3 target plan §6.3, §8](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-2-artifacts-releases/verification.md) |
+| Gateway + ExecutionContext (Sprint 3) | Planned in target document | Sprints 1–2 | Not created | [v3 target plan §10, §11](../../agenthub-v3-django-plan.md) | Not available |
 | Gateway and identity context | Planned in target document | Control plane, identity provider | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | RAG runtime and ingestion | Planned in target document | Model/embedding provider, pgvector, workers | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | Evaluation and release | Planned in target document | Runtime, artifact registry | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |

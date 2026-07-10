@@ -1,0 +1,98 @@
+"""Artifact validation, immutability, checksum, and secret-safety."""
+
+from __future__ import annotations
+
+import pytest
+
+from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.services import create_artifact_version
+from apps.artifacts.types import ArtifactType
+from apps.artifacts.validation import ArtifactValidationError, compute_checksum
+from apps.tenancy.models import Organization
+
+VALID_INPUT_SCHEMA = {
+    "type": "object",
+    "required": ["query"],
+    "properties": {"query": {"type": "string", "maxLength": 8000}},
+    "additionalProperties": False,
+}
+
+
+@pytest.fixture
+def org(db) -> Organization:
+    return Organization.objects.create(slug="mcm", name="MCM")
+
+
+@pytest.mark.django_db
+def test_create_assigns_version_and_checksum(org: Organization) -> None:
+    a1 = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.INPUT_CONTRACT,
+        logical_id="customer_query",
+        body=VALID_INPUT_SCHEMA,
+        created_by="alice",
+    )
+    assert a1.version == 1
+    assert a1.checksum == compute_checksum(VALID_INPUT_SCHEMA)
+    assert a1.ref == "customer_query:v1"
+
+    a2 = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.INPUT_CONTRACT,
+        logical_id="customer_query",
+        body=VALID_INPUT_SCHEMA,
+        created_by="alice",
+    )
+    assert a2.version == 2  # auto-incremented
+
+
+@pytest.mark.django_db
+def test_artifact_is_immutable(org: Organization) -> None:
+    artifact = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.POLICY_PROFILE,
+        logical_id="grounded",
+        body={"grounding": {"required": True}},
+        created_by="alice",
+    )
+    artifact.body = {"grounding": {"required": False}}
+    with pytest.raises(ValueError, match="immutable"):
+        artifact.save()
+    with pytest.raises(ValueError):
+        artifact.delete()
+
+
+@pytest.mark.django_db
+def test_invalid_json_schema_contract_rejected(org: Organization) -> None:
+    with pytest.raises(ArtifactValidationError, match="JSON Schema"):
+        create_artifact_version(
+            organization=org,
+            artifact_type=ArtifactType.OUTPUT_CONTRACT,
+            logical_id="bad",
+            body={"type": "not-a-real-type"},
+            created_by="alice",
+        )
+
+
+@pytest.mark.django_db
+def test_inline_secret_rejected(org: Organization) -> None:
+    with pytest.raises(ArtifactValidationError, match="inline secret"):
+        create_artifact_version(
+            organization=org,
+            artifact_type=ArtifactType.MODEL_PROFILE,
+            logical_id="default_chat",
+            body={"endpoint": "https://llm.example", "api_key": "sk-live-123"},
+            created_by="alice",
+        )
+
+
+@pytest.mark.django_db
+def test_secret_reference_allowed(org: Organization) -> None:
+    artifact = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.MODEL_PROFILE,
+        logical_id="default_chat",
+        body={"endpoint": "https://llm.example", "api_key": "secret:llm-token"},
+        created_by="alice",
+    )
+    assert ArtifactVersion.objects.filter(pk=artifact.pk).exists()

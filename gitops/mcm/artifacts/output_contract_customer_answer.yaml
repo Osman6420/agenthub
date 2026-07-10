@@ -1,0 +1,20 @@
+api_version: agenthub/v3
+kind: OutputContract
+metadata:
+  organization: mcm
+  logical_id: customer_answer
+spec:
+  type: object
+  required: [answer, sources]
+  additionalProperties: false
+  properties:
+    answer: {type: string, maxLength: 4000}
+    sources:
+      type: array
+      items:
+        type: object
+        required: [source_id, source_uri]
+        properties:
+          source_id: {type: string}
+          source_uri: {type: string}
+    fallback_used: {type: boolean}

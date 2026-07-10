@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from django.db.models import QuerySet
 
+from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import AIProject, Scenario
 from apps.identity.models import Consumer
+from apps.releases.models import ScenarioRelease
 from apps.tenancy.models import Organization
 from apps.tenancy.services import allowed_organization_ids
 
@@ -38,3 +40,17 @@ def scoped_consumers(user: UserLike) -> QuerySet[Consumer]:
     allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = Consumer.objects.select_related("organization")
     return qs if allowed is None else qs.filter(organization_id__in=allowed)
+
+
+def scoped_artifacts(user: UserLike) -> QuerySet[ArtifactVersion]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = ArtifactVersion.objects.select_related("organization")
+    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+
+
+def scoped_releases(user: UserLike) -> QuerySet[ScenarioRelease]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = ScenarioRelease.objects.select_related(
+        "scenario", "scenario__project", "scenario__project__organization"
+    )
+    return qs if allowed is None else qs.filter(scenario__project__organization_id__in=allowed)

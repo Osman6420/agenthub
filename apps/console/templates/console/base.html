@@ -46,6 +46,8 @@ self-contained; the Sprint 11 builder replaces/extends this surface.{% endcommen
       <a href="{% url 'console:organizations' %}">Organizations</a>
       <a href="{% url 'console:projects' %}">Projects</a>
       <a href="{% url 'console:scenarios' %}">Scenarios</a>
+      <a href="{% url 'console:artifacts' %}">Artifacts</a>
+      <a href="{% url 'console:releases' %}">Releases</a>
       <a href="{% url 'console:consumers' %}">Consumers</a>
       <span class="muted">{{ user.get_username }}</span>
       <form class="inline" method="post" action="{% url 'console:logout' %}">

@@ -1,0 +1,20 @@
+# Release spec: pins the artifact versions that compose the customer-information
+# scenario release. Consumed by `manage.py compile_release`.
+runtime_version: agenthub-runtime:3.0.0
+artifacts:
+  - role: input_contract
+    kind: InputContract
+    logical_id: customer_query
+    version: 1
+  - role: output_contract
+    kind: OutputContract
+    logical_id: customer_answer
+    version: 1
+  - role: policy
+    kind: PolicyProfile
+    logical_id: customer_grounded
+    version: 1
+  - role: model_profile
+    kind: ModelProfile
+    logical_id: default_chat
+    version: 1

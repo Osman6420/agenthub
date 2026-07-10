@@ -43,6 +43,8 @@ LOCAL_APPS = [
     "apps.tenancy",
     "apps.identity",
     "apps.catalog",
+    "apps.artifacts",
+    "apps.releases",
     "apps.audit",
     "apps.gateway",
     "apps.console",

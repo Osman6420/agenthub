@@ -25,6 +25,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             "projects": scoping.scoped_projects(user).count(),
             "scenarios": scoping.scoped_scenarios(user).count(),
             "consumers": scoping.scoped_consumers(user).count(),
+            "artifacts": scoping.scoped_artifacts(user).count(),
+            "releases": scoping.scoped_releases(user).count(),
         },
     }
     return render(request, "console/dashboard.html", context)
@@ -96,6 +98,48 @@ def consumers(request: HttpRequest) -> HttpResponse:
         {
             "title": "Consumers",
             "headers": ["Organization", "Name", "Subject", "Protocol", "Status"],
+            "rows": rows,
+        },
+    )
+
+
+@login_required
+def artifacts(request: HttpRequest) -> HttpResponse:
+    rows = [
+        {"cols": [a.organization.slug, a.type, a.logical_id, f"v{a.version}", a.checksum[:12]]}
+        for a in scoping.scoped_artifacts(request.user)
+    ]
+    return render(
+        request,
+        "console/list.html",
+        {
+            "title": "Artifacts",
+            "headers": ["Organization", "Type", "Logical ID", "Version", "Checksum"],
+            "rows": rows,
+        },
+    )
+
+
+@login_required
+def releases(request: HttpRequest) -> HttpResponse:
+    rows = [
+        {
+            "cols": [
+                r.scenario.project.organization.slug,
+                r.scenario.slug,
+                r.status,
+                r.runtime_version,
+                r.artifact_manifest_sha256[:12],
+            ]
+        }
+        for r in scoping.scoped_releases(request.user)
+    ]
+    return render(
+        request,
+        "console/list.html",
+        {
+            "title": "Releases",
+            "headers": ["Organization", "Scenario", "Status", "Runtime", "Manifest SHA"],
             "rows": rows,
         },
     )

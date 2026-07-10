@@ -20,20 +20,27 @@ Configuration must be validated, environment-neutral, and fail safely. Secrets n
 
 ## Repository-specific verified state
 
-As of 2026-07-10, Sprints 0–1 are implemented and verified. The repository contains
+As of 2026-07-10, Sprints 0–2 are implemented and verified. The repository contains
 a bootable Django modular monolith: `config/` (settings split base/local/test/
 production, `celery.py`, `asgi.py`, `wsgi.py`, `urls.py`); `apps/gateway`
-(unauthenticated health probes); and the Sprint 1 control-plane apps `apps/tenancy`,
+(unauthenticated health probes); the Sprint 1 control-plane apps `apps/tenancy`,
 `apps/identity`, `apps/catalog`, `apps/audit`, and the LDAP-authenticated
-`apps/console` (the management surface; Django Admin is removed except a local-dev
-opt-in — see [ADR-0001](../adr/0001-custom-console-ldap-auth.md)). Tooling:
-`pyproject.toml` (deps + `ldap` extra + ruff/mypy/pytest config), `requirements.lock`,
-`deploy/` (Dockerfile + Docker Compose for pgvector/Redis/MinIO and web/worker/beat),
-`.github/workflows/ci.yml`. The broader [target design](../../agenthub-v3-django-plan.md)
-(gateway/ExecutionContext, RAG runtime, ingestion, workflow/agent/tools, evaluation/
-release, MCP, metrics, OpenShift manifests) remains *planned, not implemented* and is
-delivered per later sprints. LDAP is configured but not yet validated against a live
-directory; local/CI/tests run with LDAP disabled (Django model backend).
+`apps/console` (management surface; Django Admin removed except a local-dev opt-in —
+see [ADR-0001](../adr/0001-custom-console-ldap-auth.md)); and the Sprint 2 apps
+`apps/artifacts` (immutable, checksummed, secret-safe versioned definitions with
+GitOps import/export) and `apps/releases` (compiled `ScenarioRelease` with a
+DB-enforced single-active invariant and a release compiler). Management commands:
+`import_gitops`, `export_gitops`, `validate_artifacts`, `compile_release`. Tooling:
+`pyproject.toml` (deps incl. jsonschema/PyYAML + `ldap` extra + ruff/mypy/pytest
+config), `requirements.lock`, `deploy/` (Dockerfile + Docker Compose for
+pgvector/Redis/MinIO and web/worker/beat), `.github/workflows/ci.yml`. The broader
+[target design](../../agenthub-v3-django-plan.md) (gateway/ExecutionContext, RAG
+runtime, ingestion, workflow/agent/tools, gated evaluation/release, MCP, metrics,
+OpenShift manifests) remains *planned, not implemented* and is delivered per later
+sprints. LDAP is configured but not yet validated against a live directory;
+local/CI/tests run with LDAP disabled (Django model backend). Repository-verified
+commands additionally include `ruff`, `mypy`, `pytest` (SQLite and — via
+`config.settings.local` — real PostgreSQL), and the four management commands above.
 
 Repository-verified commands (run from the repo root, in a Python 3.13 venv with
 `pip install -e ".[dev]"`): `ruff format --check .`, `ruff check .`, `mypy .`,
