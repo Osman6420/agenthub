@@ -123,13 +123,19 @@ https-only destinations with IP/private/`.internal`/`localhost` hosts rejected,
 tenant-scoped immutable `ToolDefinition` / `ToolBinding` registry models (write-once
 body, status-only mutation), registration services enforcing the high-risk
 side-effecting approval invariant, and fail-closed release pinning of active,
-checksum-matched bindings into the manifest. **No tool execution proxy, outbound
-network/egress path, SSRF/DNS/redirect enforcement, secret resolution, or approval
-lifecycle exists yet** — the platform performs no tool egress. No production dependency
-was added. Increments B–D (proxy + HTTP/MCP adapters + egress controls; secret
-resolution; approval lifecycle + idempotent durable resume; console/API/MCP surfaces)
-remain planned and require explicit approval for authorization, public API, secret,
-dependency, and network changes.
+checksum-matched bindings into the manifest. Increment B adds the central default-deny
+`apps.tools.proxy.invoke_tool` (capability, input/output contracts, field allowlists,
+risk/approval gate), SSRF-safe destination validation (`apps.tools.egress`:
+public-unicast-only with resolved-IP checks defeating DNS rebinding), and the
+transport-adapter and least-privilege `secret:<name>` resolver seams, plus
+`resolve_release_tool` that reads the pinned binding/definition/contracts. **The default
+adapter performs no network I/O and the proxy has no production caller yet — the
+platform still performs no live tool egress**, and a high-risk side-effecting tool
+raises `ToolApprovalRequired` rather than executing. No production dependency was added.
+Increments C–D (the real HTTP/MCP adapter + its network dependency, requiring explicit
+approval; approval lifecycle + idempotent durable resume + workflow pause/resume;
+console/API/MCP surfaces, audit, metrics) remain planned and require explicit approval
+for authorization, public API, secret, dependency, and network changes.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is

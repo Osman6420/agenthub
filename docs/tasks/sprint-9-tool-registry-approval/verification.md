@@ -65,3 +65,49 @@ applied cleanly on SQLite and PostgreSQL via `--create-db`.
   redirect checks are the proxy's responsibility and are not present.
 - Bindings must be explicitly registered by a platform/registry service before a release
   can pin them; console/API registration surfaces arrive in a later increment.
+
+## Increment B — tool execution proxy (policy + egress seam, no live egress)
+
+Scope: the central default-deny `invoke_tool` proxy, SSRF-safe destination validation,
+the transport-adapter and secret-resolver seams, and `resolve_release_tool` (reads the
+release-pinned binding/definition/contracts). No production dependency was added; the
+default adapter performs **no network I/O**, and the proxy is **not yet wired** into any
+workflow node or gateway path, so no live tool egress exists. Public behavior unchanged.
+
+### Commands and results
+
+| Command | Result |
+| --- | --- |
+| `ruff format --check .` / `ruff check .` | Pass — 198 files |
+| `mypy .` | Pass — no issues in 198 source files |
+| `python manage.py makemigrations --check --dry-run` | Pass — no changes (no new model) |
+| `pytest` (SQLite, `config.settings.test`) | Pass — 232 passed, 2 skipped |
+| `pytest --create-db` (PostgreSQL/pgvector, MCP+metrics enabled) | Pass — 234 passed |
+
+### Acceptance-criteria evidence (this increment)
+
+- SSRF/egress: only public unicast destinations pass; loopback, private, link-local,
+  unspecified, IPv6 ULA/link-local, and any public+private mix (DNS-rebinding) are
+  denied; non-https scheme, IP-literal host, bad port, empty/failed DNS are denied —
+  `test_egress.py` (validated through an injected resolver, deterministic offline).
+- Default-deny policy: capability gate (read vs side-effecting), input/output contract
+  validation, input/output field allowlists (mass-assignment + exfiltration defense),
+  and bounded response size — `test_proxy.py`.
+- A high-risk side-effecting tool is never executed — `test_approval_required_raises_
+  and_never_executes` asserts `ToolApprovalRequired` is raised and the adapter is not
+  called.
+- Least-privilege secrets: a missing secret fails closed; a resolved credential is
+  passed to the adapter but never appears in the returned result — `test_missing_secret_
+  fails_closed`, `test_secret_is_passed_to_adapter_but_not_returned`.
+- Release-pinned resolution: `resolve_release_tool` reads the pinned binding/definition
+  (checksum-matched) and contracts and feeds `invoke_tool`; an unpinned role fails
+  closed — `test_resolve_release_tool_then_invoke`, `test_resolve_release_tool_missing_
+  role_fails_closed`.
+
+### Residual risk / not yet delivered
+
+- The real HTTP/MCP adapter (TLS verification, disabled redirects, bounded streaming
+  read against the validated IP) is not implemented; the default adapter is a no-egress
+  stub and requires explicit approval plus any client dependency before real egress.
+- No durable invocation record, idempotency, approval lifecycle, or workflow
+  pause/resume yet (increment C); the proxy has no production caller yet.

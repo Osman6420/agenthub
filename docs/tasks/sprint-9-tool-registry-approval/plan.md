@@ -179,9 +179,16 @@ In progress, delivered as verified, independently committable increments.
   side-effecting approval invariant, and fail-closed release pinning of active,
   checksum-matched bindings. No execution proxy, egress, secret resolution, or approval
   lifecycle yet — the platform performs no tool egress. See `verification.md`.
-- Increments B–D — **planned**: the execution proxy with bounded HTTP/MCP adapters and
-  DNS/redirect/SSRF egress controls; secret resolution; the approval lifecycle with
-  idempotent durable resume and uncertain-outcome handling; and console/API/MCP
+- Increment B — **implemented and verified** (SQLite + PostgreSQL): the central
+  default-deny `invoke_tool` proxy (capability, contracts, field allowlists, risk),
+  SSRF-safe destination validation (public-unicast-only, DNS-rebinding defense via
+  resolved-IP checks), the transport-adapter and least-privilege secret-resolver seams,
+  and `resolve_release_tool`. The default adapter performs no network I/O and the proxy
+  has no production caller yet — there is still no live tool egress. See
+  `verification.md`.
+- Increments C–D — **planned**: the real HTTP/MCP adapter and its network dependency
+  (requires explicit approval); the approval lifecycle with idempotent durable resume,
+  uncertain-outcome handling, and workflow pause/resume wiring; and console/API/MCP
   surfaces, audit, and metrics. These require explicit approval for authorization,
   public API, secret, dependency, and network changes before landing.
 
