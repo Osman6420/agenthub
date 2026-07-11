@@ -55,6 +55,7 @@ LOCAL_APPS = [
     "apps.workflows",
     "apps.tools",
     "apps.agents",
+    "apps.builder",
     "apps.evaluations",
     "apps.observability",
     "apps.mcp",

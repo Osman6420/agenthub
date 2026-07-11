@@ -1,0 +1,60 @@
+"""Builder service invariants: body bounds, diagnostics parity, publish versioning."""
+
+from __future__ import annotations
+
+import pytest
+
+from apps.artifacts.models import ArtifactVersion
+from apps.builder import services
+from apps.builder.models import WorkflowDraft
+from apps.builder.tests.conftest import BuilderFixture, simple_workflow
+
+pytestmark = pytest.mark.django_db
+
+
+def test_create_rejects_oversized_body(bf: BuilderFixture) -> None:
+    huge = {"blob": "x" * (services.MAX_DRAFT_BODY_BYTES + 1)}
+    with pytest.raises(services.BuilderError) as exc:
+        services.create_draft(
+            organization=bf.org,
+            name="big",
+            logical_id="flow_big",
+            body=huge,
+            actor="author",
+        )
+    assert exc.value.code == "body_too_large"
+    assert not WorkflowDraft.objects.filter(logical_id="flow_big").exists()
+
+
+def test_diagnose_matches_publish_on_secret(bf: BuilderFixture) -> None:
+    body = simple_workflow()
+    body["spec"]["nodes"][1]["config"]["password"] = "hunter2literal"  # noqa: S105
+    # Diagnostics reject the same inline secret publish would (shared validator).
+    assert services.diagnose(body)["ok"] is False
+
+
+def test_diagnose_ok_for_valid_body(bf: BuilderFixture) -> None:
+    result = services.diagnose(simple_workflow())
+    assert result["ok"] is True
+    assert result["compiled_checksum"]
+
+
+def test_publish_increments_version(bf: BuilderFixture) -> None:
+    first = services.publish_draft(bf.draft, actor="author")
+    second = services.publish_draft(bf.draft, actor="author")
+    assert first.version == 1
+    assert second.version == 2
+    assert (
+        ArtifactVersion.objects.filter(
+            organization=bf.org, type="workflow_definition", logical_id="flow_a"
+        ).count()
+        == 2
+    )
+
+
+def test_publish_is_immutable_source_of_truth(bf: BuilderFixture) -> None:
+    # The published artifact checksum is the canonical checksum of the draft body.
+    from apps.artifacts.validation import compute_checksum
+
+    artifact = services.publish_draft(bf.draft, actor="author")
+    assert artifact.checksum == compute_checksum(bf.draft.body)

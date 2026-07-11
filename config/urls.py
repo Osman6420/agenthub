@@ -17,6 +17,7 @@ from apps.observability.views import metrics
 
 urlpatterns = [
     path("", RedirectView.as_view(pattern_name="console:dashboard", permanent=False)),
+    path("console/api/builder/", include("apps.builder.urls")),
     path("console/", include("apps.console.urls")),
     path("v1/", include("apps.gateway.urls")),
     path("mcp/", include("apps.mcp.urls")),

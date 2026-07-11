@@ -33,6 +33,7 @@ urlpatterns = [
     path("releases/<int:release_id>/rollback/", views.release_rollback, name="release_rollback"),
     path("releases/<int:release_id>/canary/", views.canary_start, name="canary_start"),
     path("canaries/<int:canary_id>/stop/", views.canary_stop, name="canary_stop"),
+    path("builder/", views.builder, name="builder"),
     path("agent-runs/", views.agent_runs, name="agent_runs"),
     path("agent-runs/<str:public_id>/", views.agent_run_detail, name="agent_run_detail"),
     path(

@@ -15,6 +15,7 @@ from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
 from apps.agents.models import AgentRun
@@ -470,6 +471,31 @@ def agent_run_detail(request: HttpRequest, public_id: str) -> HttpResponse:
         request,
         "console/agent_run_detail.html",
         {"title": f"Agent run {public[:8]}", "run": summary, "events": events},
+    )
+
+
+@login_required
+@ensure_csrf_cookie
+def builder(request: HttpRequest) -> HttpResponse:
+    """Host the React Flow workflow builder SPA.
+
+    The page only carries mount configuration — the operator's organizations in read
+    scope with their per-org authoring flag (which drives the SPA's read-only mode). All
+    authoritative validation, authorization, and publishing happen in the builder API;
+    ``@ensure_csrf_cookie`` guarantees the SPA can obtain a CSRF token for its writes.
+    """
+    orgs = [
+        {
+            "slug": org.slug,
+            "name": org.name,
+            "can_write": can_author_scenarios(request.user, org.id),
+        }
+        for org in scoping.scoped_organizations(request.user).order_by("slug")
+    ]
+    return render(
+        request,
+        "console/builder.html",
+        {"title": "Workflow builder", "builder_orgs": orgs},
     )
 
 

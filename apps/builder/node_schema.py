@@ -1,0 +1,117 @@
+"""Node-schema generation for the visual builder.
+
+Produces the palette and per-node configuration schema the frontend renders. It exposes
+only *public* information: builtin node types, the org's active custom-node refs, and the
+org's tool **binding roles** with their approval flag. It deliberately never returns tool
+endpoints, destinations, tool-definition manifests, or ``secret:<name>`` values — the UI
+must not be able to learn them.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from apps.tools.models import ToolBinding, ToolStatus
+from apps.workflows.compiler import MAX_EDGES, MAX_NODES
+from apps.workflows.models import CustomNodeDefinition, CustomNodeStatus
+
+# Field descriptors are data the frontend uses to render inputs. ``kind`` is a UI hint,
+# not an authoritative validator — the backend compiler remains the source of truth.
+_BUILTIN_NODES: list[dict[str, Any]] = [
+    {
+        "type": "input",
+        "label": "Input",
+        "category": "io",
+        "singleton": True,
+        "is_entry": True,
+        "fields": [],
+    },
+    {"type": "retrieve", "label": "Retrieve", "category": "rag", "fields": []},
+    {"type": "generate", "label": "Generate", "category": "rag", "fields": []},
+    {"type": "format_output", "label": "Format output", "category": "rag", "fields": []},
+    {
+        "type": "validate_contract",
+        "label": "Validate contract",
+        "category": "governance",
+        "fields": [],
+    },
+    {
+        "type": "condition",
+        "label": "Condition",
+        "category": "control",
+        "has_conditional_edges": True,
+        "fields": [
+            {
+                "name": "expression",
+                "kind": "expression",
+                "required": True,
+                "help": "Bounded boolean expression over the run state.",
+            }
+        ],
+    },
+    {
+        "type": "tool",
+        "label": "Tool",
+        "category": "tool",
+        "fields": [
+            {
+                "name": "binding_role",
+                "kind": "enum",
+                "required": True,
+                "options_ref": "tool_binding_roles",
+                "help": "A tool binding role pinned into the release at compile time.",
+            },
+            {"name": "input_key", "kind": "identifier", "required": True},
+            {"name": "output_key", "kind": "identifier", "required": True},
+        ],
+    },
+    {
+        "type": "custom",
+        "label": "Custom node",
+        "category": "custom",
+        "fields": [
+            {
+                "name": "node_ref",
+                "kind": "enum",
+                "required": True,
+                "options_ref": "custom_nodes",
+                "help": "An organization-allowlisted custom node.",
+            },
+            {"name": "fields", "kind": "object", "required": False},
+        ],
+    },
+    {"type": "end", "label": "End", "category": "io", "is_terminal": True, "fields": []},
+]
+
+
+def build_node_schema(*, organization_id: int) -> dict[str, Any]:
+    """Return the builder palette + config schema for one organization.
+
+    Only public governance metadata is included. Tool endpoints/secrets are never
+    exposed; only binding *role* names and their approval flag are returned.
+    """
+    tool_binding_roles = [
+        {"role": logical_id, "approval_required": bool(approval_required)}
+        for logical_id, approval_required in ToolBinding.objects.filter(
+            organization_id=organization_id, status=ToolStatus.ACTIVE
+        )
+        .order_by("logical_id")
+        .values_list("logical_id", "approval_required")
+        .distinct()
+    ]
+    custom_nodes = [
+        {"node_ref": logical_id}
+        for logical_id in CustomNodeDefinition.objects.filter(
+            organization_id=organization_id, status=CustomNodeStatus.ACTIVE
+        )
+        .order_by("logical_id")
+        .values_list("logical_id", flat=True)
+        .distinct()
+    ]
+    return {
+        "dsl": {"api_version": "agenthub/v1", "kind": "Workflow"},
+        "limits": {"max_nodes": MAX_NODES, "max_edges": MAX_EDGES},
+        "node_types": _BUILTIN_NODES,
+        "tool_binding_roles": tool_binding_roles,
+        "custom_nodes": custom_nodes,
+    }
