@@ -1,13 +1,13 @@
-"""Real HTTPS tool adapter (stdlib only), enabled by configuration.
+"""Real HTTPS transport for tool adapters (stdlib only), enabled by configuration.
 
-SSRF-safe by construction: it connects to the *already-validated public IP* from the
+SSRF-safe by construction: connects to the *already-validated public IP* from the
 egress check while verifying the TLS certificate and sending SNI/Host for the original
-hostname, which closes the DNS-rebinding TOCTOU window. Redirects are never followed,
-the response body is read under a hard byte cap, and a timeout after dispatch is
-surfaced as an uncertain outcome (never a false success). Only ``https`` reaches here.
+hostname, closing the DNS-rebinding TOCTOU window. Redirects are never followed, the
+response body is read under a hard byte cap, and a timeout after dispatch is surfaced
+as an uncertain outcome (never a false success).
 
-The connection factory is injectable so tests exercise request-building and
-response-handling fully offline; real sockets are only opened in the default factory.
+``perform_https_post`` is the shared, injectable transport used by both the HTTP and
+MCP adapters; the connection factory is injectable so tests run fully offline.
 """
 
 from __future__ import annotations
@@ -72,6 +72,43 @@ def _default_connection_factory(
     )
 
 
+def perform_https_post(
+    factory: ConnectionFactory,
+    request: ToolAdapterRequest,
+    *,
+    path: str,
+    headers: dict[str, str],
+    body: bytes,
+) -> bytes:
+    """Send a bounded, redirect-free HTTPS request to the validated IP; return 2xx bytes."""
+    destination = request.destination
+    if not destination.ip_addresses:
+        raise ToolAdapterError("DESTINATION_UNRESOLVED")
+    ip = destination.ip_addresses[0]
+    method = request.method or "POST"
+    connection = factory(ip, destination.port, float(request.timeout_seconds), destination.host)
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        status = int(response.status)
+        raw = response.read(request.max_response_bytes + 1)
+    except TimeoutError as exc:
+        # Dispatched, but the outcome cannot be confirmed: never a false success.
+        raise ToolAdapterUncertain() from exc
+    except OSError as exc:
+        raise ToolAdapterError("CONNECTION_FAILED") from exc
+    finally:
+        _safe_close(connection)
+
+    if 300 <= status < 400:
+        raise ToolAdapterError("REDIRECT_NOT_ALLOWED")
+    if len(raw) > request.max_response_bytes:
+        raise ToolAdapterError("RESPONSE_TOO_LARGE")
+    if not 200 <= status < 300:
+        raise ToolAdapterError("UPSTREAM_STATUS")
+    return raw
+
+
 class HttpToolAdapter:
     """Bounded, redirect-free HTTPS adapter used when tool egress is enabled."""
 
@@ -83,10 +120,6 @@ class HttpToolAdapter:
             # MCP egress uses a separate adapter; this one speaks plain HTTPS.
             raise ToolAdapterError("PROTOCOL_UNSUPPORTED")
         destination = request.destination
-        if not destination.ip_addresses:
-            raise ToolAdapterError("DESTINATION_UNRESOLVED")
-        ip = destination.ip_addresses[0]
-        method = request.method or "POST"
         path = destination.path_prefix or "/"
         headers = {
             "Host": destination.host,
@@ -97,35 +130,14 @@ class HttpToolAdapter:
             headers["Authorization"] = f"Bearer {request.credential}"
         body = json.dumps(request.payload, separators=(",", ":")).encode("utf-8")
 
-        connection = self._factory(
-            ip, destination.port, float(request.timeout_seconds), destination.host
-        )
-        try:
-            connection.request(method, path, body=body, headers=headers)
-            response = connection.getresponse()
-            status = int(response.status)
-            raw = response.read(request.max_response_bytes + 1)
-        except TimeoutError as exc:
-            # Dispatched, but the outcome cannot be confirmed: never a false success.
-            raise ToolAdapterUncertain() from exc
-        except OSError as exc:
-            raise ToolAdapterError("CONNECTION_FAILED") from exc
-        finally:
-            _safe_close(connection)
-
-        if 300 <= status < 400:
-            raise ToolAdapterError("REDIRECT_NOT_ALLOWED")
-        if len(raw) > request.max_response_bytes:
-            raise ToolAdapterError("RESPONSE_TOO_LARGE")
-        if not 200 <= status < 300:
-            raise ToolAdapterError("UPSTREAM_STATUS")
+        raw = perform_https_post(self._factory, request, path=path, headers=headers, body=body)
         try:
             parsed: Any = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:
             raise ToolAdapterError("RESPONSE_NOT_JSON") from exc
         if not isinstance(parsed, dict):
             raise ToolAdapterError("RESPONSE_NOT_OBJECT")
-        return ToolAdapterResponse(status_code=status, body=parsed)
+        return ToolAdapterResponse(status_code=200, body=parsed)
 
 
 def _safe_close(connection: _HttpConnection) -> None:

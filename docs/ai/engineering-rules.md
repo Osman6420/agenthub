@@ -115,42 +115,36 @@ workflow scenario and requires `workflow_run` plus an `Idempotency-Key`; `GET`/`
 organization-allowlisted, exact-version matched, schema-checked, and receive only a
 narrow execution context. No workflow-engine dependency was added.
 
-Sprint 9 (tool registry + approval) is *in progress*, delivered as verified increments.
-Increment A is implemented and verified (SQLite + PostgreSQL): `apps.tools` adds
-`tool_definition` / `tool_binding` artifact validation (bounded, allowlisted,
-https-only destinations with IP/private/`.internal`/`localhost` hosts rejected,
-`critical` risk disabled, credentials only as `secret:<name>` references), the
-tenant-scoped immutable `ToolDefinition` / `ToolBinding` registry models (write-once
-body, status-only mutation), registration services enforcing the high-risk
-side-effecting approval invariant, and fail-closed release pinning of active,
-checksum-matched bindings into the manifest. Increment B adds the central default-deny
-`apps.tools.proxy.invoke_tool` (capability, input/output contracts, field allowlists,
-risk/approval gate), SSRF-safe destination validation (`apps.tools.egress`:
-public-unicast-only with resolved-IP checks defeating DNS rebinding), and the
-transport-adapter and least-privilege `secret:<name>` resolver seams, plus
-`resolve_release_tool` that reads the pinned binding/definition/contracts. **The default
-adapter performs no network I/O and the proxy has no production caller yet — the
-platform still performs no live tool egress**, and a high-risk side-effecting tool
-raises `ToolApprovalRequired` rather than executing. Increment C adds the durable
-lifecycle: additive `ToolInvocation` / `ApprovalRequest` models and the
+Sprint 9 (tool registry + approval) is implemented and verified (SQLite + PostgreSQL),
+delivered across increments A–D. `apps.tools` adds `tool_definition` / `tool_binding`
+artifact validation (bounded, allowlisted, https-only destinations with
+IP/private/`.internal`/`localhost` hosts rejected, `critical` risk disabled, credentials
+only as `secret:<name>` references), the tenant-scoped immutable `ToolDefinition` /
+`ToolBinding` registry (write-once body, status-only mutation), registration enforcing
+the high-risk side-effecting approval invariant, and fail-closed release pinning of
+active, checksum-matched bindings. The central default-deny `apps.tools.proxy.invoke_tool`
+enforces capability, input/output contracts, field allowlists (mass-assignment +
+exfiltration defense), risk/approval, bounded size, and least-privilege `secret:<name>`
+resolution; `apps.tools.egress` is SSRF-safe (public-unicast-only with resolved-IP checks
+defeating DNS rebinding). The durable lifecycle (`ToolInvocation` / `ApprovalRequest`,
 `request_tool_invocation` / `decide_approval` / `execute_invocation` /
-`cancel_invocation` services — separation-of-duties, a request-checksum binding
+`cancel_invocation`) provides separation-of-duties, a request-checksum binding
 (input-swap-after-approval defense), a 30-minute approval expiry, idempotent resume that
 never double-executes, `outcome_unknown` for dispatched-but-unconfirmed calls (never
-retried), and redacted fail-closed audit. Increment D1 (end-to-end egress was approved
-by the project owner) adds `apps.tools.http_adapter.HttpToolAdapter`, an SSRF-safe
-stdlib-only HTTPS client selected by `TOOL_ADAPTER=http`: it dials the already-validated
-public IP while verifying TLS/SNI/Host for the original hostname (DNS-rebinding defense),
-never follows redirects, reads under a byte cap, and maps a post-dispatch timeout to
-`outcome_unknown`. **No production dependency was added, and the default `TOOL_ADAPTER`
-is `deterministic` — tests/CI perform no live egress.** The operator surface is
-implemented and verified: management commands `decide_tool_approval`,
-`list_tool_approvals`, and `cancel_tool_invocation` (role-resolved authorization) plus
-bounded Prometheus counters `agenthub_tool_invocations_total` /
-`agenthub_tool_approvals_total` wired via `post_save` signals. Remaining Increment D work
-(an MCP egress adapter; a workflow `tool` node with pause/resume; public consumer
-REST/MCP tool/approval endpoints; an HTML operator console view) is in progress under
-that approval; approvals are already fully operable via the management commands.
+retried), and redacted fail-closed audit. Real egress (project-owner approved) is the
+SSRF-safe stdlib-only `HttpToolAdapter` plus `McpToolAdapter` (JSON-RPC `tools/call`),
+selected by `TOOL_ADAPTER=http`/`real` and protocol-dispatched; **the default
+`TOOL_ADAPTER` is `deterministic` and opens no socket, so tests/CI perform no live
+egress**. A workflow `tool` node calls the governed flow and pauses the run
+(`waiting_approval` + durable `awaiting_node` checkpoint), auto-resuming on the
+post-commit decision signal and failing closed on rejection; `GET /v1/runs/{id}` surfaces
+`waiting_approval`. Operator surfaces: the role-gated, tenant-scoped console approval
+view and the management commands `decide_tool_approval` / `list_tool_approvals` /
+`cancel_tool_invocation`, with bounded Prometheus counters
+`agenthub_tool_invocations_total` / `agenthub_tool_approvals_total`. No new production
+dependency was added (the real client is stdlib). Additive migrations only
+(`tools.0001`, `tools.0002`, `workflows.0002`). Approval decisions are operator actions
+(not consumer actions), so no public consumer "decide" endpoint exists.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is

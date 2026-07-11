@@ -23,6 +23,7 @@ BUILTIN_NODE_TYPES = frozenset(
         "validate_contract",
         "end",
         "custom",
+        "tool",
     }
 )
 
@@ -123,6 +124,13 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
         node_ref = _identifier(config.get("node_ref"), "custom node_ref")
         if allowed_custom_nodes is not None and node_ref not in allowed_custom_nodes:
             raise WorkflowCompileError("custom node is not allowed for this workflow")
+    elif node_type == "tool":
+        # A tool node calls the governed tool proxy for a release-pinned binding role;
+        # egress/approval are enforced at runtime, never in the workflow graph.
+        _require_exact_keys(config, {"binding_role", "input_key", "output_key"}, "tool config")
+        _identifier(config.get("binding_role"), "tool binding_role")
+        _identifier(config.get("input_key"), "tool input_key")
+        _identifier(config.get("output_key"), "tool output_key")
     elif node_type in {"input", "validate_contract", "end"} and config:
         raise WorkflowCompileError(f"{node_type} node does not accept config")
 

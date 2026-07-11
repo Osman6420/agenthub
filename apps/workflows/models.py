@@ -87,6 +87,7 @@ class WorkflowRunStatus(models.TextChoices):
     REQUESTED = "requested", "Requested"
     QUEUED = "queued", "Queued"
     RUNNING = "running", "Running"
+    WAITING_APPROVAL = "waiting_approval", "Waiting approval"
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
     TIMED_OUT = "timed_out", "Timed out"
@@ -114,9 +115,11 @@ class WorkflowRun(TimeStampedModel):
     execution_context = models.JSONField()
     redacted_state = models.JSONField(default=dict)
     status = models.CharField(
-        max_length=16, choices=WorkflowRunStatus.choices, default=WorkflowRunStatus.REQUESTED
+        max_length=20, choices=WorkflowRunStatus.choices, default=WorkflowRunStatus.REQUESTED
     )
     error_code = models.CharField(max_length=64, blank=True)
+    # Set to the tool node id while a run is paused for approval; empty otherwise.
+    awaiting_node = models.CharField(max_length=64, blank=True)
     deadline_at = models.DateTimeField()
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)

@@ -16,10 +16,11 @@ from apps.gateway.execution_context import ExecutionContextInvalid, verify_execu
 from apps.orchestration.runtime import RunResult
 from apps.releases.services import get_artifact_body_for_role
 from apps.workflows.custom_nodes import CustomNodeError, execute_custom_node
-from apps.workflows.models import WorkflowRunStatus
+from apps.workflows.models import WorkflowRunEvent, WorkflowRunStatus
 from apps.workflows.services import (
     WorkflowRequestError,
     _assert_state_size,
+    _next_sequence,
     _redact,
     resolve_release_workflow,
 )
@@ -31,6 +32,10 @@ class WorkflowRuntimeError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+class WorkflowPaused(Exception):
+    """Signals that a run is suspended awaiting a tool approval decision."""
 
 
 @dataclass(frozen=True)
@@ -78,7 +83,9 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
     for edge in graph["edges"]:
         edges[edge["from"]].append(edge)
     state = dict(run.redacted_state)
-    current = graph["input_node"]
+    # Resume from the paused tool node when the run is being re-dispatched.
+    resuming = bool(getattr(run, "awaiting_node", ""))
+    current = run.awaiting_node if resuming else graph["input_node"]
     executed: list[str] = []
 
     while True:
@@ -88,6 +95,20 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
         if time.time() > run.deadline_at.timestamp():
             raise WorkflowRuntimeError("WORKFLOW_TIMED_OUT")
         node = nodes[current]
+        if node["type"] == "tool":
+            # May raise WorkflowPaused (approval pending) or merge output into state.
+            _run_tool_node(node=node, state=state, run=run, resuming=resuming)
+            resuming = False
+            try:
+                _assert_state_size(state)
+            except WorkflowRequestError:
+                raise WorkflowRuntimeError("WORKFLOW_STATE_TOO_LARGE") from None
+            executed.append(current)
+            outgoing = edges[current]
+            if len(outgoing) != 1:
+                raise WorkflowRuntimeError("WORKFLOW_EDGE_INVALID")
+            current = outgoing[0]["to"]
+            continue
         started = time.monotonic()
         decision = _execute_node(node=node, state=state, release=run.release, run=run)
         if time.monotonic() - started > MAX_NODE_SECONDS:
@@ -134,6 +155,81 @@ def _validate_output_policy(release: Any, output: dict[str, Any]) -> None:
         sources = output.get("sources")
         if not isinstance(sources, list) or not sources:
             raise WorkflowRuntimeError("POLICY_VIOLATION")
+
+
+def _run_tool_node(
+    *, node: dict[str, Any], state: dict[str, Any], run: Any, resuming: bool
+) -> None:
+    """Execute a governed tool call, pausing the run if approval is pending."""
+    from apps.tools.approvals import ToolApprovalError, execute_invocation, request_tool_invocation
+    from apps.tools.models import ToolInvocationStatus
+
+    config = node["config"]
+    role = config["binding_role"]
+    input_key = config["input_key"]
+    output_key = config["output_key"]
+    tool_input = state.get(input_key)
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+
+    # The eval candidate seam runs without a consumer; produce a deterministic stub so
+    # tool-containing workflows remain evaluable without real egress or approval.
+    if getattr(run, "consumer_id", None) is None:
+        state[output_key] = {"status": "ok"}
+        return
+
+    context = run.execution_context if isinstance(run.execution_context, dict) else {}
+    capabilities = list(context.get("capabilities", []))
+    idempotency_key = f"wf:{run.id}:{node['id']}"
+    try:
+        invocation = request_tool_invocation(
+            release=run.release,
+            consumer=run.consumer,
+            role=role,
+            tool_input=tool_input,
+            idempotency_key=idempotency_key,
+            consumer_capabilities=capabilities,
+            requested_by=run.consumer.subject,
+        )
+    except ToolApprovalError as exc:
+        raise WorkflowRuntimeError(f"TOOL_{exc.code}") from None
+
+    if invocation.status == ToolInvocationStatus.PENDING_APPROVAL:
+        _pause_for_approval(run, str(node["id"]), state)
+        raise WorkflowPaused()
+
+    if invocation.status == ToolInvocationStatus.APPROVED:
+        try:
+            invocation = execute_invocation(
+                invocation_id=invocation.id,
+                tool_input=tool_input,
+                consumer_capabilities=capabilities,
+            )
+        except ToolApprovalError as exc:
+            raise WorkflowRuntimeError(f"TOOL_{exc.code}") from None
+
+    if invocation.status == ToolInvocationStatus.COMPLETED:
+        output = invocation.redacted_output if isinstance(invocation.redacted_output, dict) else {}
+        state[output_key] = output
+        if resuming:
+            run.awaiting_node = ""
+            run.save(update_fields=["awaiting_node", "updated_at"])
+        return
+    raise WorkflowRuntimeError(f"TOOL_{str(invocation.status).upper()}")
+
+
+def _pause_for_approval(run: Any, node_id: str, state: dict[str, Any]) -> None:
+    run.status = WorkflowRunStatus.WAITING_APPROVAL
+    run.awaiting_node = node_id
+    run.redacted_state = _redact(state)
+    run.save(update_fields=["status", "awaiting_node", "redacted_state", "updated_at"])
+    WorkflowRunEvent.objects.create(
+        run=run,
+        sequence=_next_sequence(run),
+        event_type="run_waiting_approval",
+        node_id=node_id,
+        outcome="waiting_approval",
+    )
 
 
 def _execute_node(

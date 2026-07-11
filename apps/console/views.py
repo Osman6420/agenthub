@@ -42,6 +42,9 @@ from apps.tenancy.services import (
     can_manage_releases,
     is_platform_admin,
 )
+from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_approval
+from apps.tools.authz import resolve_actor_roles
+from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
 
 
 def _audit_create(
@@ -326,6 +329,92 @@ def canary_stop(request: HttpRequest, canary_id: int) -> HttpResponse:
     except LifecycleError as exc:
         messages.error(request, f"Stop denied: {exc.code}")
     return redirect("console:releases")
+
+
+@login_required
+def tool_approvals(request: HttpRequest) -> HttpResponse:
+    user = request.user
+    allowed = allowed_organization_ids(user)
+    queryset = (
+        ApprovalRequest.objects.filter(status=ApprovalStatus.PENDING)
+        .select_related("invocation", "organization")
+        .order_by("expires_at")
+    )
+    if allowed is not None:
+        queryset = queryset.filter(organization_id__in=allowed)
+    rows = []
+    for approval in queryset:
+        roles = resolve_actor_roles(
+            username=user.get_username(), organization_id=approval.organization_id
+        )
+        rows.append(
+            {
+                "id": approval.pk,
+                "org": approval.organization.slug,
+                "invocation": approval.invocation_id,
+                "tool_ref": approval.invocation.tool_ref,
+                "risk": approval.invocation.risk,
+                "expires": approval.expires_at,
+                "can_decide": bool(set(roles or []) & set(approval.approver_roles)),
+            }
+        )
+    return render(request, "console/tool_approvals.html", {"title": "Tool approvals", "rows": rows})
+
+
+@login_required
+@require_POST
+def tool_approval_decide(request: HttpRequest, approval_id: int) -> HttpResponse:
+    approval = ApprovalRequest.objects.filter(pk=approval_id).first()
+    if approval is None:
+        raise Http404
+    if not _operator_can_access_org(request.user, approval.organization_id):
+        raise PermissionDenied
+    roles = resolve_actor_roles(
+        username=request.user.get_username(), organization_id=approval.organization_id
+    )
+    if roles is None:
+        raise PermissionDenied
+    approve = request.POST.get("decision") == "approve"
+    try:
+        decide_approval(
+            approval_id=approval.pk,
+            organization_id=approval.organization_id,
+            actor=request.user.get_username(),
+            actor_roles=roles,
+            approve=approve,
+            reason=request.POST.get("reason", ""),
+        )
+        messages.success(
+            request, f"Approval {approval.pk} {'approved' if approve else 'rejected'}."
+        )
+    except ToolApprovalError as exc:
+        messages.error(request, f"Decision denied: {exc.code}")
+    return redirect("console:tool_approvals")
+
+
+@login_required
+@require_POST
+def tool_invocation_cancel(request: HttpRequest, invocation_id: int) -> HttpResponse:
+    invocation = ToolInvocation.objects.filter(pk=invocation_id).first()
+    if invocation is None:
+        raise Http404
+    if not _operator_can_access_org(request.user, invocation.organization_id):
+        raise PermissionDenied
+    try:
+        cancel_invocation(
+            invocation_id=invocation.pk,
+            organization_id=invocation.organization_id,
+            actor=request.user.get_username(),
+        )
+        messages.success(request, f"Invocation {invocation.pk} cancelled.")
+    except ToolApprovalError as exc:
+        messages.error(request, f"Cancel denied: {exc.code}")
+    return redirect("console:tool_approvals")
+
+
+def _operator_can_access_org(user: UserLike, organization_id: int) -> bool:
+    allowed = allowed_organization_ids(user)
+    return allowed is None or organization_id in allowed
 
 
 def _create(

@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from apps.artifacts.validation import compute_checksum
 from apps.workflows.models import WorkflowRun, WorkflowRunEvent, WorkflowRunStatus
-from apps.workflows.runtime import WorkflowRuntimeError, execute_graph
+from apps.workflows.runtime import WorkflowPaused, WorkflowRuntimeError, execute_graph
 from apps.workflows.services import _next_sequence
 
 logger = logging.getLogger(__name__)
@@ -32,15 +32,21 @@ def execute_workflow_run(run_id: int) -> str:
                 WorkflowRunStatus.CANCELLED,
             }:
                 return str(run.status)
-            if run.status not in {WorkflowRunStatus.QUEUED, WorkflowRunStatus.REQUESTED}:
+            if run.status not in {
+                WorkflowRunStatus.QUEUED,
+                WorkflowRunStatus.REQUESTED,
+                WorkflowRunStatus.WAITING_APPROVAL,
+            }:
                 return str(run.status)
+            resuming = run.status == WorkflowRunStatus.WAITING_APPROVAL
             run.status = WorkflowRunStatus.RUNNING
-            run.started_at = timezone.now()
+            if run.started_at is None:
+                run.started_at = timezone.now()
             run.save(update_fields=["status", "started_at", "updated_at"])
             WorkflowRunEvent.objects.create(
                 run=run,
                 sequence=_next_sequence(run),
-                event_type="run_started",
+                event_type="run_resumed" if resuming else "run_started",
                 outcome="running",
             )
     except WorkflowRun.DoesNotExist:
@@ -51,6 +57,9 @@ def execute_workflow_run(run_id: int) -> str:
 
     try:
         result = execute_graph(run=run)
+    except WorkflowPaused:
+        # The run is suspended awaiting approval; state was persisted by the runtime.
+        return str(WorkflowRunStatus.WAITING_APPROVAL)
     except WorkflowRuntimeError as exc:
         return _finish_error(run_id, exc.code)
 

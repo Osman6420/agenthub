@@ -22,12 +22,20 @@ runs authorized by `workflow_run`. Workers claim by run id, enforce graph/state/
 bounds, persist redacted events, and expose tenant-scoped status/cancel. Custom nodes
 are pre-installed allowlisted extensions, not uploaded code or external-tool access.
 
+Sprint 9 adds the governed tool boundary: immutable tenant-scoped tool
+definitions/bindings pin into releases; a default-deny proxy enforces capability,
+contracts, field allowlists, SSRF-safe egress, and `secret:<name>` resolution; a durable
+approval lifecycle (separation-of-duties, checksum binding, expiry, idempotent resume,
+uncertain-outcome handling) gates high-risk side-effecting calls; and a workflow `tool`
+node pauses for approval and resumes. Real HTTPS/MCP egress is opt-in; the default
+adapter opens no socket. Approvals are operator actions (console + management commands).
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full
-target. Later slices—including external model providers, workflow/agent execution, and
-tool proxy/approval—remain planned unless the master plan records verification. Sprint
-7 deployment assets are verified drafts, not applied production infrastructure.
+target. Later slices—including external model providers and agent execution—remain
+planned unless the master plan records verification. Sprint 7 deployment assets are
+verified drafts, not applied production infrastructure.
 
 Major proposed flow: trusted ingress authenticates a consumer, resolves tenant/scenario capability, and creates an execution context; the pinned release drives RAG/workflow/agent execution; tool access passes through a controlled proxy; state changes and security decisions produce audit events. This is a design summary, not evidence of implementation.
 

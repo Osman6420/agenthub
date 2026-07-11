@@ -1,0 +1,48 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>{{ title }}</h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Organization</th><th>Invocation</th><th>Tool</th>
+        <th>Risk</th><th>Expires</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ r.org }}</td>
+        <td>{{ r.invocation }}</td>
+        <td>{{ r.tool_ref }}</td>
+        <td><span class="badge">{{ r.risk }}</span></td>
+        <td>{{ r.expires }}</td>
+        <td>
+          {% if r.can_decide %}
+          <form class="inline" method="post" action="{% url 'console:tool_approval_decide' r.id %}">
+            {% csrf_token %}
+            <input type="hidden" name="decision" value="approve">
+            <button class="link" type="submit">Approve</button>
+          </form>
+          <form class="inline" method="post" action="{% url 'console:tool_approval_decide' r.id %}">
+            {% csrf_token %}
+            <input type="hidden" name="decision" value="reject">
+            <button class="link" type="submit">Reject</button>
+          </form>
+          {% endif %}
+          <form class="inline" method="post" action="{% url 'console:tool_invocation_cancel' r.invocation %}">
+            {% csrf_token %}<button class="link" type="submit">Cancel</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No pending tool approvals in your scope.</p>
+  {% endif %}
+</div>
+{% endblock %}

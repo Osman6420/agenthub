@@ -65,6 +65,10 @@ class DeterministicToolAdapter:
     surrounding governance (contracts, field allowlists, secret resolution) can be
     exercised without a real outbound call."""
 
+    # No socket is opened, so DNS/egress validation is not required (and is skipped
+    # unless a resolver is explicitly injected, keeping offline runs deterministic).
+    requires_egress = False
+
     def call(self, request: ToolAdapterRequest) -> ToolAdapterResponse:
         echo = {
             key: request.payload[key]
@@ -74,17 +78,31 @@ class DeterministicToolAdapter:
         return ToolAdapterResponse(status_code=200, body={"status": "ok", "echo": echo})
 
 
+class RealEgressAdapter:
+    """Dispatch to the real HTTPS or MCP transport by the request protocol."""
+
+    def __init__(self) -> None:
+        from apps.tools.http_adapter import HttpToolAdapter
+        from apps.tools.mcp_adapter import McpToolAdapter
+
+        self._http = HttpToolAdapter()
+        self._mcp = McpToolAdapter()
+
+    def call(self, request: ToolAdapterRequest) -> ToolAdapterResponse:
+        if request.protocol == "mcp":
+            return self._mcp.call(request)
+        return self._http.call(request)
+
+
 def get_configured_adapter() -> ToolAdapter:
     """Return the adapter selected by ``settings.TOOL_ADAPTER`` (default: no egress).
 
-    Only ``"http"`` opts into real HTTPS egress; every other value (and the default)
-    keeps the deterministic no-egress adapter, so tests and unconfigured environments
-    never make an outbound call.
+    ``"http"`` (or ``"real"``) opts into real egress and dispatches by protocol to the
+    HTTPS/MCP transports; every other value (and the default) keeps the deterministic
+    no-egress adapter, so tests and unconfigured environments never make an outbound call.
     """
     from django.conf import settings
 
-    if getattr(settings, "TOOL_ADAPTER", "deterministic") == "http":
-        from apps.tools.http_adapter import HttpToolAdapter
-
-        return HttpToolAdapter()
+    if getattr(settings, "TOOL_ADAPTER", "deterministic") in {"http", "real"}:
+        return RealEgressAdapter()
     return DeterministicToolAdapter()

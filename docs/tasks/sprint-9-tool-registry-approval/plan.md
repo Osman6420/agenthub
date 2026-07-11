@@ -169,7 +169,8 @@ fallback where contracts permit. Retain additive records/audit for investigation
 
 ## Status
 
-In progress, delivered as verified, independently committable increments.
+Implemented and verified on SQLite and PostgreSQL (all scope delivered), across
+independently committable increments A–D.
 
 - Increment A — **implemented and verified** (SQLite + PostgreSQL): `tool_definition`
   / `tool_binding` artifact validation (bounded, allowlisted, https-only, IP/private
@@ -202,9 +203,16 @@ In progress, delivered as verified, independently committable increments.
     (`decide_tool_approval`, `list_tool_approvals`, `cancel_tool_invocation`) with
     role-resolved authorization, and bounded Prometheus metrics for tool
     invocations/approvals wired via `post_save` signals.
-  - Remaining — **planned**: MCP egress adapter; the workflow `tool` node with
-    pause/resume; public consumer REST/MCP tool/approval endpoints; and an HTML operator
-    console view (convenience — approvals are already operable via the commands above).
+  - D-final — **implemented and verified**: the MCP egress adapter (JSON-RPC
+    `tools/call` over the SSRF-safe transport, protocol-dispatched by
+    `get_configured_adapter`); the workflow `tool` node with durable pause/resume
+    (`waiting_approval` + `awaiting_node` checkpoint, auto-resumed on the post-commit
+    decision signal, fail-closed on rejection); and the role-gated, tenant-scoped
+    operator console approval view. The run-status API surfaces `waiting_approval`.
+
+Design note: approval *decisions* are operator actions (console + management commands +
+platform-admin MCP), not consumer actions, so no public consumer REST/MCP "decide"
+endpoint is exposed; consumers observe the paused state through `GET /v1/runs/{id}`.
 
 ## Completion criteria
 

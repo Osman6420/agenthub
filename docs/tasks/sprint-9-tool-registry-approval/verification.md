@@ -233,9 +233,45 @@ wired via `post_save` signals (no coupling from the service layer).
 - Metrics stay bounded and are emitted from DB signals — `test_approval_decision_
   increments_bounded_metric`.
 
-### Residual risk / not yet delivered
+## Increment D-final — MCP egress, workflow tool node + pause/resume, console
 
-- The workflow `tool` node with pause/resume, the MCP egress adapter, and public
-  consumer REST/MCP tool/approval endpoints remain the last mile. The approval lifecycle
-  is fully operable today via management commands; an HTML operator console view is a
-  convenience follow-up.
+Scope: the MCP egress adapter; the workflow `tool` node with durable pause/resume; the
+operator console approval view; and auto-resume on decision. Completes Sprint 9.
+
+### Commands and results
+
+| Command | Result |
+| --- | --- |
+| `ruff format --check .` / `ruff check .` | Pass — 214 files |
+| `mypy .` | Pass — no issues in 214 source files |
+| `python manage.py makemigrations --check --dry-run` | Pass — no changes |
+| `pytest` (SQLite) | Pass — 275 passed, 2 skipped |
+| `pytest --create-db` (PostgreSQL/pgvector, MCP+metrics) | Pass — 277 passed |
+
+New migration: `apps/workflows/migrations/0002_workflowrun_awaiting_node_alter_workflowrun_status.py`
+(additive — `awaiting_node` checkpoint field + `waiting_approval` status). Applied cleanly
+on both databases.
+
+### Acceptance-criteria evidence
+
+- MCP egress: a bounded JSON-RPC `tools/call` over the same SSRF-safe pinned-IP/TLS
+  transport; JSON-RPC/tool errors and malformed results are rejected — `test_mcp_adapter.py`.
+  `get_configured_adapter` dispatches http/mcp by protocol when `TOOL_ADAPTER` enables egress.
+- Workflow tool node: a high-risk tool pauses the run (`waiting_approval` + durable
+  `awaiting_node` checkpoint), an operator decision resumes it to completion, a rejection
+  fails the run closed, and a low-risk tool completes without a pause —
+  `test_tool_node.py`. Auto-resume is wired via a post-commit signal on the decision.
+- Console approval view: role-gated approve/reject/cancel, tenant-scoped, POST-only for
+  decisions, graceful denial — `test_tool_approval_views.py`.
+
+### Residual risk
+
+- On resume the tool executes with the run's redacted checkpoint state (deterministic
+  governance runtime); a durable encrypted/short-lived raw-payload design for tools that
+  need confidential raw text across a restart remains separately approved future work
+  (consistent with the Sprint 8 redaction stance).
+- The real HTTP/MCP adapters hold no DB lock during egress in the standalone proxy, but
+  the workflow resume path executes the tool inside the run's transaction; moving the
+  network call outside the row lock is a hardening follow-up for high-latency tools.
+- Real OTel/Prometheus/live-egress validation remains an operational follow-up; the
+  automated suite uses the deterministic no-egress adapter.

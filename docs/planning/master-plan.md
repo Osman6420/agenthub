@@ -87,7 +87,18 @@ schema-valid before/after execution. Workflow output/trajectory assertions reuse
 Sprint 6 eval and promotion gate. See
 [`sprint-8-workflow-core`](../tasks/sprint-8-workflow-core/plan.md).
 
-Not yet present: a real LLM/embedding provider, workflows, tools, agents, or applied
+Sprint 9 is implemented and verified: `apps.tools` is a governed tool registry +
+execution boundary. Immutable tenant-scoped `ToolDefinition`/`ToolBinding` artifacts
+pin into releases; a default-deny proxy enforces capability, contracts, field
+allowlists, SSRF-safe egress (public-unicast-only, DNS-rebinding defense), and
+least-privilege `secret:<name>` resolution; a durable approval lifecycle adds
+separation-of-duties, a request-checksum binding, 30-minute expiry, idempotent resume,
+and `outcome_unknown` handling. A workflow `tool` node pauses for approval and resumes.
+Real egress (stdlib HTTPS/MCP adapters) is opt-in via `TOOL_ADAPTER`; the default is a
+no-egress deterministic adapter, so tests make no outbound call. No new production
+dependency was added. See [`sprint-9-tool-registry-approval`](../tasks/sprint-9-tool-registry-approval/plan.md).
+
+Not yet present: a real LLM/embedding provider, agents, or applied
 production deployment. Sprint 7 deployment resources are reviewable drafts, not live
 infrastructure. Model/embedding providers are deterministic defaults (no real LLM call
 yet). Consumer auth is bearer-token only (OIDC/JWT/mTLS later); LDAP is configured but
@@ -119,6 +130,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Eval + gated promotion/rollback (Sprint 6) | Verified | Sprints 4–5 | [sprint-6-eval-promotion-rollback](../tasks/sprint-6-eval-promotion-rollback/plan.md) | [v3 target plan §15, §16](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-6-eval-promotion-rollback/verification.md) |
 | MCP + metrics + operations (Sprint 7) | Verified | Sprints 3–6 | [sprint-7-mcp-metrics-operations](../tasks/sprint-7-mcp-metrics-operations/plan.md) | [v3 target plan §12, §21, §24](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-7-mcp-metrics-operations/verification.md) |
 | Workflow core (Sprint 8) | Verified | Sprints 6–7 | [sprint-8-workflow-core](../tasks/sprint-8-workflow-core/plan.md) | [v3 target plan §15](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-8-workflow-core/verification.md) |
+| Tool registry + approval (Sprint 9) | Verified | Sprint 8 | [sprint-9-tool-registry-approval](../tasks/sprint-9-tool-registry-approval/plan.md) | [v3 target plan §17](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-9-tool-registry-approval/verification.md) |
 | Gateway and identity context | Planned in target document | Control plane, identity provider | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | RAG runtime and ingestion | Planned in target document | Model/embedding provider, pgvector, workers | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | Evaluation and release | Planned in target document | Runtime, artifact registry | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |

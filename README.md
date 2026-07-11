@@ -94,6 +94,15 @@ gateway returns `202` with a `run_id`. Read or cancel the same consumer's run th
 compiled graphs; arbitrary Python, endpoints, package uploads, and direct custom-node
 tool calls are rejected.
 
+Sprint 9 adds governed tools. Immutable tenant-scoped `ToolDefinition`/`ToolBinding`
+artifacts pin into releases; a default-deny proxy enforces capability, contracts, field
+allowlists, SSRF-safe egress (https-only, public-unicast-only, DNS-rebinding defense),
+and `secret:<name>` credential resolution. High-risk side-effecting tools require an
+authorized, non-self approval (30-minute expiry, request-checksum bound); a workflow
+`tool` node pauses for approval and resumes. Real HTTPS/MCP egress is opt-in via
+`TOOL_ADAPTER` (default: no egress). Operators decide approvals via the console or the
+`decide_tool_approval` / `list_tool_approvals` / `cancel_tool_invocation` commands.
+
 ## Belgeler
 
 - [Django hedef mimari planı — doküman revizyonu 3](agenthub-v3-django-plan.md)

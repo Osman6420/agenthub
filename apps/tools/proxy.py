@@ -28,7 +28,7 @@ from apps.tools.adapters import (
     ToolAdapterUncertain,
     get_configured_adapter,
 )
-from apps.tools.egress import DnsResolver, EgressDenied, validate_destination
+from apps.tools.egress import DnsResolver, EgressDenied, ValidatedDestination, validate_destination
 from apps.tools.secrets_resolver import EnvSecretResolver, SecretResolutionError, SecretResolver
 
 
@@ -163,10 +163,17 @@ def invoke_tool(
 
     _validate_input(tool, tool_input)
 
-    try:
-        destination = validate_destination(tool.destination, resolver=dns_resolver)
-    except EgressDenied as exc:
-        raise ToolExecutionError(exc.code) from exc
+    active_adapter = adapter or get_configured_adapter()
+    # Enforce the SSRF/egress policy whenever the adapter actually opens a socket, or
+    # whenever a resolver is injected (tests). The no-egress deterministic adapter skips
+    # real DNS so offline/governance runs stay deterministic.
+    if getattr(active_adapter, "requires_egress", True) or dns_resolver is not None:
+        try:
+            destination = validate_destination(tool.destination, resolver=dns_resolver)
+        except EgressDenied as exc:
+            raise ToolExecutionError(exc.code) from exc
+    else:
+        destination = _passthrough_destination(tool.destination)
 
     credential: str | None = None
     if tool.secret_ref:
@@ -175,8 +182,6 @@ def invoke_tool(
             credential = resolver.resolve(tool.secret_ref)
         except SecretResolutionError as exc:
             raise ToolExecutionError(exc.code) from exc
-
-    active_adapter = adapter or get_configured_adapter()
     request = ToolAdapterRequest(
         protocol=tool.protocol,
         method=tool.method,
@@ -202,6 +207,17 @@ def invoke_tool(
 def validate_tool_input(tool: ResolvedTool, tool_input: dict[str, Any]) -> None:
     """Public input check (field allowlist + input contract) for the request path."""
     _validate_input(tool, tool_input)
+
+
+def _passthrough_destination(destination: dict[str, Any]) -> ValidatedDestination:
+    """Build a non-resolved destination for the no-egress adapter (no socket opened)."""
+    return ValidatedDestination(
+        scheme=str(destination.get("scheme", "https")),
+        host=str(destination.get("host", "")),
+        port=int(destination.get("port", 443)),
+        path_prefix=str(destination.get("path_prefix", "")),
+        ip_addresses=(),
+    )
 
 
 def _validate_input(tool: ResolvedTool, tool_input: Any) -> None:
