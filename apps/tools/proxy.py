@@ -26,6 +26,7 @@ from apps.tools.adapters import (
     ToolAdapter,
     ToolAdapterError,
     ToolAdapterRequest,
+    ToolAdapterUncertain,
 )
 from apps.tools.egress import DnsResolver, EgressDenied, validate_destination
 from apps.tools.secrets_resolver import EnvSecretResolver, SecretResolutionError, SecretResolver
@@ -49,9 +50,19 @@ class ToolApprovalRequired(Exception):
         super().__init__(self.code)
 
 
+class ToolOutcomeUnknown(RuntimeError):
+    """Raised when a dispatched call's outcome cannot be confirmed; never retried."""
+
+    def __init__(self, code: str = "OUTCOME_UNKNOWN") -> None:
+        self.code = code
+        super().__init__(code)
+
+
 @dataclass(frozen=True)
 class ResolvedTool:
     role: str
+    definition_ref: str
+    binding_checksum: str
     protocol: str
     method: str | None
     destination: dict[str, Any]
@@ -61,6 +72,7 @@ class ResolvedTool:
     risk: str
     side_effecting: bool
     approval_required: bool
+    approver_roles: tuple[str, ...]
     timeout_seconds: int
     max_response_bytes: int
     allowed_input_fields: tuple[str, ...]
@@ -108,8 +120,11 @@ def resolve_release_tool(release: ScenarioRelease, role: str) -> ResolvedTool:
         str(definition_spec.get("output_contract_ref", "")),
         ArtifactType.OUTPUT_CONTRACT,
     )
+    approval = binding_spec.get("approval", {})
     return ResolvedTool(
         role=role,
+        definition_ref=str(pin.get("definition_ref", "")),
+        binding_checksum=str(pin.get("binding_checksum", "")),
         protocol=str(definition_spec["protocol"]),
         method=definition_spec.get("method"),
         destination=dict(definition_spec["destination"]),
@@ -118,9 +133,8 @@ def resolve_release_tool(release: ScenarioRelease, role: str) -> ResolvedTool:
         secret_ref=definition_spec.get("secret_ref"),
         risk=str(definition_spec["risk"]),
         side_effecting=bool(definition_spec["side_effecting"]),
-        approval_required=bool(
-            pin.get("approval_required", binding_spec.get("approval", {}).get("required", False))
-        ),
+        approval_required=bool(pin.get("approval_required", approval.get("required", False))),
+        approver_roles=tuple(approval.get("approver_roles", [])),
         timeout_seconds=int(definition_spec["timeout_seconds"]),
         max_response_bytes=int(definition_spec["max_response_bytes"]),
         allowed_input_fields=tuple(binding_spec.get("allowed_input_fields", [])),
@@ -136,13 +150,15 @@ def invoke_tool(
     adapter: ToolAdapter | None = None,
     secret_resolver: SecretResolver | None = None,
     dns_resolver: DnsResolver | None = None,
+    approval_granted: bool = False,
 ) -> ToolCallResult:
     required = Capability.TOOL_CALL_SIDE_EFFECT if tool.side_effecting else Capability.TOOL_CALL
     if required not in consumer_capabilities:
         raise ToolExecutionError("CAPABILITY_DENIED")
 
-    # A tool that requires approval is never executed on this path.
-    if tool.approval_required:
+    # A tool that requires approval is never executed unless a valid approval was
+    # recorded for this exact request (enforced by the approval service).
+    if tool.approval_required and not approval_granted:
         raise ToolApprovalRequired(role=tool.role, risk=tool.risk)
 
     _validate_input(tool, tool_input)
@@ -172,11 +188,20 @@ def invoke_tool(
     )
     try:
         response = active_adapter.call(request)
+    except ToolAdapterUncertain as exc:
+        # Dispatched, outcome unconfirmed: surface distinctly so the caller records it
+        # as uncertain and does not retry a possible side effect.
+        raise ToolOutcomeUnknown(exc.code) from exc
     except ToolAdapterError as exc:
         raise ToolExecutionError(exc.code) from exc
 
     output = _validate_output(tool, response.body)
     return ToolCallResult(outcome="completed", reason_code="OK", output=output)
+
+
+def validate_tool_input(tool: ResolvedTool, tool_input: dict[str, Any]) -> None:
+    """Public input check (field allowlist + input contract) for the request path."""
+    _validate_input(tool, tool_input)
 
 
 def _validate_input(tool: ResolvedTool, tool_input: Any) -> None:

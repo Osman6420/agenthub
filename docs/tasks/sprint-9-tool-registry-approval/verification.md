@@ -111,3 +111,59 @@ workflow node or gateway path, so no live tool egress exists. Public behavior un
   stub and requires explicit approval plus any client dependency before real egress.
 - No durable invocation record, idempotency, approval lifecycle, or workflow
   pause/resume yet (increment C); the proxy has no production caller yet.
+
+## Increment C — durable approval lifecycle + idempotent resume (no live egress)
+
+Scope: additive `ToolInvocation` / `ApprovalRequest` models; the `request_tool_invocation`
+/ `decide_approval` / `execute_invocation` / `cancel_invocation` services with
+separation-of-duties, request-checksum binding, 30-minute approval expiry, idempotent
+resume, uncertain-outcome handling, and redacted fail-closed audit. The default adapter
+still performs no network I/O; no public surface or workflow node is wired yet.
+
+### Commands and results
+
+| Command | Result |
+| --- | --- |
+| `ruff format --check .` / `ruff check .` | Pass — 200 files |
+| `mypy .` | Pass — no issues in 200 source files |
+| `python manage.py makemigrations --check --dry-run` | Pass — no changes |
+| `pytest` (SQLite, `config.settings.test`) | Pass — 245 passed, 2 skipped |
+| `pytest --create-db` (PostgreSQL/pgvector, MCP+metrics enabled) | Pass — 247 passed |
+
+New migration: `apps/tools/migrations/0002_toolinvocation_approvalrequest_and_more.py`
+(additive — `ToolInvocation`, `ApprovalRequest`, per-consumer idempotency unique
+constraint, org/status indexes). Applied cleanly on SQLite and PostgreSQL.
+
+### Acceptance-criteria evidence (this increment)
+
+- A high-risk side-effecting tool cannot execute before a valid authorized approval;
+  low/medium tools auto-approve — `test_high_risk_requires_approval_then_resumes`,
+  `test_low_risk_auto_approves_and_executes`.
+- Separation of duties + authorization: the requester cannot self-approve; a non-approver
+  role is denied; a decision is tenant-scoped — `test_self_approval_is_forbidden`,
+  `test_unauthorized_approver_is_denied`, `test_cross_tenant_decision_is_not_found`.
+- Time-bounding: an expired approval is denied and the invocation expires —
+  `test_expired_approval_is_denied_and_invocation_expires`.
+- Input-swap-after-approval is denied via the request-checksum binding —
+  `test_input_swap_after_approval_is_denied`.
+- Idempotency + never-double-execute: duplicate requests coalesce/conflict; a terminal
+  invocation is not re-run; an uncertain outcome is recorded and never retried —
+  `test_idempotent_request_and_conflict`, `test_execute_is_idempotent_and_never_
+  reexecutes`, `test_uncertain_outcome_is_recorded_and_not_retried`.
+- Rejected/cancelled invocations do not execute — `test_rejected_invocation_does_not_
+  execute`, `test_cancel_pending_invocation`.
+- Fail-closed audit persists: terminal-state writes and deny audits are committed inside
+  the atomic block and the error is raised afterward, so a denial/terminal outcome is
+  never rolled back by the raising path.
+
+### Residual risk / not yet delivered
+
+- The resume path holds the invocation row lock while calling the (currently no-egress)
+  adapter; the real HTTP/MCP adapter must release the lock during the network call and
+  record the outcome in a follow-up transaction. Noted for the real-adapter increment.
+- `execute_invocation` requires the raw `tool_input` from the caller (never persisted;
+  only a redacted copy is stored), modelling a short-lived payload; a durable
+  encrypted-payload design for cross-restart resume remains separately approved future
+  work (consistent with the Sprint 8 redaction stance).
+- No public surface (console/API/MCP) or workflow `tool` node yet (increment D); the
+  default adapter performs no live egress.

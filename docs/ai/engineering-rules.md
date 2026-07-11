@@ -131,11 +131,18 @@ transport-adapter and least-privilege `secret:<name>` resolver seams, plus
 `resolve_release_tool` that reads the pinned binding/definition/contracts. **The default
 adapter performs no network I/O and the proxy has no production caller yet — the
 platform still performs no live tool egress**, and a high-risk side-effecting tool
-raises `ToolApprovalRequired` rather than executing. No production dependency was added.
-Increments C–D (the real HTTP/MCP adapter + its network dependency, requiring explicit
-approval; approval lifecycle + idempotent durable resume + workflow pause/resume;
-console/API/MCP surfaces, audit, metrics) remain planned and require explicit approval
-for authorization, public API, secret, dependency, and network changes.
+raises `ToolApprovalRequired` rather than executing. Increment C adds the durable
+lifecycle: additive `ToolInvocation` / `ApprovalRequest` models and the
+`request_tool_invocation` / `decide_approval` / `execute_invocation` /
+`cancel_invocation` services — separation-of-duties, a request-checksum binding
+(input-swap-after-approval defense), a 30-minute approval expiry, idempotent resume that
+never double-executes, `outcome_unknown` for dispatched-but-unconfirmed calls (never
+retried), and redacted fail-closed audit. No production dependency was added; the default
+adapter still performs no live egress and nothing calls the flow in production yet.
+Increment D (the real HTTP/MCP adapter + its network dependency, requiring explicit
+approval; a workflow `tool` node with pause/resume; console/API/MCP approval surfaces
+and metrics) remains planned and requires explicit approval for authorization, public
+API, secret, dependency, and network changes.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is

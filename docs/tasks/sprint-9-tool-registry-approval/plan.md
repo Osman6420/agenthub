@@ -186,11 +186,18 @@ In progress, delivered as verified, independently committable increments.
   and `resolve_release_tool`. The default adapter performs no network I/O and the proxy
   has no production caller yet — there is still no live tool egress. See
   `verification.md`.
-- Increments C–D — **planned**: the real HTTP/MCP adapter and its network dependency
-  (requires explicit approval); the approval lifecycle with idempotent durable resume,
-  uncertain-outcome handling, and workflow pause/resume wiring; and console/API/MCP
-  surfaces, audit, and metrics. These require explicit approval for authorization,
-  public API, secret, dependency, and network changes before landing.
+- Increment C — **implemented and verified** (SQLite + PostgreSQL): additive
+  `ToolInvocation` / `ApprovalRequest` models and the `request_tool_invocation` /
+  `decide_approval` / `execute_invocation` / `cancel_invocation` services —
+  separation-of-duties, request-checksum binding (input-swap defense), 30-minute
+  approval expiry, idempotent resume that never double-executes, uncertain-outcome
+  handling, and redacted fail-closed audit. Still no live egress and no public caller.
+  See `verification.md`.
+- Increment D — **planned**: the real HTTP/MCP adapter and its network dependency
+  (requires explicit approval); wiring the proxy/approval flow into a workflow `tool`
+  node with pause/resume; and console/API/MCP approval surfaces plus metrics. These
+  require explicit approval for authorization, public API, secret, dependency, and
+  network changes before landing.
 
 ## Completion criteria
 

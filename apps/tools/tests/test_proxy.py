@@ -38,6 +38,9 @@ def _private_resolver(host: str, port: int) -> list[tuple[Any, ...]]:
 def _tool(**overrides: Any) -> ResolvedTool:
     base: dict[str, Any] = {
         "role": "tool_binding.search",
+        "definition_ref": "search:v1",
+        "binding_checksum": "deadbeef",
+        "approver_roles": ("approver",),
         "protocol": "http",
         "method": "GET",
         "destination": {"scheme": "https", "host": "api.example.com", "port": 443},

@@ -26,6 +26,19 @@ class ToolAdapterError(RuntimeError):
         super().__init__(code)
 
 
+class ToolAdapterUncertain(RuntimeError):
+    """Raised when a request was dispatched but its outcome cannot be confirmed.
+
+    A timeout or lost connection *after* the request left the proxy means the side
+    effect may or may not have happened. The caller must record this as an uncertain
+    outcome and must never blindly retry (v3 plan §17 approved decisions).
+    """
+
+    def __init__(self, code: str = "OUTCOME_UNKNOWN") -> None:
+        self.code = code
+        super().__init__(code)
+
+
 @dataclass(frozen=True)
 class ToolAdapterRequest:
     protocol: str

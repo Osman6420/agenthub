@@ -104,3 +104,120 @@ class ToolBinding(_ImmutableBodyModel):
     def clean(self) -> None:
         if self.tool_definition_id and self.organization_id != self.tool_definition.organization_id:
             raise ValidationError("tool binding organization must match its definition")
+
+
+class ToolInvocationStatus(models.TextChoices):
+    PENDING_APPROVAL = "pending_approval", "Pending approval"
+    APPROVED = "approved", "Approved"
+    COMPLETED = "completed", "Completed"
+    REJECTED = "rejected", "Rejected"
+    FAILED = "failed", "Failed"
+    OUTCOME_UNKNOWN = "outcome_unknown", "Outcome unknown"
+    CANCELLED = "cancelled", "Cancelled"
+    EXPIRED = "expired", "Expired"
+
+
+# Statuses from which no further execution or decision may occur.
+TERMINAL_INVOCATION_STATUSES = frozenset(
+    {
+        ToolInvocationStatus.COMPLETED,
+        ToolInvocationStatus.REJECTED,
+        ToolInvocationStatus.FAILED,
+        ToolInvocationStatus.OUTCOME_UNKNOWN,
+        ToolInvocationStatus.CANCELLED,
+        ToolInvocationStatus.EXPIRED,
+    }
+)
+
+
+class ToolInvocation(TimeStampedModel):
+    """A durable, redacted, idempotent record of one tool-call attempt."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="tool_invocations"
+    )
+    scenario = models.ForeignKey(
+        "catalog.Scenario", on_delete=models.PROTECT, related_name="tool_invocations"
+    )
+    release = models.ForeignKey(
+        "releases.ScenarioRelease", on_delete=models.PROTECT, related_name="tool_invocations"
+    )
+    consumer = models.ForeignKey(
+        "identity.Consumer", on_delete=models.PROTECT, related_name="tool_invocations"
+    )
+    binding_role = models.CharField(max_length=128)
+    tool_ref = models.CharField(max_length=160)
+    binding_checksum = models.CharField(max_length=64)
+    request_checksum = models.CharField(max_length=64)
+    idempotency_key = models.CharField(max_length=128)
+    risk = models.CharField(max_length=16)
+    side_effecting = models.BooleanField()
+    status = models.CharField(
+        max_length=20,
+        choices=ToolInvocationStatus.choices,
+        default=ToolInvocationStatus.PENDING_APPROVAL,
+    )
+    outcome_reason = models.CharField(max_length=64, blank=True)
+    redacted_input = models.JSONField(default=dict, blank=True)
+    redacted_output = models.JSONField(default=dict, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["consumer", "idempotency_key"],
+                name="uniq_tool_invocation_consumer_idempotency",
+            )
+        ]
+        indexes = [models.Index(fields=["organization", "status", "created_at"])]
+
+    def __str__(self) -> str:
+        return f"tool-invocation:{self.pk}:{self.status}"
+
+    def clean(self) -> None:
+        organization_id = self.organization_id
+        if self.scenario_id and organization_id != self.scenario.project.organization_id:
+            raise ValidationError("invocation scenario must match invocation organization")
+        if self.release_id and self.release.scenario_id != self.scenario_id:
+            raise ValidationError("invocation release must match invocation scenario")
+        if self.consumer_id and self.consumer.organization_id != organization_id:
+            raise ValidationError("invocation consumer must match invocation organization")
+
+
+class ApprovalStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+    EXPIRED = "expired", "Expired"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class ApprovalRequest(TimeStampedModel):
+    """Human approval bound to one invocation's exact request checksum."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="tool_approval_requests"
+    )
+    invocation = models.OneToOneField(
+        ToolInvocation, on_delete=models.PROTECT, related_name="approval"
+    )
+    request_checksum = models.CharField(max_length=64)
+    approver_roles = models.JSONField(default=list)
+    requested_by = models.CharField(max_length=200)
+    status = models.CharField(
+        max_length=16, choices=ApprovalStatus.choices, default=ApprovalStatus.PENDING
+    )
+    decided_by = models.CharField(max_length=200, blank=True)
+    decision_reason = models.CharField(max_length=64, blank=True)
+    expires_at = models.DateTimeField()
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["organization", "status", "expires_at"])]
+
+    def __str__(self) -> str:
+        return f"tool-approval:{self.pk}:{self.status}"
+
+    def clean(self) -> None:
+        if self.invocation_id and self.organization_id != self.invocation.organization_id:
+            raise ValidationError("approval organization must match its invocation")

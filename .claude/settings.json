@@ -13,7 +13,14 @@
       "WebSearch",
       "Agent",
       "Artifact",
-      "ExitPlanMode"
+      "ExitPlanMode",
+      "Bash(export DJANGO_SETTINGS_MODULE=config.settings.test)",
+      "Bash(.venv/Scripts/python.exe manage.py makemigrations tools)",
+      "Bash(.venv/Scripts/python.exe manage.py makemigrations --check --dry-run)",
+      "Bash(.venv/Scripts/python.exe -m ruff format apps/tools/)",
+      "Bash(.venv/Scripts/python.exe -m ruff format --check .)",
+      "Bash(.venv/Scripts/python.exe -m ruff check .)",
+      "Bash(.venv/Scripts/python.exe -m mypy .)"
     ],
     "ask": [
       "Bash(git commit*)",
