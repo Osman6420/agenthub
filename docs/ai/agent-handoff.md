@@ -17,7 +17,7 @@ branches, stashes, and reflog. Do not infer the active task only from open IDE t
 
 ## Local runtime snapshot
 
-Last checked: 2026-07-10, Europe/Istanbul.
+Last checked: 2026-07-11, Europe/Istanbul.
 
 Record only genuinely time-varying facts here (is a server up, which ports, is MinIO
 running). Durable facts — what is implemented/verified, the canonical interpreter, and
@@ -33,8 +33,14 @@ such a fact is written.
   published localhost ports. MinIO was not running at the last check.
 - Runtime logs: `.runtime/web.stdout.log` and `.runtime/web.stderr.log` (gitignored).
 - Uvicorn is started without `--reload`; source changes require a web-process restart.
-- Sprint 7 MCP/telemetry code and dependencies are installed locally but the running
-  Uvicorn process has not been restarted or manually smoke-tested for this change.
+- Uvicorn was restarted after Sprint 8 as PID `2064`; liveness and readiness returned
+  `200`, and `/console/` returned the expected unauthenticated `302` redirect.
+- Local PostgreSQL now has the additive Sprint 6 and Sprint 8 migrations applied,
+  including `evaluations.0001`, `releases.0002`, `artifacts.0002`, and
+  `workflows.0001`. A standalone runtime Celery worker was started by the user and
+  exposed a stale Redis task whose pytest database row no longer existed. Sprint 8 now
+  treats that delivery as a logged no-op; the worker must be restarted to load the fix,
+  and a successful non-eager async workflow execution remains pending.
 - Interpreter: `.venv` (Python 3.13) is canonical and, after Sprint 5, again has all
   dependencies (`boto3`/`pgvector` installed from `requirements.lock`); gates pass in it
   on SQLite and — with the Compose database — on PostgreSQL. `C:\Python314\python.exe`
@@ -95,6 +101,9 @@ Current cross-agent state:
 - Codex implemented Sprint 7 without modifying Sprint 6 implementation files. Automated
   evidence, including parity against the committed Sprint 6 canary routing contract, is
   in the Sprint 7 verification record.
+- Codex implemented and automatically verified Sprint 8 on SQLite and PostgreSQL; see
+  its verification record. The web is current, but the user-started worker requires a
+  restart after the stale-message fix; manual async workflow smoke remains.
 
 ## Agent transition checklist
 

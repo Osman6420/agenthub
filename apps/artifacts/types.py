@@ -18,6 +18,7 @@ class ArtifactType(models.TextChoices):
     CHUNKING_PROFILE = "chunking_profile", "Chunking profile"
     RETRIEVAL_PROFILE = "retrieval_profile", "Retrieval profile"
     WORKFLOW_DEFINITION = "workflow_definition", "Workflow definition"
+    CUSTOM_NODE_DEFINITION = "custom_node_definition", "Custom node definition"
     TOOL_DEFINITION = "tool_definition", "Tool definition"
     TOOL_BINDING = "tool_binding", "Tool binding"
     MEMORY_POLICY = "memory_policy", "Memory policy"

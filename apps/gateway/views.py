@@ -13,13 +13,14 @@ import time
 from typing import Any
 
 import jsonschema
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.artifacts.validation import compute_checksum
 from apps.audit.services import record_event
+from apps.catalog.models import ScenarioType
 from apps.gateway.errors import ApiError, ErrorCode
 from apps.gateway.execution_context import issue_execution_context
 from apps.gateway.models import IdempotencyRecord
@@ -29,6 +30,15 @@ from apps.identity.services import resolve_active_binding
 from apps.observability.models import UsageEvent
 from apps.releases.routing import select_release
 from apps.releases.services import get_artifact_body_for_role
+from apps.workflows.compiler import WorkflowCompileError
+from apps.workflows.models import WorkflowRun, WorkflowRunStatus
+from apps.workflows.services import (
+    WorkflowRequestError,
+    cancel_workflow_run,
+    request_workflow_run,
+    resolve_release_workflow,
+)
+from apps.workflows.tasks import execute_workflow_run
 
 _QUERY_CAPABILITY = Capability.QUERY
 
@@ -129,14 +139,19 @@ class _GatewayView(APIView):
                 "The scenario alias is not available to this consumer.",
                 http_status_code=403,
             )
-        if _QUERY_CAPABILITY not in resolved.capabilities:
+        scenario = resolved.binding.scenario
+        required_capability = (
+            Capability.WORKFLOW_RUN
+            if scenario.type == ScenarioType.WORKFLOW and self.operation == "invoke"
+            else _QUERY_CAPABILITY
+        )
+        if required_capability not in resolved.capabilities:
             raise ApiError(
                 ErrorCode.CAPABILITY_DENIED,
                 "The required capability is not granted.",
                 http_status_code=403,
             )
 
-        scenario = resolved.binding.scenario
         # Canary routing only applies after the binding above is authorized, and is
         # scoped to this specific consumer; everyone else gets the active release.
         release, _is_canary = select_release(scenario=scenario, consumer=consumer)
@@ -149,6 +164,17 @@ class _GatewayView(APIView):
             )
 
         _validate_input(release, input_payload)
+
+        if scenario.type == ScenarioType.WORKFLOW and self.operation == "invoke":
+            return self._process_workflow(
+                request=request,
+                consumer=consumer,
+                request_id=request_id,
+                alias=alias,
+                input_payload=input_payload,
+                resolved=resolved,
+                release=release,
+            )
 
         # Idempotency: replay identical, conflict on differing body.
         idem_key = request.headers.get("Idempotency-Key")
@@ -202,6 +228,96 @@ class _GatewayView(APIView):
             consumer, request_id, scenario, release, result["status"], result["usage"]
         )
         return Response(body, status=200)
+
+    def _process_workflow(
+        self,
+        *,
+        request: Request,
+        consumer: Any,
+        request_id: str,
+        alias: str,
+        input_payload: dict[str, Any],
+        resolved: Any,
+        release: Any,
+    ) -> Response:
+        idempotency_key = request.headers.get("Idempotency-Key", "")
+        request_hash = compute_checksum({"alias": alias, "input": input_payload, "op": "workflow"})
+        if idempotency_key:
+            replay = self._check_idempotency(consumer, idempotency_key, request_hash)
+            if replay is not None:
+                return replay
+        try:
+            workflow_version = resolve_release_workflow(release)
+        except WorkflowCompileError as exc:
+            raise ApiError(
+                ErrorCode.RUNTIME_NOT_AVAILABLE,
+                "The workflow runtime is not available for this release.",
+                http_status_code=503,
+                retryable=False,
+            ) from exc
+        scenario = resolved.binding.scenario
+        context = issue_execution_context(
+            organization_id=consumer.organization_id,
+            project_id=scenario.project_id,
+            scenario_id=scenario.id,
+            scenario_alias=alias,
+            consumer_id=consumer.id,
+            capabilities=list(resolved.capabilities),
+            release_id=release.id,
+            request_id=request_id,
+        )
+        try:
+            run, created = request_workflow_run(
+                release=release,
+                consumer=consumer,
+                workflow_version=workflow_version,
+                execution_context=context,
+                input_payload=input_payload,
+                idempotency_key=idempotency_key,
+            )
+        except WorkflowRequestError as exc:
+            if exc.code == "IDEMPOTENCY_CONFLICT":
+                raise ApiError(
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency-Key was reused with a different workflow request.",
+                    http_status_code=409,
+                ) from exc
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "A bounded Idempotency-Key is required for workflow execution.",
+                http_status_code=400,
+            ) from exc
+        if created:
+            transaction.on_commit(lambda: execute_workflow_run.delay(run.id))
+        body = {
+            "request_id": request_id,
+            "scenario_alias": alias,
+            "release_id": release.id,
+            "run_id": str(run.id),
+            "status": str(run.status),
+        }
+        if idempotency_key:
+            self._store_idempotency(consumer, idempotency_key, request_hash, 202, body)
+        record_event(
+            actor_type="consumer",
+            actor_id=consumer.subject,
+            action="gateway.workflow_run",
+            outcome="success",
+            organization_id=consumer.organization_id,
+            resource_type="workflow_run",
+            resource_id=str(run.id),
+            request_id=request_id,
+        )
+        UsageEvent.objects.create(
+            request_id=request_id,
+            organization_id=consumer.organization_id,
+            scenario_id=scenario.id,
+            release_id=release.id,
+            consumer_id=consumer.id,
+            operation="workflow_run",
+            status="queued",
+        )
+        return Response(body, status=202)
 
     def _check_idempotency(self, consumer: Any, key: str, request_hash: str) -> Response | None:
         existing = IdempotencyRecord.objects.filter(consumer=consumer, key=key).first()
@@ -287,5 +403,32 @@ class QueryView(_GatewayView):
 
 class RunStatusView(APIView):
     def get(self, request: Request, run_id: str) -> Response:
-        # No durable runs exist yet (async workflow/agent runs arrive later).
-        raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
+        run = self._resolve(request, run_id)
+        body: dict[str, Any] = {
+            "run_id": str(run.id),
+            "status": str(run.status),
+            "release_id": run.release_id,
+            "error_code": run.error_code,
+        }
+        output = run.redacted_state.get("output")
+        if run.status == WorkflowRunStatus.COMPLETED and isinstance(output, dict):
+            body["output"] = output
+        return Response(body)
+
+    def delete(self, request: Request, run_id: str) -> Response:
+        run = self._resolve(request, run_id)
+        cancelled = cancel_workflow_run(run=run, consumer=request.auth)
+        return Response({"run_id": str(cancelled.id), "status": str(cancelled.status)})
+
+    @staticmethod
+    def _resolve(request: Request, run_id: str) -> WorkflowRun:
+        if not run_id.isdigit():
+            raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
+        run = WorkflowRun.objects.filter(
+            pk=int(run_id),
+            consumer=request.auth,
+            organization_id=request.auth.organization_id,
+        ).first()
+        if run is None:
+            raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
+        return run

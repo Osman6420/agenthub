@@ -49,6 +49,18 @@ TOKENS = Counter(
     ("operation", "direction"),
     registry=REGISTRY,
 )
+WORKFLOW_RUNS = Counter(
+    "agenthub_workflow_runs_total",
+    "Durable workflow run state transitions.",
+    ("status",),
+    registry=REGISTRY,
+)
+WORKFLOW_NODES = Counter(
+    "agenthub_workflow_nodes_total",
+    "Completed workflow nodes by bounded registry type.",
+    ("node_type",),
+    registry=REGISTRY,
+)
 
 
 def render_metrics() -> bytes:

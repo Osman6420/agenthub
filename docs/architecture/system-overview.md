@@ -16,6 +16,12 @@ collector; and deployment, dashboard, alert, and runbook drafts live under `depl
 Automated verification includes the completed Sprint 6 routing contract; live platform
 infrastructure verification remains pending.
 
+Sprint 8 adds the verified workflow core: reviewed DSL artifacts compile to immutable
+DAGs, releases pin the exact definition/checksum, and the gateway starts durable async
+runs authorized by `workflow_run`. Workers claim by run id, enforce graph/state/time
+bounds, persist redacted events, and expose tenant-scoped status/cancel. Custom nodes
+are pre-installed allowlisted extensions, not uploaded code or external-tool access.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full

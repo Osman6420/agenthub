@@ -8,7 +8,7 @@ failure yields a server-controlled fallback rather than leaking model output.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import jsonschema
@@ -40,6 +40,7 @@ class RunResult:
     output: dict[str, Any]
     usage: dict[str, int]
     fallback_used: bool
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def _citations(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:

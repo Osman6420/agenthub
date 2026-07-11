@@ -85,6 +85,15 @@ MCP is default-off and must be enabled only in an approved internal/VPN overlay.
 OpenShift, monitoring, and runbook assets are under `deploy/openshift`,
 `deploy/monitoring`, and `docs/operations`.
 
+## Workflow runtime
+
+Sprint 8 adds compiled asynchronous workflows. A workflow scenario invoked through
+`POST /v1/invoke` requires the `workflow_run` capability and an `Idempotency-Key`; the
+gateway returns `202` with a `run_id`. Read or cancel the same consumer's run through
+`GET` or `DELETE /v1/runs/{run_id}`. Runtime executes only release-pinned immutable
+compiled graphs; arbitrary Python, endpoints, package uploads, and direct custom-node
+tool calls are rejected.
+
 ## Belgeler
 
 - [Django hedef mimari planı — doküman revizyonu 3](agenthub-v3-django-plan.md)

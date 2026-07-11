@@ -105,6 +105,16 @@ dependencies are `opentelemetry-api`, `opentelemetry-sdk`, the OTLP HTTP exporte
 parity tests. Live OTel/Prometheus/Grafana/OpenShift checks remain an operational
 follow-up; do not describe the draft manifests as deployed infrastructure.
 
+Sprint 8 is implemented and verified. `apps.workflows` provides strict artifact
+validation, deterministic immutable DAG compilation, additive workflow/custom-node/run
+models, bounded asynchronous Celery execution, redacted durable state/events,
+idempotency, tenant-scoped status/cancel, contract/policy enforcement, and workflow
+eval assertions. `POST /v1/invoke` returns `202` plus `run_id` for an authorized
+workflow scenario and requires `workflow_run` plus an `Idempotency-Key`; `GET`/`DELETE
+/v1/runs/{id}` are consumer/tenant scoped. Custom nodes are platform-preinstalled,
+organization-allowlisted, exact-version matched, schema-checked, and receive only a
+narrow execution context. No workflow-engine dependency was added.
+
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is
 implemented/verified and how to run the gates. Update it in the same change that lands

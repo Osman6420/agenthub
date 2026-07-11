@@ -53,3 +53,14 @@ def validate_body(artifact_type: str, body: Any) -> None:
             validate_eval_suite_body(body)
         except ValueError as exc:
             raise ArtifactValidationError(str(exc)) from exc
+
+    if artifact_type in {
+        ArtifactType.WORKFLOW_DEFINITION,
+        ArtifactType.CUSTOM_NODE_DEFINITION,
+    }:
+        from apps.workflows.compiler import WorkflowCompileError, validate_artifact_body
+
+        try:
+            validate_artifact_body(artifact_type, body)
+        except WorkflowCompileError as exc:
+            raise ArtifactValidationError(str(exc)) from exc

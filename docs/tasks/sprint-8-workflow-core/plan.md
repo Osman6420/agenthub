@@ -152,8 +152,14 @@ Keep additive schema until a separately approved cleanup.
 
 ## Status
 
-Planned; implementation depends on verified Sprints 6–7 contracts and approval of
-custom-code execution and any public/API or dependency changes.
+Verified on SQLite and PostgreSQL as of 2026-07-11. Delivered scope includes strict
+workflow/custom-node artifacts, deterministic immutable compilation, the bounded
+built-in DAG runtime, pre-installed schema-checked custom nodes, fully asynchronous
+Celery execution, durable redacted runs/events, idempotent start/redelivery,
+tenant-scoped status/cancel, output contract and policy enforcement, release pins, and
+workflow eval assertions using the Sprint 6 promotion gate. No workflow-engine
+production dependency was added. Public gateway behavior changes were implemented with
+the project owner's approved async and authorization model.
 
 ## Completion criteria
 

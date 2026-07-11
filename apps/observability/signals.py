@@ -16,8 +16,12 @@ from apps.observability.metrics import (
     RELEASE_LIFECYCLE,
     RUNTIME_REQUESTS,
     TOKENS,
+    WORKFLOW_NODES,
+    WORKFLOW_RUNS,
 )
 from apps.observability.models import UsageEvent
+from apps.workflows.compiler import BUILTIN_NODE_TYPES
+from apps.workflows.models import WorkflowRun, WorkflowRunEvent
 
 
 @receiver(post_save, sender=UsageEvent, dispatch_uid="observability.usage_event")
@@ -51,3 +55,29 @@ def release_audit_saved(sender: Any, instance: AuditEvent, created: bool, **kwar
         action = "other"
     outcome = instance.outcome if instance.outcome in {"allow", "deny", "failure"} else "other"
     RELEASE_LIFECYCLE.labels(action=action, outcome=outcome).inc()
+
+
+@receiver(post_save, sender=WorkflowRun, dispatch_uid="observability.workflow_run")
+def workflow_run_saved(sender: Any, instance: WorkflowRun, **kwargs: Any) -> None:
+    status = str(instance.status)
+    if status not in {
+        "requested",
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "timed_out",
+        "cancelled",
+    }:
+        status = "other"
+    WORKFLOW_RUNS.labels(status=status).inc()
+
+
+@receiver(post_save, sender=WorkflowRunEvent, dispatch_uid="observability.workflow_node")
+def workflow_event_saved(
+    sender: Any, instance: WorkflowRunEvent, created: bool, **kwargs: Any
+) -> None:
+    if not created or instance.event_type != "node_completed":
+        return
+    node_type = instance.outcome if instance.outcome in BUILTIN_NODE_TYPES else "other"
+    WORKFLOW_NODES.labels(node_type=node_type).inc()

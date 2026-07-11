@@ -22,9 +22,11 @@ MAX_VALUE_LENGTH = 500
 MAX_MIN_SOURCES = 100
 
 # Assertions requiring a non-empty string ``value``.
-_VALUE_ASSERTIONS = frozenset({"answer_contains", "answer_not_contains"})
+_VALUE_ASSERTIONS = frozenset({"answer_contains", "answer_not_contains", "node_executed"})
 # Assertions taking no parameters.
-_NULLARY_ASSERTIONS = frozenset({"grounded", "not_grounded", "citations_present"})
+_NULLARY_ASSERTIONS = frozenset(
+    {"grounded", "not_grounded", "citations_present", "workflow_completed"}
+)
 # Assertions requiring an integer ``count`` >= 1.
 _COUNT_ASSERTIONS = frozenset({"min_sources"})
 

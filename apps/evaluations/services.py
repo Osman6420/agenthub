@@ -12,6 +12,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.services import record_event
+from apps.catalog.models import ScenarioType
 from apps.evaluations.assertions import evaluate_assertion
 from apps.evaluations.models import EvalCaseResult, EvalRun, EvalStatus
 from apps.orchestration.providers import ModelProvider, ModelProviderError
@@ -19,6 +20,7 @@ from apps.orchestration.runtime import RetrievalError, RuntimeReleaseError, run_
 from apps.releases.models import ScenarioRelease
 from apps.releases.services import get_artifact_body_for_role, get_manifest_role
 from apps.retrieval.providers import RetrievalProvider
+from apps.workflows.runtime import WorkflowRuntimeError, run_workflow_candidate
 
 
 class EvalError(RuntimeError):
@@ -85,14 +87,20 @@ def run_eval(
     try:
         with transaction.atomic():
             for case in cases:
-                result = run_rag(
-                    execution_context={},
-                    validated_input=dict(case.get("input", {})),
-                    release=release,
-                    require_active=False,
-                    model_provider=model_provider,
-                    retrieval_provider=retrieval_provider,
-                )
+                if release.scenario.type == ScenarioType.WORKFLOW:
+                    result = run_workflow_candidate(
+                        release=release,
+                        input_payload=dict(case.get("input", {})),
+                    )
+                else:
+                    result = run_rag(
+                        execution_context={},
+                        validated_input=dict(case.get("input", {})),
+                        release=release,
+                        require_active=False,
+                        model_provider=model_provider,
+                        retrieval_provider=retrieval_provider,
+                    )
                 outcomes: list[dict[str, object]] = []
                 case_passed = True
                 for assertion in case.get("assertions", []):
@@ -110,7 +118,7 @@ def run_eval(
                 )
                 if case_passed:
                     passed_cases += 1
-    except (RuntimeReleaseError, RetrievalError, ModelProviderError) as exc:
+    except (RuntimeReleaseError, RetrievalError, ModelProviderError, WorkflowRuntimeError) as exc:
         return _finalize(run, EvalStatus.ERROR, 0, error_code=type(exc).__name__)
     except Exception:  # defensive: never leak an unclassified runtime error
         return _finalize(run, EvalStatus.ERROR, 0, error_code="INTERNAL_ERROR")

@@ -78,6 +78,15 @@ contract. Live OTel/Prometheus/Grafana/OpenShift validation remains an operation
 follow-up because deployment is outside the sprint scope. See
 [`sprint-7-mcp-metrics-operations`](../tasks/sprint-7-mcp-metrics-operations/plan.md).
 
+Sprint 8 is implemented and verified: strict workflow/custom-node artifacts compile to
+immutable checksummed DAGs; built-in nodes execute through a bounded asynchronous Celery
+runtime with durable redacted runs/events, idempotent start/redelivery, tenant-scoped
+status/cancel, output contract/policy enforcement, and release pins. Custom nodes must
+be active, organization-allowlisted, pre-installed with an exact package version, and
+schema-valid before/after execution. Workflow output/trajectory assertions reuse the
+Sprint 6 eval and promotion gate. See
+[`sprint-8-workflow-core`](../tasks/sprint-8-workflow-core/plan.md).
+
 Not yet present: a real LLM/embedding provider, workflows, tools, agents, or applied
 production deployment. Sprint 7 deployment resources are reviewable drafts, not live
 infrastructure. Model/embedding providers are deterministic defaults (no real LLM call
@@ -109,6 +118,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Ingestion + pgvector index (Sprint 5) | Verified | Sprint 4 | [sprint-5-ingestion-pgvector](../tasks/sprint-5-ingestion-pgvector/plan.md) | [v3 target plan §14](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-5-ingestion-pgvector/verification.md) |
 | Eval + gated promotion/rollback (Sprint 6) | Verified | Sprints 4–5 | [sprint-6-eval-promotion-rollback](../tasks/sprint-6-eval-promotion-rollback/plan.md) | [v3 target plan §15, §16](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-6-eval-promotion-rollback/verification.md) |
 | MCP + metrics + operations (Sprint 7) | Verified | Sprints 3–6 | [sprint-7-mcp-metrics-operations](../tasks/sprint-7-mcp-metrics-operations/plan.md) | [v3 target plan §12, §21, §24](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-7-mcp-metrics-operations/verification.md) |
+| Workflow core (Sprint 8) | Verified | Sprints 6–7 | [sprint-8-workflow-core](../tasks/sprint-8-workflow-core/plan.md) | [v3 target plan §15](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-8-workflow-core/verification.md) |
 | Gateway and identity context | Planned in target document | Control plane, identity provider | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | RAG runtime and ingestion | Planned in target document | Model/embedding provider, pgvector, workers | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | Evaluation and release | Planned in target document | Runtime, artifact registry | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |

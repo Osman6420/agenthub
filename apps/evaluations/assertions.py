@@ -45,5 +45,12 @@ def evaluate_assertion(assertion: dict[str, Any], result: RunResult) -> tuple[bo
     if kind == "min_sources":
         ok = len(_sources(result)) >= int(assertion["count"])
         return ok, "enough_sources" if ok else "too_few_sources"
+    if kind == "workflow_completed":
+        ok = result.status == "completed" and result.metadata.get("workload_type") == "workflow"
+        return ok, "workflow_completed" if ok else "workflow_incomplete"
+    if kind == "node_executed":
+        executed = result.metadata.get("executed_nodes", [])
+        ok = isinstance(executed, list) and assertion["value"] in executed
+        return ok, "node_executed" if ok else "node_not_executed"
     # Unreachable: suite validation rejects unknown assertion types before storage.
     return False, "unsupported_assertion"

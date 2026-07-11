@@ -72,6 +72,7 @@ def compile_release(
         raise CompileError("index version ids must be positive integers")
 
     artifacts_manifest: dict[str, dict[str, object]] = {}
+    workflow_checksum = ""
     for ref in refs:
         if ref.role in artifacts_manifest:
             raise CompileError(f"duplicate role in release: {ref.role}")
@@ -89,6 +90,21 @@ def compile_release(
             "ref": artifact.ref,
             "checksum": artifact.checksum,
         }
+        if artifact.type == "workflow_definition":
+            if ref.role != "workflow_definition":
+                raise CompileError("workflow definition must use the workflow_definition role")
+            from apps.workflows.compiler import WorkflowCompileError
+            from apps.workflows.services import compile_workflow_version
+
+            try:
+                workflow_version = compile_workflow_version(
+                    scenario=scenario,
+                    source_artifact=artifact,
+                    created_by=created_by,
+                )
+            except WorkflowCompileError as exc:
+                raise CompileError(f"workflow compilation failed: {exc}") from exc
+            workflow_checksum = workflow_version.checksum
 
     manifest: dict[str, object] = {
         "scenario_id": scenario.id,
@@ -97,6 +113,8 @@ def compile_release(
     }
     if pinned_indexes:
         manifest["index_versions"] = pinned_indexes
+    if workflow_checksum:
+        manifest["workflow_checksum"] = workflow_checksum
     manifest_sha = compute_checksum(manifest)
 
     return ScenarioRelease.objects.create(
