@@ -90,8 +90,13 @@ check`, and `pytest`. They pass both under `DJANGO_SETTINGS_MODULE=config.settin
 (isolated in-memory SQLite; no external services) and — via
 `DJANGO_SETTINGS_MODULE=config.settings.local` with `pytest --create-db` against the
 Compose PostgreSQL/pgvector — on real PostgreSQL, where the pgvector cosine-retrieval
-and advisory-lock tests that SQLite skips also run. Redis and MinIO are not yet
-exercised by the automated suite. Management/operational commands shown in the target
+and advisory-lock tests that SQLite skips also run. When running under
+`config.settings.local`, also export `MCP_ENABLED=true` and a non-empty
+`METRICS_BEARER_TOKEN`: the Sprint 7 MCP/metrics tests are hard-enabled only in
+`config.settings.test`, so without these ~8 MCP/metrics tests fail spuriously (the
+disabled endpoints 404). On Windows, pass a writable `--basetemp` to avoid the shared
+`pytest-of-*` permission error. Redis and MinIO are not yet exercised by the automated
+suite. Management/operational commands shown in the target
 plan that are not listed above remain proposed future interfaces and must not be
 reported as executable today.
 

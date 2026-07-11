@@ -33,14 +33,19 @@ such a fact is written.
   published localhost ports. MinIO was not running at the last check.
 - Runtime logs: `.runtime/web.stdout.log` and `.runtime/web.stderr.log` (gitignored).
 - Uvicorn is started without `--reload`; source changes require a web-process restart.
-- Uvicorn was restarted after Sprint 8 as PID `2064`; liveness and readiness returned
-  `200`, and `/console/` returned the expected unauthenticated `302` redirect.
-- Local PostgreSQL now has the additive Sprint 6 and Sprint 8 migrations applied,
-  including `evaluations.0001`, `releases.0002`, `artifacts.0002`, and
-  `workflows.0001`. A standalone runtime Celery worker was started by the user and
-  exposed a stale Redis task whose pytest database row no longer existed. Sprint 8 now
-  treats that delivery as a logged no-op; the worker must be restarted to load the fix,
-  and a successful non-eager async workflow execution remains pending.
+- Sprint 9 was verified via the automated suite (SQLite and PostgreSQL `--create-db`),
+  not by restarting the live server. The long-running Uvicorn (last known PID `2064`)
+  and any standing Celery worker were **not** restarted for Sprint 9 and may still be
+  running Sprint 8 code — restart both before any live smoke test.
+- The additive Sprint 9 migrations `tools.0001`, `tools.0002`, and `workflows.0002`
+  were exercised through `pytest --create-db` (fresh throwaway DBs) but were **not**
+  necessarily applied to the standing local `agenthub` database. Run `manage.py migrate`
+  before serving Sprint 9 code against the persistent local DB.
+- PostgreSQL gate gotcha: the Sprint 7 MCP/metrics tests are hard-enabled only under
+  `config.settings.test`. When running `--create-db` under `config.settings.local`,
+  also export `MCP_ENABLED=true` and `METRICS_BEARER_TOKEN=<any-non-empty>` or 8
+  MCP/metrics tests fail spuriously (they 404 the disabled endpoints). Also verified in
+  the [`engineering-rules.md`](engineering-rules.md) verified-state.
 - Interpreter: `.venv` (Python 3.13) is canonical and, after Sprint 5, again has all
   dependencies (`boto3`/`pgvector` installed from `requirements.lock`); gates pass in it
   on SQLite and — with the Compose database — on PostgreSQL. `C:\Python314\python.exe`
@@ -104,6 +109,13 @@ Current cross-agent state:
 - Codex implemented and automatically verified Sprint 8 on SQLite and PostgreSQL; see
   its verification record. The web is current, but the user-started worker requires a
   restart after the stale-message fix; manual async workflow smoke remains.
+- Claude committed Sprint 8 (`b38af35`) after independently re-verifying it, then
+  implemented and verified Sprint 9 (tool registry + governed egress + approval
+  lifecycle + workflow tool node) across six commits `bb4d675`, `84ffb76`, `47e7321`,
+  `39e67d8`, `e2bc174`, and `c68415d` (tip). Automated evidence only (SQLite 275 passed
+  / 2 skipped; PostgreSQL 277 passed); no live-egress or live-server smoke was run —
+  `TOOL_ADAPTER` defaults to the no-egress deterministic adapter. Sprint 10
+  (`docs/tasks/sprint-10-agent-runtime/`) is planned but not started.
 
 ## Agent transition checklist
 
