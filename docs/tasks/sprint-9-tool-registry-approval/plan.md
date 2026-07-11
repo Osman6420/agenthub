@@ -169,8 +169,21 @@ fallback where contracts permit. Retain additive records/audit for investigation
 
 ## Status
 
-Planned; implementation requires verified Sprint 8 resume semantics and explicit
-approval for authorization, public API, secret, dependency, and network changes.
+In progress, delivered as verified, independently committable increments.
+
+- Increment A — **implemented and verified** (SQLite + PostgreSQL): `tool_definition`
+  / `tool_binding` artifact validation (bounded, allowlisted, https-only, IP/private
+  hosts rejected, `critical` disabled, `secret:<name>`-only credentials), the
+  tenant-scoped immutable `ToolDefinition` / `ToolBinding` registry models with a
+  status-only mutation path, registration services enforcing the high-risk
+  side-effecting approval invariant, and fail-closed release pinning of active,
+  checksum-matched bindings. No execution proxy, egress, secret resolution, or approval
+  lifecycle yet — the platform performs no tool egress. See `verification.md`.
+- Increments B–D — **planned**: the execution proxy with bounded HTTP/MCP adapters and
+  DNS/redirect/SSRF egress controls; secret resolution; the approval lifecycle with
+  idempotent durable resume and uncertain-outcome handling; and console/API/MCP
+  surfaces, audit, and metrics. These require explicit approval for authorization,
+  public API, secret, dependency, and network changes before landing.
 
 ## Completion criteria
 

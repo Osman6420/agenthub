@@ -90,6 +90,17 @@ def compile_release(
             "ref": artifact.ref,
             "checksum": artifact.checksum,
         }
+        if artifact.type == "tool_binding":
+            # Pin the exact, active, registered binding (and its definition) so the
+            # execution proxy enforces a release-pinned allowlist. Fails closed.
+            from apps.tools.services import ToolRegistryError, resolve_pinned_tool_binding
+
+            try:
+                artifacts_manifest[ref.role]["tool"] = resolve_pinned_tool_binding(
+                    scenario=scenario, artifact=artifact
+                )
+            except ToolRegistryError as exc:
+                raise CompileError(f"role '{ref.role}' tool binding failed: {exc}") from exc
         if artifact.type == "workflow_definition":
             if ref.role != "workflow_definition":
                 raise CompileError("workflow definition must use the workflow_definition role")

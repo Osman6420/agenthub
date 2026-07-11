@@ -115,6 +115,22 @@ workflow scenario and requires `workflow_run` plus an `Idempotency-Key`; `GET`/`
 organization-allowlisted, exact-version matched, schema-checked, and receive only a
 narrow execution context. No workflow-engine dependency was added.
 
+Sprint 9 (tool registry + approval) is *in progress*, delivered as verified increments.
+Increment A is implemented and verified (SQLite + PostgreSQL): `apps.tools` adds
+`tool_definition` / `tool_binding` artifact validation (bounded, allowlisted,
+https-only destinations with IP/private/`.internal`/`localhost` hosts rejected,
+`critical` risk disabled, credentials only as `secret:<name>` references), the
+tenant-scoped immutable `ToolDefinition` / `ToolBinding` registry models (write-once
+body, status-only mutation), registration services enforcing the high-risk
+side-effecting approval invariant, and fail-closed release pinning of active,
+checksum-matched bindings into the manifest. **No tool execution proxy, outbound
+network/egress path, SSRF/DNS/redirect enforcement, secret resolution, or approval
+lifecycle exists yet** — the platform performs no tool egress. No production dependency
+was added. Increments B–D (proxy + HTTP/MCP adapters + egress controls; secret
+resolution; approval lifecycle + idempotent durable resume; console/API/MCP surfaces)
+remain planned and require explicit approval for authorization, public API, secret,
+dependency, and network changes.
+
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is
 implemented/verified and how to run the gates. Update it in the same change that lands

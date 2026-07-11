@@ -64,3 +64,11 @@ def validate_body(artifact_type: str, body: Any) -> None:
             validate_artifact_body(artifact_type, body)
         except WorkflowCompileError as exc:
             raise ArtifactValidationError(str(exc)) from exc
+
+    if artifact_type in {ArtifactType.TOOL_DEFINITION, ArtifactType.TOOL_BINDING}:
+        from apps.tools.tool_schema import ToolArtifactError, validate_tool_artifact_body
+
+        try:
+            validate_tool_artifact_body(artifact_type, body)
+        except ToolArtifactError as exc:
+            raise ArtifactValidationError(str(exc)) from exc

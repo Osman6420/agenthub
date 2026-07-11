@@ -53,6 +53,7 @@ LOCAL_APPS = [
     "apps.ingestion",
     "apps.orchestration",
     "apps.workflows",
+    "apps.tools",
     "apps.evaluations",
     "apps.observability",
     "apps.mcp",
