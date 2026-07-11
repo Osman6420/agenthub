@@ -193,11 +193,13 @@ In progress, delivered as verified, independently committable increments.
   approval expiry, idempotent resume that never double-executes, uncertain-outcome
   handling, and redacted fail-closed audit. Still no live egress and no public caller.
   See `verification.md`.
-- Increment D — **planned**: the real HTTP/MCP adapter and its network dependency
-  (requires explicit approval); wiring the proxy/approval flow into a workflow `tool`
-  node with pause/resume; and console/API/MCP approval surfaces plus metrics. These
-  require explicit approval for authorization, public API, secret, dependency, and
-  network changes before landing.
+- Increment D — **in progress** (end-to-end egress approved by the project owner):
+  - D1 — **implemented and verified**: `HttpToolAdapter`, an SSRF-safe stdlib HTTPS
+    client (no new dependency) selected by `TOOL_ADAPTER=http`; default stays the
+    deterministic no-egress adapter. Connects to the validated IP, verifies TLS for the
+    original host, no redirects, bounded read, timeout→uncertain. See `verification.md`.
+  - D2–D4 — **planned**: MCP egress adapter; public REST/MCP approval surfaces; the
+    workflow `tool` node with pause/resume; console operator views; and metrics.
 
 ## Completion criteria
 

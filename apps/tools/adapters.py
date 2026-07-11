@@ -72,3 +72,19 @@ class DeterministicToolAdapter:
             if isinstance(request.payload[key], (str, int, float, bool))
         }
         return ToolAdapterResponse(status_code=200, body={"status": "ok", "echo": echo})
+
+
+def get_configured_adapter() -> ToolAdapter:
+    """Return the adapter selected by ``settings.TOOL_ADAPTER`` (default: no egress).
+
+    Only ``"http"`` opts into real HTTPS egress; every other value (and the default)
+    keeps the deterministic no-egress adapter, so tests and unconfigured environments
+    never make an outbound call.
+    """
+    from django.conf import settings
+
+    if getattr(settings, "TOOL_ADAPTER", "deterministic") == "http":
+        from apps.tools.http_adapter import HttpToolAdapter
+
+        return HttpToolAdapter()
+    return DeterministicToolAdapter()

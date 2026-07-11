@@ -171,6 +171,11 @@ RUNTIME_RETRIEVAL_PROVIDER = env(
     default="apps.retrieval.providers.PgvectorRetrievalProvider",
 )
 
+# --- Tool egress (Sprint 9) -------------------------------------------------
+# "deterministic" (default) performs no outbound call; "http" enables the SSRF-safe
+# real HTTPS adapter. Egress remains gated by the release-pinned destination allowlist.
+TOOL_ADAPTER = env("TOOL_ADAPTER", default="deterministic")
+
 # --- Object storage (S3/MinIO) ----------------------------------------------
 # Referenced by ingestion (Sprint 5). Declared here so config is validated early.
 OBJECT_STORE = {

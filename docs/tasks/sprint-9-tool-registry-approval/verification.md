@@ -167,3 +167,39 @@ constraint, org/status indexes). Applied cleanly on SQLite and PostgreSQL.
   work (consistent with the Sprint 8 redaction stance).
 - No public surface (console/API/MCP) or workflow `tool` node yet (increment D); the
   default adapter performs no live egress.
+
+## Increment D1 — real HTTPS egress adapter (opt-in, default off)
+
+Scope: `HttpToolAdapter` (stdlib `http.client`/`ssl`/`socket`, **no new dependency**)
+selected by `TOOL_ADAPTER=http`; default remains the deterministic no-egress adapter.
+The project owner explicitly approved end-to-end egress for Increment D.
+
+### Commands and results
+
+| Command | Result |
+| --- | --- |
+| `ruff format --check .` / `ruff check .` | Pass — 202 files |
+| `mypy .` | Pass — no issues in 202 source files |
+| `python manage.py makemigrations --check --dry-run` | Pass — no changes (no model) |
+| `pytest` (SQLite) | Pass — 255 passed, 2 skipped |
+| `pytest --create-db` (PostgreSQL/pgvector, MCP+metrics) | Pass — 257 passed |
+
+### Security properties (evidenced in `test_http_adapter.py`, fully offline)
+
+- Connects to the **already-validated public IP** while sending SNI/Host and verifying
+  the TLS certificate for the **original hostname** — closes the DNS-rebinding TOCTOU
+  window (`test_success_connects_to_validated_ip_and_sends_host_and_auth`).
+- Redirects are never followed (`REDIRECT_NOT_ALLOWED`); non-2xx is an error; the body
+  is read under a hard byte cap (`RESPONSE_TOO_LARGE`); non-JSON / non-object bodies are
+  rejected; a credential becomes an ephemeral `Authorization` header (omitted when
+  absent) and is never logged.
+- A timeout after dispatch maps to `ToolAdapterUncertain` → `outcome_unknown` (never a
+  false success); a pre-send connection error is a plain failure.
+
+### Residual risk / not yet delivered
+
+- Real egress is opt-in and unconfigured in CI/tests, which use the deterministic
+  adapter; no live outbound call is made by the automated suite.
+- The MCP egress adapter (protocol `mcp`) is not yet implemented — `HttpToolAdapter`
+  rejects it with `PROTOCOL_UNSUPPORTED`. Public approval surfaces (REST/MCP), the
+  workflow `tool` node with pause/resume, console views, and metrics remain (D2–D4).

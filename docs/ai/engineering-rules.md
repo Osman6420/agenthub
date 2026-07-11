@@ -137,12 +137,15 @@ lifecycle: additive `ToolInvocation` / `ApprovalRequest` models and the
 `cancel_invocation` services — separation-of-duties, a request-checksum binding
 (input-swap-after-approval defense), a 30-minute approval expiry, idempotent resume that
 never double-executes, `outcome_unknown` for dispatched-but-unconfirmed calls (never
-retried), and redacted fail-closed audit. No production dependency was added; the default
-adapter still performs no live egress and nothing calls the flow in production yet.
-Increment D (the real HTTP/MCP adapter + its network dependency, requiring explicit
-approval; a workflow `tool` node with pause/resume; console/API/MCP approval surfaces
-and metrics) remains planned and requires explicit approval for authorization, public
-API, secret, dependency, and network changes.
+retried), and redacted fail-closed audit. Increment D1 (end-to-end egress was approved
+by the project owner) adds `apps.tools.http_adapter.HttpToolAdapter`, an SSRF-safe
+stdlib-only HTTPS client selected by `TOOL_ADAPTER=http`: it dials the already-validated
+public IP while verifying TLS/SNI/Host for the original hostname (DNS-rebinding defense),
+never follows redirects, reads under a byte cap, and maps a post-dispatch timeout to
+`outcome_unknown`. **No production dependency was added, and the default `TOOL_ADAPTER`
+is `deterministic` — tests/CI perform no live egress.** Remaining Increment D work
+(D2–D4: an MCP egress adapter; public REST/MCP approval surfaces; a workflow `tool` node
+with pause/resume; console operator views; metrics) is in progress under that approval.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is

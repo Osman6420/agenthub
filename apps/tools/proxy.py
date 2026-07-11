@@ -22,11 +22,11 @@ from apps.identity.capabilities import Capability
 from apps.releases.models import ScenarioRelease
 from apps.releases.services import get_artifact_body_for_role, get_manifest_role
 from apps.tools.adapters import (
-    DeterministicToolAdapter,
     ToolAdapter,
     ToolAdapterError,
     ToolAdapterRequest,
     ToolAdapterUncertain,
+    get_configured_adapter,
 )
 from apps.tools.egress import DnsResolver, EgressDenied, validate_destination
 from apps.tools.secrets_resolver import EnvSecretResolver, SecretResolutionError, SecretResolver
@@ -176,7 +176,7 @@ def invoke_tool(
         except SecretResolutionError as exc:
             raise ToolExecutionError(exc.code) from exc
 
-    active_adapter = adapter or DeterministicToolAdapter()
+    active_adapter = adapter or get_configured_adapter()
     request = ToolAdapterRequest(
         protocol=tool.protocol,
         method=tool.method,
