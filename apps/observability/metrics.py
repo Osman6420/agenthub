@@ -61,6 +61,18 @@ WORKFLOW_NODES = Counter(
     ("node_type",),
     registry=REGISTRY,
 )
+TOOL_INVOCATIONS = Counter(
+    "agenthub_tool_invocations_total",
+    "Terminal tool-invocation outcomes.",
+    ("status",),
+    registry=REGISTRY,
+)
+TOOL_APPROVALS = Counter(
+    "agenthub_tool_approvals_total",
+    "Tool approval decisions.",
+    ("decision",),
+    registry=REGISTRY,
+)
 
 
 def render_metrics() -> bytes:

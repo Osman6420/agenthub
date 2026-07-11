@@ -16,12 +16,29 @@ from apps.observability.metrics import (
     RELEASE_LIFECYCLE,
     RUNTIME_REQUESTS,
     TOKENS,
+    TOOL_APPROVALS,
+    TOOL_INVOCATIONS,
     WORKFLOW_NODES,
     WORKFLOW_RUNS,
 )
 from apps.observability.models import UsageEvent
+from apps.tools.models import (
+    TERMINAL_INVOCATION_STATUSES,
+    ApprovalRequest,
+    ApprovalStatus,
+    ToolInvocation,
+)
 from apps.workflows.compiler import BUILTIN_NODE_TYPES
 from apps.workflows.models import WorkflowRun, WorkflowRunEvent
+
+_DECIDED_APPROVAL_STATUSES = frozenset(
+    {
+        ApprovalStatus.APPROVED,
+        ApprovalStatus.REJECTED,
+        ApprovalStatus.EXPIRED,
+        ApprovalStatus.CANCELLED,
+    }
+)
 
 
 @receiver(post_save, sender=UsageEvent, dispatch_uid="observability.usage_event")
@@ -81,3 +98,16 @@ def workflow_event_saved(
         return
     node_type = instance.outcome if instance.outcome in BUILTIN_NODE_TYPES else "other"
     WORKFLOW_NODES.labels(node_type=node_type).inc()
+
+
+@receiver(post_save, sender=ToolInvocation, dispatch_uid="observability.tool_invocation")
+def tool_invocation_saved(sender: Any, instance: ToolInvocation, **kwargs: Any) -> None:
+    # Count each invocation once, when it reaches a terminal status.
+    if instance.status in TERMINAL_INVOCATION_STATUSES:
+        TOOL_INVOCATIONS.labels(status=str(instance.status)).inc()
+
+
+@receiver(post_save, sender=ApprovalRequest, dispatch_uid="observability.tool_approval")
+def tool_approval_saved(sender: Any, instance: ApprovalRequest, **kwargs: Any) -> None:
+    if instance.status in _DECIDED_APPROVAL_STATUSES:
+        TOOL_APPROVALS.labels(decision=str(instance.status)).inc()

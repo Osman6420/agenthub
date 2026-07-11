@@ -203,3 +203,39 @@ The project owner explicitly approved end-to-end egress for Increment D.
 - The MCP egress adapter (protocol `mcp`) is not yet implemented — `HttpToolAdapter`
   rejects it with `PROTOCOL_UNSUPPORTED`. Public approval surfaces (REST/MCP), the
   workflow `tool` node with pause/resume, console views, and metrics remain (D2–D4).
+
+## Increment D-surface — operator commands + bounded metrics
+
+Scope: management commands `decide_tool_approval` / `list_tool_approvals` /
+`cancel_tool_invocation` (role-resolved authorization) and bounded Prometheus counters
+`agenthub_tool_invocations_total{status}` and `agenthub_tool_approvals_total{decision}`
+wired via `post_save` signals (no coupling from the service layer).
+
+### Commands and results
+
+| Command | Result |
+| --- | --- |
+| `ruff format --check .` / `ruff check .` | Pass — 209 files |
+| `mypy .` | Pass — no issues in 209 source files |
+| `python manage.py makemigrations --check --dry-run` | Pass — no changes |
+| `pytest` (SQLite) | Pass — 261 passed, 2 skipped |
+| `pytest --create-db` (PostgreSQL/pgvector, MCP+metrics) | Pass — 263 passed |
+
+### Acceptance-criteria evidence
+
+- `decide_tool_approval` approves only for an authorized approver role and rejects a
+  non-approver or unknown actor — `test_commands.py::test_decide_command_approves_for_
+  approver`, `test_decide_command_denied_for_non_approver`, `test_decide_command_unknown_
+  actor`.
+- `list_tool_approvals` shows pending requests for an org; `cancel_tool_invocation`
+  cancels tenant-scoped — `test_list_command_shows_pending`, `test_cancel_command_
+  cancels_invocation`.
+- Metrics stay bounded and are emitted from DB signals — `test_approval_decision_
+  increments_bounded_metric`.
+
+### Residual risk / not yet delivered
+
+- The workflow `tool` node with pause/resume, the MCP egress adapter, and public
+  consumer REST/MCP tool/approval endpoints remain the last mile. The approval lifecycle
+  is fully operable today via management commands; an HTML operator console view is a
+  convenience follow-up.

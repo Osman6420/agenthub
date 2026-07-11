@@ -143,9 +143,14 @@ stdlib-only HTTPS client selected by `TOOL_ADAPTER=http`: it dials the already-v
 public IP while verifying TLS/SNI/Host for the original hostname (DNS-rebinding defense),
 never follows redirects, reads under a byte cap, and maps a post-dispatch timeout to
 `outcome_unknown`. **No production dependency was added, and the default `TOOL_ADAPTER`
-is `deterministic` — tests/CI perform no live egress.** Remaining Increment D work
-(D2–D4: an MCP egress adapter; public REST/MCP approval surfaces; a workflow `tool` node
-with pause/resume; console operator views; metrics) is in progress under that approval.
+is `deterministic` — tests/CI perform no live egress.** The operator surface is
+implemented and verified: management commands `decide_tool_approval`,
+`list_tool_approvals`, and `cancel_tool_invocation` (role-resolved authorization) plus
+bounded Prometheus counters `agenthub_tool_invocations_total` /
+`agenthub_tool_approvals_total` wired via `post_save` signals. Remaining Increment D work
+(an MCP egress adapter; a workflow `tool` node with pause/resume; public consumer
+REST/MCP tool/approval endpoints; an HTML operator console view) is in progress under
+that approval; approvals are already fully operable via the management commands.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is

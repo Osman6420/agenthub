@@ -198,8 +198,13 @@ In progress, delivered as verified, independently committable increments.
     client (no new dependency) selected by `TOOL_ADAPTER=http`; default stays the
     deterministic no-egress adapter. Connects to the validated IP, verifies TLS for the
     original host, no redirects, bounded read, timeout→uncertain. See `verification.md`.
-  - D2–D4 — **planned**: MCP egress adapter; public REST/MCP approval surfaces; the
-    workflow `tool` node with pause/resume; console operator views; and metrics.
+  - D-surface — **implemented and verified**: operator management commands
+    (`decide_tool_approval`, `list_tool_approvals`, `cancel_tool_invocation`) with
+    role-resolved authorization, and bounded Prometheus metrics for tool
+    invocations/approvals wired via `post_save` signals.
+  - Remaining — **planned**: MCP egress adapter; the workflow `tool` node with
+    pause/resume; public consumer REST/MCP tool/approval endpoints; and an HTML operator
+    console view (convenience — approvals are already operable via the commands above).
 
 ## Completion criteria
 
