@@ -1,0 +1,63 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Agent run <span class="muted">{{ run.public_id }}</span></h2>
+  <div class="tiles">
+    <div class="tile"><div class="n">{{ run.steps }}</div><div class="l">Steps</div></div>
+    <div class="tile"><div class="n">{{ run.tool_calls }}</div><div class="l">Tool calls</div></div>
+    <div class="tile"><div class="n">{{ run.input_tokens }}</div><div class="l">Input tokens</div></div>
+    <div class="tile"><div class="n">{{ run.output_tokens }}</div><div class="l">Output tokens</div></div>
+  </div>
+  <table>
+    <tbody>
+      <tr><th>Organization</th><td>{{ run.org }}</td></tr>
+      <tr><th>Scenario</th><td>{{ run.scenario }}</td></tr>
+      <tr><th>Status</th><td><span class="badge">{{ run.status }}</span></td></tr>
+      <tr><th>Error</th><td>{{ run.error|default:"-" }}</td></tr>
+      {% if run.awaiting_role %}<tr><th>Awaiting tool</th><td>{{ run.awaiting_role }}</td></tr>{% endif %}
+      <tr><th>Created</th><td>{{ run.created }}</td></tr>
+      <tr><th>Finished</th><td>{{ run.finished|default:"-" }}</td></tr>
+    </tbody>
+  </table>
+  {% if run.can_cancel %}
+  <div class="actions" style="margin-top:16px">
+    <form class="inline" method="post" action="{% url 'console:agent_run_cancel' run.public_id %}">
+      {% csrf_token %}<button class="link" type="submit">Cancel run</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+<div class="card">
+  <h2>Trace</h2>
+  <p class="muted" style="font-size:13px">
+    Redacted, append-only event trail — bounded decision/outcome labels and state
+    checksums only, never raw objective, chain-of-thought, or tool payloads.
+  </p>
+  {% if events %}
+  <table>
+    <thead>
+      <tr><th>#</th><th>Event</th><th>Step</th><th>Decision</th><th>Outcome</th>
+          <th>Reason</th><th>State</th><th>At</th></tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      <tr>
+        <td>{{ e.sequence }}</td>
+        <td>{{ e.event_type }}</td>
+        <td>{{ e.step_index|default:"-" }}</td>
+        <td>{{ e.decision|default:"-" }}</td>
+        <td>{{ e.outcome|default:"-" }}</td>
+        <td>{{ e.reason_code|default:"-" }}</td>
+        <td class="muted">{{ e.checksum|default:"-" }}</td>
+        <td>{{ e.occurred_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No trace events recorded yet.</p>
+  {% endif %}
+</div>
+<div class="actions"><a href="{% url 'console:agent_runs' %}">← All agent runs</a></div>
+{% endblock %}

@@ -151,6 +151,49 @@ dependency was added (the real client is stdlib). Additive migrations only
 (`tools.0001`, `tools.0002`, `workflows.0002`). Approval decisions are operator actions
 (not consumer actions), so no public consumer "decide" endpoint exists.
 
+Sprint 10 (agent runtime) is implemented and verified (SQLite 337 passed / 2 skipped;
+PostgreSQL affected-app run 142 passed). `apps.agents` adds the `agent_definition`
+artifact (data, not code: bounded, allowlisted tool *binding roles*, retrieval flag,
+limit overrides that may only lower the hard caps) with author-time validation and a
+deterministic checksummed compiler; the release compiler pins the compiled agent
+(`agent_checksum`) and fails closed unless every declared tool resolves to a pinned
+`tool_binding` role. Durable state is the immutable `AgentVersion`, the tenant-scoped
+`AgentRun` (addressed externally by an opaque `public_id` UUID so agent and workflow run
+ids never collide on `/v1/runs/{id}`) with an immutable redacted start snapshot, a
+versioned redacted checkpoint, bounded resource counters, and an append-only
+`AgentRunEvent` trail. The Celery task (`queue="runtime"`, `acks_late`) claims the run
+under `select_for_update`, is terminal-state idempotent, and treats a stale/missing
+message as a safe no-op; the bounded loop re-checks cancellation, deadline, and the step
+cap each iteration, enforces step/tool-call/token/state-size/checkpoint-schema-version
+caps (each terminates deterministically with a stable code — never an uncontrolled
+requeue), and re-validates every planner decision against the immutable compiled tool
+allowlist and decision-kind allowlist. Tool use flows only through the Sprint 9
+proxy/approval boundary (idempotency key `agent:<run_id>:<step>`); a required approval
+pauses the run (`waiting_approval` + durable checkpoint) and auto-resumes on the
+post-commit decision signal, failing closed on rejection. Final output must pass the
+release output contract and policy. **LangGraph (`langgraph==1.2.9`, the one approved new
+production dependency — exact pin, transitive tree captured in `requirements.lock`, `pip
+check` clean, and a CI step fails closed on lock drift) is integrated only as an
+`AgentPlanner` adapter selected via `AGENT_PLANNER`; the default is the deterministic
+planner, so CI/tests run no graph code and open no socket.** LangGraph owns only the
+planning loop/transitions/tool-selection/agent-local checkpointing; the durable run state
+machine, tenant isolation, tool proxy, approval, audit, retry, cancellation, and
+idempotency remain AgentHub's. No LangSmith / LangGraph Cloud / hosted service / new
+public endpoint was added (`langsmith` is a dormant transitive dep — no API key, no
+tracing). Gateway `POST /v1/invoke` returns `202` + `run_id` (the UUID `public_id`) for an
+authorized AGENT scenario, requiring `agent_invoke` + `Idempotency-Key`; `GET`/`DELETE
+/v1/runs/{id}` dual-dispatch (numeric→workflow, UUID→agent) and stay consumer/tenant
+scoped. Governed eval adds trajectory assertions (`agent_completed`, `agent_tool_invoked`,
+`agent_no_tools`, `agent_max_steps`) over the isolated candidate seam. Operator surfaces:
+the role-gated, tenant-scoped console agent-run list + redacted trace view + cancel, the
+`list_agent_runs` / `cancel_agent_run` management commands, and bounded Prometheus
+counters `agenthub_agent_runs_total` / `agenthub_agent_steps_total`. Additive migrations
+only (`agents.0001`, `artifacts.0003`). Management commands today additionally include
+`list_agent_runs` and `cancel_agent_run`. Not yet delivered (operational follow-ups): a
+global start/resume kill switch, the checkpoint retention/purge job (the 30/90-day policy
+is recorded but not automated), and production-like load/soak tests; no live-egress or
+live-server smoke was run (default deterministic model provider + no-egress tool adapter).
+
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is
 implemented/verified and how to run the gates. Update it in the same change that lands

@@ -7,10 +7,13 @@ from typing import Any
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from apps.agents.models import AgentRun, AgentRunEvent
 from apps.audit.models import AuditEvent
 from apps.evaluations.models import EvalCaseResult
 from apps.ingestion.models import IngestionRun
 from apps.observability.metrics import (
+    AGENT_RUNS,
+    AGENT_STEPS,
     EVAL_CASES,
     INGESTION_RUNS,
     RELEASE_LIFECYCLE,
@@ -98,6 +101,33 @@ def workflow_event_saved(
         return
     node_type = instance.outcome if instance.outcome in BUILTIN_NODE_TYPES else "other"
     WORKFLOW_NODES.labels(node_type=node_type).inc()
+
+
+@receiver(post_save, sender=AgentRun, dispatch_uid="observability.agent_run")
+def agent_run_saved(sender: Any, instance: AgentRun, **kwargs: Any) -> None:
+    status = str(instance.status)
+    if status not in {
+        "requested",
+        "queued",
+        "running",
+        "waiting_approval",
+        "completed",
+        "failed",
+        "timed_out",
+        "cancelled",
+    }:
+        status = "other"
+    AGENT_RUNS.labels(status=status).inc()
+
+
+@receiver(post_save, sender=AgentRunEvent, dispatch_uid="observability.agent_step")
+def agent_event_saved(sender: Any, instance: AgentRunEvent, created: bool, **kwargs: Any) -> None:
+    if not created or instance.event_type != "step_completed":
+        return
+    decision = (
+        instance.decision if instance.decision in {"retrieve", "tool", "respond"} else "other"
+    )
+    AGENT_STEPS.labels(decision=decision).inc()
 
 
 @receiver(post_save, sender=ToolInvocation, dispatch_uid="observability.tool_invocation")

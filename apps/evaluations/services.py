@@ -11,6 +11,7 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils import timezone
 
+from apps.agents.runtime import AgentRuntimeError, run_agent_candidate
 from apps.audit.services import record_event
 from apps.catalog.models import ScenarioType
 from apps.evaluations.assertions import evaluate_assertion
@@ -92,6 +93,11 @@ def run_eval(
                         release=release,
                         input_payload=dict(case.get("input", {})),
                     )
+                elif release.scenario.type == ScenarioType.AGENT:
+                    result = run_agent_candidate(
+                        release=release,
+                        input_payload=dict(case.get("input", {})),
+                    )
                 else:
                     result = run_rag(
                         execution_context={},
@@ -118,7 +124,13 @@ def run_eval(
                 )
                 if case_passed:
                     passed_cases += 1
-    except (RuntimeReleaseError, RetrievalError, ModelProviderError, WorkflowRuntimeError) as exc:
+    except (
+        RuntimeReleaseError,
+        RetrievalError,
+        ModelProviderError,
+        WorkflowRuntimeError,
+        AgentRuntimeError,
+    ) as exc:
         return _finalize(run, EvalStatus.ERROR, 0, error_code=type(exc).__name__)
     except Exception:  # defensive: never leak an unclassified runtime error
         return _finalize(run, EvalStatus.ERROR, 0, error_code="INTERNAL_ERROR")

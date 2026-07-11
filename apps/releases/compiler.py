@@ -73,6 +73,8 @@ def compile_release(
 
     artifacts_manifest: dict[str, dict[str, object]] = {}
     workflow_checksum = ""
+    agent_checksum = ""
+    agent_tools: list[str] = []
     for ref in refs:
         if ref.role in artifacts_manifest:
             raise CompileError(f"duplicate role in release: {ref.role}")
@@ -116,6 +118,32 @@ def compile_release(
             except WorkflowCompileError as exc:
                 raise CompileError(f"workflow compilation failed: {exc}") from exc
             workflow_checksum = workflow_version.checksum
+        if artifact.type == "agent_definition":
+            if ref.role != "agent_definition":
+                raise CompileError("agent definition must use the agent_definition role")
+            from apps.agents.compiler import AgentCompileError
+            from apps.agents.services import compile_agent_version
+
+            try:
+                agent_version = compile_agent_version(
+                    scenario=scenario,
+                    source_artifact=artifact,
+                    created_by=created_by,
+                )
+            except AgentCompileError as exc:
+                raise CompileError(f"agent compilation failed: {exc}") from exc
+            agent_checksum = agent_version.checksum
+            agent_tools = list(agent_version.compiled_config.get("tools", []))
+
+    if agent_checksum:
+        # Fail closed: every tool the agent may propose must resolve to a tool_binding
+        # role pinned into this same release, so the runtime's allowlist is complete.
+        tool_roles = {
+            role for role, entry in artifacts_manifest.items() if entry["type"] == "tool_binding"
+        }
+        missing = sorted(t for t in agent_tools if t not in tool_roles)
+        if missing:
+            raise CompileError(f"agent declares tools with no pinned tool_binding role: {missing}")
 
     manifest: dict[str, object] = {
         "scenario_id": scenario.id,
@@ -126,6 +154,8 @@ def compile_release(
         manifest["index_versions"] = pinned_indexes
     if workflow_checksum:
         manifest["workflow_checksum"] = workflow_checksum
+    if agent_checksum:
+        manifest["agent_checksum"] = agent_checksum
     manifest_sha = compute_checksum(manifest)
 
     return ScenarioRelease.objects.create(

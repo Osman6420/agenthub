@@ -1,0 +1,33 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>{{ title }}</h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Run</th><th>Organization</th><th>Scenario</th><th>Status</th>
+        <th>Steps</th><th>Tool calls</th><th>Error</th><th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="{% url 'console:agent_run_detail' r.public_id %}">{{ r.public_id|slice:":8" }}</a></td>
+        <td>{{ r.org }}</td>
+        <td>{{ r.scenario }}</td>
+        <td><span class="badge">{{ r.status }}</span></td>
+        <td>{{ r.steps }}</td>
+        <td>{{ r.tool_calls }}</td>
+        <td>{{ r.error|default:"-" }}</td>
+        <td>{{ r.created }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No agent runs in your scope.</p>
+  {% endif %}
+</div>
+{% endblock %}

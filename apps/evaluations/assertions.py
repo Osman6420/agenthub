@@ -52,5 +52,20 @@ def evaluate_assertion(assertion: dict[str, Any], result: RunResult) -> tuple[bo
         executed = result.metadata.get("executed_nodes", [])
         ok = isinstance(executed, list) and assertion["value"] in executed
         return ok, "node_executed" if ok else "node_not_executed"
+    if kind == "agent_completed":
+        ok = result.status == "completed" and result.metadata.get("workload_type") == "agent"
+        return ok, "agent_completed" if ok else "agent_incomplete"
+    if kind == "agent_tool_invoked":
+        called = result.metadata.get("tools_called", [])
+        ok = isinstance(called, list) and assertion["value"] in called
+        return ok, "tool_invoked" if ok else "tool_not_invoked"
+    if kind == "agent_no_tools":
+        called = result.metadata.get("tools_called", [])
+        ok = isinstance(called, list) and len(called) == 0
+        return ok, "no_tools" if ok else "tools_invoked"
+    if kind == "agent_max_steps":
+        steps = result.metadata.get("steps", 0)
+        ok = isinstance(steps, int) and steps <= int(assertion["count"])
+        return ok, "within_step_budget" if ok else "step_budget_exceeded"
     # Unreachable: suite validation rejects unknown assertion types before storage.
     return False, "unsupported_assertion"

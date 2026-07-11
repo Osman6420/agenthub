@@ -61,6 +61,18 @@ WORKFLOW_NODES = Counter(
     ("node_type",),
     registry=REGISTRY,
 )
+AGENT_RUNS = Counter(
+    "agenthub_agent_runs_total",
+    "Durable agent run state transitions.",
+    ("status",),
+    registry=REGISTRY,
+)
+AGENT_STEPS = Counter(
+    "agenthub_agent_steps_total",
+    "Completed agent steps by bounded decision type.",
+    ("decision",),
+    registry=REGISTRY,
+)
 TOOL_INVOCATIONS = Counter(
     "agenthub_tool_invocations_total",
     "Terminal tool-invocation outcomes.",

@@ -54,6 +54,7 @@ LOCAL_APPS = [
     "apps.orchestration",
     "apps.workflows",
     "apps.tools",
+    "apps.agents",
     "apps.evaluations",
     "apps.observability",
     "apps.mcp",
@@ -175,6 +176,14 @@ RUNTIME_RETRIEVAL_PROVIDER = env(
 # "deterministic" (default) performs no outbound call; "http" enables the SSRF-safe
 # real HTTPS adapter. Egress remains gated by the release-pinned destination allowlist.
 TOOL_ADAPTER = env("TOOL_ADAPTER", default="deterministic")
+
+# --- Agent runtime (Sprint 10) ----------------------------------------------
+# Dotted path to an AgentPlanner implementation. Empty -> the deterministic built-in
+# planner, so tests/CI stay hermetic and no graph code runs. Set to
+# "apps.agents.langgraph_planner.LangGraphPlanner" to drive planning with the in-process
+# LangGraph adapter. The planner only *proposes* actions; the runtime re-validates every
+# decision against the immutable compiled tool allowlist and all resource caps.
+AGENT_PLANNER = env("AGENT_PLANNER", default="")
 
 # --- Object storage (S3/MinIO) ----------------------------------------------
 # Referenced by ingestion (Sprint 5). Declared here so config is validated early.

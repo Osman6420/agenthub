@@ -159,8 +159,49 @@ on incompatible code. Existing RAG/workflow paths remain available.
 
 ## Status
 
-Planned; implementation requires verified Sprints 8–9 contracts and explicit approval
-for the agent framework dependency plus authorization/public-interface changes.
+Implemented and Verified (2026-07-11). The `apps.agents` app delivers the bounded,
+guarded agent runtime on the verified Sprints 8–9 contracts:
+
+- `agent_definition` artifact (data, not code) with author-time validation and a
+  deterministic checksummed compiler; releases pin the compiled agent and fail closed
+  unless every declared tool resolves to a pinned `tool_binding` role.
+- Durable `AgentVersion` / `AgentRun` (opaque `public_id` UUID) / append-only
+  `AgentRunEvent`, immutable redacted start snapshot, versioned redacted checkpoint,
+  and the requested→queued→running→waiting_approval→completed/failed/timed_out/cancelled
+  state machine with `acks_late` claim-under-`select_for_update`, terminal-state
+  idempotency, and stale/missing-message-safe no-op.
+- Deterministic guard engine: step, tool-call, token, deadline, checkpoint-size, and
+  checkpoint-schema-version caps terminate deterministically with a stable code and no
+  uncontrolled requeue. Every planner decision is re-validated against the immutable
+  compiled tool allowlist and the decision-kind allowlist (untrusted-planner defense).
+- Tool use flows only through the Sprint 9 proxy/approval boundary; a required approval
+  pauses the run (`waiting_approval` + durable checkpoint) and auto-resumes on the
+  post-commit decision signal, failing closed on rejection.
+- LangGraph is integrated **only** as an `AgentPlanner` adapter selected via
+  `AGENT_PLANNER` (default is the deterministic planner, so CI/tests run no graph code).
+  LangGraph owns only the planning loop/transitions/tool-selection/agent-local
+  checkpointing; the durable run state machine, tenant isolation, tool proxy, approval,
+  audit, retry, cancellation, and idempotency remain AgentHub's. No LangSmith / LangGraph
+  Cloud / hosted service / new public endpoint was added.
+- Gateway `POST /v1/invoke` returns `202` + `run_id` (the UUID `public_id`) for an
+  authorized AGENT scenario, requiring `agent_invoke` + `Idempotency-Key`; `GET`/`DELETE
+  /v1/runs/{id}` dual-dispatch (numeric→workflow, UUID→agent) and are consumer/tenant
+  scoped.
+- Trajectory eval assertions (`agent_completed`, `agent_tool_invoked`, `agent_no_tools`,
+  `agent_max_steps`) run against the isolated candidate seam and can block promotion.
+- Operator surfaces: role-gated, tenant-scoped console agent-run list + redacted trace
+  view + cancel, and the `list_agent_runs` / `cancel_agent_run` management commands.
+  Bounded Prometheus counters `agenthub_agent_runs_total` / `agenthub_agent_steps_total`.
+
+Additive migrations only (`agents.0001`, `artifacts.0003`). One approved production
+dependency added: `langgraph==1.2.9` (exact pin; transitive tree captured in
+`requirements.lock`, `pip check` clean, and a CI step fails closed on lock drift).
+`langsmith` is a dormant transitive dependency — no API key is set and no tracing is
+enabled. See [`verification.md`](verification.md) for command evidence.
+
+Residual / not implemented in this increment: a global start/resume kill switch, the
+checkpoint retention/purge job (30/90-day policy is recorded but not automated), and
+production-like load/soak tests remain operational follow-ups.
 
 ## Completion criteria
 

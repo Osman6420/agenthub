@@ -37,10 +37,17 @@ such a fact is written.
   not by restarting the live server. The long-running Uvicorn (last known PID `2064`)
   and any standing Celery worker were **not** restarted for Sprint 9 and may still be
   running Sprint 8 code — restart both before any live smoke test.
-- The additive Sprint 9 migrations `tools.0001`, `tools.0002`, and `workflows.0002`
-  were exercised through `pytest --create-db` (fresh throwaway DBs) but were **not**
-  necessarily applied to the standing local `agenthub` database. Run `manage.py migrate`
-  before serving Sprint 9 code against the persistent local DB.
+- The additive Sprint 9 migrations `tools.0001`, `tools.0002`, and `workflows.0002` and
+  the Sprint 10 migrations `agents.0001` and `artifacts.0003` were exercised through
+  `pytest --create-db` (fresh throwaway DBs) but were **not** necessarily applied to the
+  standing local `agenthub` database. Run `manage.py migrate` before serving Sprint 9/10
+  code against the persistent local DB.
+- Sprint 10 added the approved production dependency `langgraph==1.2.9`. A `.venv` created
+  before Sprint 10 lacks it (and its transitive tree) and cannot import
+  `apps.agents.langgraph_planner`; re-run `pip install -e ".[dev]"` (or install from
+  `requirements.lock`) after pulling Sprint 10. The default `AGENT_PLANNER` is the
+  deterministic planner, so the core runtime and gates do not require langgraph to be
+  importable, but the LangGraph adapter test does.
 - PostgreSQL gate gotcha: the Sprint 7 MCP/metrics tests are hard-enabled only under
   `config.settings.test`. When running `--create-db` under `config.settings.local`,
   also export `MCP_ENABLED=true` and `METRICS_BEARER_TOKEN=<any-non-empty>` or 8
@@ -112,10 +119,25 @@ Current cross-agent state:
 - Claude committed Sprint 8 (`b38af35`) after independently re-verifying it, then
   implemented and verified Sprint 9 (tool registry + governed egress + approval
   lifecycle + workflow tool node) across six commits `bb4d675`, `84ffb76`, `47e7321`,
-  `39e67d8`, `e2bc174`, and `c68415d` (tip). Automated evidence only (SQLite 275 passed
+  `39e67d8`, `e2bc174`, and `c68415d`. Automated evidence only (SQLite 275 passed
   / 2 skipped; PostgreSQL 277 passed); no live-egress or live-server smoke was run —
-  `TOOL_ADAPTER` defaults to the no-egress deterministic adapter. Sprint 10
-  (`docs/tasks/sprint-10-agent-runtime/`) is planned but not started.
+  `TOOL_ADAPTER` defaults to the no-egress deterministic adapter.
+- Claude then implemented and verified Sprint 10 (agent runtime — `apps.agents`):
+  the `agent_definition` artifact + compiler, durable `AgentRun` (opaque `public_id`
+  UUID) with a guarded decision loop on the Sprint 8/9 Celery/tool-proxy/approval
+  contracts, LangGraph integrated only as an `AgentPlanner` adapter behind
+  `AGENT_PLANNER` (default deterministic → no graph code in CI), gateway `202` agent
+  invoke + workflow/agent dual-dispatch `/v1/runs/{id}`, trajectory eval assertions, and
+  role-gated console/command operator surfaces. Automated evidence only (SQLite 337
+  passed / 2 skipped; PostgreSQL affected-app run 142 passed); no live-egress or
+  live-server smoke was run (default deterministic model provider + no-egress tool
+  adapter). One approved production dependency added: `langgraph==1.2.9` (exact pin,
+  `requirements.lock` regenerated, `pip check` clean, CI fails closed on lock drift).
+  Additive migrations `agents.0001`, `artifacts.0003`. **As of this writing the Sprint 10
+  work is UNCOMMITTED** (verify with `git status`); the standing local Uvicorn/Celery
+  worker (if any) still runs pre-Sprint-10 code — restart both and run `manage.py migrate`
+  before any live Sprint 10 smoke. Not delivered (operational follow-ups): a global
+  start/resume kill switch, the checkpoint retention/purge job, and load/soak tests.
 
 ## Agent transition checklist
 

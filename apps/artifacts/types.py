@@ -21,6 +21,7 @@ class ArtifactType(models.TextChoices):
     CUSTOM_NODE_DEFINITION = "custom_node_definition", "Custom node definition"
     TOOL_DEFINITION = "tool_definition", "Tool definition"
     TOOL_BINDING = "tool_binding", "Tool binding"
+    AGENT_DEFINITION = "agent_definition", "Agent definition"
     MEMORY_POLICY = "memory_policy", "Memory policy"
     EVAL_SUITE = "eval_suite", "Eval suite"
 

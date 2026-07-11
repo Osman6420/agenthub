@@ -98,3 +98,32 @@ approval denial; checkpoint/release/context/limit tampering; task/resume replay;
 concurrent cancel/resume/timeout; every resource guard boundary; crash fault injection
 around checkpoints and tool calls; output/trajectory gate bypass; redaction/no-chain-of-
 thought; audit failure; retention/purge; and load/denial-of-wallet tests.
+
+## Implementation status (2026-07-11)
+
+Implemented and evidenced in [`verification.md`](verification.md):
+
+- Immutable checksummed compiled agent + release pin (`agent_checksum`); the runtime
+  reads only the pinned config, never the raw artifact.
+- Versioned redacted checkpoint with an incompatible-version fail-closed guard; input
+  redacted at ingress; events carry only allowlisted labels + checksums (no raw
+  chain-of-thought) — the "no `hello` leaks" assertions verify this.
+- Explicit state machine with `acks_late` claim-under-`select_for_update`, terminal-state
+  idempotency, and stale/missing-message-safe no-op (task/resume replay defense).
+- Hard step/tool-call/token/deadline/state-size caps, each failing closed with a stable
+  code and no uncontrolled requeue.
+- Model-output tainting: every planner decision is re-validated against the immutable
+  compiled tool allowlist and decision-kind allowlist, so a compromised/novel planner
+  (incl. LangGraph) cannot widen the tool surface or skip approval.
+- Central Sprint 9 tool proxy + approval reused unchanged (capability/contract/field/risk/
+  approval); required approval pauses and resumes; rejection fails closed; the Sprint 9
+  idempotency key prevents double-execution.
+- Output contract + policy validation on the final answer; tenant-scoped queries on every
+  run/event/trace access; trajectory eval assertions.
+
+Not yet implemented (tracked residual, operational follow-ups): the **global kill switch**,
+the **checkpoint retention/purge** job (30/90-day policy recorded, not automated), and
+**load / denial-of-wallet** tests. The "in-process framework/library defect" residual now
+concretely includes LangGraph, which is confined to the planning-decision seam behind
+`AGENT_PLANNER` (default deterministic) and cannot reach durable state, tenancy, or the
+tool boundary except by proposing a decision the runtime independently re-validates.

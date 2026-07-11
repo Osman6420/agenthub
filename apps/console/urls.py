@@ -33,6 +33,13 @@ urlpatterns = [
     path("releases/<int:release_id>/rollback/", views.release_rollback, name="release_rollback"),
     path("releases/<int:release_id>/canary/", views.canary_start, name="canary_start"),
     path("canaries/<int:canary_id>/stop/", views.canary_stop, name="canary_stop"),
+    path("agent-runs/", views.agent_runs, name="agent_runs"),
+    path("agent-runs/<str:public_id>/", views.agent_run_detail, name="agent_run_detail"),
+    path(
+        "agent-runs/<str:public_id>/cancel/",
+        views.agent_run_cancel,
+        name="agent_run_cancel",
+    ),
     path("tool-approvals/", views.tool_approvals, name="tool_approvals"),
     path(
         "tool-approvals/<int:approval_id>/decide/",

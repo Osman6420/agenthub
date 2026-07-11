@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from django.db.models import QuerySet
 
+from apps.agents.models import AgentRun
 from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import AIProject, Scenario
 from apps.identity.models import Consumer
@@ -54,3 +55,11 @@ def scoped_releases(user: UserLike) -> QuerySet[ScenarioRelease]:
         "scenario", "scenario__project", "scenario__project__organization"
     )
     return qs if allowed is None else qs.filter(scenario__project__organization_id__in=allowed)
+
+
+def scoped_agent_runs(user: UserLike) -> QuerySet[AgentRun]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = AgentRun.objects.select_related(
+        "organization", "scenario", "scenario__project", "consumer"
+    )
+    return qs if allowed is None else qs.filter(organization_id__in=allowed)

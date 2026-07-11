@@ -27,6 +27,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Verify locked dependency tree
+        # Fail closed if the resolved tree is internally inconsistent or if the pinned
+        # LangGraph version (Sprint 10 agent planner) drifts from requirements.lock.
+        run: |
+          pip check
+          python - <<'PY'
+          import importlib.metadata as md
+
+          expected = {}
+          with open("requirements.lock", encoding="utf-8") as handle:
+              for line in handle:
+                  line = line.strip()
+                  if not line or line.startswith("#") or "==" not in line:
+                      continue
+                  name, version = line.split("==", 1)
+                  expected[name.strip().lower().replace("_", "-")] = version.strip()
+
+          for pkg in ("langgraph", "langgraph-checkpoint", "langchain-core"):
+              installed = md.version(pkg)
+              assert expected.get(pkg) == installed, (
+                  f"{pkg} drift: lock={expected.get(pkg)} installed={installed}"
+              )
+          print("locked dependency tree verified")
+          PY
+
       - name: Format check (ruff)
         run: ruff format --check .
 

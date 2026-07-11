@@ -10,6 +10,7 @@ error envelope.
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any
 
 import jsonschema
@@ -18,6 +19,15 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.agents.compiler import AgentCompileError
+from apps.agents.models import AgentRun, AgentRunStatus
+from apps.agents.services import (
+    AgentRequestError,
+    cancel_agent_run,
+    request_agent_run,
+    resolve_release_agent,
+)
+from apps.agents.tasks import execute_agent_run
 from apps.artifacts.validation import compute_checksum
 from apps.audit.services import record_event
 from apps.catalog.models import ScenarioType
@@ -140,11 +150,12 @@ class _GatewayView(APIView):
                 http_status_code=403,
             )
         scenario = resolved.binding.scenario
-        required_capability = (
-            Capability.WORKFLOW_RUN
-            if scenario.type == ScenarioType.WORKFLOW and self.operation == "invoke"
-            else _QUERY_CAPABILITY
-        )
+        if self.operation == "invoke" and scenario.type == ScenarioType.WORKFLOW:
+            required_capability = Capability.WORKFLOW_RUN
+        elif self.operation == "invoke" and scenario.type == ScenarioType.AGENT:
+            required_capability = Capability.AGENT_INVOKE
+        else:
+            required_capability = _QUERY_CAPABILITY
         if required_capability not in resolved.capabilities:
             raise ApiError(
                 ErrorCode.CAPABILITY_DENIED,
@@ -167,6 +178,17 @@ class _GatewayView(APIView):
 
         if scenario.type == ScenarioType.WORKFLOW and self.operation == "invoke":
             return self._process_workflow(
+                request=request,
+                consumer=consumer,
+                request_id=request_id,
+                alias=alias,
+                input_payload=input_payload,
+                resolved=resolved,
+                release=release,
+            )
+
+        if scenario.type == ScenarioType.AGENT and self.operation == "invoke":
+            return self._process_agent(
                 request=request,
                 consumer=consumer,
                 request_id=request_id,
@@ -319,6 +341,96 @@ class _GatewayView(APIView):
         )
         return Response(body, status=202)
 
+    def _process_agent(
+        self,
+        *,
+        request: Request,
+        consumer: Any,
+        request_id: str,
+        alias: str,
+        input_payload: dict[str, Any],
+        resolved: Any,
+        release: Any,
+    ) -> Response:
+        idempotency_key = request.headers.get("Idempotency-Key", "")
+        request_hash = compute_checksum({"alias": alias, "input": input_payload, "op": "agent"})
+        if idempotency_key:
+            replay = self._check_idempotency(consumer, idempotency_key, request_hash)
+            if replay is not None:
+                return replay
+        try:
+            agent_version = resolve_release_agent(release)
+        except AgentCompileError as exc:
+            raise ApiError(
+                ErrorCode.RUNTIME_NOT_AVAILABLE,
+                "The agent runtime is not available for this release.",
+                http_status_code=503,
+                retryable=False,
+            ) from exc
+        scenario = resolved.binding.scenario
+        context = issue_execution_context(
+            organization_id=consumer.organization_id,
+            project_id=scenario.project_id,
+            scenario_id=scenario.id,
+            scenario_alias=alias,
+            consumer_id=consumer.id,
+            capabilities=list(resolved.capabilities),
+            release_id=release.id,
+            request_id=request_id,
+        )
+        try:
+            run, created = request_agent_run(
+                release=release,
+                consumer=consumer,
+                agent_version=agent_version,
+                execution_context=context,
+                input_payload=input_payload,
+                idempotency_key=idempotency_key,
+            )
+        except AgentRequestError as exc:
+            if exc.code == "IDEMPOTENCY_CONFLICT":
+                raise ApiError(
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency-Key was reused with a different agent request.",
+                    http_status_code=409,
+                ) from exc
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "A bounded Idempotency-Key is required for agent execution.",
+                http_status_code=400,
+            ) from exc
+        if created:
+            transaction.on_commit(lambda: execute_agent_run.delay(run.id))
+        body = {
+            "request_id": request_id,
+            "scenario_alias": alias,
+            "release_id": release.id,
+            "run_id": str(run.public_id),
+            "status": str(run.status),
+        }
+        if idempotency_key:
+            self._store_idempotency(consumer, idempotency_key, request_hash, 202, body)
+        record_event(
+            actor_type="consumer",
+            actor_id=consumer.subject,
+            action="gateway.agent_run",
+            outcome="success",
+            organization_id=consumer.organization_id,
+            resource_type="agent_run",
+            resource_id=str(run.public_id),
+            request_id=request_id,
+        )
+        UsageEvent.objects.create(
+            request_id=request_id,
+            organization_id=consumer.organization_id,
+            scenario_id=scenario.id,
+            release_id=release.id,
+            consumer_id=consumer.id,
+            operation="agent_run",
+            status="queued",
+        )
+        return Response(body, status=202)
+
     def _check_idempotency(self, consumer: Any, key: str, request_hash: str) -> Response | None:
         existing = IdempotencyRecord.objects.filter(consumer=consumer, key=key).first()
         if existing is None:
@@ -402,8 +514,31 @@ class QueryView(_GatewayView):
 
 
 class RunStatusView(APIView):
+    """Consumer/tenant-scoped run status + cancel for both workflow and agent runs.
+
+    A numeric ``run_id`` addresses a workflow run (legacy Sprint 8 contract); a UUID
+    addresses an agent run by its opaque ``public_id``. The two id spaces are disjoint,
+    so the shared surface never leaks or collides across the two runtimes.
+    """
+
     def get(self, request: Request, run_id: str) -> Response:
-        run = self._resolve(request, run_id)
+        if run_id.isdigit():
+            return self._workflow_status(self._resolve_workflow(request, run_id))
+        return self._agent_status(self._resolve_agent(request, run_id))
+
+    def delete(self, request: Request, run_id: str) -> Response:
+        if run_id.isdigit():
+            run = self._resolve_workflow(request, run_id)
+            cancelled = cancel_workflow_run(run=run, consumer=request.auth)
+            return Response({"run_id": str(cancelled.id), "status": str(cancelled.status)})
+        agent_run = self._resolve_agent(request, run_id)
+        cancelled_agent = cancel_agent_run(run=agent_run, consumer=request.auth)
+        return Response(
+            {"run_id": str(cancelled_agent.public_id), "status": str(cancelled_agent.status)}
+        )
+
+    @staticmethod
+    def _workflow_status(run: WorkflowRun) -> Response:
         body: dict[str, Any] = {
             "run_id": str(run.id),
             "status": str(run.status),
@@ -415,20 +550,49 @@ class RunStatusView(APIView):
             body["output"] = output
         return Response(body)
 
-    def delete(self, request: Request, run_id: str) -> Response:
-        run = self._resolve(request, run_id)
-        cancelled = cancel_workflow_run(run=run, consumer=request.auth)
-        return Response({"run_id": str(cancelled.id), "status": str(cancelled.status)})
+    @staticmethod
+    def _agent_status(run: AgentRun) -> Response:
+        body: dict[str, Any] = {
+            "run_id": str(run.public_id),
+            "status": str(run.status),
+            "release_id": run.release_id,
+            "error_code": run.error_code,
+        }
+        if run.status == AgentRunStatus.COMPLETED:
+            output_key = run.agent_version.compiled_config.get("output_key", "output")
+            output = run.checkpoint.get(output_key)
+            if isinstance(output, dict):
+                body["output"] = output
+        return Response(body)
 
     @staticmethod
-    def _resolve(request: Request, run_id: str) -> WorkflowRun:
-        if not run_id.isdigit():
-            raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
+    def _resolve_workflow(request: Request, run_id: str) -> WorkflowRun:
         run = WorkflowRun.objects.filter(
             pk=int(run_id),
             consumer=request.auth,
             organization_id=request.auth.organization_id,
         ).first()
+        if run is None:
+            raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
+        return run
+
+    @staticmethod
+    def _resolve_agent(request: Request, run_id: str) -> AgentRun:
+        try:
+            public_id = uuid.UUID(run_id)
+        except ValueError:
+            raise ApiError(
+                ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404
+            ) from None
+        run = (
+            AgentRun.objects.select_related("agent_version")
+            .filter(
+                public_id=public_id,
+                consumer=request.auth,
+                organization_id=request.auth.organization_id,
+            )
+            .first()
+        )
         if run is None:
             raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
         return run

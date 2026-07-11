@@ -17,6 +17,8 @@ from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
+from apps.agents.models import AgentRun
+from apps.agents.services import AgentRequestError, operator_cancel_agent_run
 from apps.audit.services import record_event
 from apps.catalog.models import ScenarioAlias
 from apps.console import scoping
@@ -410,6 +412,100 @@ def tool_invocation_cancel(request: HttpRequest, invocation_id: int) -> HttpResp
     except ToolApprovalError as exc:
         messages.error(request, f"Cancel denied: {exc.code}")
     return redirect("console:tool_approvals")
+
+
+@login_required
+def agent_runs(request: HttpRequest) -> HttpResponse:
+    rows = [
+        {
+            "public_id": str(run.public_id),
+            "org": run.organization.slug,
+            "scenario": run.scenario.slug,
+            "status": run.status,
+            "steps": run.step_count,
+            "tool_calls": run.tool_call_count,
+            "error": run.error_code,
+            "created": run.created_at,
+        }
+        for run in scoping.scoped_agent_runs(request.user).order_by("-created_at")[:200]
+    ]
+    return render(request, "console/agent_runs.html", {"title": "Agent runs", "rows": rows})
+
+
+@login_required
+def agent_run_detail(request: HttpRequest, public_id: str) -> HttpResponse:
+    run = _scoped_agent_run(request.user, public_id)
+    # Only bounded, already-redacted fields reach the template: the event trail carries
+    # allowlisted decision/outcome labels and checksums, never raw state or payloads.
+    events = [
+        {
+            "sequence": event.sequence,
+            "event_type": event.event_type,
+            "step_index": event.step_index,
+            "decision": event.decision,
+            "outcome": event.outcome,
+            "reason_code": event.reason_code,
+            "checksum": event.state_checksum[:12],
+            "occurred_at": event.occurred_at,
+        }
+        for event in run.events.order_by("sequence")
+    ]
+    public = str(run.public_id)
+    summary = {
+        "public_id": public,
+        "org": run.organization.slug,
+        "scenario": run.scenario.slug,
+        "status": run.status,
+        "error": run.error_code,
+        "steps": run.step_count,
+        "tool_calls": run.tool_call_count,
+        "input_tokens": run.input_tokens,
+        "output_tokens": run.output_tokens,
+        "awaiting_role": run.awaiting_role,
+        "created": run.created_at,
+        "finished": run.finished_at,
+        "can_cancel": run.status not in {"completed", "failed", "timed_out", "cancelled"},
+    }
+    return render(
+        request,
+        "console/agent_run_detail.html",
+        {"title": f"Agent run {public[:8]}", "run": summary, "events": events},
+    )
+
+
+@login_required
+@require_POST
+def agent_run_cancel(request: HttpRequest, public_id: str) -> HttpResponse:
+    run = _scoped_agent_run(request.user, public_id)
+    try:
+        operator_cancel_agent_run(
+            run=run,
+            organization_id=run.organization_id,
+            actor=request.user.get_username(),
+        )
+        messages.success(request, f"Agent run {run.public_id} cancelled.")
+    except AgentRequestError as exc:
+        messages.error(request, f"Cancel denied: {exc.code}")
+    return redirect("console:agent_run_detail", public_id=str(run.public_id))
+
+
+def _scoped_agent_run(user: UserLike, public_id: str) -> AgentRun:
+    import uuid as _uuid
+
+    try:
+        parsed = _uuid.UUID(str(public_id))
+    except ValueError as exc:
+        raise Http404 from exc
+    run = (
+        AgentRun.objects.select_related("organization", "scenario", "consumer")
+        .filter(public_id=parsed)
+        .first()
+    )
+    if run is None:
+        raise Http404
+    if not _operator_can_access_org(user, run.organization_id):
+        raise PermissionDenied
+    return run
 
 
 def _operator_can_access_org(user: UserLike, organization_id: int) -> bool:

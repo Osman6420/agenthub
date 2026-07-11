@@ -98,11 +98,28 @@ Real egress (stdlib HTTPS/MCP adapters) is opt-in via `TOOL_ADAPTER`; the defaul
 no-egress deterministic adapter, so tests make no outbound call. No new production
 dependency was added. See [`sprint-9-tool-registry-approval`](../tasks/sprint-9-tool-registry-approval/plan.md).
 
-Not yet present: a real LLM/embedding provider, agents, or applied
-production deployment. Sprint 7 deployment resources are reviewable drafts, not live
-infrastructure. Model/embedding providers are deterministic defaults (no real LLM call
-yet). Consumer auth is bearer-token only (OIDC/JWT/mTLS later); LDAP is configured but
-not yet validated against a live directory.
+Sprint 10 is implemented and verified: `apps.agents` is a durable, bounded agent runtime.
+An `agent_definition` artifact (data, not code) compiles to an immutable checksummed
+config pinned into releases (fail-closed unless every declared tool resolves to a pinned
+`tool_binding` role). The tenant-scoped `AgentRun` (opaque `public_id` UUID) runs a
+guarded decision loop on the verified Sprint 8/9 Celery, tool-proxy, and approval
+contracts: step/tool-call/token/deadline/state-size/checkpoint-version caps fail closed,
+every planner decision is re-validated against the immutable compiled tool allowlist, a
+required tool approval pauses (`waiting_approval`) and auto-resumes on the decision
+signal, and output must pass contract + policy. LangGraph (`langgraph==1.2.9`, one
+approved pinned dependency) is integrated only as an `AgentPlanner` adapter via
+`AGENT_PLANNER`; the default is deterministic, so CI runs no graph code. `POST /v1/invoke`
+returns `202` + UUID `run_id`; `GET`/`DELETE /v1/runs/{id}` dual-dispatch workflow/agent.
+Trajectory eval assertions, a role-gated console agent-run list + redacted trace, and
+`list_agent_runs` / `cancel_agent_run` commands are included. No LangSmith/Cloud/hosted
+service or new public endpoint. See [`sprint-10-agent-runtime`](../tasks/sprint-10-agent-runtime/plan.md).
+
+Not yet present: a real LLM/embedding provider or applied production deployment. Sprint 7
+deployment resources are reviewable drafts, not live infrastructure. Model/embedding
+providers are deterministic defaults (no real LLM call yet). Consumer auth is bearer-token
+only (OIDC/JWT/mTLS later); LDAP is configured but not yet validated against a live
+directory. Agent operational follow-ups remain: a global start/resume kill switch, the
+checkpoint retention/purge job, and load/soak tests.
 
 ## Scope
 
@@ -131,6 +148,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | MCP + metrics + operations (Sprint 7) | Verified | Sprints 3–6 | [sprint-7-mcp-metrics-operations](../tasks/sprint-7-mcp-metrics-operations/plan.md) | [v3 target plan §12, §21, §24](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-7-mcp-metrics-operations/verification.md) |
 | Workflow core (Sprint 8) | Verified | Sprints 6–7 | [sprint-8-workflow-core](../tasks/sprint-8-workflow-core/plan.md) | [v3 target plan §15](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-8-workflow-core/verification.md) |
 | Tool registry + approval (Sprint 9) | Verified | Sprint 8 | [sprint-9-tool-registry-approval](../tasks/sprint-9-tool-registry-approval/plan.md) | [v3 target plan §17](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-9-tool-registry-approval/verification.md) |
+| Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
 | Gateway and identity context | Planned in target document | Control plane, identity provider | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | RAG runtime and ingestion | Planned in target document | Model/embedding provider, pgvector, workers | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | Evaluation and release | Planned in target document | Runtime, artifact registry | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |

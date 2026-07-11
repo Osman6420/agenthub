@@ -6,7 +6,7 @@ requires-python = ">=3.13"
 license = { text = "Proprietary" }
 
 # Runtime dependencies. Kept minimal for Sprint 0; each later sprint adds only
-# what it needs (DRF in Sprint 3, pgvector in Sprint 5, LangGraph in Sprint 10, ...).
+# what it needs (DRF in Sprint 3, pgvector in Sprint 5, LangGraph in Sprint 10).
 dependencies = [
     "Django>=5.2,<5.3",
     "django-environ>=0.11,<0.13",
@@ -23,6 +23,11 @@ dependencies = [
     "opentelemetry-sdk>=1.38,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.38,<2",
     "prometheus-client>=0.22,<1",
+    # Sprint 10 agent runtime: LangGraph powers only the agent planning loop behind
+    # the internal AgentPlanner adapter (default planner stays deterministic). Exact
+    # pin; the resolved transitive tree is captured in requirements.lock. No
+    # LangSmith/LangGraph Cloud/hosted services are used.
+    "langgraph==1.2.9",
 ]
 
 [project.optional-dependencies]
