@@ -36,7 +36,7 @@ Last checked: 2026-07-12, Europe/Istanbul.
   (redacted output); agent `POST /v1/invoke` → 202 → completed (UUID run id); console login +
   builder bundle (`/static/builder/builder.js` 200); MCP 401 (auth-gated); metrics served.
 - Manual test recipe (credentials/token are printed by the seeder, not stored):
-  [`docs/manual-testing-guide.md`](manual-testing-guide.md).
+  [`docs/manual-testing-guide.md`](../manual-testing-guide.md).
 
 Record only genuinely time-varying facts here (is a server up, which ports, is MinIO
 running). Durable facts — what is implemented/verified, the canonical interpreter, and
@@ -232,8 +232,9 @@ Current cross-agent state:
   not banned); **no blind retry** (a post-send model/embedding failure is an unknown outcome, not a
   retry); and a **technical prompt-injection boundary** (system instructions server-side + separate
   from doc/user text, tool calls never authorized by model output, citation/policy applied after the
-  model). WS1 status is **"architecture scoped; implementation design gated by M0"** (not "design
-  complete" — the physical index schema + RLS connection-context are still chosen in M0).
+  model). WS1 status is **"architecture scoped; M0 decisions documented; implementation not
+  approved"** — the physical index schema, RLS connection-context, and shared egress contract are
+  fixed by ADR-0003/0004/0005; changing them requires a superseding ADR.
 
 - **Planning-doc consistency pass (2026-07-12):** a review found `phase-2-plan.md` and
   `master-plan.md` still carried pre-decision statements (stale `openai`-may-be-used note,
@@ -266,6 +267,38 @@ Current cross-agent state:
   DAG (multiple `generate` nodes) but **not yet functional** — wiring generate/retrieve/model
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
+
+- **STARTING PHASE 2 — read this first (for the session told "start Phase 2").**
+  - **Entry point:** M0 (design spikes) is **done** — [ADR-0003] vector storage, [ADR-0004] RLS,
+    [ADR-0005] shared egress (implements [ADR-0002]). Begin at **P1 — shared SSRF-safe egress
+    adapter + real chat `ModelProvider`** and follow the phase order in
+    [`../planning/components/runtime-and-document-plane-sequence.md`](../planning/components/runtime-and-document-plane-sequence.md)
+    (P1 chat → P2 content plane → P3 embeddings/indexing staged → P4 ACL+RLS serve → P5 wire
+    agent/workflow → P6 agent prompt → P7 parsers/OCR/connectors → P8 console UI). Do **not** jump
+    ahead; honor the **serving guardrail** (no real tenant corpus served to consumers until P4).
+  - **What "start Phase 2" does and does not authorize:** it authorizes beginning *implementation*;
+    it does **not** waive the remaining gates. Before opening any **live egress** (chat P1,
+    embedding P3, OCR + Confluence/REST P7) get the owner's **environment-specific endpoint/profile
+    + secret** sign-off; before adding the **document-parser dependency** (P7) get supply-chain
+    approval. **No `openai` dependency** — stdlib adapter only (ADR-0002/0005). The planning docs
+    still read "not approved for implementation"; treat the owner's kickoff as the approval to begin
+    at P1 and update those status lines in the same change that lands P1.
+  - **Non-negotiable design constraints (change only via a new ADR):** egress is **profile-ID-only**
+    — an artifact carries only a `ModelProfile`/`EmbeddingProfile` id; `base_url`/host/scheme/secret/
+    TLS are **not** in the artifact (ADR-0002). **Migrate the existing `gitops/mcm/artifacts/
+    model_profile_default_chat.yaml`** (which still inlines `endpoint`/`api_key`) to a profile-ID
+    reference as part of P1. Reuse `apps/tools/egress`; **no blind retry** (post-send failure =
+    `outcome_unknown`; HTTP 429/503 retries require a documented idempotency guarantee); keep the
+    **deterministic providers as the default** so CI/gates run no live
+    egress. `run_rag` (`/v1/query`) already calls the model seam, so P1 lights it up once the
+    provider + catalog exist. Blue/green per-`IndexVersion` stores + pointer-flip promotion
+    (ADR-0003); `FORCE` RLS + transaction-local tenant context (ADR-0004).
+  - **First actions:** create `docs/tasks/phase-2-p1-live-chat/plan.md` + `threat-model.md` +
+    `verification.md`; re-establish a green gate baseline (`ruff format --check`, `ruff check`,
+    `mypy`, `makemigrations --check`, `manage.py check`, `pytest` on SQLite, and PostgreSQL with
+    `MCP_ENABLED=true` + `METRICS_BEARER_TOKEN`) **before** changing code; verify `.venv` deps.
+    Additive migrations only; never weaken an existing control. Ignore the untracked `.serena/` and
+    `docs/tasks/serena-agent-setup/` — unrelated tooling, not Phase 2 work.
 
 ## Agent transition checklist
 

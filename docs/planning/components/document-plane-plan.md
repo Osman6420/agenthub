@@ -20,11 +20,10 @@ UI). Consumer gateway seam unchanged in contract.
 ## Status
 
 **Decisions A–E approved by the owner on 2026-07-12** with the constraints folded into this
-plan. The workstream is **architecture-scoped**, but its **implementation design is gated by the
-M0 spikes** — the physical index schema and the RLS connection-context are still to be chosen —
-so this was *not* "design complete" in the buildable sense. **Not started (no code/migration/
-dependency/egress).** The M0 spikes are **now documented as ADRs** (the prerequisite for any
-migration/implementation); the remaining gate is Phase 2 implementation approval + per-phase egress
+plan. The workstream is **architecture-scoped** and **not started (no code/migration/dependency/
+egress)**. Its M0 decisions — physical index schema, RLS connection-context, and shared egress
+contract — are documented as accepted ADRs (the prerequisite for any migration/implementation);
+the remaining gate is Phase 2 implementation approval + per-phase egress
 sign-off. The M0 outputs:
 
 1. pgvector multi-dimension storage → [ADR-0003](../../adr/0003-vector-storage-blue-green-per-index-version.md);
@@ -382,8 +381,8 @@ Remaining (non-blocking, decided at their milestone):
 - Blob dedup by checksum — optional; defer unless storage pressure warrants.
 - Connector specifics — Confluence Cloud vs Data Center + auth; generic-REST source definition
   shape; upload size/type/scan limits — detailed in M4.
-- Spike 1's a-vs-b outcome (dimensionless-column-with-partial-index vs separate store) — default
-  is the separate immutable store unless the spike surfaces a blocker.
+- Vector storage — the separate immutable store is decided by ADR-0003; changing it requires a
+  superseding ADR.
 
 ## Testing strategy
 

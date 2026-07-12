@@ -186,12 +186,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
 | Visual workflow builder (Sprint 11) | Verified | Sprints 2, 8 | [sprint-11-workflow-builder](../tasks/sprint-11-workflow-builder/plan.md) | [v3 target plan §25](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-11-workflow-builder/verification.md) |
 | Document plane (Phase 2 · WS1) | Architecture scoped — M0 spikes documented (ADR-0003/0004/0005), implementation not approved | Sprints 5–6 | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | Not available (implementation approval pending) |
-| Live model runtime (Phase 2 · WS5) | Architecture scoped — implementation not approved | Shared egress + `ModelProfile` catalog | [phase-2-plan](phase-2-plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) + [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) | Not available |
-| Gateway and identity context | Planned in target document | Control plane, identity provider | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
-| RAG runtime and ingestion | Planned in target document | Model/embedding provider, pgvector, workers | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
-| Evaluation and release | Planned in target document | Runtime, artifact registry | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
-| Workflow, agent, tools, approval | Planned in target document | Gateway, policy, durable state | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
-| Audit and observability | Planned in target document | All runtime/control paths | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
+| Live model runtime (Phase 2 · WS5) | Architecture scoped — implementation not approved | Shared egress + `ModelProfile` catalog | [phase-2-plan](phase-2-plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | Not available (implementation approval pending) |
 
 ## Cross-cutting concerns
 
@@ -227,4 +222,5 @@ Each milestone has an approved plan, threat model where applicable, implemented 
 
 ## Status legend
 
-Use [the repository status model](../ai/definition-of-done.md#status-model). “Planned in target document” is not `Implemented`.
+Use [the repository status model](../ai/definition-of-done.md#status-model). Architecture-scoped
+Phase 2 work is not `Implemented` until code, migrations, tests, and verification evidence land.

@@ -222,8 +222,10 @@ delivered on that interleaved sequence. Implementation itself is still not appro
 
 ### 5.6 Governance, cost, and observability on live paths
 
-- Enforce per-call **timeout, response-size cap, token budget**, bounded retries with backoff, and
-  circuit-breaking on model egress; grounding/output-contract/policy/fallback on every real
+- Enforce per-call **timeout, response-size cap, token budget**, **ADR-0002/0005-classified retries
+  only for provably safe pre-send failures**, and circuit-breaking on model egress (the circuit
+  breaker may reject new calls but never re-send an `outcome_unknown` call);
+  grounding/output-contract/policy/fallback on every real
   generation path (RAG, workflow, agent); **no prompt/response content in logs, metrics labels, or
   audit** (ids/counts/latency/stable codes only). Add per-provider latency/error/token metrics
   reusing the Sprint 7 Prometheus surface.

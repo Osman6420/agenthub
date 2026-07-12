@@ -232,7 +232,11 @@ builder is being repurposed toward AI-assisted authoring. The single canonical S
 record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan is archived
 under `docs/planning/archive/`. Phase 2 is a discussion draft at
 `docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
-personal end-user MCP) — nothing there is approved for implementation yet.
+personal end-user MCP, and the foundational live-model runtime). Phase 2 implementation is not yet
+approved. Its M0 architecture decisions are accepted as ADR-0002–0005; the owner-set entry point
+after an explicit "start Phase 2" kickoff is P1 shared SSRF-safe egress + real chat provider, with
+the remaining environment-specific egress and dependency approvals still enforced. See
+`docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is

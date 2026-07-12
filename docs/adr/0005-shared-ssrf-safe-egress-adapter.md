@@ -43,8 +43,12 @@ reused by all three call sites.
   - **redacted audit** — record ids/operation/latency/status only; never the URL query, headers,
     token, prompt, or response body.
 - **Idempotency — no blind retry (per ADR-0002).** Failures are classified:
-  - **Pre-send** (DNS failure, connect refused, TLS handshake failure, or a clean pre-body 429/503):
-    bounded retry with exponential backoff + jitter.
+  - **Provably pre-send** (for example DNS failure, connect refused, or TLS handshake failure
+    before any request byte is written): bounded retry with exponential backoff + jitter.
+  - **HTTP 429/503:** receiving an HTTP response means the request may have been processed; these
+    responses are retried only when the provider contract documents the operation as idempotent
+    (or a provider-supported idempotency key makes it so). `Retry-After` is honored only after that
+    safety condition is met. Otherwise the call is not automatically re-sent.
   - **Post-send** (request bytes were written, then read timeout / reset / partial response):
     **no retry** — return `outcome_unknown` to the caller. Callers handle it per their governance:
     RAG generation → server fallback; ingestion embedding → fail the chunk/build for controlled
@@ -71,8 +75,9 @@ reused by all three call sites.
 - Rebinding (public A record that resolves to a private IP) is blocked; private/loopback/link-local/
   metadata endpoints are rejected; a redirect is denied; an oversized response is truncated/failed;
   a TLS-verification failure aborts; a caller-supplied URL/host/scheme is rejected (only profile IDs
-  accepted); a post-send timeout yields `outcome_unknown` and is **not** retried; a pre-send failure
-  retries within bounds; secrets/prompts/URLs are absent from logs and audit.
+  accepted); a post-send timeout yields `outcome_unknown` and is **not** retried; a provably
+  pre-send failure retries within bounds; 429/503 is not retried without a documented idempotency
+  guarantee; secrets/prompts/URLs are absent from logs and audit.
 
 ## Data and privacy consequences
 
