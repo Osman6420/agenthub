@@ -268,7 +268,16 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **PHASE 2 CURRENT ENTRY — P1 + P2 + P3 COMPLETE; continue at P4.** **P3 (real embeddings + staged
+- **P4 IN PROGRESS — P4.1 landed; continue at P4.2.** P4 (document-ACL retrieval + RLS + pointer-flip
+  promotion — the security core) is decomposed in `docs/tasks/phase-2-p4-acl-rls/plan.md` into P4.1
+  (binding + ACL grant foundation — **done**, commit `80d140f`: `ScenarioDocumentSetBinding` +
+  `DocumentSetGrant` in `apps/documents`, additive migration `documents.0002`, audited services, no
+  enforcement wired yet), P4.2 (release-compile pinning of `document_set_versions` + resolver
+  expansion + deny-by-default ACL retrieval predicate), P4.3 (PostgreSQL `FORCE` RLS + transaction-
+  local tenant connection-context per ADR-0004), P4.4 (pointer-flip promotion of the eval'd P3 index
+  + full negative-test matrix). **The serving guardrail still holds** — no real tenant corpus is
+  served to a consumer until P4.2 + P4.3 land. SQLite 447 passed / 10 skipped at P4.1.
+- **PHASE 2 CURRENT ENTRY — P1 + P2 + P3 COMPLETE; P4 in progress (see above).** **P3 (real embeddings + staged
   blue/green indexing) is implemented and verified** in `docs/tasks/phase-2-p3-embeddings/`, in two
   increments: P3.1 — a platform `EmbeddingProfile` catalog + per-tenant grants + opt-in
   `OpenAICompatibleEmbeddingClient` over the shared SSRF-safe transport (profile-id-only,
