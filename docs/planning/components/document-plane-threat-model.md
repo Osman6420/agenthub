@@ -79,10 +79,10 @@ PostgreSQL/pgvector, object store (MinIO/S3), Redis/Celery. Every outbound call 
 allowlisted scheme/host, resolved-IP pinning (anti-DNS-rebinding), connect/read timeouts,
 response-size caps, bounded retries, and `secret:<name>` credentials — reusing the Sprint 9
 SSRF-safe **stdlib** transport. Private/link-local/metadata ranges are blocked. The embedding
-endpoint is a platform-allowlisted internal endpoint taken from the selected `EmbeddingProfile`;
-neither tenant nor request may supply a `base_url`, and the `openai` library's `base_url`/
-transport flexibility is not used as an egress control. No `openai` dependency is added for
-embeddings at this stage.
+endpoint is a platform-allowlisted, environment-specific endpoint (test → cloud / prod → local)
+taken from the selected `EmbeddingProfile`; neither tenant nor request may supply a `base_url`,
+and the `openai` library's `base_url`/transport flexibility is not used as an egress control. No
+`openai` dependency is added for embeddings at this stage.
 
 ## Abuse cases
 

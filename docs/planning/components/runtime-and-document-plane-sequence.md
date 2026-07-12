@@ -2,8 +2,9 @@
 
 ## Status
 
-**Draft proposal for owner sign-off — not approved for implementation.** This document only
-**orders** work already designed elsewhere; it invents no new scope. Authorities:
+The high-level **delivery order is owner-set** (2026-07-12); this document **elaborates** it into
+a phase plan and **invents no new scope**. **Implementation is not yet approved** — the M0 spikes
+and per-phase egress sign-off remain the gates. Authorities:
 
 - WS1 design: [`document-plane-plan.md`](document-plane-plan.md) + [threat model](document-plane-threat-model.md).
 - WS5 scope: [`../phase-2-plan.md`](../phase-2-plan.md) → "Workstream 5 — Live model runtime".

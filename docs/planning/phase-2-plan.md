@@ -14,9 +14,10 @@ releases, gateway + MCP, RAG runtime, ingestion + pgvector, eval/promotion, work
 registry + approval, agent runtime, and the visual workflow builder. Phase 2 extends it
 with a **governed document plane**, a **modernized Turkish UI**, **AI-assisted scenario
 authoring** (alongside the visual builder), **personal (end-user) MCP with identity delegation**,
-and a **foundational live model runtime** — the real LLM provider (base_url + token → actual
-call) plus wiring the currently-stubbed generation/retrieval seams across RAG, workflow, and
-agent so scenarios truly reach a live model.
+and a **foundational live model runtime** — the real LLM provider (a platform-catalog
+`ModelProfile` → platform-resolved endpoint + credential → actual call) plus wiring the
+currently-stubbed generation/retrieval seams across RAG, workflow, and agent so scenarios truly
+reach a live model.
 
 ## Priority order (owner-set)
 
@@ -88,8 +89,9 @@ The interleaved phase plan is in
 - **Decision refined (2026-07-12) — the authoritative WS1 design supersedes the notes above:**
   the client is an `OpenAICompatibleEmbeddingClient` adapter over the **Sprint 9 SSRF-safe
   stdlib transport**, so **no `openai` dependency is added** at this stage; the endpoint is a
-  **platform-allowlisted internal endpoint** (no tenant/request `base_url`), and model +
-  dimensions come from a **platform-managed, immutable `EmbeddingProfile`** catalog. A dimension
+  **platform-allowlisted endpoint, environment-specific (test → cloud / prod → local)** — never a
+  tenant/request `base_url` — and model + dimensions come from a **platform-managed, immutable
+  `EmbeddingProfile`** catalog. A dimension
   change flows through a **staged, immutable blue/green reindex** with a **metadata-atomic
   pointer-flip promotion** — not an in-place column/HNSW mutation. See
   [`components/document-plane-plan.md`](components/document-plane-plan.md).
@@ -149,7 +151,8 @@ completed."* Today the runtime ships **only deterministic stubs** — a `model_p
 can declare `endpoint` + `model` + `secret:<name>` token, but no provider actually calls it, and
 several generation/retrieval seams are placeholders. This workstream makes scenarios reach a real
 model. It is **foundational** (nothing is a real product without it) and reuses the WS1 SSRF-safe
-egress; the owner sets its final sequence (recommended alongside WS1).
+egress. The **owner has set the delivery order** (see the Priority section); this track is
+delivered on that interleaved sequence. Implementation itself is still not approved.
 
 ### Current gaps (verified by code inspection 2026-07-12)
 
@@ -166,13 +169,17 @@ egress; the owner sets its final sequence (recommended alongside WS1).
 - **Multi-prompt scenarios are only drawable, not runnable.** The workflow DAG can hold multiple
   `generate` nodes, but with stubbed generation there is no real multi-prompt / multi-model flow.
 
-### 5.1 Real LLM `ModelProvider` (base_url + token → live call)
+### 5.1 Real LLM `ModelProvider` (ModelProfile ID → platform-resolved endpoint → live call)
 
 - Implement an `OpenAICompatibleModelProvider` (chat/generation) over the **Sprint 9 SSRF-safe
   stdlib transport** (same pattern as the WS1 embedding client — reuse target/scheme/host
-  validation, resolved-IP pinning, redirect denial, timeouts, response-size cap, bounded retries,
-  redacted audit). Driven by the `model_profile` artifact: `provider`, `endpoint`/base_url,
-  `model`, `secret:<name>` token, `timeout_seconds`; plugged via `RUNTIME_MODEL_PROVIDER`.
+  validation, resolved-IP pinning, redirect denial, timeouts, response-size cap, redacted audit).
+  The flow is **platform-catalog `ModelProfile` ID → platform-resolved endpoint / model / secret /
+  TLS policy → live call**: the artifact carries **only a `ModelProfile` ID/role**; `endpoint`/
+  `base_url`, `secret`, and TLS options are **removed from the artifact schema** and resolved by
+  the platform from the catalog. Plugged via `RUNTIME_MODEL_PROVIDER`.
+- **Retries:** bounded retries **only for safe pre-send failures** (connection not yet
+  established); a **post-send failure is an unknown outcome, never retried** (see 5.7).
 - **Endpoint governance — DECIDED ([ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)):**
   chat and embedding endpoints are a **platform-managed, immutable, revisioned profile catalog**
   (`ModelProfile` / `EmbeddingProfile`). Artifacts and the runtime reference a profile **by ID
@@ -247,10 +254,10 @@ at DSL level) makes prompts/models *authorable and visible in the UI* instead of
 reuses the **WS1** SSRF-safe egress and provider-catalog pattern. Dependencies/egress here follow
 the same explicit-approval + supply-chain/threat-review gate.
 
-**Proposed interleaved delivery order for WS1 + WS5** (value-first, shared egress built once, a
-real-LLM answer shipped early) is drafted in
-[`components/runtime-and-document-plane-sequence.md`](components/runtime-and-document-plane-sequence.md)
-— for owner sign-off, not yet approved.
+The **interleaved delivery order for WS1 + WS5 is owner-set**; the detailed phase plan (value-first,
+shared egress built once, a real-LLM answer shipped early) elaborates it in
+[`components/runtime-and-document-plane-sequence.md`](components/runtime-and-document-plane-sequence.md).
+**Implementation itself is not yet approved** (M0 spikes + per-phase egress sign-off remain gates).
 
 ## Cross-cutting constraints
 
