@@ -248,3 +248,91 @@ class DocumentSetMembership(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"membership:{self.document_set_version_id}:{self.document_version_id}"
+
+
+class ScenarioDocumentSetBinding(TimeStampedModel):
+    """Mandatory scenario ↔ document-set binding (the deny-by-default retrieval unit).
+
+    A retrieval scenario retrieves **only** from the document sets it is explicitly bound to,
+    within its tenant. A scenario with no binding retrieves nothing. At release-compile time
+    (P4.2) each binding resolves to a specific published ``DocumentSetVersion``; the enforcement
+    predicate + RLS backstop land in P4.2/P4.3. Here we model the binding and forbid a
+    cross-tenant scenario↔set link.
+    """
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="scenario_document_set_bindings"
+    )
+    scenario = models.ForeignKey(
+        "catalog.Scenario", on_delete=models.CASCADE, related_name="document_set_bindings"
+    )
+    document_set = models.ForeignKey(
+        DocumentSet, on_delete=models.CASCADE, related_name="scenario_bindings"
+    )
+    created_by = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "document_set"], name="uniq_scenario_document_set_binding"
+            )
+        ]
+        ordering = ["organization_id", "scenario_id", "document_set_id"]
+
+    def clean(self) -> None:
+        if self.document_set_id and self.document_set.organization_id != self.organization_id:
+            raise ValidationError("binding document set must belong to the same organization")
+        # Scenario tenancy is derived through its project; a scenario may only bind a set in
+        # its own tenant (cross-tenant retrieval defense).
+        if self.scenario_id and self.scenario.organization_id != self.organization_id:
+            raise ValidationError("binding scenario must belong to the same organization")
+
+    def __str__(self) -> str:
+        return f"binding:{self.scenario_id}:{self.document_set_id}"
+
+
+class GrantPrincipalType(models.TextChoices):
+    CONSUMER = "consumer", "Consumer"
+    SERVICE = "service", "Service"
+    USER = "user", "User"
+    GROUP = "group", "Group"
+
+
+class GrantPermission(models.TextChoices):
+    RETRIEVE = "retrieve", "Retrieve"
+
+
+class DocumentSetGrant(TimeStampedModel):
+    """Forward-ready ACL grant on a document set.
+
+    **Workstream 1 (P4) enforces only ``consumer`` grants via the scenario binding**; ``service``/
+    ``user``/``group`` rows may exist but are inert until the personal-MCP workstream (WS4). The
+    ``principal_ref`` is an opaque reference (e.g. a consumer's public id), not an FK, because the
+    principal namespace varies by ``principal_type``.
+    """
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="document_set_grants"
+    )
+    document_set = models.ForeignKey(DocumentSet, on_delete=models.CASCADE, related_name="grants")
+    principal_type = models.CharField(max_length=16, choices=GrantPrincipalType.choices)
+    principal_ref = models.CharField(max_length=255)
+    permission = models.CharField(
+        max_length=16, choices=GrantPermission.choices, default=GrantPermission.RETRIEVE
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document_set", "principal_type", "principal_ref", "permission"],
+                name="uniq_document_set_grant",
+            )
+        ]
+        ordering = ["document_set_id", "principal_type", "principal_ref"]
+
+    def clean(self) -> None:
+        if self.document_set_id and self.document_set.organization_id != self.organization_id:
+            raise ValidationError("grant document set must belong to the same organization")
+
+    def __str__(self) -> str:
+        return f"grant:{self.document_set_id}:{self.principal_type}:{self.principal_ref}"

@@ -3,8 +3,9 @@
 Every state change and its audit event happen inside one transaction so an audit-write
 failure fails closed with the data write (mirroring the Sprint 11 builder). Blob bytes go to
 the object store; the database holds only metadata (checksum, mime, tenant-prefixed key,
-counts). No retrieval behavior, scenario binding, ACL grant, or RLS is touched here — those
-arrive in P4.
+counts). P4.1 adds the mandatory scenario↔document-set binding and forward-ready ACL grants
+here; the deny-by-default retrieval predicate, resolver pinning, and RLS backstop that *enforce*
+them arrive in P4.2/P4.3 (no served retrieval path changes yet).
 
 Removal has two levels: :func:`soft_delete_document` sets a tombstone (immediately excluded
 from future retrieval by the P4 ``deleted_at`` predicate) and :func:`purge_document` is a
@@ -21,15 +22,20 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.audit.services import record_event
+from apps.catalog.models import Scenario
 from apps.documents.models import (
     Document,
     DocumentLifecycle,
     DocumentSet,
+    DocumentSetGrant,
     DocumentSetMembership,
     DocumentSetVersion,
     DocumentSetVersionStatus,
     DocumentVersion,
+    GrantPermission,
+    GrantPrincipalType,
     ParseStatus,
+    ScenarioDocumentSetBinding,
 )
 from apps.documents.storage import StorageError, build_object_key, get_object_store
 from apps.ingestion.models import Source
@@ -347,3 +353,101 @@ def publish_document_set_version(
         request_id=request_id,
     )
     return locked
+
+
+# --- Scenario ↔ document-set binding + ACL grants (deny-by-default, P4) --------
+
+
+@transaction.atomic
+def bind_scenario_document_set(
+    *, scenario: Scenario, document_set: DocumentSet, actor: str, request_id: str = ""
+) -> ScenarioDocumentSetBinding:
+    """Bind a scenario to a document set (same tenant, deny-by-default retrieval unit)."""
+    organization_id = document_set.organization_id
+    binding = ScenarioDocumentSetBinding(
+        organization_id=organization_id,
+        scenario=scenario,
+        document_set=document_set,
+        created_by=actor,
+    )
+    # ``clean`` forbids a cross-tenant scenario↔set link; the DB unique constraint (not
+    # ``validate_unique``) reports a duplicate so it maps to a stable code.
+    binding.full_clean(exclude=["created_by"], validate_unique=False, validate_constraints=False)
+    try:
+        binding.save()
+    except IntegrityError as exc:
+        raise DocumentError("DUPLICATE_BINDING", "scenario is already bound to this set") from exc
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="documents.binding.create",
+        outcome="success",
+        organization_id=organization_id,
+        resource_type="scenario_document_set_binding",
+        resource_id=f"{binding.scenario_id}:{document_set.logical_id}",
+        request_id=request_id,
+    )
+    return binding
+
+
+@transaction.atomic
+def unbind_scenario_document_set(
+    binding: ScenarioDocumentSetBinding, *, actor: str, request_id: str = ""
+) -> None:
+    organization_id = binding.organization_id
+    scenario_id = binding.scenario_id
+    logical_id = binding.document_set.logical_id
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="documents.binding.remove",
+        outcome="success",
+        organization_id=organization_id,
+        resource_type="scenario_document_set_binding",
+        resource_id=f"{scenario_id}:{logical_id}",
+        request_id=request_id,
+    )
+    binding.delete()
+
+
+@transaction.atomic
+def grant_document_set(
+    *,
+    document_set: DocumentSet,
+    principal_type: str,
+    principal_ref: str,
+    permission: str = GrantPermission.RETRIEVE,
+    actor: str,
+    request_id: str = "",
+) -> DocumentSetGrant:
+    """Add an ACL grant. Only ``consumer`` grants are enforced in WS1 (others are inert)."""
+    if principal_type not in GrantPrincipalType.values:
+        raise DocumentError("invalid_principal_type", "unsupported principal type")
+    if permission not in GrantPermission.values:
+        raise DocumentError("invalid_permission", "unsupported permission")
+    principal_ref = (principal_ref or "").strip()
+    if not principal_ref:
+        raise DocumentError("principal_ref_required", "principal reference is required")
+    grant = DocumentSetGrant(
+        organization_id=document_set.organization_id,
+        document_set=document_set,
+        principal_type=principal_type,
+        principal_ref=principal_ref,
+        permission=permission,
+    )
+    grant.full_clean(validate_unique=False, validate_constraints=False)
+    try:
+        grant.save()
+    except IntegrityError as exc:
+        raise DocumentError("DUPLICATE_GRANT", "grant already exists") from exc
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="documents.grant.create",
+        outcome="success",
+        organization_id=document_set.organization_id,
+        resource_type="document_set_grant",
+        resource_id=f"{document_set.logical_id}:{principal_type}:{principal_ref}",
+        request_id=request_id,
+    )
+    return grant
