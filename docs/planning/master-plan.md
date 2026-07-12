@@ -140,9 +140,14 @@ duplicate plan is archived under [`planning/archive`](archive/README.md).
 
 **Phase 2 is drafted (not approved):** a governed document plane (per-scenario sources +
 real parsers/embeddings + retrieval-time document authorization), a modernized Turkish UI,
-AI-assisted authoring alongside the visual builder, and — last — personal end-user MCP with
-identity delegation. See [`phase-2-plan.md`](phase-2-plan.md). It is a discussion draft;
-every new dependency/egress named there needs explicit approval before implementation.
+AI-assisted authoring alongside the visual builder, personal end-user MCP with identity
+delegation, and a **foundational live model runtime** (Workstream 5 — the real chat/embedding
+provider; today only a deterministic stub ships). The WS1 document plane and WS5 runtime share
+one SSRF-safe egress + a platform-managed profile catalog and are delivered on one interleaved
+critical path ([`components/runtime-and-document-plane-sequence.md`](components/runtime-and-document-plane-sequence.md));
+the egress architecture is [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md).
+See [`phase-2-plan.md`](phase-2-plan.md). It is a discussion draft; every new dependency/egress
+named there needs explicit approval before implementation.
 
 Not yet present: a real LLM/embedding provider or applied production deployment. Sprint 7
 deployment resources are reviewable drafts, not live infrastructure. Model/embedding

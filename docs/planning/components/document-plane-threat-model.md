@@ -103,7 +103,12 @@ embeddings at this stage.
   without eval; in-place mutation of an active index; promotion rename/copy/rebuild losing
   atomicity; superseded store dropped while still referenced, or orphaned forever.
 - Tenant creating an arbitrary endpoint/model via a self-defined `EmbeddingProfile`, or mutating
-  a profile already used by a built index.
+  a profile already used by a built index; an artifact/prompt/request supplying `base_url`,
+  host/port, scheme, credential selection, or TLS-verification behavior instead of a profile ID.
+- Blind retry of an embedding/model call after a post-send failure (read timeout) causing double
+  cost and divergent vectors/answers.
+- Document/retrieved text smuggling instructions into the model (prompt injection), or model
+  output attempting to authorize a tool call or widen scope.
 - Soft-deleted or purged document still retrievable; purge not fully removing blobs.
 - Privilege escalation: non-owner triggering purge; cross-org membership/binding selection;
   worker granted a broad tenant-bypass role.
@@ -142,7 +147,14 @@ rebuild), and reclaimed by a retention/purge job only when unreferenced; source 
 against duplicate builds; late Celery ack and idempotent, terminal-state build/promote;
 soft-delete tombstone with live answer exclusion plus auditable physical purge; role-gated,
 non-authoritative console with UI never exposing endpoints, object keys beyond scope, physical
-store names, or secret refs; redacted, separate, fail-closed audit for security-critical actions.
+store names, or secret refs; **egress via a platform-managed profile catalog referenced by ID
+only** (no artifact/tenant/request `base_url`/host/scheme/credential/TLS choice), over the shared
+transport that also verifies TLS and pins the resolved IP; **no blind retry** — a post-send
+embedding/model failure is an unknown outcome, failed for controlled re-drive, never silently
+re-sent; **prompt-injection boundary** — system instructions built server-side and kept separate
+from document/retrieved/user text, tool calls never authorized by model output (re-validated by
+the Sprint 9/10 proxy + approval), and citation/grounding/output-contract/policy applied *after*
+the model; redacted, separate, fail-closed audit for security-critical actions.
 
 ## Residual risks
 

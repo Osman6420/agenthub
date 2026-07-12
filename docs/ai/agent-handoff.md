@@ -210,16 +210,34 @@ Current cross-agent state:
   behind a `DocumentParser` interface, comparison-table before any dependency (format-specific
   pypdf/pdfplumber+python-docx+openpyxl preferred), **OCR NOT in-app** — image PDFs + embedded
   images go to the owner's external OCR endpoint over SSRF-safe egress. **Immediate next step
-  (owner instruction): document two design spikes as M0 before any migration/code — Spike 1
-  pgvector multi-dimension storage, Spike 2 RLS connection-context — then M1 rename+content plane
-  → M2 binding+ACL+RLS → M3 embeddings+blue/green → M4 parsers+connectors → M5 console UI.** No
-  code/migration/dependency/egress yet.
+  (owner instruction): document three M0 design spikes before any migration/code — Spike 1
+  pgvector multi-dimension storage, Spike 2 RLS connection-context, Spike 3 shared SSRF-safe egress
+  adapter — then the interleaved WS1+WS5 delivery below.** No code/migration/dependency/egress yet.
+
+- **WS5 (live model runtime) added + owner review folded in (2026-07-12).** Owner: "give the app a
+  base_url + token and actually reach the LLM — that must exist." Verified today's runtime ships
+  only deterministic stubs (no real `ModelProvider`; agent `retrieve` + workflow `generate`/
+  `retrieve` are placeholders; agents carry no system prompt; multi-prompt workflows drawable but
+  not runnable). **WS5 is a foundational track interleaved with WS1, not a 5th-in-line priority.**
+  Owner delivery order: M0 spikes → shared egress/provider infra → chat provider → embedding/
+  indexing → document-ACL retrieval → UI. The interleaved phase plan (P0–P8, with a **serving
+  guardrail**: real tenant corpora are not served to consumers until deny-by-default binding + RLS
+  are in place) is `docs/planning/components/runtime-and-document-plane-sequence.md`. **Egress
+  architecture is now [ADR-0002]** (`docs/adr/0002-...`): chat + embedding via a **platform-managed
+  immutable revisioned profile catalog referenced by ID only** — no tenant/artifact/prompt/request
+  `base_url`/host/scheme/credential/TLS choice (supersedes inline endpoint/api_key in the
+  `model_profile` artifact); a **stdlib OpenAI-compatible adapter, no `openai` dependency** (deferred
+  not banned); **no blind retry** (a post-send model/embedding failure is an unknown outcome, not a
+  retry); and a **technical prompt-injection boundary** (system instructions server-side + separate
+  from doc/user text, tool calls never authorized by model output, citation/policy applied after the
+  model). WS1 status is **"architecture scoped; implementation design gated by M0"** (not "design
+  complete" — the physical index schema + RLS connection-context are still chosen in M0).
 
 - **Planning-doc consistency pass (2026-07-12):** a review found `phase-2-plan.md` and
   `master-plan.md` still carried pre-decision statements (stale `openai`-may-be-used note,
   "open questions" already resolved in the component plan, "split into component plans" next-step,
   and a current-state header that only counted Sprints 0–1). Fixed: the phase-2 summary now defers
-  to the authoritative component plan, marks WS1 design-complete/implementation-not-approved with
+  to the authoritative component plan, marks WS1 architecture-scoped/implementation-gated-by-M0 with
   a per-workstream status table, and `master-plan.md` reads "Sprints 0–11 implemented and
   verified" with a Document-plane row in the Components table. **These planning/handoff doc edits
   are documentation-only (no code) and are committed on `feat/foundation-sprint-0-1`; nothing was

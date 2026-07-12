@@ -27,12 +27,16 @@ agent so scenarios truly reach a live model.
    with the visual builder.
 4. **Personal MCP** (end-user identity + on-behalf-of delegation) — after everything else;
    to be detailed in a separate discussion.
-5. **Live model runtime (real generation)** — a **foundational enabler added 2026-07-12**:
-   implement the real LLM `ModelProvider` (give the app a base_url + token and actually reach the
-   model) and wire the currently-stubbed generation/retrieval seams across RAG, workflow, and
-   agent so scenarios truly reach a live model. **Sequencing to confirm with the owner**
-   (recommended **together with WS1**, since both build on the same SSRF-safe egress + provider
-   seam) — it is not "after WS4".
+**Foundational track (not a 5th-in-line priority) — Live model runtime (WS5).** Without a real
+chat provider the product still returns stub answers, so WS5 is **not** sequenced after WS4; it is
+a foundational track run **in parallel/interleaved with WS1** (both build on the same SSRF-safe
+egress + managed provider catalog). Owner-set delivery order (2026-07-12):
+
+> WS1 M0 security/design spikes → shared egress/provider infra → chat provider →
+> embedding/indexing → document-ACL retrieval → UI.
+
+The interleaved phase plan is in
+[`components/runtime-and-document-plane-sequence.md`](components/runtime-and-document-plane-sequence.md).
 
 ---
 
@@ -169,11 +173,18 @@ egress; the owner sets its final sequence (recommended alongside WS1).
   validation, resolved-IP pinning, redirect denial, timeouts, response-size cap, bounded retries,
   redacted audit). Driven by the `model_profile` artifact: `provider`, `endpoint`/base_url,
   `model`, `secret:<name>` token, `timeout_seconds`; plugged via `RUNTIME_MODEL_PROVIDER`.
-- **Endpoint governance:** platform-allowlisted destinations; test → cloud, prod → local
-  OpenAI-compatible. Decide whether the endpoint is free-form per `model_profile` (author-set) or
-  restricted to a platform allowlist like WS1 embeddings — **open decision** (recommend allowlist
-  + author selects among allowlisted model profiles, mirroring the `EmbeddingProfile` catalog).
-- **No `openai` dependency** unless a later review approves it; default is the stdlib client.
+- **Endpoint governance — DECIDED ([ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)):**
+  chat and embedding endpoints are a **platform-managed, immutable, revisioned profile catalog**
+  (`ModelProfile` / `EmbeddingProfile`). Artifacts and the runtime reference a profile **by ID
+  only**; a tenant, artifact, prompt, or request may **not** set `base_url`, host/port, scheme,
+  credential/secret selection, or TLS-verification behavior. This supersedes inlining
+  `endpoint`/`api_key` in the `model_profile` artifact. Test → cloud, prod → local.
+- **Transport controls (allowlist alone is not enough):** the shared transport also enforces
+  post-DNS **resolved-IP validation/pinning**, redirect denial, private/link-local/metadata range
+  blocking, **TLS certificate verification**, connect/read timeouts, response-size caps, and
+  log/audit redaction.
+- **No `openai` dependency** now (deferred, not banned — revisit via approval + threat/supply-chain
+  review if streaming/multimodal/realtime/complex tool-calling grows the surface; ADR-0002).
 
 ### 5.2 Light up RAG generation
 
@@ -209,6 +220,25 @@ egress; the owner sets its final sequence (recommended alongside WS1).
   generation path (RAG, workflow, agent); **no prompt/response content in logs, metrics labels, or
   audit** (ids/counts/latency/stable codes only). Add per-provider latency/error/token metrics
   reusing the Sprint 7 Prometheus surface.
+
+### 5.7 Model-egress idempotency (no blind retry)
+
+- A chat/embedding call that fails **after the request is sent** (e.g. read timeout) is **not**
+  safely retryable — retrying risks double cost and a divergent answer. Retries are limited to
+  safe pre-connection failures or provider behaviors explicitly documented as idempotent; a
+  post-send failure is treated as `outcome_unknown` (the Sprint 9 tool-invocation stance), never
+  as a retryable transient. ([ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md).)
+
+### 5.8 Prompt-injection boundary (data ≠ instructions, technically)
+
+- Document/tool/retrieved text is untrusted **data, never instructions**, and this is enforced at
+  the model call, not just asserted: (a) **system instructions are constructed server-side and
+  kept separate** from retrieved/document/user content in the request; (b) **tool calls are never
+  authorized by model output** — the agent/workflow tool proxy re-validates every proposed call
+  against the immutable release-pinned allowlist and approval flow (Sprint 9/10); (c)
+  **citation, grounding, output-contract, and policy checks run *after* the model** and can
+  replace the answer with a governed fallback. The model can propose; it can never widen its own
+  authority.
 
 ### Relation to other workstreams
 
@@ -273,21 +303,23 @@ allowlist, and secret provisioning (deployment config).
 
 ## Status
 
-Draft. **Workstream 1 is design-complete and authoritative** (component plan + threat model
-under [`components/`](components/)) but **not approved for implementation**; its immediate next
-step is the two **M0 design spikes** (pgvector multi-dimension storage; RLS connection context)
-documented before any migration or code. **Workstreams 2–4 remain in discovery** and are not
-yet decomposed into component plans.
+Draft. **Workstream 1 is architecture-scoped and authoritative** (component plan + threat model
+under [`components/`](components/)) but its **implementation design is gated by the M0 spikes**
+(the physical index schema and the RLS connection-context are still to be chosen) and it is **not
+approved for implementation**. Its immediate next step is documenting the M0 design spikes
+(pgvector multi-dimension storage; RLS connection-context; the shared SSRF-safe egress adapter)
+before any migration or code. **Workstreams 2–4 remain in discovery** and are not yet decomposed
+into component plans.
 
 ### Workstream status
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | Design complete (component plan + threat model) — implementation **not approved**; M0 spikes pending |
+| 1 | Document plane | Architecture scoped (component plan + threat model); **implementation design gated by M0**; not approved |
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
-| 5 | Live model runtime (real generation) | Scoped 2026-07-12 — **foundational**; sequence to confirm (recommended with WS1); not started |
+| 5 | Live model runtime (real generation) | **Foundational track, interleaved with WS1** (not a 5th-in-line priority); scoped 2026-07-12; not started |
 
 ---
 

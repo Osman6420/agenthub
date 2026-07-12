@@ -20,12 +20,15 @@ UI). Consumer gateway seam unchanged in contract.
 ## Status
 
 **Decisions A–E approved by the owner on 2026-07-12** with the constraints folded into this
-plan. **Still not started (no code/migration/dependency/egress).** Two design spikes are
-prerequisites and must be documented *before* any migration or implementation
+plan. The workstream is **architecture-scoped**, but its **implementation design is gated by the
+M0 spikes** — the physical index schema and the RLS connection-context are still to be chosen —
+so this is *not* "design complete" in the buildable sense. **Not started (no code/migration/
+dependency/egress).** The M0 spikes must be documented *before* any migration or implementation
 (see [Design spikes](#design-spikes-m0--prerequisite-to-implementation)):
 
-1. the pgvector multi-dimension storage spike, and
-2. the RLS connection-context design.
+1. the pgvector multi-dimension storage spike,
+2. the RLS connection-context design, and
+3. the shared SSRF-safe egress adapter (WS1+WS5).
 
 New production dependencies and new external egress each still require a separate explicit
 owner approval + supply-chain/threat review at the milestone that introduces them.
@@ -140,26 +143,35 @@ never mutated** on every model below; all are RLS-protected tenant data-plane ta
   (`vector`/`halfvec`) and `dimensions` on the `EmbeddingProfile` must be compatible or the build
   is rejected before any embedding call.
 
-### EmbeddingProfile — platform-managed, immutable, revisioned
+### EmbeddingProfile — platform-managed, immutable, revisioned ([ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md))
 
 - Platform administrators define profiles; **tenants cannot create free endpoint/model/profiles**
   and may only **select among profiles allowlisted to them** (a `TenantEmbeddingProfileGrant`).
+- **Artifacts and the runtime reference an `EmbeddingProfile` by ID only.** A tenant, artifact,
+  prompt, or request may **not** set `base_url`, host/port, scheme, credential/secret selection, or
+  TLS-verification behavior — the catalog is a *managed profile catalog*, not a string host
+  allowlist. The same rule governs the chat `ModelProfile` (WS5).
 - A **used profile is never modified in place**. Any change to provider, `model_id`,
   `model_revision`, `dimensions`, `normalization`, `distance_metric`, or `index_type` creates a
-  **new `EmbeddingProfile`** and a **new staged reindex**. A future tenant-specific profile is
-  still created by a platform admin and assigned to only that tenant.
-- `endpoint_ref` may only reference a **platform-allowlisted internal endpoint**; neither tenant
-  nor request may supply a `base_url`. `secret_ref` is a `secret:<name>` reference.
+  **new `EmbeddingProfile` revision** and a **new staged reindex**. A future tenant-specific
+  profile is still created by a platform admin and assigned to only that tenant.
+- The endpoint is a **platform-allowlisted destination** resolved from the profile; `secret_ref`
+  is a `secret:<name>` reference.
 
 ### Embedding egress — SSRF-safe adapter (no `openai` dependency)
 
 - `OpenAICompatibleEmbeddingClient` is an adapter over the **Sprint 9 SSRF-safe stdlib
   transport** (`apps/tools/egress`): it **reuses** the existing target/scheme/host validation,
-  DNS→resolved-IP pinning (anti-rebinding), redirect-denial, connect/read timeouts,
-  response-size cap, and redacted audit. **No `openai` dependency is added.** The endpoint is
-  the allowlisted internal endpoint from the selected `EmbeddingProfile`; the model name comes
-  from that profile. The `openai` library's custom `base_url`/transport hooks are explicitly
-  *not* used as an egress control (that flexibility is not an SSRF defense).
+  DNS→resolved-IP pinning (anti-rebinding), redirect-denial, **TLS certificate verification**,
+  connect/read timeouts, response-size cap, private/link-local/metadata blocking, and redacted
+  audit. **No `openai` dependency is added.** The endpoint comes from the selected
+  `EmbeddingProfile` (platform catalog, ID-referenced); the model name comes from that profile.
+  The `openai` library's custom `base_url`/transport hooks are explicitly *not* used as an egress
+  control (that flexibility is not an SSRF defense).
+- **Idempotency:** an embedding call that fails *after the request is sent* (read timeout) is
+  **not** blindly retried — a retry risks double cost and divergent vectors. Retries are limited
+  to safe pre-connection failures; a post-send failure is treated as an unknown outcome and the
+  chunk/build is failed for controlled re-drive, never silently re-sent (ADR-0002).
 
 ### Retrieval — deny-by-default effective authorization (app predicate + RLS)
 
@@ -283,8 +295,8 @@ final pick is confirmed in Milestone M4 before the dependency is approved.
 
 ## Design spikes (M0 — prerequisite to implementation)
 
-Both must be **documented before any migration/implementation** (owner instruction 2026-07-12).
-Each produces a short design note (candidate ADR).
+All three must be **documented before any migration/implementation** (owner instruction
+2026-07-12). Each produces a short design note (candidate ADR).
 
 - **Spike 1 — pgvector multi-dimension storage.** Compare (a) a dimensionless `vector` column +
   profile-specific **expression/partial index** vs (b) a **separate dimension/profile or
@@ -299,13 +311,26 @@ Each produces a short design note (candidate ADR).
   local only), the fail-closed policy for missing/invalid context, control-plane vs data-plane
   table separation, and the separate auditable cross-tenant admin path. Output: the middleware/
   task-wrapper design + the exact policy set + a negative-test matrix.
+- **Spike 3 — shared SSRF-safe egress adapter (WS1+WS5).** One adapter over `apps.tools.egress`
+  reused by the embedding model, the chat model (WS5), and OCR: resolved-IP pinning, redirect
+  denial, private/link-local/metadata block, TLS verification, timeouts, response-size cap,
+  `secret:<name>` resolution, redacted audit, and the **no-blind-retry** idempotency stance. The
+  endpoint-governance policy is already decided (platform-managed profile catalog referenced by ID
+  only, [ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)); the
+  spike settles the adapter shape. Output: the adapter contract + the profile→endpoint resolution
+  path + a negative-test matrix (SSRF/rebinding/redirect/oversize/retry).
 
 ## Milestones
 
 Each milestone is additive-migration-only, keeps the deterministic profile passing, never
-mutates an active index in place, and promotes only via the pointer flip after eval.
+mutates an active index in place, and promotes only via the pointer flip after eval. The
+**authoritative delivery order** (interleaved with WS5, value-first) is
+[`runtime-and-document-plane-sequence.md`](runtime-and-document-plane-sequence.md); that sequence
+builds **staged** embeddings (M3) before **serving** ACL retrieval (M2) under an explicit serving
+guardrail (real tenant corpora are not served to consumers until deny-by-default binding + RLS are
+in place), so the milestone numbers below are scope units, not the build order.
 
-- **M0 — Design spikes** (above): document Spike 1 and Spike 2. Gate for all following work.
+- **M0 — Design spikes** (above): document Spikes 1, 2, and 3. Gate for all following work.
 - **M1 — Content plane & storage**: rename `Document → IndexedDocument`; `apps/documents` models;
   object-store upload; soft-delete + auditable purge. No retrieval behavior change yet.
 - **M2 — Binding, ACL & RLS retrieval**: `DocumentSet`/`Version`/`Membership`,
@@ -434,6 +459,7 @@ all governed and audited.
 - Phase 2 overview: [`../phase-2-plan.md`](../phase-2-plan.md)
 - Threat model: [`document-plane-threat-model.md`](document-plane-threat-model.md)
 - Interleaved WS1+WS5 delivery order: [`runtime-and-document-plane-sequence.md`](runtime-and-document-plane-sequence.md)
+- Egress architecture decision: [ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)
 - Supersedes as retrieval trust unit: [`../../tasks/sprint-5-ingestion-pgvector/plan.md`](../../tasks/sprint-5-ingestion-pgvector/plan.md)
 - Reused seams: Sprint 6 release lifecycle, Sprint 7 metrics/tracing, Sprint 9 SSRF-safe egress.
 - Technical grounding: pgvector HNSW dimension limits (`vector`≤2000, `halfvec`≤4000) and
