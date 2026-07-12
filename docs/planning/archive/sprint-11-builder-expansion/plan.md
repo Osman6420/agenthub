@@ -1,5 +1,13 @@
 # Task Plan: sprint-11-builder-expansion
 
+> **SUPERSEDED / ARCHIVED (2026-07-12).** This was the originally-approved Sprint 11 plan
+> (approvals dated 2026-07-10). Sprint 11 was implemented and verified under the consolidated
+> record [`docs/tasks/sprint-11-workflow-builder/`](../../../tasks/sprint-11-workflow-builder/plan.md)
+> (see its `verification.md`). The delivered scope is a subset; the remaining originally-planned
+> enhancements are reclassified into [`docs/planning/phase-2-plan.md`](../../phase-2-plan.md).
+> This file is retained unchanged for the approved-decision provenance only — do not edit it to
+> describe later behavior (planning-archive policy).
+
 ## Task summary
 
 Extend the existing LDAP-authenticated operator console with governed draft workflow

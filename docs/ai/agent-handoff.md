@@ -178,6 +178,16 @@ Current cross-agent state:
   `pytest --create-db` but not necessarily applied to the standing local `agenthub` DB — run
   `manage.py migrate` before serving Sprint 11 against the persistent local DB.
 
+- Sprint 11 documentation was consolidated (2026-07-12): the duplicate
+  `docs/tasks/sprint-11-builder-expansion/` plan was archived to
+  `docs/planning/archive/sprint-11-builder-expansion/` (approved-decision provenance), and
+  `docs/tasks/sprint-11-workflow-builder/` is now the single canonical Sprint 11 record with
+  a delivered-vs-deferred reconciliation. Deferred builder enhancements moved to the new
+  **Phase 2 discussion draft** `docs/planning/phase-2-plan.md` (governed document plane →
+  Turkish UI → AI-assisted authoring → personal end-user MCP, in that owner-set priority).
+  Phase 2 is **not approved for implementation**; new dependencies/egress there need explicit
+  sign-off first.
+
 ## Agent transition checklist
 
 Before yielding work to another agent:

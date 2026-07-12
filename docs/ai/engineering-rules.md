@@ -225,7 +225,14 @@ deterministic (canonical, sorted). Five approved new **production frontend** dep
 new Python runtime dependency**. Frontend gates run on Node v20 / npm 10. Not delivered: no
 headless-browser/live-server smoke (the SPA is verified by vitest+jsdom and the build;
 Django static resolution by `findstatic`); in-app (non-unload) navigation away from a dirty
-editor is not additionally guarded.
+editor is not additionally guarded. Several originally-planned builder enhancements
+(optimistic concurrency/ETag conflict, autosave, soft-delete, GitOps draft export, artifact
+preview view, CSP, a distinct `project_editor` permission) are **deferred to Phase 2** — the
+builder is being repurposed toward AI-assisted authoring. The single canonical Sprint 11
+record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan is archived
+under `docs/planning/archive/`. Phase 2 is a discussion draft at
+`docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
+personal end-user MCP) — nothing there is approved for implementation yet.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is

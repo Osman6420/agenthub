@@ -129,7 +129,18 @@ panel, backend diagnostics on the graph, unsaved-change protection, role-driven 
 mode, and deterministic DSL serialization. The frontend is non-authoritative (every
 operation is a backend round-trip). Five approved new production frontend dependencies
 (Node/npm, Vite, React, React DOM, `@xyflow/react`) with a Node CI job; no new Python runtime
-dependency. See [`sprint-11-workflow-builder`](../tasks/sprint-11-workflow-builder/plan.md).
+dependency. The delivered scope is verified; several originally-planned builder enhancements
+(optimistic concurrency, autosave, soft-delete, GitOps draft export, artifact preview view,
+CSP) are **deferred to Phase 2** because the builder is being repurposed toward AI-assisted
+authoring. The single canonical Sprint 11 record is
+[`sprint-11-workflow-builder`](../tasks/sprint-11-workflow-builder/plan.md); the earlier
+duplicate plan is archived under [`planning/archive`](archive/README.md).
+
+**Phase 2 is drafted (not approved):** a governed document plane (per-scenario sources +
+real parsers/embeddings + retrieval-time document authorization), a modernized Turkish UI,
+AI-assisted authoring alongside the visual builder, and — last — personal end-user MCP with
+identity delegation. See [`phase-2-plan.md`](phase-2-plan.md). It is a discussion draft;
+every new dependency/egress named there needs explicit approval before implementation.
 
 Not yet present: a real LLM/embedding provider or applied production deployment. Sprint 7
 deployment resources are reviewable drafts, not live infrastructure. Model/embedding

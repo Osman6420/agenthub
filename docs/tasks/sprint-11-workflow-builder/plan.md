@@ -166,6 +166,16 @@ No published artifact or release is affected by disabling the builder.
 - The built frontend is served **same-origin through Django**, reusing the existing
   LDAP/session identity and role/tenant authorization. No separate authentication system and
   **no public CORS surface** are introduced.
+- **Earlier plan (consolidated).** The originally-approved Sprint 11 plan (2026-07-10, then
+  named `sprint-11-builder-expansion`, now archived under
+  [`docs/planning/archive/`](../../planning/archive/README.md)) also approved React /
+  TypeScript / React Flow as production dependencies and recorded these authoring decisions:
+  optimistic concurrency (revision/ETag precondition + visible conflict, never a silent
+  overwrite), autosave after a 5-second debounce, 30-day draft soft-delete then purge, a
+  distinct `project_editor` draft-authoring permission, builder-embedded validate/test/eval/
+  publish/trace views, and GitOps draft export / import→draft seed. Those decisions remain
+  valid intent but were **not all delivered** in this increment — see the reconciliation
+  below.
 
 ## Minimum frontend feature set (owner-specified, 2026-07-11)
 
@@ -174,9 +184,35 @@ node configuration panel; backend compile/validation errors displayed on the gra
 unsaved-change protection; read-only mode driven by role; deterministic DSL serialization;
 frontend unit tests plus one end-to-end builder flow.
 
+## Scope reconciliation — consolidation & delivered vs deferred
+
+This record is the **single canonical Sprint 11 task plan**. It consolidates the earlier
+duplicate `sprint-11-builder-expansion` plan (same sprint, richer originally-approved scope),
+which is now archived with a supersession pointer. There is one active Sprint 11 folder.
+
+**Delivered and verified in this increment:** the governed draft API (`apps.builder`) —
+`WorkflowDraft` + CRUD + compiler diagnostics + node-schema + shared-path publish, LDAP/role/
+tenant authz, CSRF, audit, additive migration — and the React Flow SPA (draft create/edit/
+save, palette + drag/drop canvas, typed edges, schema-driven config panel, backend
+diagnostics on the graph, unsaved-change protection, role-driven read-only, deterministic DSL
+serialization, unit + one e2e test). Evidence in [`verification.md`](verification.md).
+
+**Deferred — reclassified into [Phase 2](../../planning/phase-2-plan.md).** Given the Phase 2
+decision to repurpose the builder toward AI-assisted authoring + a preview surface (small DSL
+edits), the following originally-planned items are moved to Phase 2 rather than built
+speculatively now: optimistic concurrency (ETag/revision + `409` conflict), autosave debounce,
+30-day draft soft-delete/purge, GitOps draft export / import→draft seed, an artifact detail/
+preview view for endpoint- and AI-produced artifacts, builder-embedded test/eval/trace panels
+(today they link to the existing console screens), a Content-Security-Policy header, and a
+distinct `project_editor` permission (today draft authoring reuses `can_author_scenarios`).
+None of these are required for the delivered scope to be safe or correct; each is tracked in
+the Phase 2 plan for a decision under the trimmed-builder direction.
+
 ## Status
 
-Implemented and Verified (2026-07-12), delivered in two increments.
+Implemented and Verified (2026-07-12) for the **delivered scope above**; enhancements from the
+originally-approved plan are **deferred to Phase 2** (see the reconciliation). Delivered in two
+increments.
 
 **Backend (`apps.builder`)** — the tenant-scoped mutable `WorkflowDraft`, the operator JSON
 API (`/console/api/builder/`) for draft CRUD + compiler diagnostics + node-schema generation
