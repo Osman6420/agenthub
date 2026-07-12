@@ -433,6 +433,7 @@ all governed and audited.
 
 - Phase 2 overview: [`../phase-2-plan.md`](../phase-2-plan.md)
 - Threat model: [`document-plane-threat-model.md`](document-plane-threat-model.md)
+- Interleaved WS1+WS5 delivery order: [`runtime-and-document-plane-sequence.md`](runtime-and-document-plane-sequence.md)
 - Supersedes as retrieval trust unit: [`../../tasks/sprint-5-ingestion-pgvector/plan.md`](../../tasks/sprint-5-ingestion-pgvector/plan.md)
 - Reused seams: Sprint 6 release lifecycle, Sprint 7 metrics/tracing, Sprint 9 SSRF-safe egress.
 - Technical grounding: pgvector HNSW dimension limits (`vector`≤2000, `halfvec`≤4000) and

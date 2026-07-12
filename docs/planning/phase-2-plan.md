@@ -217,6 +217,11 @@ at DSL level) makes prompts/models *authorable and visible in the UI* instead of
 reuses the **WS1** SSRF-safe egress and provider-catalog pattern. Dependencies/egress here follow
 the same explicit-approval + supply-chain/threat-review gate.
 
+**Proposed interleaved delivery order for WS1 + WS5** (value-first, shared egress built once, a
+real-LLM answer shipped early) is drafted in
+[`components/runtime-and-document-plane-sequence.md`](components/runtime-and-document-plane-sequence.md)
+— for owner sign-off, not yet approved.
+
 ## Cross-cutting constraints
 
 - Every new production dependency and every new external egress needs **explicit owner
