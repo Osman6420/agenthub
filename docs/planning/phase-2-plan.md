@@ -13,8 +13,10 @@ Phase 1 (Sprints 0–11) delivered the verified governed platform: control plane
 releases, gateway + MCP, RAG runtime, ingestion + pgvector, eval/promotion, workflow, tool
 registry + approval, agent runtime, and the visual workflow builder. Phase 2 extends it
 with a **governed document plane**, a **modernized Turkish UI**, **AI-assisted scenario
-authoring** (alongside the visual builder), and — last — **personal (end-user) MCP with
-identity delegation**.
+authoring** (alongside the visual builder), **personal (end-user) MCP with identity delegation**,
+and a **foundational live model runtime** — the real LLM provider (base_url + token → actual
+call) plus wiring the currently-stubbed generation/retrieval seams across RAG, workflow, and
+agent so scenarios truly reach a live model.
 
 ## Priority order (owner-set)
 
@@ -25,6 +27,12 @@ identity delegation**.
    with the visual builder.
 4. **Personal MCP** (end-user identity + on-behalf-of delegation) — after everything else;
    to be detailed in a separate discussion.
+5. **Live model runtime (real generation)** — a **foundational enabler added 2026-07-12**:
+   implement the real LLM `ModelProvider` (give the app a base_url + token and actually reach the
+   model) and wire the currently-stubbed generation/retrieval seams across RAG, workflow, and
+   agent so scenarios truly reach a live model. **Sequencing to confirm with the owner**
+   (recommended **together with WS1**, since both build on the same SSRF-safe egress + provider
+   seam) — it is not "after WS4".
 
 ---
 
@@ -130,6 +138,85 @@ identity delegation**.
 
 ---
 
+## Workstream 5 — Live model runtime (real generation) [FOUNDATIONAL]
+
+Added 2026-07-12 at the owner's instruction: *"everything you flagged as missing must be
+completed."* Today the runtime ships **only deterministic stubs** — a `model_profile` artifact
+can declare `endpoint` + `model` + `secret:<name>` token, but no provider actually calls it, and
+several generation/retrieval seams are placeholders. This workstream makes scenarios reach a real
+model. It is **foundational** (nothing is a real product without it) and reuses the WS1 SSRF-safe
+egress; the owner sets its final sequence (recommended alongside WS1).
+
+### Current gaps (verified by code inspection 2026-07-12)
+
+- **No real model provider.** `apps/orchestration/providers.py` contains only
+  `StubModelProvider`; `RUNTIME_MODEL_PROVIDER` defaults to empty. `model_profile`
+  (`endpoint`/`model`/`api_key: secret:<name>`) is declared but never invoked.
+- **Agent retrieval is a stub.** The agent loop's `retrieve` decision returns empty chunks
+  (`apps/agents/runtime.py`) — agents do **not** do real document RAG today; only the standalone
+  `run_rag` (`/v1/query`) path calls the real pgvector retriever.
+- **Workflow `generate`/`retrieve` nodes are stubs.** `apps/workflows/runtime.py` writes a fixed
+  `{"answer": "generated"}` and empty chunks; no model call, no per-node prompt.
+- **Agents have no authored system prompt.** `agent_definition` carries no prompt text; the loop
+  uses the raw user objective as the prompt.
+- **Multi-prompt scenarios are only drawable, not runnable.** The workflow DAG can hold multiple
+  `generate` nodes, but with stubbed generation there is no real multi-prompt / multi-model flow.
+
+### 5.1 Real LLM `ModelProvider` (base_url + token → live call)
+
+- Implement an `OpenAICompatibleModelProvider` (chat/generation) over the **Sprint 9 SSRF-safe
+  stdlib transport** (same pattern as the WS1 embedding client — reuse target/scheme/host
+  validation, resolved-IP pinning, redirect denial, timeouts, response-size cap, bounded retries,
+  redacted audit). Driven by the `model_profile` artifact: `provider`, `endpoint`/base_url,
+  `model`, `secret:<name>` token, `timeout_seconds`; plugged via `RUNTIME_MODEL_PROVIDER`.
+- **Endpoint governance:** platform-allowlisted destinations; test → cloud, prod → local
+  OpenAI-compatible. Decide whether the endpoint is free-form per `model_profile` (author-set) or
+  restricted to a platform allowlist like WS1 embeddings — **open decision** (recommend allowlist
+  + author selects among allowlisted model profiles, mirroring the `EmbeddingProfile` catalog).
+- **No `openai` dependency** unless a later review approves it; default is the stdlib client.
+
+### 5.2 Light up RAG generation
+
+- Once 5.1 exists, `run_rag` (`/v1/query`) reaches the real model with no runtime change (the
+  generate seam already calls the provider). Verify grounding gate, output-contract governance,
+  citation policy, fallback, token usage, and redaction all hold on the live path.
+
+### 5.3 Wire real retrieval into the agent + workflow
+
+- Replace the agent `retrieve` stub and the workflow `retrieve` node with the governed retrieval
+  provider (WS1 ACL-scoped pgvector), so agents and workflows do **real, authorized document RAG**
+  — not just the standalone query path.
+
+### 5.4 Real workflow generation + multi-prompt / multi-model
+
+- Wire the workflow `generate` node to the real provider with **per-node prompt/model binding**:
+  a `generate` node references a governed `prompt` role/template (data, validated, redaction-safe)
+  and optionally a specific `model_profile`. This enables **scenarios that need several different
+  LLM prompts** (multiple `generate` nodes in one DAG, each with its own prompt/model), all still
+  governed by contracts/policy/fallback.
+
+### 5.5 Agent system prompt (authored, governed)
+
+- Extend `agent_definition` to reference a governed **system-prompt / instruction** artifact
+  (data, not code: validated, bounded, redaction-safe, checksummed, pinned in the release) so an
+  agent has an authored persona/instructions. Today there is none. Keep the loop's tool/decision
+  re-validation unchanged (the prompt is an input, never authorization).
+
+### 5.6 Governance, cost, and observability on live paths
+
+- Enforce per-call **timeout, response-size cap, token budget**, bounded retries with backoff, and
+  circuit-breaking on model egress; grounding/output-contract/policy/fallback on every real
+  generation path (RAG, workflow, agent); **no prompt/response content in logs, metrics labels, or
+  audit** (ids/counts/latency/stable codes only). Add per-provider latency/error/token metrics
+  reusing the Sprint 7 Prometheus surface.
+
+### Relation to other workstreams
+
+WS5 makes generation *work*; **WS3** (AI-assisted authoring + artifacts visible/editable in the UI
+at DSL level) makes prompts/models *authorable and visible in the UI* instead of GitOps-only. WS5
+reuses the **WS1** SSRF-safe egress and provider-catalog pattern. Dependencies/egress here follow
+the same explicit-approval + supply-chain/threat-review gate.
+
 ## Cross-cutting constraints
 
 - Every new production dependency and every new external egress needs **explicit owner
@@ -195,6 +282,7 @@ yet decomposed into component plans.
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
+| 5 | Live model runtime (real generation) | Scoped 2026-07-12 — **foundational**; sequence to confirm (recommended with WS1); not started |
 
 ---
 
