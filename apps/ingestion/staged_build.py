@@ -1,0 +1,246 @@
+"""Staged, blue/green real-embedding index build over a managed document-set version (P3.2).
+
+Builds a **staged** ``IndexVersion`` (its own immutable per-version vector store) from the exact
+``DocumentVersion``s pinned into a published ``DocumentSetVersion``, using a tenant-granted
+``EmbeddingProfile``. The result is left ``promotable`` — it is **not served to consumers**: the
+serving guardrail holds real corpora back until P4 wires deny-by-default binding + RLS and the
+pointer-flip promotion. Embedding runs over ``text``/``markdown`` bytes; richer formats (pdf/docx/
+xlsx via parsers, OCR) arrive in P7.
+
+The embedder is the deterministic default unless ``RUNTIME_EMBEDDING_PROVIDER`` selects the real
+opt-in client; either way the vector dimension must equal the profile's declared dimension (no
+silent truncation, ADR-0003). A post-send embedding failure surfaces as ``OUTCOME_UNKNOWN`` and the
+build fails closed for controlled re-drive — the partial store is dropped, never a silent re-send.
+"""
+
+from __future__ import annotations
+
+from django.db import connection, transaction
+from django.db.models import Max
+
+from apps.audit.services import record_event
+from apps.documents.models import DocumentSetVersion, DocumentSetVersionStatus
+from apps.ingestion.embedding import (
+    EmbeddingError,
+    EmbeddingOutcomeUnknown,
+    get_embedding_provider,
+)
+from apps.ingestion.models import (
+    EmbeddingProfile,
+    EmbeddingProfileStatus,
+    IndexStatus,
+    IndexVersion,
+    TenantEmbeddingProfileGrant,
+)
+from apps.ingestion.pipeline import CHUNKERS, PipelineError
+from apps.ingestion.vector_store import (
+    VectorRow,
+    VectorStoreError,
+    drop_store,
+    provision_store,
+    write_chunks,
+)
+
+# Bounds so one build cannot exhaust resources.
+_MAX_DOCUMENTS = 5_000
+_MAX_CHUNKS = 200_000
+_EMBEDDABLE_MIME = frozenset({"text/plain", "text/markdown"})
+
+
+class StagedBuildError(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def build_staged_index(
+    *,
+    document_set_version: DocumentSetVersion,
+    embedding_profile: EmbeddingProfile,
+    actor: str,
+    chunker: str = "fixed",
+    request_id: str = "",
+) -> IndexVersion:
+    if connection.vendor != "postgresql":
+        # The per-IndexVersion store is a pgvector-only path (ADR-0003).
+        raise StagedBuildError("VECTOR_STORE_REQUIRES_POSTGRES")
+
+    organization_id = document_set_version.organization_id
+    if document_set_version.status not in (
+        DocumentSetVersionStatus.PROMOTABLE,
+        DocumentSetVersionStatus.ACTIVE,
+    ):
+        raise StagedBuildError("SET_VERSION_NOT_PUBLISHED")
+    if embedding_profile.status != EmbeddingProfileStatus.ACTIVE:
+        raise StagedBuildError("EMBEDDING_PROFILE_DISABLED")
+    # Deny-by-default: the tenant must be granted this platform profile.
+    if not TenantEmbeddingProfileGrant.objects.filter(
+        organization_id=organization_id, embedding_profile=embedding_profile
+    ).exists():
+        raise StagedBuildError("EMBEDDING_PROFILE_NOT_GRANTED")
+    chunk_fn = CHUNKERS.get(chunker)
+    if chunk_fn is None:
+        raise StagedBuildError("CHUNKER_UNSUPPORTED")
+
+    index_version = _create_index_version(document_set_version, embedding_profile)
+    try:
+        provision_store(index_version)
+        document_count, chunk_count = _embed_into_store(
+            index_version, document_set_version, embedding_profile, chunk_fn
+        )
+    except (StagedBuildError, VectorStoreError, EmbeddingError, PipelineError):
+        _fail(index_version, reason="build_failed")
+        raise
+    except Exception:
+        _fail(index_version, reason="internal_error")
+        raise
+
+    with transaction.atomic():
+        locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
+        locked.status = IndexStatus.PROMOTABLE
+        locked.store_ready = True
+        locked.document_count = document_count
+        locked.chunk_count = chunk_count
+        locked.save(
+            update_fields=["status", "store_ready", "document_count", "chunk_count", "updated_at"]
+        )
+        record_event(
+            actor_type="user",
+            actor_id=actor,
+            action="ingestion.staged_index.built",
+            outcome="success",
+            organization_id=organization_id,
+            resource_type="index_version",
+            resource_id=str(locked.pk),
+            request_id=request_id,
+            after={
+                "document_set_version_id": document_set_version.pk,
+                "embedding_profile_id": str(embedding_profile.public_id),
+                "documents": document_count,
+                "chunks": chunk_count,
+            },
+        )
+    index_version.refresh_from_db()
+    return index_version
+
+
+def _create_index_version(
+    document_set_version: DocumentSetVersion, embedding_profile: EmbeddingProfile
+) -> IndexVersion:
+    with transaction.atomic():
+        latest = (
+            IndexVersion.objects.select_for_update()
+            .filter(document_set_version=document_set_version, embedding_profile=embedding_profile)
+            .aggregate(value=Max("version"))["value"]
+            or 0
+        )
+        return IndexVersion.objects.create(
+            organization_id=document_set_version.organization_id,
+            document_set_version=document_set_version,
+            embedding_profile=embedding_profile,
+            dimensions=embedding_profile.dimensions,
+            index_type=embedding_profile.index_type,
+            version=latest + 1,
+            status=IndexStatus.BUILDING,
+        )
+
+
+def _embed_into_store(
+    index_version: IndexVersion,
+    document_set_version: DocumentSetVersion,
+    embedding_profile: EmbeddingProfile,
+    chunk_fn: object,
+) -> tuple[int, int]:
+    from apps.documents.storage import get_object_store
+
+    provider = get_embedding_provider()
+    store = get_object_store()
+    profile_id = str(embedding_profile.public_id)
+    organization_id = document_set_version.organization_id
+    batch_size = max(1, int(embedding_profile.max_batch_size))
+
+    document_count = 0
+    chunk_count = 0
+    for membership in document_set_version.memberships.select_related("document_version").order_by(
+        "ordinal", "id"
+    ):
+        version = membership.document_version
+        if version.mime_type not in _EMBEDDABLE_MIME:
+            raise StagedBuildError("UNSUPPORTED_MIME_FOR_EMBEDDING")
+        try:
+            text = store.get(version.object_key).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise StagedBuildError("DOCUMENT_NOT_UTF8") from exc
+        chunks = chunk_fn(text)  # type: ignore[operator]
+        rows: list[VectorRow] = []
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start : start + batch_size]
+            try:
+                result = provider.embed(batch, profile_id=profile_id)
+            except EmbeddingOutcomeUnknown:
+                # Post-send unknown: never re-send; fail the build for controlled re-drive.
+                raise
+            if result.dimensions and result.dimensions != embedding_profile.dimensions:
+                raise StagedBuildError("EMBEDDING_DIMENSION_MISMATCH")
+            for offset, (chunk_text, vector) in enumerate(zip(batch, result.vectors, strict=True)):
+                rows.append(
+                    VectorRow(
+                        organization_id=organization_id,
+                        document_version_id=version.pk,
+                        ordinal=start + offset,
+                        text=chunk_text,
+                        embedding=vector,
+                    )
+                )
+        chunk_count += write_chunks(index_version, rows)
+        document_count += 1
+        if document_count > _MAX_DOCUMENTS or chunk_count > _MAX_CHUNKS:
+            raise StagedBuildError("BUILD_TOO_LARGE")
+    return document_count, chunk_count
+
+
+def _fail(index_version: IndexVersion, *, reason: str) -> None:
+    # Drop the partial store and mark the version failed; never leave a half-written store ready.
+    try:
+        drop_store(index_version)
+    except VectorStoreError:
+        pass
+    with transaction.atomic():
+        locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
+        locked.status = IndexStatus.FAILED
+        locked.store_ready = False
+        locked.save(update_fields=["status", "store_ready", "updated_at"])
+        record_event(
+            actor_type="system",
+            actor_id="ingestion-worker",
+            action="ingestion.staged_index.failed",
+            outcome="failure",
+            organization_id=locked.organization_id,
+            resource_type="index_version",
+            resource_id=str(locked.pk),
+            reason=reason,
+        )
+
+
+def retire_staged_index(index_version: IndexVersion, *, actor: str, request_id: str = "") -> None:
+    """Drop a staged/superseded store's physical relation (retention/purge), audited.
+
+    Refuses an active index: an active store is only retired after a P4 pointer-flip supersedes it.
+    """
+    if index_version.status == IndexStatus.ACTIVE:
+        raise StagedBuildError("INDEX_ACTIVE")
+    drop_store(index_version)
+    with transaction.atomic():
+        locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
+        locked.store_ready = False
+        locked.save(update_fields=["store_ready", "updated_at"])
+        record_event(
+            actor_type="user",
+            actor_id=actor,
+            action="ingestion.staged_index.retired",
+            outcome="success",
+            organization_id=locked.organization_id,
+            resource_type="index_version",
+            resource_id=str(locked.pk),
+            request_id=request_id,
+        )

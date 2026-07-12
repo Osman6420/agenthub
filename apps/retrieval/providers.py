@@ -105,8 +105,10 @@ class PgvectorRetrievalProvider:
         )
         return [
             RetrievedChunk(
+                # This legacy path only serves source-scoped index versions; a P3 document-set
+                # index version writes to its own per-IndexVersion store, not this Chunk table.
                 text=row.text,
-                source_id=row.index_version.source.slug,
+                source_id=row.index_version.source.slug if row.index_version.source else "",
                 source_uri=row.document.source_uri,
                 title=row.document.title,
                 score=max(0.0, 1.0 - float(row.distance)),

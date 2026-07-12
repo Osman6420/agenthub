@@ -31,10 +31,17 @@ called in CI. Phase 2 P2 added the tenant-owned content plane `apps/documents`
 (`Document→DocumentVersion` + `DocumentSet/Version/Membership`), object-store blob upload,
 soft-delete tombstone, auditable physical purge, and a role/tenant-scoped operator JSON API under
 `/console/api/documents/`; the Sprint 5 index-scoped `Document` was renamed to `IndexedDocument`
-(rows/PKs/FKs preserved). P2 changes no retrieval path and adds no dependency or egress; scenario
-binding, retrieval ACL, and RLS remain P4, real embeddings remain P3. Embedding and agent/workflow
-generation wiring remain pending. Providers plug in via
-`RUNTIME_MODEL_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
+(rows/PKs/FKs preserved). Phase 2 P3 added real embeddings + staged indexing: a platform-managed
+immutable `EmbeddingProfile` catalog + per-tenant grants and an opt-in `OpenAICompatibleEmbeddingClient`
+over the shared SSRF-safe transport (profile-id-only, deterministic default, no `openai` dep — P3.1),
+plus the ADR-0003 per-`IndexVersion` blue/green vector-store DAL (`apps/ingestion/vector_store.py`,
+system-generated `chunk_iv_<pk>` names, `vector(D)`/`halfvec(D)`, PostgreSQL-only) and a staged
+`build_staged_index` over managed documents that leaves a `promotable` (never served) index (P3.2).
+`IndexVersion` was re-scoped (additive) to `(org, document_set_version, embedding_profile)`. P2/P3
+change no served retrieval path and add no dependency or live egress; scenario binding, retrieval
+ACL, RLS, pointer-flip promotion, and the legacy-chunk data-migration cutover remain **P4**. Wiring
+real embeddings/retrieval into agent/workflow generation remains later (P5+). Providers plug in via
+`RUNTIME_MODEL_PROVIDER`/`RUNTIME_EMBEDDING_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
 The repository contains
 a bootable Django modular monolith: `config/` (settings split base/local/test/
 production, `celery.py`, `asgi.py`, `wsgi.py`, `urls.py`); the Sprint 1 control-plane
@@ -241,8 +248,9 @@ record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan i
 under `docs/planning/archive/`. Phase 2 is a discussion draft at
 `docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
 personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and P1
-(live chat) and P2 (content plane & storage) are verified; continue at P3 (real embeddings +
-indexing, staged). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
+(live chat), P2 (content plane & storage), and P3 (real embeddings + staged blue/green indexing) are
+verified; continue at P4 (document-ACL retrieval + RLS + pointer-flip promotion, which unlocks
+serving real corpora). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
 remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 

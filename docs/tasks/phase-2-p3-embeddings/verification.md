@@ -2,9 +2,48 @@
 
 ## Status
 
-**P3.1 (embedding provider foundation) Verified 2026-07-12.** Automated evidence only; every
-transport test injects an offline resolver/connection, so no socket is opened and no live embedding
-endpoint was configured or called. **P3.2 (staged blue/green indexing) is not yet implemented.**
+**P3 Verified.** P3.1 (embedding provider foundation) verified 2026-07-12; P3.2 (per-`IndexVersion`
+vector-store DAL + staged blue/green build) verified 2026-07-13. Automated evidence only: every
+egress test injects an offline resolver/connection (no socket, no live endpoint), and the vector
+store is exercised on the real Docker-Compose PostgreSQL/pgvector with the hermetic in-memory object
+store (no MinIO). The served `/v1/query` retriever and the legacy `Chunk` table are unchanged
+(pointer-flip promotion, ACL retrieval, RLS, and the chunk data-migration cutover are P4).
+
+## P3.2 acceptance criteria mapping
+
+- Per-`IndexVersion` store: `provision_store` creates a fixed-dimension `vector(D)`/`halfvec(D)`
+  table + HNSW cosine index with a system-generated `chunk_iv_<pk>` name (regex-validated, never
+  external input); `write_chunks`/`search`/`drop_store` verified on PostgreSQL.
+- No silent truncation: `write_chunks` rejects a vector whose length ≠ the store dimension.
+- Tenant scoping: `search` filters by `organization_id`; a foreign-tenant row is not returned.
+- Staged build: deny-by-default tenant grant required; only a published set version + active profile
+  build; `text`/`markdown` only (non-text fails closed); result is `promotable` (never `active`) and
+  searchable; a failed build drops the partial store; all audited.
+- Off-PostgreSQL: the DAL and build fail closed with `VECTOR_STORE_REQUIRES_POSTGRES`.
+- Migration `ingestion.0004` (additive `IndexVersion` re-scope) applies with no drift.
+
+## Checks and evidence (P3.2)
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Format / lint / type | `ruff format --check`, `ruff check`, `mypy apps config` | Pass — 289 files |
+| Django check / drift | `manage.py check`; `makemigrations --check --dry-run` | Pass — no changes |
+| Targeted pgvector | `pytest apps/ingestion/tests/test_vector_store.py apps/ingestion/tests/test_staged_build.py` (PostgreSQL) | 9 passed, 2 off-PG guards skipped |
+| Final SQLite | `pytest -q` | 440 passed, 10 skipped (pgvector) |
+| Final PostgreSQL | `pytest -q --create-db` under `config.settings.local` + MCP/metrics flags | 448 passed, 2 skipped (off-PG guards) |
+
+## Security and authorization evidence (P3.2)
+
+Store names are int-derived and regex-validated (no SQL-identifier injection surface); all values
+are bound parameters. `search` is tenant-scoped (RLS is the P4 backstop). The staged build enforces
+a per-tenant embedding-profile grant (deny-by-default), rejects unpublished set versions, disabled
+profiles, and non-text mime, and never leaves a half-written store `ready`. Audit records
+`ingestion.staged_index.built/failed/retired` with ids/counts only (no content, no store name).
+
+## Migration verification (P3.2)
+
+`ingestion.0004_indexversion_dimensions_and_more` is additive (nullable FKs/fields + conditional
+unique; `source` relaxed to nullable). No drift; the full PostgreSQL `--create-db` suite applies it.
 
 ## Acceptance criteria mapping (P3.1)
 

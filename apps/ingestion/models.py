@@ -79,7 +79,31 @@ class IndexVersion(TimeStampedModel):
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="index_versions"
     )
-    source = models.ForeignKey(Source, on_delete=models.CASCADE, related_name="index_versions")
+    # Sprint 5 source-scoped path (legacy). Nullable so a Phase 2 P3 index version can instead be
+    # scoped to a document-set version + embedding profile (ADR-0003 retrieval trust unit).
+    source = models.ForeignKey(
+        Source, on_delete=models.CASCADE, related_name="index_versions", null=True, blank=True
+    )
+    document_set_version = models.ForeignKey(
+        "documents.DocumentSetVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="index_versions",
+    )
+    embedding_profile = models.ForeignKey(
+        "ingestion.EmbeddingProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="index_versions",
+    )
+    # Snapshot of the store's fixed geometry so the DAL never has to join a (possibly disabled)
+    # profile to know the column type. "vector"/"halfvec"; dimensions <= profile.max_dimensions.
+    dimensions = models.PositiveIntegerField(null=True, blank=True)
+    index_type = models.CharField(max_length=16, blank=True)
+    # True once the per-IndexVersion physical vector store has been provisioned and written.
+    store_ready = models.BooleanField(default=False)
     version = models.PositiveIntegerField()
     status = models.CharField(
         max_length=16, choices=IndexStatus.choices, default=IndexStatus.BUILDING
@@ -89,12 +113,22 @@ class IndexVersion(TimeStampedModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["source", "version"], name="uniq_index_source_version")
+            models.UniqueConstraint(fields=["source", "version"], name="uniq_index_source_version"),
+            models.UniqueConstraint(
+                fields=["document_set_version", "embedding_profile", "version"],
+                name="uniq_index_docsetver_profile_version",
+                condition=models.Q(document_set_version__isnull=False),
+            ),
         ]
 
     def clean(self) -> None:
-        if self.source_id and self.organization_id != self.source.organization_id:
+        if self.source_id and self.organization_id != self.source.organization_id:  # type: ignore[union-attr]
             raise ValidationError("index organization must match source organization")
+        if (
+            self.document_set_version_id
+            and self.document_set_version.organization_id != self.organization_id  # type: ignore[union-attr]
+        ):
+            raise ValidationError("index organization must match document-set-version organization")
 
 
 class RunStatus(models.TextChoices):

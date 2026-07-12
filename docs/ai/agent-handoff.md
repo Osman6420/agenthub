@@ -268,7 +268,22 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **PHASE 2 CURRENT ENTRY — P1 + P2 COMPLETE; continue at P3.** P1 is implemented and verified in
+- **PHASE 2 CURRENT ENTRY — P1 + P2 + P3 COMPLETE; continue at P4.** **P3 (real embeddings + staged
+  blue/green indexing) is implemented and verified** in `docs/tasks/phase-2-p3-embeddings/`, in two
+  increments: P3.1 — a platform `EmbeddingProfile` catalog + per-tenant grants + opt-in
+  `OpenAICompatibleEmbeddingClient` over the shared SSRF-safe transport (profile-id-only,
+  deterministic default, no `openai` dep, no live endpoint); P3.2 — the ADR-0003 per-`IndexVersion`
+  blue/green vector-store DAL (`apps/ingestion/vector_store.py`, system-generated `chunk_iv_<pk>`
+  names, `vector(D)`/`halfvec(D)`, **PostgreSQL-only**) + a re-scoped `IndexVersion` (migration
+  `ingestion.0003` catalog, `0004` re-scope) + `build_staged_index` over managed documents that
+  leaves a **`promotable` (never served)** index. New settings knob `RUNTIME_EMBEDDING_PROVIDER`
+  (default deterministic). New management commands: `register_embedding_profile`,
+  `grant_embedding_profile`, `build_staged_index`. Evidence: SQLite 440 passed / 10 skipped
+  (pgvector); PostgreSQL `--create-db` 448 passed / 2 skipped (off-PG guards). **The served
+  `/v1/query` retriever and the legacy `Chunk` table are untouched** — pointer-flip promotion,
+  document-ACL retrieval, RLS, and the legacy-chunk data-migration cutover are **P4** (they cross the
+  serving guardrail). Continue at **P4** honoring the guardrail. Older P1/P2 provenance follows.
+- **P1 + P2 provenance.** P1 is implemented and verified in
   `docs/tasks/phase-2-p1-live-chat/` (platform `ModelProfile` catalog, profile-ID-only shared
   SSRF-safe egress, opt-in real chat provider; deterministic default; no live endpoint opened).
   **P2 (content plane & storage) is implemented and verified** in

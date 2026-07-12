@@ -109,13 +109,38 @@ profiles through the governed command only after a separate environment-specific
 Rollback: leave `RUNTIME_EMBEDDING_PROVIDER` empty (deterministic); the catalog is additive and
 inert. Reverse `ingestion.0003` only before data is relied upon.
 
+## Scope (P3.2 — staged blue/green indexing)
+
+- Name-parameterized per-`IndexVersion` vector-store DAL (`apps/ingestion/vector_store.py`):
+  `provision_store` / `write_chunks` / `search` (cosine) / `store_exists` / `drop_store`; store name
+  is `chunk_iv_<int-pk>` (regex-validated, never external input); `vector(D)`/`halfvec(D)` fixed per
+  store; PostgreSQL-only (fails closed off PostgreSQL).
+- `IndexVersion` re-scoped: additive nullable `document_set_version` + `embedding_profile` +
+  `dimensions` + `index_type` + `store_ready`; `source` made nullable; conditional unique on
+  `(document_set_version, embedding_profile, version)`. Migration `ingestion.0004`.
+- `build_staged_index` (`apps/ingestion/staged_build.py`): tenant-grant check (deny-by-default),
+  published-set-version + active-profile checks, provision store, read each pinned `DocumentVersion`
+  blob (`text`/`markdown` only in P3), chunk, embed (deterministic default), write via the DAL,
+  leave `promotable` (never `active` — serving guardrail), audited; fail-closed drops the partial
+  store; `retire_staged_index` drops a staged/superseded store (refuses an active one).
+- `build_staged_index` management command.
+
+## Non-goals (P3.2)
+
+Pointer-flip promotion to `active` + release/binding pinning + eval-on-candidate + repointing the
+served retriever + migrating the legacy 64-dim `Chunk` rows into per-`IndexVersion` stores are **P4**
+(they cross the serving guardrail and the ACL/RLS core). The legacy `Chunk` table and the current
+`/v1/query` retriever are left untouched here.
+
 ## Status
 
-P3.1 Implemented and Verified (2026-07-12): SQLite 437 passed / 2 skipped; PostgreSQL `--create-db`
-439 passed; ruff/mypy/check/no-drift clean. No live endpoint opened. P3.2 (staged blue/green
-indexing) is the next increment.
+**P3 Implemented and Verified.** P3.1 (2026-07-12): SQLite 437 / PostgreSQL 439. P3.2 (2026-07-13):
+per-`IndexVersion` store DAL + re-scoped `IndexVersion` (migration `0004`) + staged build, verified
+on real PostgreSQL (store built/written/cosine-searched); SQLite 440 passed / 10 skipped (pgvector),
+PostgreSQL `--create-db` 448 passed / 2 skipped (off-PG guards). No live endpoint opened; the served
+retriever is unchanged. Continue at **P4** (document-ACL retrieval + RLS + pointer-flip promotion).
 
 ## Completion criteria
 
 Acceptance criteria mapped in `verification.md`; ruff/mypy/check/migration/SQLite/PostgreSQL,
-authorization, SSRF, redaction, and final-diff reviews pass for P3.1.
+authorization, tenant-isolation, SSRF, redaction, and final-diff reviews pass for P3.1 and P3.2.

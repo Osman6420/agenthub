@@ -329,7 +329,7 @@ decomposed into component plans.
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | **P2 (content plane & storage) implemented + verified** (`apps/documents`, object-store upload, soft-delete/purge, operator API, `Document→IndexedDocument` rename); M0 spikes documented (ADR-0003/0004/0005). Next: **P3 real embeddings (staged)**; P4 ACL+RLS retrieval; per-phase egress/dependency sign-off remains |
+| 1 | Document plane | **P2 (content plane & storage) + P3 (real embeddings + staged blue/green indexing) implemented + verified** (`apps/documents`; `EmbeddingProfile` catalog + opt-in embedding client; ADR-0003 per-`IndexVersion` vector-store DAL + `build_staged_index`, staged/never-served). M0 spikes = ADR-0003/0004/0005. Next: **P4 document-ACL retrieval + RLS + pointer-flip promotion** (unlocks serving); per-phase egress/dependency sign-off remains |
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
