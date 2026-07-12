@@ -333,7 +333,7 @@ decomposed into component plans.
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
-| 5 | Live model runtime (real generation) | **P1 implemented + verified** (catalog/shared egress/chat provider, opt-in/no live endpoint); P5–P6 pending |
+| 5 | Live model runtime (real generation) | **P1 + P5 implemented + verified** — catalog/shared egress/chat provider (opt-in); **P5 wired real retrieve/generate into the agent loop + workflow nodes + per-node prompt/model binding** (`apps/orchestration/rag_steps.py`). Next: **P6 authored agent system prompt** |
 
 ---
 

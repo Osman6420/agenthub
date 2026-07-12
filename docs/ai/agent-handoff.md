@@ -268,7 +268,18 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **P4 COMPLETE — continue at P5.** P4 (document-ACL retrieval + RLS + pointer-flip promotion — the
+- **P5 COMPLETE — continue at P6.** P5 (real retrieve/generate wired into the agent loop + workflow
+  nodes) is implemented and verified in `docs/tasks/phase-2-p5-agent-workflow-rag/`: a shared
+  `apps/orchestration/rag_steps.py` (`retrieve_for_release` → P4 ACL retrieval; `generate_for_release`
+  → P1 chat, over the release bundle) now backs the workflow `retrieve`/`generate` nodes and the
+  agent retrieve step + `_respond` (previously stubs). The workflow `generate` node gained optional
+  per-node `prompt_ref`/`model_profile_ref` binding (compiler-validated) → multi-prompt/multi-model
+  workflows. **Behavioral wiring only — no migration, no new dependency, deterministic default keeps
+  CI hermetic.** Evidence: SQLite 464 passed / 18 skipped; PostgreSQL `--create-db` 480 passed / 2
+  skipped. The agent still uses the user objective as its prompt — an **authored agent system-prompt
+  artifact is P6** (extend `agent_definition` to reference a governed, validated, release-pinned
+  system-prompt/instruction artifact; tool/decision re-validation unchanged). P4 provenance follows.
+- **P4 COMPLETE.** P4 (document-ACL retrieval + RLS + pointer-flip promotion — the
   security core) is implemented and verified in `docs/tasks/phase-2-p4-acl-rls/` across four
   increments: P4.1 binding + ACL grant foundation (`80d140f`); P4.2 the release compiler pins
   `document_set_versions` deny-by-default from `ScenarioDocumentSetBinding`s, the resolver/runtime

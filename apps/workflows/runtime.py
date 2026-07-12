@@ -240,10 +240,30 @@ def _execute_node(
     if node_type in {"input", "end"}:
         return None
     if node_type == "retrieve":
-        state["retrieval"] = {"chunks": [], "top_score": 0.0}
+        from apps.orchestration.rag_steps import retrieve_for_release
+
+        try:
+            state["retrieval"] = retrieve_for_release(release=release, query=_workflow_query(state))
+        except Exception as exc:  # provider-opaque failure -> fail the node with a stable code
+            raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_FAILED") from exc
         return None
     if node_type == "generate":
-        state["output"] = {"answer": "generated", "sources": []}
+        from apps.orchestration.providers import ModelProviderError
+        from apps.orchestration.rag_steps import chunks_from_state, generate_for_release
+
+        context = chunks_from_state(state)
+        prompt, model_profile = _generate_bindings(config, release)
+        try:
+            response = generate_for_release(
+                release=release, context=context, prompt=prompt, model_profile=model_profile
+            )
+        except ModelProviderError as exc:
+            raise WorkflowRuntimeError("WORKFLOW_GENERATION_FAILED") from exc
+        retrieval = state.get("retrieval") if isinstance(state.get("retrieval"), dict) else {}
+        state["output"] = {
+            "answer": response.text,
+            "sources": retrieval.get("chunks", []) if isinstance(retrieval, dict) else [],
+        }
         return None
     if node_type == "format_output":
         state["output"] = {"answer": str(config.get("template_ref", "")), "sources": []}
@@ -276,6 +296,40 @@ def _execute_node(
         state.update(patch)
         return None
     raise WorkflowRuntimeError("WORKFLOW_NODE_UNSUPPORTED")
+
+
+def _workflow_query(state: dict[str, Any]) -> str:
+    """Derive the retrieval query from the workflow input (server-side; no client filter)."""
+    payload = state.get("input")
+    if isinstance(payload, dict):
+        query = payload.get("query")
+        if isinstance(query, str):
+            return query
+    return str(payload) if payload is not None else ""
+
+
+def _generate_bindings(
+    config: dict[str, Any], release: Any
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve per-node prompt/model binding for a ``generate`` node (P5.2).
+
+    ``prompt_ref``/``model_profile_ref`` name manifest roles pinned into the release, so a workflow
+    with several ``generate`` nodes runs distinct governed prompts/models. Absent -> the
+    release-level ``prompt``/``model_profile`` roles (bundle defaults).
+    """
+    prompt: str | None = None
+    model_profile: dict[str, Any] | None = None
+    prompt_ref = config.get("prompt_ref")
+    if isinstance(prompt_ref, str) and prompt_ref:
+        body = get_artifact_body_for_role(release, prompt_ref)
+        if isinstance(body, dict):
+            prompt = str(body.get("template", ""))
+    model_ref = config.get("model_profile_ref")
+    if isinstance(model_ref, str) and model_ref:
+        body = get_artifact_body_for_role(release, model_ref)
+        if isinstance(body, dict):
+            model_profile = body
+    return prompt, model_profile
 
 
 def _evaluate_condition(expression: str, state: dict[str, Any]) -> bool:

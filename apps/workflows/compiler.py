@@ -131,6 +131,21 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
         _identifier(config.get("binding_role"), "tool binding_role")
         _identifier(config.get("input_key"), "tool input_key")
         _identifier(config.get("output_key"), "tool output_key")
+    elif node_type == "generate":
+        # Optional per-node prompt/model binding (P5.2): names of manifest roles pinned into the
+        # release. The runtime resolves them; a missing role falls back to the release defaults.
+        _require_exact_keys(
+            config,
+            {"prompt_ref", "model_profile_ref"},
+            "generate config",
+            optional={"prompt_ref", "model_profile_ref"},
+        )
+        if "prompt_ref" in config:
+            _identifier(config.get("prompt_ref"), "generate prompt_ref")
+        if "model_profile_ref" in config:
+            _identifier(config.get("model_profile_ref"), "generate model_profile_ref")
+    elif node_type == "retrieve" and config:
+        raise WorkflowCompileError("retrieve node does not accept config")
     elif node_type in {"input", "validate_contract", "end"} and config:
         raise WorkflowCompileError(f"{node_type} node does not accept config")
 

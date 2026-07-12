@@ -44,7 +44,6 @@ from apps.agents.services import (
 )
 from apps.artifacts.validation import compute_checksum
 from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
-from apps.orchestration.providers import get_model_provider
 from apps.orchestration.runtime import RunResult
 from apps.releases.services import get_artifact_body_for_role
 
@@ -163,7 +162,7 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
         _validate_decision(decision, config)
 
         if decision.kind == DECISION_RESPOND:
-            output, delta_in, delta_out = _respond(objective, state, config)
+            output, delta_in, delta_out = _respond(objective, state, config, run.release)
             in_tokens += delta_in
             out_tokens += delta_out
             if in_tokens + out_tokens > limits["max_tokens"]:
@@ -183,9 +182,14 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
             )
 
         if decision.kind == DECISION_RETRIEVE:
-            # Deterministic retrieval seam (mirrors the workflow retrieve node); a real
-            # retriever plugs in behind the same governed provider interface.
-            state["retrieval"] = {"chunks": [], "top_score": 0.0}
+            # Governed release-scoped retrieval (P5): the P4 document-ACL retriever behind the
+            # same provider seam as run_rag. Deterministic default keeps CI hermetic.
+            from apps.orchestration.rag_steps import retrieve_for_release
+
+            try:
+                state["retrieval"] = retrieve_for_release(release=run.release, query=objective)
+            except Exception as exc:
+                raise AgentRuntimeError("AGENT_RETRIEVAL_FAILED") from exc
             retrieved = True
             state["_retrieved"] = True
         else:  # DECISION_TOOL
@@ -364,10 +368,14 @@ def _validate_decision(decision: AgentDecision, config: dict[str, Any]) -> None:
 
 
 def _respond(
-    objective: str, state: dict[str, Any], config: dict[str, Any]
+    objective: str, state: dict[str, Any], config: dict[str, Any], release: Any
 ) -> tuple[dict[str, Any], int, int]:
-    provider = get_model_provider()
-    response = provider.generate(prompt=objective or "", context=[], model_profile={})
+    # Generate over the governed model provider using the retrieved context (P5). The objective is
+    # the prompt until P6 adds an authored agent system prompt; the release model_profile is used.
+    from apps.orchestration.rag_steps import chunks_from_state, generate_for_release
+
+    context = chunks_from_state(state)
+    response = generate_for_release(release=release, context=context, prompt=objective or "")
     sources = state.get("retrieval", {}).get("chunks", []) if isinstance(state, dict) else []
     output = {"answer": response.text, "sources": sources if isinstance(sources, list) else []}
     return output, response.input_tokens, response.output_tokens

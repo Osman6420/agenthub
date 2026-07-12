@@ -48,8 +48,13 @@ non-superuser role); and `promote_staged_index`/`rollback_staged_index` do the m
 pointer-flip. Legacy source-scoped retrieval is unchanged; no dependency or live egress added.
 **Remaining P4 production hardening:** `FORCE` RLS on the Django-managed tenant tables + a dedicated
 non-owner app role (CI/local run as the superuser owner, which bypasses RLS — the mechanism is
-proven on the served stores). Wiring real embeddings/retrieval into agent/workflow generation is
-**P5+**. Providers plug in via
+proven on the served stores). Phase 2 P5 wired the **same governed retrieve/generate seams** into the
+workflow (`retrieve`/`generate` nodes) and agent (retrieve step + `_respond`) via
+`apps/orchestration/rag_steps.py`, so agents/workflows now do real P4 ACL retrieval + P1 generation
+(not stubs); the workflow `generate` node gained optional per-node `prompt_ref`/`model_profile_ref`
+binding (multi-prompt/multi-model workflows). The agent still uses the user objective as its prompt —
+an authored agent **system prompt** is **P6**. Deterministic providers remain default (CI hermetic);
+providers plug in via
 `RUNTIME_MODEL_PROVIDER`/`RUNTIME_EMBEDDING_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
 The repository contains
 a bootable Django modular monolith: `config/` (settings split base/local/test/
@@ -259,9 +264,10 @@ under `docs/planning/archive/`. Phase 2 is a discussion draft at
 personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and P1
 (live chat), P2 (content plane & storage), P3 (real embeddings + staged blue/green indexing), and P4
 (document-ACL retrieval + FORCE RLS + pointer-flip promotion — the security core that unlocks
-serving real, ACL-scoped tenant corpora) are verified; continue at P5 (wire real retrieval +
-generation into the agent loop and workflow generate/retrieve nodes, with per-node prompt/model
-binding). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
+serving real, ACL-scoped tenant corpora), and P5 (real retrieve/generate wired into the agent loop
+and workflow generate/retrieve nodes + per-node prompt/model binding) are verified; continue at P6
+(authored, governed agent system-prompt artifact). Its M0 architecture decisions are accepted as
+ADR-0002–0005, with the
 remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 
