@@ -1,0 +1,221 @@
+# AgentHub — Operator & Workflow Builder User Guide
+
+This guide explains how to operate AgentHub through the console: signing in, navigating
+the tenant-scoped surfaces, authoring workflows visually with the Sprint 11 builder, and
+taking a scenario from draft to a served release. It is written for tenant operators
+(scenario editors, project owners, org admins, release managers, approvers, auditors).
+
+> AgentHub is a governed, multi-tenant platform for shipping RAG, workflow, and agent
+> scenarios behind a single public API. Everything an operator publishes is an **immutable,
+> checksummed artifact** compiled into a **release**; nothing reaches a consumer until it
+> passes evaluation and is explicitly promoted.
+
+---
+
+## 1. Signing in
+
+1. Open the console at **`/console/`** (locally `http://127.0.0.1:8000/console/`).
+2. You are redirected to **`/console/login/`**. Authenticate with your operator account.
+   In production this is your **LDAP / directory** identity; in local development it is a
+   Django account. There is no separate builder login — the visual builder reuses this
+   same session.
+3. After login you land on the **Dashboard**, which shows counts for only the
+   organizations you belong to.
+
+**What you can see and do is decided entirely on the server** from your directory group /
+role membership. The UI never grants access the backend would deny.
+
+### Roles at a glance
+
+| Role | Can do |
+| --- | --- |
+| `platform_admin` (superuser) | Everything, across all organizations; create organizations |
+| `organization_admin` | Administer an org: consumers, bindings, authoring, releases |
+| `project_owner` | Author scenarios/artifacts in the org |
+| `scenario_editor` | Author scenarios/artifacts and **workflow drafts** |
+| `release_manager` | Compile/promote/rollback releases, start/stop canaries |
+| `approver` | Decide tool-invocation approvals |
+| `auditor` | Read-only visibility (no authoring) |
+
+Read access is **membership-scoped** (you see only your organizations). Write actions
+additionally require the right role in the **target** organization.
+
+---
+
+## 2. Console surfaces
+
+The top navigation exposes the tenant-scoped management surfaces:
+
+| Surface | Purpose |
+| --- | --- |
+| **Dashboard** | Scoped counts of orgs, projects, scenarios, consumers, artifacts, releases |
+| **Organizations** | Tenants (platform admin creates them) |
+| **Projects** | Projects within an organization |
+| **Scenarios** | RAG / workflow / agent scenarios + their stable aliases |
+| **Artifacts** | Immutable, versioned, checksummed definitions (contracts, prompts, policies, workflows, tools, agents, eval suites) |
+| **Releases** | Compiled `ScenarioRelease`s; run eval, promote, rollback, start/stop canary |
+| **Builder** | The visual workflow builder (Sprint 11) — see §4 |
+| **Agent runs** | Redacted, tenant-scoped agent run list + trace; cancel |
+| **Consumers** | API consumers and their capability bindings |
+| **Tool approvals** | Pending high-risk tool invocations awaiting an approver decision |
+
+---
+
+## 3. The end-to-end scenario lifecycle
+
+A scenario goes from authoring to a served release along one governed path. The visual
+builder plugs into the **authoring** step for workflows; everything downstream is
+unchanged.
+
+```
+ Author artifacts            Compile           Evaluate         Release
+ (GitOps import OR    ─▶  candidate release ─▶ run eval  ─▶  promote / canary ─▶  Serve via
+  console / builder)       (compile_release)   (run_eval)     (fail-closed)       /v1 API
+                                                                   │
+                                                                   └─▶ rollback (atomic)
+```
+
+1. **Register** an organization, project, and scenario (+ a stable alias).
+2. **Author** the scenario's artifacts — input/output contracts, prompt, policy, model
+   profile, sources, eval suite, and (for workflow scenarios) the **workflow definition**.
+   Author via GitOps import (`import_gitops`), the console create forms, or the **visual
+   builder** (workflows).
+3. **Ingest** source documents if the scenario uses retrieval; a worker builds a staged
+   pgvector index.
+4. **Compile** a candidate release (`compile_release`) that pins exact artifact versions
+   (and indexes/tool bindings) by role.
+5. **Evaluate** the candidate against its pinned eval suite (`run_eval`) — the report is
+   redacted and audited.
+6. **Promote** (`promote_release`) — fail-closed: requires a passing eval bound to the
+   pinned suite and ready, tenant-owned indexes. Or run a **consumer-scoped, time-bounded
+   canary**.
+7. **Serve**: an authorized consumer calls `POST /v1/query`, `POST /v1/invoke`, or
+   `GET /v1/runs/{id}`. The gateway issues a signed short-lived execution context and the
+   runtime answers with the active (or canary) release.
+8. **Rollback** (`rollback_release`) atomically restores the superseded release if needed.
+
+---
+
+## 4. The visual workflow builder (Sprint 11)
+
+The builder is a drag-and-drop canvas for authoring **workflow definitions**. It produces a
+**versioned DSL** — not a runtime graph — and publishing routes through the *same* compiler
+and release pipeline as GitOps. The builder never exposes tool endpoints or secrets.
+
+Open it from the **Builder** nav entry (`/console/builder/`).
+
+### 4.1 Choosing an organization and draft
+
+- Pick an **Organization** (only those in your scope appear).
+- The **Drafts** list shows existing workflow drafts for that org. Click **Open** to edit
+  one, or use **New draft** (name + `logical_id`) to start one. `logical_id` is the target
+  artifact id used when you publish.
+- If you lack the authoring role for the org, the builder loads in **read-only** mode: you
+  can view and validate, but Save/Publish and canvas edits are disabled.
+
+### 4.2 Building the graph
+
+- **Node palette** (left): drag a node onto the canvas, or click it to add. Node types
+  come from the backend and include `input`, `retrieve`, `generate`, `condition`,
+  `format_output`, `validate_contract`, `tool`, `custom`, and `end`.
+- **Edges**: drag from a node's right handle to another node's left handle. Edges out of a
+  **condition** node are auto-typed as the `true` then `false` branch. You cannot draw an
+  edge out of an `end` node or a self-loop.
+- **Configuration panel** (right): select a node to edit its config. Fields are generated
+  from the backend schema:
+  - a **tool** node picks a **binding role** from a dropdown (the tool's endpoint and
+    credentials are never shown — only the role name and whether it needs approval);
+  - a **custom** node picks an organization-allowlisted node ref;
+  - a **condition** node takes a bounded boolean expression.
+
+### 4.3 Validate, save, publish
+
+- **Validate** sends the current graph to the backend compiler. Problems are shown as a
+  banner and the offending node is highlighted in red. Validation runs the *same* checks as
+  publishing (including inline-secret rejection) and never persists anything.
+- **Save** stores your draft. An **unsaved changes** badge appears whenever the canvas
+  differs from the last save, and the browser warns you before you navigate away with
+  unsaved work.
+- **Publish** creates an **immutable `workflow_definition` artifact version** through the
+  shared authoring path. Publishing does not itself deploy anything — you then compile,
+  evaluate, and promote a release exactly as with any other artifact (§3).
+
+> The builder is a convenience layer. All validation, authorization, and publishing happen
+> on the server; the canvas cannot bypass a single control.
+
+---
+
+## 5. Serving traffic (consumer API)
+
+Consumers authenticate with a **bearer token** (created by an operator via
+`create_consumer_token`) and are authorized per scenario alias + capability.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/query` | Synchronous RAG query against the active release |
+| `POST /v1/invoke` | Invoke a workflow or agent scenario (returns `202` + `run_id`) |
+| `GET /v1/runs/{id}` | Poll a workflow/agent run's redacted status/output |
+| `DELETE /v1/runs/{id}` | Cancel a run (consumer/tenant scoped) |
+| `GET /v1/health/live` | Unauthenticated liveness probe |
+
+Workflow/agent invokes require an `Idempotency-Key` header. Every call is rate-limited per
+consumer, validated against the release input contract, and recorded as a usage event and
+audit entry. The same operations are available over authenticated **MCP** ingress.
+
+### Human approval for high-risk tools
+
+If a workflow or agent needs a **high-risk, side-effecting** tool, the run **pauses**
+(`waiting_approval`) and an entry appears under **Tool approvals**. An **approver** (a
+different person from the requester — separation of duties) approves or rejects it; the run
+then resumes or fails closed. Approvals expire after 30 minutes. Operators can also use
+`list_tool_approvals` / `decide_tool_approval` / `cancel_tool_invocation`.
+
+---
+
+## 6. Management commands
+
+Run from the repo root in the project virtualenv. Common commands:
+
+| Command | Purpose |
+| --- | --- |
+| `import_gitops` / `export_gitops` | Import/export artifacts as YAML (GitOps) |
+| `import_control_plane` | Idempotently import orgs/projects/scenarios/aliases/consumers/bindings |
+| `validate_artifacts` | Validate artifact bodies (schema, secrets, compilation) |
+| `compile_release` | Compile a candidate release (`--promote` is fail-closed) |
+| `run_eval` | Run a candidate against its pinned eval suite in isolation |
+| `promote_release` / `rollback_release` | Promote (fail-closed) / atomically roll back |
+| `start_canary` / `stop_canary` | Consumer-scoped, time-bounded canary routing |
+| `create_consumer_token` | Mint a hashed consumer bearer token |
+| `start_ingestion` / `retry_ingestion` | Drive the ingestion pipeline |
+| `list_tool_approvals` / `decide_tool_approval` / `cancel_tool_invocation` | Tool approvals |
+| `list_agent_runs` / `cancel_agent_run` | Agent run operations |
+
+---
+
+## 7. Running it locally
+
+Prerequisites: PostgreSQL/pgvector and Redis (the Docker Compose stack), the `.venv`
+(Python 3.13) with dependencies installed, and — for the builder UI — the built frontend
+bundle.
+
+```powershell
+# 1. Build the workflow builder frontend (first time / after frontend changes)
+npm --prefix frontend ci
+npm --prefix frontend run build   # writes apps/builder/static/builder/
+
+# 2. Apply migrations to the local database
+$env:DJANGO_SETTINGS_MODULE = 'config.settings.local'
+$env:DATABASE_URL = 'postgres://agenthub:agenthub@localhost:5432/agenthub'
+$env:REDIS_URL = 'redis://localhost:6379/0'
+.venv\Scripts\python.exe manage.py migrate
+
+# 3. Start the app on port 8000 (runserver serves the static builder bundle in DEBUG)
+.venv\Scripts\python.exe manage.py runserver 127.0.0.1:8000
+```
+
+Then open `http://127.0.0.1:8000/console/`. Asynchronous workflow/agent runs additionally
+require a Celery worker (`celery -A config worker -Q runtime`); the console, builder, and
+synchronous RAG work without it.
+
+See [`docs/security-overview.md`](security-overview.md) for how and why the platform is
+safe and secure.
