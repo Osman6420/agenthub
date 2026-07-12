@@ -17,7 +17,26 @@ branches, stashes, and reflog. Do not infer the active task only from open IDE t
 
 ## Local runtime snapshot
 
-Last checked: 2026-07-11, Europe/Istanbul.
+Last checked: 2026-07-12, Europe/Istanbul.
+
+**Live demo is up and manually smoke-tested (2026-07-12).** Current topology:
+
+- Web: `manage.py runserver 127.0.0.1:8000 --noreload` under `config.settings.local`
+  (DEBUG serves the builder static bundle) with `MCP_ENABLED=true` and
+  `METRICS_BEARER_TOKEN` set so MCP/metrics are exercisable. **Not uvicorn** — runserver is
+  used because plain uvicorn/ASGI does not serve `/static/` (no WhiteNoise).
+- One Celery runtime worker: `celery -A config.celery worker --pool=solo -Q runtime,default`.
+  **The two stale Sprint-8 workers (PIDs 16732/672 from 2026-07-11) and the stale uvicorn
+  (PID 2064) were stopped** — they were running pre-Sprint-9 code and silently failed async
+  runs (`WORKFLOW_NODE_UNSUPPORTED` on the tool node). Only run ONE runtime worker.
+- Demo tenant seeded via `manage.py seed_demo` (org `demo`, operators one-per-role, RAG +
+  workflow-with-approval + agent scenarios with promoted releases, a consumer token).
+- Verified live end-to-end: RAG `POST /v1/query` → 200 completed; workflow `POST /v1/invoke`
+  → 202 → `waiting_approval` → `decide_tool_approval --approve` → auto-resume → completed
+  (redacted output); agent `POST /v1/invoke` → 202 → completed (UUID run id); console login +
+  builder bundle (`/static/builder/builder.js` 200); MCP 401 (auth-gated); metrics served.
+- Manual test recipe (credentials/token are printed by the seeder, not stored):
+  [`docs/manual-testing-guide.md`](manual-testing-guide.md).
 
 Record only genuinely time-varying facts here (is a server up, which ports, is MinIO
 running). Durable facts — what is implemented/verified, the canonical interpreter, and
@@ -28,20 +47,19 @@ such a fact is written.
 
 - Application: `http://127.0.0.1:8000`.
 - Health: `GET /v1/health/live` returned `200 {"status":"ok"}`.
-- Web process: host Python 3.14 running Uvicorn, not the Compose `web` service.
+- Web process: `.venv` Python 3.13 `manage.py runserver` (see the live-demo block above),
+  not the Compose `web` service. (Earlier sessions used host Python 3.14 + uvicorn.)
 - Infrastructure: Docker Compose PostgreSQL/pgvector and Redis are running on the
   published localhost ports. MinIO was not running at the last check.
 - Runtime logs: `.runtime/web.stdout.log` and `.runtime/web.stderr.log` (gitignored).
 - Uvicorn is started without `--reload`; source changes require a web-process restart.
-- Sprint 9 was verified via the automated suite (SQLite and PostgreSQL `--create-db`),
-  not by restarting the live server. The long-running Uvicorn (last known PID `2064`)
-  and any standing Celery worker were **not** restarted for Sprint 9 and may still be
-  running Sprint 8 code — restart both before any live smoke test.
-- The additive Sprint 9 migrations `tools.0001`, `tools.0002`, and `workflows.0002` and
-  the Sprint 10 migrations `agents.0001` and `artifacts.0003` were exercised through
-  `pytest --create-db` (fresh throwaway DBs) but were **not** necessarily applied to the
-  standing local `agenthub` database. Run `manage.py migrate` before serving Sprint 9/10
-  code against the persistent local DB.
+- The stale-process hazard from earlier sprints is now **resolved** (see the live-demo
+  block above): PID 2064 (uvicorn) and PIDs 16732/672 (Sprint-8 workers) were stopped, and
+  the current web + single runtime worker run Sprint 11 code.
+- All migrations through Sprint 11 (`tools.0001/0002`, `workflows.0002`, `agents.0001`,
+  `artifacts.0003`, `builder.0001`) have now been applied to the standing local `agenthub`
+  database via `manage.py migrate`. Re-run `manage.py migrate` after pulling future
+  increments before serving them against the persistent local DB.
 - Sprint 10 added the approved production dependency `langgraph==1.2.9`. A `.venv` created
   before Sprint 10 lacks it (and its transitive tree) and cannot import
   `apps.agents.langgraph_planner`; re-run `pip install -e ".[dev]"` (or install from
@@ -144,10 +162,13 @@ Current cross-agent state:
   (mutable tenant-scoped `WorkflowDraft` + operator JSON API under `/console/api/builder/`
   for draft CRUD + diagnostics + node-schema + publish, reusing console LDAP/session +
   role/tenant authz, CSRF, audited; additive migration `builder.0001`) and a **React Flow
-  SPA** in `frontend/` served same-origin as Django static assets. Backend committed as
-  `36626f3`; the frontend increment follows. Automated evidence only (SQLite 364 passed / 2
-  skipped; PostgreSQL `apps/builder`+`apps/console` 46 passed; frontend 11 vitest tests +
-  `vite build`); no headless-browser/live-server smoke. **New: a Node/npm build toolchain**
+  SPA** in `frontend/` served same-origin as Django static assets. Committed:
+  `36626f3` (backend), `456bd17` (frontend SPA), `cb6874c` (user-guide + security-overview
+  docs), and `ddb442c` (the `seed_demo` command + manual-testing guide). Automated evidence
+  (SQLite 364 passed / 2 skipped; PostgreSQL `apps/builder`+`apps/console` 46 passed;
+  frontend 11 vitest tests + `vite build`) **plus a live end-to-end smoke on 2026-07-12**
+  (RAG query, workflow approval pause/resume, agent run, builder bundle, MCP, metrics — see
+  the live-demo snapshot above). **New: a Node/npm build toolchain**
   — five approved production frontend deps (Node/npm, Vite, React, React DOM,
   `@xyflow/react`), pinned in `frontend/package-lock.json`, with a Node CI job. The built
   bundle (`apps/builder/static/builder/`) is **gitignored**: run
