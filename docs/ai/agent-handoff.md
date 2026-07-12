@@ -209,10 +209,12 @@ Current cross-agent state:
   dimension validated up front (`vector`≤2000 / `halfvec`≤4000, no silent truncation). (E) parser
   behind a `DocumentParser` interface, comparison-table before any dependency (format-specific
   pypdf/pdfplumber+python-docx+openpyxl preferred), **OCR NOT in-app** — image PDFs + embedded
-  images go to the owner's external OCR endpoint over SSRF-safe egress. **Immediate next step
-  (owner instruction): document three M0 design spikes before any migration/code — Spike 1
-  pgvector multi-dimension storage, Spike 2 RLS connection-context, Spike 3 shared SSRF-safe egress
-  adapter — then the interleaved WS1+WS5 delivery below.** No code/migration/dependency/egress yet.
+  images go to the owner's external OCR endpoint over SSRF-safe egress. **M0 design spikes are now
+  DONE, documented as ADRs (2026-07-12):** Spike 1 pgvector multi-dimension storage →
+  [ADR-0003], Spike 2 RLS connection-context → [ADR-0004], Spike 3 shared SSRF-safe egress adapter →
+  [ADR-0005] (implements [ADR-0002]). **Remaining gates before any code: Phase 2 implementation
+  approval + per-phase egress sign-off; then the interleaved WS1+WS5 delivery below.** No
+  code/migration/dependency/egress yet.
 
 - **WS5 (live model runtime) added + owner review folded in (2026-07-12).** Owner: "give the app a
   base_url + token and actually reach the LLM — that must exist." Verified today's runtime ships

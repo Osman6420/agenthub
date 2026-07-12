@@ -311,18 +311,20 @@ allowlist, and secret provisioning (deployment config).
 ## Status
 
 Draft. **Workstream 1 is architecture-scoped and authoritative** (component plan + threat model
-under [`components/`](components/)) but its **implementation design is gated by the M0 spikes**
-(the physical index schema and the RLS connection-context are still to be chosen) and it is **not
-approved for implementation**. Its immediate next step is documenting the M0 design spikes
-(pgvector multi-dimension storage; RLS connection-context; the shared SSRF-safe egress adapter)
-before any migration or code. **Workstreams 2–4 remain in discovery** and are not yet decomposed
-into component plans.
+under [`components/`](components/)). Its **M0 design spikes are now documented as ADRs** — pgvector
+multi-dimension storage ([ADR-0003](../adr/0003-vector-storage-blue-green-per-index-version.md)),
+RLS connection-context ([ADR-0004](../adr/0004-tenant-isolation-postgres-rls-connection-context.md)),
+and the shared SSRF-safe egress adapter ([ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md),
+implementing [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)). The
+remaining gates before code are **Phase 2 implementation approval + per-phase egress sign-off**; it
+is **not approved for implementation**. **Workstreams 2–4 remain in discovery** and are not yet
+decomposed into component plans.
 
 ### Workstream status
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | Architecture scoped (component plan + threat model); **implementation design gated by M0**; not approved |
+| 1 | Document plane | Architecture scoped; **M0 spikes documented (ADR-0003/0004/0005)**; gates left: implementation approval + per-phase egress sign-off; not approved |
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |

@@ -22,13 +22,14 @@ UI). Consumer gateway seam unchanged in contract.
 **Decisions A–E approved by the owner on 2026-07-12** with the constraints folded into this
 plan. The workstream is **architecture-scoped**, but its **implementation design is gated by the
 M0 spikes** — the physical index schema and the RLS connection-context are still to be chosen —
-so this is *not* "design complete" in the buildable sense. **Not started (no code/migration/
-dependency/egress).** The M0 spikes must be documented *before* any migration or implementation
-(see [Design spikes](#design-spikes-m0--prerequisite-to-implementation)):
+so this was *not* "design complete" in the buildable sense. **Not started (no code/migration/
+dependency/egress).** The M0 spikes are **now documented as ADRs** (the prerequisite for any
+migration/implementation); the remaining gate is Phase 2 implementation approval + per-phase egress
+sign-off. The M0 outputs:
 
-1. the pgvector multi-dimension storage spike,
-2. the RLS connection-context design, and
-3. the shared SSRF-safe egress adapter (WS1+WS5).
+1. pgvector multi-dimension storage → [ADR-0003](../../adr/0003-vector-storage-blue-green-per-index-version.md);
+2. RLS connection-context → [ADR-0004](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md);
+3. shared SSRF-safe egress adapter → [ADR-0005](../../adr/0005-shared-ssrf-safe-egress-adapter.md).
 
 New production dependencies and new external egress each still require a separate explicit
 owner approval + supply-chain/threat review at the milestone that introduces them.
@@ -295,30 +296,26 @@ final pick is confirmed in Milestone M4 before the dependency is approved.
 
 ## Design spikes (M0 — prerequisite to implementation)
 
-All three must be **documented before any migration/implementation** (owner instruction
-2026-07-12). Each produces a short design note (candidate ADR).
+All three are **now documented as ADRs (2026-07-12)** — the prerequisite for any migration or
+implementation. The remaining gate is Phase 2 implementation approval + per-phase egress sign-off.
 
-- **Spike 1 — pgvector multi-dimension storage.** Compare (a) a dimensionless `vector` column +
-  profile-specific **expression/partial index** vs (b) a **separate dimension/profile or
-  per-`IndexVersion` store/table**. Unless a specific blocker emerges, proceed with the
-  operationally safer **immutable blue/green per-`IndexVersion` store** (option b). Confirm:
-  system-generated physical names, `vector`≤2000 / `halfvec`≤4000 dimension limits, no silent
-  truncation, and that promotion is a pointer flip (no rename/copy/rebuild). Output: chosen
-  approach + DDL/naming scheme + retention-purge trigger condition.
-- **Spike 2 — RLS connection-context design.** Define the DB role model (non-owner app role, no
-  `BYPASSRLS`, `FORCE ROW LEVEL SECURITY`), the per-transaction `set_config('app.tenant_id', …,
-  true)` hook for both web requests and Celery workers, pooled-connection safety (transaction-
-  local only), the fail-closed policy for missing/invalid context, control-plane vs data-plane
-  table separation, and the separate auditable cross-tenant admin path. Output: the middleware/
-  task-wrapper design + the exact policy set + a negative-test matrix.
-- **Spike 3 — shared SSRF-safe egress adapter (WS1+WS5).** One adapter over `apps.tools.egress`
-  reused by the embedding model, the chat model (WS5), and OCR: resolved-IP pinning, redirect
-  denial, private/link-local/metadata block, TLS verification, timeouts, response-size cap,
-  `secret:<name>` resolution, redacted audit, and the **no-blind-retry** idempotency stance. The
-  endpoint-governance policy is already decided (platform-managed profile catalog referenced by ID
-  only, [ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)); the
-  spike settles the adapter shape. Output: the adapter contract + the profile→endpoint resolution
-  path + a negative-test matrix (SSRF/rebinding/redirect/oversize/retry).
+- **Spike 1 — pgvector multi-dimension storage → [ADR-0003](../../adr/0003-vector-storage-blue-green-per-index-version.md).**
+  Chose an **immutable blue/green per-`IndexVersion` store** (fixed-dim `vector(D)`/`halfvec(D)` +
+  own HNSW, system-generated names, `vector`≤2000 / `halfvec`≤4000, no silent truncation), with
+  promotion as a metadata **pointer flip** (no rename/copy/rebuild) and a retention/purge condition;
+  the dimensionless-column-with-partial-index option is a documented fallback. Includes the
+  name-parameterized DAL implementation note.
+- **Spike 2 — RLS connection-context → [ADR-0004](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md).**
+  `FORCE ROW LEVEL SECURITY`, a non-owner app role without `BYPASSRLS`, a **transaction-local**
+  `set_config('app.tenant_id', …, true)` hook for web + Celery, fail-closed missing/invalid context,
+  control-plane/data-plane separation, pgbouncer session/transaction (not statement) pooling, and a
+  negative-test matrix.
+- **Spike 3 — shared SSRF-safe egress adapter → [ADR-0005](../../adr/0005-shared-ssrf-safe-egress-adapter.md)**
+  (implements the [ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)
+  governance). One adapter over `apps.tools.egress` reused by chat/embedding/OCR: profile-ID-only
+  destinations, resolved-IP pinning, redirect denial, private/link-local/metadata block, TLS
+  verification, timeouts, response-size cap, `secret:<name>` resolution, redacted audit, and the
+  **no-blind-retry** (post-send = `outcome_unknown`) stance, with a negative-test matrix.
 
 ## Milestones
 
@@ -330,7 +327,8 @@ builds **staged** embeddings (M3) before **serving** ACL retrieval (M2) under an
 guardrail (real tenant corpora are not served to consumers until deny-by-default binding + RLS are
 in place), so the milestone numbers below are scope units, not the build order.
 
-- **M0 — Design spikes** (above): document Spikes 1, 2, and 3. Gate for all following work.
+- **M0 — Design spikes** (above): **done** — documented as ADR-0003 / ADR-0004 / ADR-0005. Gate
+  for all following work; the remaining gate is implementation approval + per-phase egress sign-off.
 - **M1 — Content plane & storage**: rename `Document → IndexedDocument`; `apps/documents` models;
   object-store upload; soft-delete + auditable purge. No retrieval behavior change yet.
 - **M2 — Binding, ACL & RLS retrieval**: `DocumentSet`/`Version`/`Membership`,
@@ -460,6 +458,9 @@ all governed and audited.
 - Threat model: [`document-plane-threat-model.md`](document-plane-threat-model.md)
 - Interleaved WS1+WS5 delivery order: [`runtime-and-document-plane-sequence.md`](runtime-and-document-plane-sequence.md)
 - Egress architecture decision: [ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)
+- M0 spike ADRs: [ADR-0003 vector storage](../../adr/0003-vector-storage-blue-green-per-index-version.md),
+  [ADR-0004 RLS tenant isolation](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md),
+  [ADR-0005 shared egress adapter](../../adr/0005-shared-ssrf-safe-egress-adapter.md)
 - Supersedes as retrieval trust unit: [`../../tasks/sprint-5-ingestion-pgvector/plan.md`](../../tasks/sprint-5-ingestion-pgvector/plan.md)
 - Reused seams: Sprint 6 release lifecycle, Sprint 7 metrics/tracing, Sprint 9 SSRF-safe egress.
 - Technical grounding: pgvector HNSW dimension limits (`vector`≤2000, `halfvec`≤4000) and

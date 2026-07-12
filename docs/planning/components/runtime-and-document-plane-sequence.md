@@ -56,24 +56,23 @@ P0 spikes ─┬─> P1 shared egress + REAL CHAT provider ──> (RAG /v1/quer
 Each phase is additive-migration-only, keeps the deterministic profiles passing (so CI needs no
 live egress), and ends with a **demoable capability**.
 
-### P0 — Design spikes (no code)
+### P0 — Design spikes (no code) — **DONE (documented as ADRs, 2026-07-12)**
 
-Document three short notes (candidate ADRs) before any migration:
+1. **Spike 1 — pgvector multi-dimension storage → [ADR-0003](../../adr/0003-vector-storage-blue-green-per-index-version.md):**
+   immutable blue/green per-`IndexVersion` store, system-generated names, pointer-flip promotion,
+   retention condition, `vector`≤2000 / `halfvec`≤4000, name-parameterized DAL.
+2. **Spike 2 — RLS connection-context → [ADR-0004](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md):**
+   non-owner app role, `FORCE ROW LEVEL SECURITY`, transaction-local `set_config('app.tenant_id',…,
+   true)` for web + Celery, pooling safety, fail-closed policy, control-plane/data-plane split,
+   negative-test matrix.
+3. **Spike 3 — shared SSRF-safe egress adapter → [ADR-0005](../../adr/0005-shared-ssrf-safe-egress-adapter.md)**
+   (implements the [ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)
+   governance): one adapter over `apps.tools.egress` reused by chat/embedding/OCR — profile-ID-only,
+   resolved-IP pinning, redirect denial, private/link-local/metadata block, TLS verification,
+   timeouts, response-size cap, `secret:<name>` resolution, redacted audit, no-blind-retry.
 
-1. **Spike 1 — pgvector multi-dimension storage** (WS1): immutable blue/green per-`IndexVersion`
-   store, system-generated names, pointer-flip promotion, retention condition, `vector`≤2000 /
-   `halfvec`≤4000. *(from the WS1 plan)*
-2. **Spike 2 — RLS connection-context** (WS1): non-owner app role, `FORCE ROW LEVEL SECURITY`,
-   transaction-local `set_config('app.tenant_id',…,true)` for web + Celery, pooling safety,
-   fail-closed policy, control-plane/data-plane split, negative-test matrix. *(from the WS1 plan)*
-3. **Spike 3 — shared SSRF-safe egress adapter** (WS1+WS5): one adapter over `apps.tools.egress`
-   reused by the **chat model**, the **embedding model**, and **OCR** — resolved-IP pinning,
-   redirect denial, private/link-local/metadata block, TLS verification, timeouts, response-size
-   cap, `secret:<name>` resolution, redacted audit, and the **no-blind-retry** idempotency stance.
-   The endpoint-governance question is **already decided** — a platform-managed profile catalog
-   referenced by ID only (ADR-0002); the spike settles the adapter shape, not the policy.
-
-**Gate for all following phases.** Deliverable: three design notes; no runtime change.
+**Gate cleared for design; the following phases still require implementation approval + per-phase
+egress sign-off.** No runtime change.
 
 ### P1 — Shared egress + real chat model (fastest visible win) · WS5 5.1–5.2
 
@@ -191,5 +190,8 @@ Document three short notes (candidate ADRs) before any migration:
 
 - WS1: [`document-plane-plan.md`](document-plane-plan.md), [threat model](document-plane-threat-model.md)
 - WS5: [`../phase-2-plan.md`](../phase-2-plan.md)
-- Egress decision: [ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)
+- Egress governance: [ADR-0002](../../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)
+- M0 spike decisions: [ADR-0003 vector storage](../../adr/0003-vector-storage-blue-green-per-index-version.md),
+  [ADR-0004 RLS tenant isolation](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md),
+  [ADR-0005 shared egress adapter](../../adr/0005-shared-ssrf-safe-egress-adapter.md)
 - Reused seams: Sprint 6 release lifecycle, Sprint 7 metrics/tracing, Sprint 9 SSRF-safe egress.
