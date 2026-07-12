@@ -1,7 +1,8 @@
-# AgentHub — Phase 2 Plan (DRAFT)
+# AgentHub — Phase 2 Plan (IN PROGRESS)
 
-> **Status: DRAFT — under discussion (project owner + agent). Not approved for
-> implementation.** This file captures the Phase 2 intent, the owner's decisions to date,
+> **Status: IN PROGRESS.** The owner approved implementation kickoff on 2026-07-12. P1 is
+> implemented and verified; later phases retain their milestone-specific dependency and live-egress
+> gates. This file captures the Phase 2 intent, the owner's decisions to date,
 > and the open questions we still need to resolve before any code is written. Every new
 > production dependency and every new external egress named below is a change-boundary item
 > that requires explicit approval + a supply-chain/threat-model review first
@@ -49,7 +50,8 @@ The interleaved phase plan is in
 > [`components/document-plane-plan.md`](components/document-plane-plan.md) and
 > [`components/document-plane-threat-model.md`](components/document-plane-threat-model.md).
 > Those two documents are the authoritative WS1 design; the summary below is retained for
-> context. Still **draft — not approved for implementation.**
+> context. Phase 2 implementation kickoff is approved; milestone-specific egress/dependency gates
+> remain.
 
 ### 1.1 Per-scenario document source management (console UI)
 
@@ -147,18 +149,19 @@ The interleaved phase plan is in
 ## Workstream 5 — Live model runtime (real generation) [FOUNDATIONAL]
 
 Added 2026-07-12 at the owner's instruction: *"everything you flagged as missing must be
-completed."* Today the runtime ships **only deterministic stubs** — a `model_profile` artifact
-can declare `endpoint` + `model` + `secret:<name>` token, but no provider actually calls it, and
-several generation/retrieval seams are placeholders. This workstream makes scenarios reach a real
+completed."* Before P1 the runtime shipped only deterministic stubs. P1 now provides an opt-in
+real chat provider and platform profile catalog while deterministic remains the default; several
+agent/workflow generation/retrieval seams are still placeholders. This workstream makes scenarios
+reach a real
 model. It is **foundational** (nothing is a real product without it) and reuses the WS1 SSRF-safe
 egress. The **owner has set the delivery order** (see the Priority section); this track is
-delivered on that interleaved sequence. Implementation itself is still not approved.
+delivered on that interleaved sequence. P1 is verified; later phases retain their explicit gates.
 
-### Current gaps (verified by code inspection 2026-07-12)
+### Current gaps after P1 (verified 2026-07-12)
 
-- **No real model provider.** `apps/orchestration/providers.py` contains only
-  `StubModelProvider`; `RUNTIME_MODEL_PROVIDER` defaults to empty. `model_profile`
-  (`endpoint`/`model`/`api_key: secret:<name>`) is declared but never invoked.
+- **Real provider is opt-in, with no live environment profile approved yet.** P1 implemented
+  `OpenAICompatibleModelProvider`, the platform `ModelProfile` catalog, and shared safe egress;
+  `RUNTIME_MODEL_PROVIDER` intentionally defaults to the deterministic stub.
 - **Agent retrieval is a stub.** The agent loop's `retrieve` decision returns empty chunks
   (`apps/agents/runtime.py`) — agents do **not** do real document RAG today; only the standalone
   `run_rag` (`/v1/query`) path calls the real pgvector retriever.
@@ -312,25 +315,25 @@ allowlist, and secret provisioning (deployment config).
 
 ## Status
 
-Draft. **Workstream 1 is architecture-scoped and authoritative** (component plan + threat model
+In progress. **Workstream 1 is architecture-scoped and authoritative** (component plan + threat model
 under [`components/`](components/)). Its **M0 design spikes are now documented as ADRs** — pgvector
 multi-dimension storage ([ADR-0003](../adr/0003-vector-storage-blue-green-per-index-version.md)),
 RLS connection-context ([ADR-0004](../adr/0004-tenant-isolation-postgres-rls-connection-context.md)),
 and the shared SSRF-safe egress adapter ([ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md),
 implementing [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)). The
-remaining gates before code are **Phase 2 implementation approval + per-phase egress sign-off**; it
-is **not approved for implementation**. **Workstreams 2–4 remain in discovery** and are not yet
+Phase 2 kickoff is approved; remaining gates are **per-phase egress/dependency sign-off**.
+**Workstreams 2–4 remain in discovery** and are not yet
 decomposed into component plans.
 
 ### Workstream status
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | Architecture scoped; **M0 spikes documented (ADR-0003/0004/0005)**; gates left: implementation approval + per-phase egress sign-off; not approved |
+| 1 | Document plane | Architecture scoped; **M0 spikes documented (ADR-0003/0004/0005)**; implementation kickoff approved; per-phase egress/dependency sign-off remains |
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
-| 5 | Live model runtime (real generation) | **Foundational track, interleaved with WS1** (not a 5th-in-line priority); scoped 2026-07-12; not started |
+| 5 | Live model runtime (real generation) | **P1 implemented + verified** (catalog/shared egress/chat provider, opt-in/no live endpoint); P5–P6 pending |
 
 ---
 

@@ -138,7 +138,7 @@ def test_run_without_pinned_suite_raises() -> None:
         organization=org,
         artifact_type=ArtifactType.MODEL_PROFILE,
         logical_id="chat",
-        body={"model": "stub"},
+        body={"profile_id": "00000000-0000-0000-0000-000000000001"},
         created_by="alice",
     )
     release = compile_release(

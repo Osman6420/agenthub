@@ -25,8 +25,10 @@ As of 2026-07-11, Sprints 0–6 are implemented and verified (Sprint 4 adds the
 deterministic default providers, a release-bundle resolver, grounding/citation/
 fallback policy, and output-contract governance; the gateway now returns real
 `completed`/fallback output with token usage. Embeddings and answer generation are
-still deterministic stubs — no real LLM/embedding-model call is made yet; model and
-retrieval providers plug in via `RUNTIME_MODEL_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
+default to deterministic stubs. Phase 2 P1 added an opt-in real chat provider with a
+platform-managed profile catalog and shared SSRF-safe transport; no live endpoint is configured or
+called in CI. Embedding and agent/workflow generation wiring remain pending. Providers plug in via
+`RUNTIME_MODEL_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
 The repository contains
 a bootable Django modular monolith: `config/` (settings split base/local/test/
 production, `celery.py`, `asgi.py`, `wsgi.py`, `urls.py`); the Sprint 1 control-plane
@@ -232,10 +234,9 @@ builder is being repurposed toward AI-assisted authoring. The single canonical S
 record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan is archived
 under `docs/planning/archive/`. Phase 2 is a discussion draft at
 `docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
-personal end-user MCP, and the foundational live-model runtime). Phase 2 implementation is not yet
-approved. Its M0 architecture decisions are accepted as ADR-0002–0005; the owner-set entry point
-after an explicit "start Phase 2" kickoff is P1 shared SSRF-safe egress + real chat provider, with
-the remaining environment-specific egress and dependency approvals still enforced. See
+personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and P1
+is verified; continue at P2. Its M0 architecture decisions are accepted as ADR-0002–0005, with the
+remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into

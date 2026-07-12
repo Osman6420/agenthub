@@ -87,12 +87,27 @@ def test_inline_secret_rejected(org: Organization) -> None:
 
 
 @pytest.mark.django_db
-def test_secret_reference_allowed(org: Organization) -> None:
+def test_model_profile_reference_allowed(org: Organization) -> None:
     artifact = create_artifact_version(
         organization=org,
         artifact_type=ArtifactType.MODEL_PROFILE,
         logical_id="default_chat",
-        body={"endpoint": "https://llm.example", "api_key": "secret:llm-token"},
+        body={"profile_id": "00000000-0000-0000-0000-000000000001"},
         created_by="alice",
     )
     assert ArtifactVersion.objects.filter(pk=artifact.pk).exists()
+
+
+@pytest.mark.django_db
+def test_model_profile_rejects_inline_endpoint_even_with_secret_ref(org: Organization) -> None:
+    with pytest.raises(ArtifactValidationError, match="only profile_id"):
+        create_artifact_version(
+            organization=org,
+            artifact_type=ArtifactType.MODEL_PROFILE,
+            logical_id="unsafe",
+            body={
+                "profile_id": "00000000-0000-0000-0000-000000000001",
+                "endpoint": "https://llm.example",
+            },
+            created_by="alice",
+        )

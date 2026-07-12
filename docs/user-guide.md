@@ -219,3 +219,12 @@ synchronous RAG work without it.
 
 See [`docs/security-overview.md`](security-overview.md) for how and why the platform is
 safe and secure.
+# Live chat provider (Phase 2 P1)
+
+The default runtime remains deterministic. An operator may opt into the real
+`apps.orchestration.providers.OpenAICompatibleModelProvider` only after an environment-specific
+egress approval. Platform admins register an immutable profile with
+`manage.py register_model_profile`; scenario artifacts contain only the returned profile UUID.
+They never contain a URL, credential, secret selector, or TLS option. Credentials are injected at
+runtime through the corresponding `MODEL_SECRET_<NAME>` environment variable. Do not enable the
+provider until the approved endpoint/network policy and secret are present.

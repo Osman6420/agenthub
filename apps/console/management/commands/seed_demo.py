@@ -184,12 +184,7 @@ class Command(BaseCommand):
             organization=org,
             artifact_type=ArtifactType.MODEL_PROFILE,
             logical_id="default_chat",
-            body={
-                "provider": "deterministic",
-                "model": "default-chat",
-                "api_key": "secret:llm-default-token",
-                "timeout_seconds": 30,
-            },
+            body={"profile_id": "00000000-0000-0000-0000-000000000001"},
             created_by="editor",
         )
         release = compile_release(

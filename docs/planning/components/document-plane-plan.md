@@ -23,8 +23,8 @@ UI). Consumer gateway seam unchanged in contract.
 plan. The workstream is **architecture-scoped** and **not started (no code/migration/dependency/
 egress)**. Its M0 decisions — physical index schema, RLS connection-context, and shared egress
 contract — are documented as accepted ADRs (the prerequisite for any migration/implementation);
-the remaining gate is Phase 2 implementation approval + per-phase egress
-sign-off. The M0 outputs:
+Phase 2 implementation kickoff is now approved; per-phase egress/dependency sign-off remains. The
+M0 outputs:
 
 1. pgvector multi-dimension storage → [ADR-0003](../../adr/0003-vector-storage-blue-green-per-index-version.md);
 2. RLS connection-context → [ADR-0004](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md);
@@ -296,7 +296,7 @@ final pick is confirmed in Milestone M4 before the dependency is approved.
 ## Design spikes (M0 — prerequisite to implementation)
 
 All three are **now documented as ADRs (2026-07-12)** — the prerequisite for any migration or
-implementation. The remaining gate is Phase 2 implementation approval + per-phase egress sign-off.
+implementation. Phase 2 kickoff is approved; per-phase egress/dependency sign-off remains.
 
 - **Spike 1 — pgvector multi-dimension storage → [ADR-0003](../../adr/0003-vector-storage-blue-green-per-index-version.md).**
   Chose an **immutable blue/green per-`IndexVersion` store** (fixed-dim `vector(D)`/`halfvec(D)` +
@@ -327,7 +327,7 @@ guardrail (real tenant corpora are not served to consumers until deny-by-default
 in place), so the milestone numbers below are scope units, not the build order.
 
 - **M0 — Design spikes** (above): **done** — documented as ADR-0003 / ADR-0004 / ADR-0005. Gate
-  for all following work; the remaining gate is implementation approval + per-phase egress sign-off.
+  for all following work; Phase 2 kickoff is approved and per-phase egress/dependency sign-off remains.
 - **M1 — Content plane & storage**: rename `Document → IndexedDocument`; `apps/documents` models;
   object-store upload; soft-delete + auditable purge. No retrieval behavior change yet.
 - **M2 — Binding, ACL & RLS retrieval**: `DocumentSet`/`Version`/`Membership`,

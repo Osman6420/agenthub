@@ -74,7 +74,11 @@ live egress), and ends with a **demoable capability**.
 **Gate cleared for design; the following phases still require implementation approval + per-phase
 egress sign-off.** No runtime change.
 
-### P1 — Shared egress + real chat model (fastest visible win) · WS5 5.1–5.2
+### P1 — Shared egress + real chat model (fastest visible win) · WS5 5.1–5.2 — IMPLEMENTED
+
+Implemented and verified 2026-07-12 under
+[`phase-2-p1-live-chat`](../../tasks/phase-2-p1-live-chat/plan.md). The provider is opt-in;
+deterministic remains the default and no environment-specific live endpoint was opened.
 
 - Implement the shared egress adapter (Spike 3) and the real `OpenAICompatibleModelProvider`
   (chat) over it, driven by a **platform-catalog `ModelProfile` referenced by ID** (no author/

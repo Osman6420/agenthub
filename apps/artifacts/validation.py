@@ -54,6 +54,17 @@ def validate_body(artifact_type: str, body: Any) -> None:
         except ValueError as exc:
             raise ArtifactValidationError(str(exc)) from exc
 
+    if artifact_type == ArtifactType.MODEL_PROFILE:
+        from apps.orchestration.profile_schema import (
+            ModelProfileValidationError,
+            validate_model_profile_artifact,
+        )
+
+        try:
+            validate_model_profile_artifact(body)
+        except ModelProfileValidationError as exc:
+            raise ArtifactValidationError(str(exc)) from exc
+
     if artifact_type in {
         ArtifactType.WORKFLOW_DEFINITION,
         ArtifactType.CUSTOM_NODE_DEFINITION,

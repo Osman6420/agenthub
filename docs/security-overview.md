@@ -276,7 +276,10 @@ non-authoritative:
   confined to the planning seam and off by default.
 - **Operational follow-ups not yet implemented**: a global agent start/resume kill switch,
   automated checkpoint retention/purge, and production-like load / denial-of-wallet tests.
-- **Not yet in place**: real LLM/embedding providers (deterministic defaults today),
+- **Not yet in place**: live-approved LLM endpoints/credentials and real embedding providers.
+  Phase 2 P1 provides an opt-in real chat provider behind a platform-managed, immutable profile
+  catalog and SSRF-safe pinned-IP transport; deterministic remains the default and CI makes no
+  live call,
   live production deployment (Sprint 7 manifests are reviewed drafts), and OIDC/JWT/mTLS
   consumer auth (bearer-token today); LDAP is configured but not yet validated against a
   live directory.

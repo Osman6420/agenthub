@@ -71,7 +71,7 @@ def _release(
             organization=org,
             artifact_type=ArtifactType.MODEL_PROFILE,
             logical_id="chat",
-            body={"model": "stub"},
+            body={"profile_id": "00000000-0000-0000-0000-000000000001"},
             created_by="alice",
         )
         refs.append(ArtifactRef("model_profile", ArtifactType.MODEL_PROFILE, "chat", 1))

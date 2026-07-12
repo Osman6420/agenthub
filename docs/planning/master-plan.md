@@ -6,10 +6,8 @@ Track project-level intent without treating target designs as implemented behavi
 
 ## Current state
 
-As of 2026-07-12, Sprints 0–11 are implemented and verified (each enumerated below with its
-verification record). Phase 2 is a not-yet-approved design draft; its first workstream (the
-document plane) has an authoritative component plan + threat model but no implementation
-approval — see the Phase 2 note and the Components table below.
+As of 2026-07-12, Sprints 0–11 and Phase 2 P1 are implemented and verified. Phase 2 implementation
+has begun; later document-plane/live-egress/dependency milestones retain their explicit gates.
 
 - Sprint 0: bootable Django modular-monolith skeleton — settings split, Celery role
   definitions, unauthenticated health probes, dependency manifest + lockfile, Docker
@@ -138,7 +136,7 @@ authoring. The single canonical Sprint 11 record is
 [`sprint-11-workflow-builder`](../tasks/sprint-11-workflow-builder/plan.md); the earlier
 duplicate plan is archived under [`planning/archive`](archive/README.md).
 
-**Phase 2 is drafted (not approved):** a governed document plane (per-scenario sources +
+**Phase 2 is in progress:** a governed document plane (per-scenario sources +
 real parsers/embeddings + retrieval-time document authorization), a modernized Turkish UI,
 AI-assisted authoring alongside the visual builder, personal end-user MCP with identity
 delegation, and a **foundational live model runtime** (Workstream 5 — the real chat/embedding
@@ -146,12 +144,13 @@ provider; today only a deterministic stub ships). The WS1 document plane and WS5
 one SSRF-safe egress + a platform-managed profile catalog and are delivered on one interleaved
 critical path ([`components/runtime-and-document-plane-sequence.md`](components/runtime-and-document-plane-sequence.md));
 the egress architecture is [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md).
-See [`phase-2-plan.md`](phase-2-plan.md). It is a discussion draft; every new dependency/egress
-named there needs explicit approval before implementation.
+See [`phase-2-plan.md`](phase-2-plan.md). P1 is verified; every later new dependency/live-egress
+destination still needs its explicit milestone approval.
 
-Not yet present: a real LLM/embedding provider or applied production deployment. Sprint 7
-deployment resources are reviewable drafts, not live infrastructure. Model/embedding
-providers are deterministic defaults (no real LLM call yet). Consumer auth is bearer-token
+P1 now provides an opt-in real OpenAI-compatible chat provider and platform-managed profile
+catalog; deterministic remains the default and no live endpoint/credential was provisioned or
+called. Not yet present: a real embedding provider or applied production deployment. Sprint 7
+deployment resources are reviewable drafts, not live infrastructure. Consumer auth is bearer-token
 only (OIDC/JWT/mTLS later); LDAP is configured but not yet validated against a live
 directory. Agent operational follow-ups remain: a global start/resume kill switch, the
 checkpoint retention/purge job, and load/soak tests.
@@ -185,8 +184,8 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Tool registry + approval (Sprint 9) | Verified | Sprint 8 | [sprint-9-tool-registry-approval](../tasks/sprint-9-tool-registry-approval/plan.md) | [v3 target plan §17](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-9-tool-registry-approval/verification.md) |
 | Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
 | Visual workflow builder (Sprint 11) | Verified | Sprints 2, 8 | [sprint-11-workflow-builder](../tasks/sprint-11-workflow-builder/plan.md) | [v3 target plan §25](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-11-workflow-builder/verification.md) |
-| Document plane (Phase 2 · WS1) | Architecture scoped — M0 spikes documented (ADR-0003/0004/0005), implementation not approved | Sprints 5–6 | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | Not available (implementation approval pending) |
-| Live model runtime (Phase 2 · WS5) | Architecture scoped — implementation not approved | Shared egress + `ModelProfile` catalog | [phase-2-plan](phase-2-plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | Not available (implementation approval pending) |
+| Document plane (Phase 2 · WS1) | Architecture scoped — M0 documented; kickoff approved; P2 next | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | Not available (P2 not started) |
+| Live model runtime (Phase 2 · WS5) | P1 Verified; P5–P6 pending | Shared egress + `ModelProfile` catalog | [P1 plan](../tasks/phase-2-p1-live-chat/plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [verification](../tasks/phase-2-p1-live-chat/verification.md) |
 
 ## Cross-cutting concerns
 

@@ -183,10 +183,10 @@ Current cross-agent state:
   `docs/planning/archive/sprint-11-builder-expansion/` (approved-decision provenance), and
   `docs/tasks/sprint-11-workflow-builder/` is now the single canonical Sprint 11 record with
   a delivered-vs-deferred reconciliation. Deferred builder enhancements moved to the new
-  **Phase 2 discussion draft** `docs/planning/phase-2-plan.md` (governed document plane →
+  **Phase 2 plan** `docs/planning/phase-2-plan.md` (governed document plane →
   Turkish UI → AI-assisted authoring → personal end-user MCP, in that owner-set priority).
-  Phase 2 is **not approved for implementation**; new dependencies/egress there need explicit
-  sign-off first.
+  Phase 2 implementation kickoff is approved; new dependencies/live egress still need their
+  milestone-specific explicit sign-off.
 
 - **Phase 2 · Workstream 1 (document plane) — authoritative design landed (2026-07-12), NOT
   approved for implementation.** The owner gave detailed decisions A–E and asked for a component
@@ -212,14 +212,14 @@ Current cross-agent state:
   images go to the owner's external OCR endpoint over SSRF-safe egress. **M0 design spikes are now
   DONE, documented as ADRs (2026-07-12):** Spike 1 pgvector multi-dimension storage →
   [ADR-0003], Spike 2 RLS connection-context → [ADR-0004], Spike 3 shared SSRF-safe egress adapter →
-  [ADR-0005] (implements [ADR-0002]). **Remaining gates before any code: Phase 2 implementation
-  approval + per-phase egress sign-off; then the interleaved WS1+WS5 delivery below.** No
-  code/migration/dependency/egress yet.
+  [ADR-0005] (implements [ADR-0002]). Phase 2 kickoff is approved and P1 is complete; continue with
+  P2 while preserving per-phase egress/dependency gates. No document-plane code/migration/
+  dependency/egress yet.
 
-- **WS5 (live model runtime) added + owner review folded in (2026-07-12).** Owner: "give the app a
+- **WS5 (live model runtime) P1 verified (2026-07-12).** Owner: "give the app a
   base_url + token and actually reach the LLM — that must exist." Verified today's runtime ships
-  only deterministic stubs (no real `ModelProvider`; agent `retrieve` + workflow `generate`/
-  `retrieve` are placeholders; agents carry no system prompt; multi-prompt workflows drawable but
+  an opt-in real `ModelProvider` now exists behind the deterministic default; agent `retrieve` and
+  workflow `generate`/`retrieve` remain placeholders; agents carry no system prompt; multi-prompt workflows drawable but
   not runnable). **WS5 is a foundational track interleaved with WS1, not a 5th-in-line priority.**
   Owner delivery order: M0 spikes → shared egress/provider infra → chat provider → embedding/
   indexing → document-ACL retrieval → UI. The interleaved phase plan (P0–P8, with a **serving
@@ -268,7 +268,12 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **STARTING PHASE 2 — read this first (for the session told "start Phase 2").**
+- **PHASE 2 CURRENT ENTRY — P1 COMPLETE; continue at P2.** P1 is implemented and verified in
+  `docs/tasks/phase-2-p1-live-chat/` (platform `ModelProfile` catalog, profile-ID-only shared
+  SSRF-safe egress, opt-in real chat provider; deterministic default; no live endpoint opened).
+  The next planned increment is **P2 content plane & storage**. The original kickoff checklist is
+  retained below as completed provenance.
+- **STARTING PHASE 2 — completed P1 kickoff provenance.**
   - **Entry point:** M0 (design spikes) is **done** — [ADR-0003] vector storage, [ADR-0004] RLS,
     [ADR-0005] shared egress (implements [ADR-0002]). Begin at **P1 — shared SSRF-safe egress
     adapter + real chat `ModelProvider`** and follow the phase order in
