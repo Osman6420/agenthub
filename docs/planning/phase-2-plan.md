@@ -30,6 +30,14 @@ identity delegation**.
 
 ## Workstream 1 — Document plane (priority 1)
 
+> **Detailed design (2026-07-12):** the owner's A–E decisions (hybrid tenant/document-set
+> isolation, forward-ready principal model, independent `Document` lineage, `EmbeddingProfile`,
+> external-OCR parser strategy) are worked out in
+> [`components/document-plane-plan.md`](components/document-plane-plan.md) and
+> [`components/document-plane-threat-model.md`](components/document-plane-threat-model.md).
+> Those two documents are the authoritative WS1 design; the summary below is retained for
+> context. Still **draft — not approved for implementation.**
+
 ### 1.1 Per-scenario document source management (console UI)
 
 - A console page to manage the document sources a scenario may use, with **role-gated**
@@ -65,9 +73,14 @@ identity delegation**.
   over **external HTTPS** with SSRF-safe egress (timeouts, size caps, controlled
   destinations) and `secret:<name>` credentials.
 - **Owner decision:** test → **cloud models**; production → **local OpenAI-compatible LLM**.
-  The `openai` client library may be used (approval + supply-chain review still required).
-- Real embeddings change the vector dimension → **pgvector column + HNSW index
-  reconfiguration**, plus a reindex / migration strategy for existing chunks.
+- **Decision refined (2026-07-12) — the authoritative WS1 design supersedes the notes above:**
+  the client is an `OpenAICompatibleEmbeddingClient` adapter over the **Sprint 9 SSRF-safe
+  stdlib transport**, so **no `openai` dependency is added** at this stage; the endpoint is a
+  **platform-allowlisted internal endpoint** (no tenant/request `base_url`), and model +
+  dimensions come from a **platform-managed, immutable `EmbeddingProfile`** catalog. A dimension
+  change flows through a **staged, immutable blue/green reindex** with a **metadata-atomic
+  pointer-flip promotion** — not an in-place column/HNSW mutation. See
+  [`components/document-plane-plan.md`](components/document-plane-plan.md).
 
 ### 1.5 Document-set authorization (retrieval-time ACL) — highest security risk
 
@@ -119,9 +132,11 @@ identity delegation**.
 
 ## Cross-cutting constraints
 
-- Every new production dependency (document parsers, `openai` client) and every new external
-  egress (embeddings, LLM) needs **explicit owner approval + supply-chain + threat-model
-  review** before implementation.
+- Every new production dependency and every new external egress needs **explicit owner
+  approval + supply-chain + threat-model review** before implementation. WS1 decision
+  (2026-07-12): **no `openai` dependency** for embeddings — the client reuses the Sprint 9
+  SSRF-safe stdlib transport; only the document-parser dependency remains pending the WS1
+  comparison (see [`components/document-plane-plan.md`](components/document-plane-plan.md)).
 - Reuse the existing controls: tenant isolation, deny-by-default authorization,
   `secret:<name>` handling, redaction, and the append-only audit trail.
 - Real model providers plug in behind the existing provider seams
@@ -135,6 +150,8 @@ repurposed toward AI-assisted authoring + preview (Workstream 3):
 
 - Artifact **detail / preview** view for endpoint- and AI-produced artifacts (→ Workstream 3).
 - GitOps **export of a draft** / import → draft seed (→ Workstream 3).
+- Builder-embedded **test / eval / trace panels** (today the builder links out to the existing
+  console screens) — reconsider under Workstream 3's preview surface, or keep as console links.
 - Optimistic concurrency (revision/ETag + visible conflict), autosave debounce, soft-delete
   retention/purge, a distinct `project_editor` permission, and a Content-Security-Policy —
   to be reconsidered under the trimmed-builder direction (some may no longer be needed).
@@ -142,25 +159,42 @@ repurposed toward AI-assisted authoring + preview (Workstream 3):
 See the consolidated Sprint 11 record:
 [`sprint-11-workflow-builder`](../tasks/sprint-11-workflow-builder/plan.md).
 
-## Open questions (to discuss)
+## Open questions
 
-- Document ACL granularity: per-source, per-document, or per-scope? Shared vs. per-scope
-  pgvector indexes for isolation?
-- Confluence / REST connector auth model and rate/size limits; upload storage backend and
-  malware/type scanning.
-- Chosen document-parser libraries (and their licenses/footprint) and the embedding
-  dimension / reindex/migration plan.
-- Which OpenAI-compatible endpoints (cloud test + local prod), egress allowlist, and secret
-  provisioning.
-- Personal-MCP identity source (which IdP), the OBO token format, and downstream (ERP)
-  trust/verification contract.
-- UI framework/theming approach and localization ownership.
+**Workstream 1 — resolved in the authoritative design**
+([`components/document-plane-plan.md`](components/document-plane-plan.md)): document ACL
+granularity + index isolation (hybrid — tenant is the physical boundary, document-set version
+is the logical ACL/retrieval unit; no per-scenario physical index), embedding
+dimension/reindex (platform-managed `EmbeddingProfile` + immutable blue/green reindex +
+metadata-atomic pointer-flip promotion), and the parser approach (format-specific stack behind
+a `DocumentParser` interface; final library chosen at M4). Remaining WS1 items are milestone
+decisions, not open blockers: Confluence/REST connector auth + rate/size limits, upload storage
+backend + malware/type scanning (M4), and the concrete embedding/OCR endpoints, egress
+allowlist, and secret provisioning (deployment config).
+
+**Workstreams 2–4 — still open (not yet decomposed):**
+
+- UI framework/theming approach and localization ownership (WS2).
+- AI-authoring LLM prompt/DSL-rule contract and the exact scope of preview-time DSL edits (WS3).
+- Personal-MCP identity source (which IdP), the OBO token format, and the downstream (ERP)
+  trust/verification contract (WS4).
 
 ## Status
 
-Draft. Next step: refine priorities/scope with the owner, then split into approved
-component plans under `docs/planning/components/` with per-workstream threat models before
-any implementation.
+Draft. **Workstream 1 is design-complete and authoritative** (component plan + threat model
+under [`components/`](components/)) but **not approved for implementation**; its immediate next
+step is the two **M0 design spikes** (pgvector multi-dimension storage; RLS connection context)
+documented before any migration or code. **Workstreams 2–4 remain in discovery** and are not
+yet decomposed into component plans.
+
+### Workstream status
+
+| WS | Scope | Status |
+| --- | --- | --- |
+| 1 | Document plane | Design complete (component plan + threat model) — implementation **not approved**; M0 spikes pending |
+| 2 | UI modernization + Turkish | Discovery — not decomposed |
+| 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
+| 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
 
 ---
 

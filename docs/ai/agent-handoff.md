@@ -188,6 +188,65 @@ Current cross-agent state:
   Phase 2 is **not approved for implementation**; new dependencies/egress there need explicit
   sign-off first.
 
+- **Phase 2 · Workstream 1 (document plane) — authoritative design landed (2026-07-12), NOT
+  approved for implementation.** The owner gave detailed decisions A–E and asked for a component
+  plan + threat model before any code. Written and cross-referenced:
+  [`docs/planning/components/document-plane-plan.md`](../planning/components/document-plane-plan.md)
+  and `document-plane-threat-model.md`. Design in brief: (A) **hybrid isolation** — tenant is the
+  physical boundary (app predicate **+ PostgreSQL FORCE RLS**, fail-closed, transaction-local
+  `set_config('app.tenant_id',…,true)`), `DocumentSet` version is the logical ACL/retrieval unit,
+  each `IndexVersion` is a physically isolated immutable store; no per-scenario physical index;
+  `IndexVersion` re-scoped to (org, doc-set-version, embedding-profile). (B) enforce
+  consumer+scenario-binding now, forward-ready `principal_type=consumer|service|user|group`
+  (user/group in WS4). (C) new content lineage `Source→Document→DocumentVersion→Blob` +
+  `DocumentSet/Version/Membership` + soft-delete tombstone vs auditable purge; **rename existing
+  index-scoped `apps.ingestion.Document`→`IndexedDocument`** (`RenameModel`, preserve rows/PKs/
+  FKs). (D) platform-managed immutable **`EmbeddingProfile`** catalog; embedding egress =
+  `OpenAICompatibleEmbeddingClient` over the **Sprint 9 SSRF-safe stdlib transport, NO `openai`
+  dependency**, platform-allowlisted endpoint only (no tenant/request `base_url`); **blue/green
+  per-`IndexVersion` stores, promotion = single-transaction pointer-flip of the active
+  `index_version_id`** (no rename/copy/rebuild), retention/purge only when unreferenced;
+  dimension validated up front (`vector`≤2000 / `halfvec`≤4000, no silent truncation). (E) parser
+  behind a `DocumentParser` interface, comparison-table before any dependency (format-specific
+  pypdf/pdfplumber+python-docx+openpyxl preferred), **OCR NOT in-app** — image PDFs + embedded
+  images go to the owner's external OCR endpoint over SSRF-safe egress. **Immediate next step
+  (owner instruction): document two design spikes as M0 before any migration/code — Spike 1
+  pgvector multi-dimension storage, Spike 2 RLS connection-context — then M1 rename+content plane
+  → M2 binding+ACL+RLS → M3 embeddings+blue/green → M4 parsers+connectors → M5 console UI.** No
+  code/migration/dependency/egress yet.
+
+- **Planning-doc consistency pass (2026-07-12):** a review found `phase-2-plan.md` and
+  `master-plan.md` still carried pre-decision statements (stale `openai`-may-be-used note,
+  "open questions" already resolved in the component plan, "split into component plans" next-step,
+  and a current-state header that only counted Sprints 0–1). Fixed: the phase-2 summary now defers
+  to the authoritative component plan, marks WS1 design-complete/implementation-not-approved with
+  a per-workstream status table, and `master-plan.md` reads "Sprints 0–11 implemented and
+  verified" with a Document-plane row in the Components table. **These planning/handoff doc edits
+  are documentation-only (no code) and are committed on `feat/foundation-sprint-0-1`; nothing was
+  pushed.** No runtime/topology change since the Sprint 11 live-demo snapshot above.
+
+- **Authoring-capability ground truth (verified by code inspection 2026-07-12, for the next
+  session):** a scenario = catalog `Scenario` + immutable **artifacts** referenced by role,
+  compiled into a `ScenarioRelease` and promoted (fail-closed via eval). Authoring is **GitOps/
+  CLI**, not the UI: write artifact YAML (`api_version: agenthub/v1`) and `manage.py import_gitops`
+  / `compile_release` / `promote_release` (see the real example under `gitops/mcm/`). Release-bundle
+  roles the runtime resolves: `prompt` (`spec.template` → `bundle.prompt_text`), `model_profile`
+  (provider/endpoint/model/`secret:<name>`), `policy`, `retrieval_profile`, `input_contract`,
+  `output_contract`, plus manifest-pinned `index_versions`; agents/workflows/tools have their own
+  artifacts. **The system prompt is the `prompt` artifact + `model_profile` — there is no console
+  field for it (the Sprint 11 builder was deliberately trimmed to exclude system-prompt entry /
+  model selection).** Important honest caveats for anyone asked "can we serve MCP+RAG+agent-loop
+  today": the plumbing exists and is served end-to-end, but by default (i) `RUNTIME_MODEL_PROVIDER`
+  is a deterministic stub (no real LLM), (ii) the **agent loop's retrieve step and the workflow
+  `generate`/`retrieve` nodes are deterministic stubs** — real pgvector RAG is wired only in the
+  standalone `run_rag` (`/v1/query`) path, not inside the agent/workflow, (iii) real tool egress
+  incl. the `McpToolAdapter` is opt-in behind `TOOL_ADAPTER` (default no-egress), and (iv) an
+  `agent_definition` carries **no prompt text** (the loop uses the user objective as the prompt).
+  So "several different LLM prompts per step against a real model" is expressible in the workflow
+  DAG (multiple `generate` nodes) but **not yet functional** — wiring generate/retrieve/model
+  providers and per-node prompt/model binding is future work that Phase 2 (real providers +
+  AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
+
 ## Agent transition checklist
 
 Before yielding work to another agent:
