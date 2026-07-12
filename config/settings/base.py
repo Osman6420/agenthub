@@ -51,6 +51,7 @@ LOCAL_APPS = [
     "apps.releases",
     "apps.retrieval",
     "apps.ingestion",
+    "apps.documents",
     "apps.orchestration",
     "apps.workflows",
     "apps.tools",
@@ -198,6 +199,25 @@ INGESTION_HTTP_ALLOWED_HOSTS = env.list("INGESTION_HTTP_ALLOWED_HOSTS", default=
 INGESTION_MAX_SOURCE_BYTES = env.int("INGESTION_MAX_SOURCE_BYTES", default=10_000_000)
 INGESTION_HTTP_TIMEOUT_SECONDS = env.int("INGESTION_HTTP_TIMEOUT_SECONDS", default=15)
 INGESTION_EMBEDDING_DIMENSIONS = 64
+
+# --- Document content plane (Phase 2 P2) ------------------------------------
+# Blob backend: "s3" (real object store, local/production) or "memory" (hermetic, tests).
+DOCUMENTS_OBJECT_STORE_BACKEND = env("DOCUMENTS_OBJECT_STORE_BACKEND", default="s3")
+DOCUMENTS_MAX_UPLOAD_BYTES = env.int("DOCUMENTS_MAX_UPLOAD_BYTES", default=25_000_000)
+# Declared upload content types accepted for storage (parsing arrives in P7). An empty list
+# would disable the allowlist; keep it bounded.
+DOCUMENTS_ALLOWED_MIME_TYPES = env.list(
+    "DOCUMENTS_ALLOWED_MIME_TYPES",
+    default=[
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ],
+)
 
 # --- Authentication / operator console (ADR-0001) ---------------------------
 # The operator console is the management surface, not Django Admin. Human operators

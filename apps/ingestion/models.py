@@ -119,7 +119,16 @@ class IngestionRun(TimeStampedModel):
             raise ValidationError({"max_attempts": "must be at least 1"})
 
 
-class Document(TimeStampedModel):
+class IndexedDocument(TimeStampedModel):
+    """A *build* artifact: the content that entered one immutable ``IndexVersion``.
+
+    This is not the tenant's managed content object — that is the content-plane
+    ``apps.documents.Document`` (Phase 2 P2). This model records what a specific index
+    build ingested (source URI, checksum, title) so retrieved chunks can cite it. It was
+    renamed from ``Document`` to free that name for the content plane; the rename is a
+    ``RenameModel`` that preserves rows, primary keys, and FK relationships.
+    """
+
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="documents"
     )
@@ -142,7 +151,7 @@ class Document(TimeStampedModel):
 class Chunk(TimeStampedModel):
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="chunks")
     index_version = models.ForeignKey(IndexVersion, on_delete=models.CASCADE, related_name="chunks")
-    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="chunks")
+    document = models.ForeignKey(IndexedDocument, on_delete=models.CASCADE, related_name="chunks")
     ordinal = models.PositiveIntegerField()
     text = models.TextField()
     embedding = VectorField(dimensions=EMBEDDING_DIMENSIONS)

@@ -38,3 +38,6 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
     },
 }
+
+# Hermetic object store so document-plane tests exercise upload/purge without MinIO.
+DOCUMENTS_OBJECT_STORE_BACKEND = "memory"

@@ -27,7 +27,13 @@ fallback policy, and output-contract governance; the gateway now returns real
 `completed`/fallback output with token usage. Embeddings and answer generation are
 default to deterministic stubs. Phase 2 P1 added an opt-in real chat provider with a
 platform-managed profile catalog and shared SSRF-safe transport; no live endpoint is configured or
-called in CI. Embedding and agent/workflow generation wiring remain pending. Providers plug in via
+called in CI. Phase 2 P2 added the tenant-owned content plane `apps/documents`
+(`Document→DocumentVersion` + `DocumentSet/Version/Membership`), object-store blob upload,
+soft-delete tombstone, auditable physical purge, and a role/tenant-scoped operator JSON API under
+`/console/api/documents/`; the Sprint 5 index-scoped `Document` was renamed to `IndexedDocument`
+(rows/PKs/FKs preserved). P2 changes no retrieval path and adds no dependency or egress; scenario
+binding, retrieval ACL, and RLS remain P4, real embeddings remain P3. Embedding and agent/workflow
+generation wiring remain pending. Providers plug in via
 `RUNTIME_MODEL_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
 The repository contains
 a bootable Django modular monolith: `config/` (settings split base/local/test/
@@ -235,7 +241,8 @@ record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan i
 under `docs/planning/archive/`. Phase 2 is a discussion draft at
 `docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
 personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and P1
-is verified; continue at P2. Its M0 architecture decisions are accepted as ADR-0002–0005, with the
+(live chat) and P2 (content plane & storage) are verified; continue at P3 (real embeddings +
+indexing, staged). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
 remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 

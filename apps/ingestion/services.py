@@ -14,7 +14,7 @@ from apps.audit.services import record_event
 from apps.ingestion.connectors import ConnectorError, get_connector
 from apps.ingestion.models import (
     Chunk,
-    Document,
+    IndexedDocument,
     IndexStatus,
     IndexVersion,
     IngestionRun,
@@ -113,7 +113,7 @@ def _build_index(run: IngestionRun) -> IndexVersion:
         chunk_count = 0
         for raw in raw_documents:
             parsed = parser(raw)
-            document = Document.objects.create(
+            document = IndexedDocument.objects.create(
                 organization_id=source.organization_id,
                 index_version=index,
                 source_uri=parsed.uri,

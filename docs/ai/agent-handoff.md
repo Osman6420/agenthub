@@ -268,11 +268,24 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **PHASE 2 CURRENT ENTRY — P1 COMPLETE; continue at P2.** P1 is implemented and verified in
+- **PHASE 2 CURRENT ENTRY — P1 + P2 COMPLETE; continue at P3.** P1 is implemented and verified in
   `docs/tasks/phase-2-p1-live-chat/` (platform `ModelProfile` catalog, profile-ID-only shared
   SSRF-safe egress, opt-in real chat provider; deterministic default; no live endpoint opened).
-  The next planned increment is **P2 content plane & storage**. The original kickoff checklist is
-  retained below as completed provenance.
+  **P2 (content plane & storage) is implemented and verified** in
+  `docs/tasks/phase-2-p2-content-plane/`: new `apps/documents`
+  (`Document→DocumentVersion` + `DocumentSet/Version/Membership`), an object-store abstraction
+  (real S3 + hermetic in-memory backend), upload/soft-delete/auditable-purge services, a
+  role/tenant-scoped operator JSON API under `/console/api/documents/`, and the data-preserving
+  `ingestion.Document → IndexedDocument` `RenameModel`. Migrations `ingestion.0002` (rename) and
+  `documents.0001` (additive) apply on SQLite and PostgreSQL. Evidence: SQLite 410 passed / 2
+  skipped; PostgreSQL `--create-db` 412 passed. No new dependency, no live egress, no retrieval
+  behavior change; scenario binding + retrieval ACL + RLS remain P4, real embeddings remain P3.
+  **Run `manage.py migrate` before serving P2 against the standing local `agenthub` DB** (the two
+  new migrations were exercised via `pytest --create-db` but not necessarily applied to the
+  persistent DB), and export `DOCUMENTS_OBJECT_STORE_BACKEND`/an object store if exercising
+  uploads locally (MinIO was not running at last check). The next planned increment is **P3 real
+  embeddings + indexing (staged)** — a new external egress (embedding endpoint) approval gate. The
+  original P1 kickoff checklist is retained below as completed provenance.
 - **STARTING PHASE 2 — completed P1 kickoff provenance.**
   - **Entry point:** M0 (design spikes) is **done** — [ADR-0003] vector storage, [ADR-0004] RLS,
     [ADR-0005] shared egress (implements [ADR-0002]). Begin at **P1 — shared SSRF-safe egress
