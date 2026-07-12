@@ -57,9 +57,33 @@ retrieval path changes.
 
 ## Status
 
-**P4.1 Implemented and Verified (2026-07-13):** ruff/mypy/check/no-drift clean; SQLite 447 passed /
-10 skipped (pgvector). P4.2–P4.4 pending. The serving guardrail still holds (no real corpus served
-to consumers until P4.2+P4.3 land).
+**P4 Implemented and Verified (2026-07-13) — the serving guardrail is now satisfiable.**
+
+- **P4.1** — binding + ACL grant foundation (commit `80d140f`).
+- **P4.2** — the release compiler pins `document_set_versions` (deny-by-default from bindings), the
+  resolver carries them, the runtime passes them, and `PgvectorRetrievalProvider._retrieve_acl`
+  serves only from the pinned versions' **active** per-`IndexVersion` stores, tenant- and
+  not-tombstoned-scoped; no client filter is honored. Legacy source-scoped retrieval is unchanged.
+- **P4.3** — each per-`IndexVersion` store is provisioned with `ENABLE`/`FORCE ROW LEVEL SECURITY`
+  and a `NULLIF(current_setting('app.tenant_id', true), '')::bigint` tenant policy; `set_tenant_context`
+  sets it transaction-locally, and `write_chunks`/`search`/`_retrieve_acl` run inside a transaction
+  that sets it. Proven fail-closed under a NOSUPERUSER role via `SET ROLE` (superusers bypass RLS).
+- **P4.4** — `promote_staged_index` pointer-flips a promotable index to `active` and supersedes the
+  prior active one for the same document-set version in one metadata-only transaction;
+  `rollback_staged_index` restores; the `promote_staged_index [--rollback]` command exposes it.
+
+Evidence: ruff/mypy/check/no-drift clean; SQLite 454 passed / 18 skipped (pgvector);
+PostgreSQL `--create-db` 470 passed / 2 skipped (off-PG guards). Additive migrations `documents.0002`
+(P4.1) and `ingestion.0005` (add `IndexStatus.superseded`). No new dependency; no live egress; the
+deterministic embedder + hermetic object store keep CI hermetic.
+
+## Negative-test matrix (verified on PostgreSQL)
+
+deny-by-default (no binding → no pin → nothing; a staged-but-not-promoted index is never served);
+cross-tenant (org B pinning org A's version yields no active index; **RLS blocks a wrong/missing
+`app.tenant_id` even with the app predicate omitted**); cross-set (only the pinned version's docs);
+tombstoned document excluded; RLS fail-closed under a non-superuser role; pointer-flip single-active
+invariant + rollback.
 
 ## Test plan (P4.1)
 

@@ -72,6 +72,7 @@ class IndexStatus(models.TextChoices):
     BUILDING = "building", "Building"
     PROMOTABLE = "promotable", "Promotable"
     ACTIVE = "active", "Active"
+    SUPERSEDED = "superseded", "Superseded"
     FAILED = "failed", "Failed"
 
 

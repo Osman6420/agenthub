@@ -30,6 +30,7 @@ class ReleaseBundle:
     input_contract: dict[str, Any] | None
     output_contract: dict[str, Any] | None
     index_versions: list[int] = field(default_factory=list)
+    document_set_version_ids: list[int] = field(default_factory=list)
 
 
 def _build(release: ScenarioRelease) -> ReleaseBundle:
@@ -37,6 +38,10 @@ def _build(release: ScenarioRelease) -> ReleaseBundle:
     manifest = release.manifest if isinstance(release.manifest, dict) else {}
     raw_pins = manifest.get("index_versions", [])
     index_versions = [int(v) for v in raw_pins if isinstance(v, int) and not isinstance(v, bool)]
+    raw_dsv = manifest.get("document_set_versions", [])
+    document_set_version_ids = [
+        int(v) for v in raw_dsv if isinstance(v, int) and not isinstance(v, bool)
+    ]
     return ReleaseBundle(
         release_id=release.id,
         organization_id=release.scenario.project.organization_id,
@@ -47,6 +52,7 @@ def _build(release: ScenarioRelease) -> ReleaseBundle:
         input_contract=get_artifact_body_for_role(release, "input_contract"),
         output_contract=get_artifact_body_for_role(release, "output_contract"),
         index_versions=index_versions,
+        document_set_version_ids=document_set_version_ids,
     )
 
 

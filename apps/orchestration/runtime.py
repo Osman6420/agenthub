@@ -101,6 +101,7 @@ def run_rag(
             profile=bundle.retrieval_profile,
             organization_id=bundle.organization_id,
             index_versions=bundle.index_versions,
+            document_set_version_ids=bundle.document_set_version_ids,
         )
     except Exception as exc:  # provider-opaque failure
         raise RetrievalError(str(exc)) from exc

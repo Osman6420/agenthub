@@ -145,6 +145,14 @@ def compile_release(
         if missing:
             raise CompileError(f"agent declares tools with no pinned tool_binding role: {missing}")
 
+    # Deny-by-default document-ACL pins (P4.2): compile the scenario's mandatory
+    # ``ScenarioDocumentSetBinding``s to published document-set-version ids. A scenario with no
+    # binding pins nothing and therefore retrieves nothing. The resolver expands each to its active
+    # index version at request time (pointer flip), so promotion/rollback need no recompile.
+    from apps.documents.services import pinned_document_set_version_ids
+
+    document_set_versions = pinned_document_set_version_ids(scenario)
+
     manifest: dict[str, object] = {
         "scenario_id": scenario.id,
         "runtime_version": runtime_version,
@@ -152,6 +160,8 @@ def compile_release(
     }
     if pinned_indexes:
         manifest["index_versions"] = pinned_indexes
+    if document_set_versions:
+        manifest["document_set_versions"] = document_set_versions
     if workflow_checksum:
         manifest["workflow_checksum"] = workflow_checksum
     if agent_checksum:

@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from django.db import connection
+from django.db import connection, transaction
 
 from apps.ingestion.models import (
     HALFVEC_MAX_DIMENSIONS,
@@ -56,6 +56,20 @@ class VectorHit:
 def _require_postgres() -> None:
     if connection.vendor != "postgresql":
         raise VectorStoreError("VECTOR_STORE_REQUIRES_POSTGRES")
+
+
+def set_tenant_context(organization_id: int) -> None:
+    """Set the transaction-local tenant id for RLS (ADR-0004); PostgreSQL-only, else no-op.
+
+    ``is_local=true`` scopes the setting to the current transaction so it never leaks to the next
+    operation on a pooled connection. Callers must run inside a transaction that also issues the
+    tenant-scoped query, or the setting is lost. A missing/invalid setting makes the RLS policy
+    return no rows (fail-closed).
+    """
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT set_config('app.tenant_id', %s, true)", [str(int(organization_id))])
 
 
 def store_name(index_version: IndexVersion | int) -> str:
@@ -111,6 +125,17 @@ def provision_store(index_version: IndexVersion) -> str:
             f'CREATE INDEX IF NOT EXISTS "{name}_hnsw" ON "{name}" '
             f"USING hnsw (embedding {opclass}) WITH (m = 16, ef_construction = 64)"
         )
+        # RLS backstop (ADR-0004): FORCE applies the policy even to the table owner, so a missing
+        # ``app.tenant_id`` (or a mismatched one) yields no rows regardless of the app predicate.
+        cursor.execute(f'ALTER TABLE "{name}" ENABLE ROW LEVEL SECURITY')
+        cursor.execute(f'ALTER TABLE "{name}" FORCE ROW LEVEL SECURITY')
+        cursor.execute(f'DROP POLICY IF EXISTS "{name}_tenant" ON "{name}"')
+        # NULLIF makes a missing OR empty ``app.tenant_id`` resolve to NULL -> the predicate is
+        # NULL -> no rows (fail-closed), and avoids an ``''::bigint`` cast error.
+        cursor.execute(
+            f'CREATE POLICY "{name}_tenant" ON "{name}" '
+            "USING (organization_id = NULLIF(current_setting('app.tenant_id', true), '')::bigint)"
+        )
     return name
 
 
@@ -134,14 +159,18 @@ def write_chunks(index_version: IndexVersion, rows: list[VectorRow]) -> int:
         )
     if not params:
         return 0
-    with connection.cursor() as cursor:
-        # "name" is int-derived and regex-validated (ADR-0003); values are bound parameters.
-        cursor.executemany(
-            f'INSERT INTO "{name}" '  # noqa: S608
-            "(organization_id, document_version_id, ordinal, text, embedding) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            params,
-        )
+    # A store is single-tenant; set the tenant context so the RLS WITH CHECK admits the rows
+    # under the production (non-owner) app role. The INSERT + context share one transaction.
+    with transaction.atomic():
+        set_tenant_context(int(index_version.organization_id))
+        with connection.cursor() as cursor:
+            # "name" is int-derived and regex-validated (ADR-0003); values are bound parameters.
+            cursor.executemany(
+                f'INSERT INTO "{name}" '  # noqa: S608
+                "(organization_id, document_version_id, ordinal, text, embedding) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                params,
+            )
     return len(params)
 
 
@@ -161,15 +190,19 @@ def search(
     column_type, _ = _column_spec(index_version.index_type, dimensions)
     literal = _vector_literal(query_embedding)
     limit = max(1, min(int(top_k), 100))
-    with connection.cursor() as cursor:
-        # "name"/"column_type" are int-derived and validated (ADR-0003); values are bound params.
-        cursor.execute(
-            f"SELECT document_version_id, ordinal, text, "  # noqa: S608
-            f"(embedding <=> %s::{column_type}) AS distance "
-            f'FROM "{name}" WHERE organization_id = %s ORDER BY distance LIMIT %s',
-            [literal, organization_id, limit],
-        )
-        rows = cursor.fetchall()
+    # Transaction-local tenant context so the RLS policy (ADR-0004) is active during the read; the
+    # ``WHERE organization_id`` app predicate is the first layer, RLS the fail-closed backstop.
+    with transaction.atomic():
+        set_tenant_context(int(organization_id))
+        with connection.cursor() as cursor:
+            # "name"/"column_type" are int-derived and validated; values are bound params.
+            cursor.execute(
+                f"SELECT document_version_id, ordinal, text, "  # noqa: S608
+                f"(embedding <=> %s::{column_type}) AS distance "
+                f'FROM "{name}" WHERE organization_id = %s ORDER BY distance LIMIT %s',
+                [literal, organization_id, limit],
+            )
+            rows = cursor.fetchall()
     return [
         VectorHit(
             document_version_id=row[0],

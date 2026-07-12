@@ -37,10 +37,19 @@ over the shared SSRF-safe transport (profile-id-only, deterministic default, no 
 plus the ADR-0003 per-`IndexVersion` blue/green vector-store DAL (`apps/ingestion/vector_store.py`,
 system-generated `chunk_iv_<pk>` names, `vector(D)`/`halfvec(D)`, PostgreSQL-only) and a staged
 `build_staged_index` over managed documents that leaves a `promotable` (never served) index (P3.2).
-`IndexVersion` was re-scoped (additive) to `(org, document_set_version, embedding_profile)`. P2/P3
-change no served retrieval path and add no dependency or live egress; scenario binding, retrieval
-ACL, RLS, pointer-flip promotion, and the legacy-chunk data-migration cutover remain **P4**. Wiring
-real embeddings/retrieval into agent/workflow generation remains later (P5+). Providers plug in via
+`IndexVersion` was re-scoped (additive) to `(org, document_set_version, embedding_profile)`. Phase 2
+P4 added the document-ACL retrieval security core: `ScenarioDocumentSetBinding` + forward-ready
+`DocumentSetGrant` (`apps/documents`); the release compiler pins `document_set_versions` deny-by-
+default from bindings, the resolver carries them, and `PgvectorRetrievalProvider._retrieve_acl`
+serves `/v1/query` only from the pinned versions' **active** per-`IndexVersion` stores (tenant +
+not-tombstoned scoped, no client filter); each store is provisioned with **`FORCE ROW LEVEL
+SECURITY`** + a transaction-local `app.tenant_id` tenant policy (ADR-0004, proven fail-closed under a
+non-superuser role); and `promote_staged_index`/`rollback_staged_index` do the metadata-only
+pointer-flip. Legacy source-scoped retrieval is unchanged; no dependency or live egress added.
+**Remaining P4 production hardening:** `FORCE` RLS on the Django-managed tenant tables + a dedicated
+non-owner app role (CI/local run as the superuser owner, which bypasses RLS — the mechanism is
+proven on the served stores). Wiring real embeddings/retrieval into agent/workflow generation is
+**P5+**. Providers plug in via
 `RUNTIME_MODEL_PROVIDER`/`RUNTIME_EMBEDDING_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
 The repository contains
 a bootable Django modular monolith: `config/` (settings split base/local/test/
@@ -248,9 +257,11 @@ record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan i
 under `docs/planning/archive/`. Phase 2 is a discussion draft at
 `docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
 personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and P1
-(live chat), P2 (content plane & storage), and P3 (real embeddings + staged blue/green indexing) are
-verified; continue at P4 (document-ACL retrieval + RLS + pointer-flip promotion, which unlocks
-serving real corpora). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
+(live chat), P2 (content plane & storage), P3 (real embeddings + staged blue/green indexing), and P4
+(document-ACL retrieval + FORCE RLS + pointer-flip promotion — the security core that unlocks
+serving real, ACL-scoped tenant corpora) are verified; continue at P5 (wire real retrieval +
+generation into the agent loop and workflow generate/retrieve nodes, with per-node prompt/model
+binding). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
 remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 

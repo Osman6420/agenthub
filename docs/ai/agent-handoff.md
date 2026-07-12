@@ -268,16 +268,25 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **P4 IN PROGRESS — P4.1 landed; continue at P4.2.** P4 (document-ACL retrieval + RLS + pointer-flip
-  promotion — the security core) is decomposed in `docs/tasks/phase-2-p4-acl-rls/plan.md` into P4.1
-  (binding + ACL grant foundation — **done**, commit `80d140f`: `ScenarioDocumentSetBinding` +
-  `DocumentSetGrant` in `apps/documents`, additive migration `documents.0002`, audited services, no
-  enforcement wired yet), P4.2 (release-compile pinning of `document_set_versions` + resolver
-  expansion + deny-by-default ACL retrieval predicate), P4.3 (PostgreSQL `FORCE` RLS + transaction-
-  local tenant connection-context per ADR-0004), P4.4 (pointer-flip promotion of the eval'd P3 index
-  + full negative-test matrix). **The serving guardrail still holds** — no real tenant corpus is
-  served to a consumer until P4.2 + P4.3 land. SQLite 447 passed / 10 skipped at P4.1.
-- **PHASE 2 CURRENT ENTRY — P1 + P2 + P3 COMPLETE; P4 in progress (see above).** **P3 (real embeddings + staged
+- **P4 COMPLETE — continue at P5.** P4 (document-ACL retrieval + RLS + pointer-flip promotion — the
+  security core) is implemented and verified in `docs/tasks/phase-2-p4-acl-rls/` across four
+  increments: P4.1 binding + ACL grant foundation (`80d140f`); P4.2 the release compiler pins
+  `document_set_versions` deny-by-default from `ScenarioDocumentSetBinding`s, the resolver/runtime
+  carry them, and `PgvectorRetrievalProvider._retrieve_acl` serves `/v1/query` only from the pinned
+  versions' **active** per-`IndexVersion` stores (tenant + not-tombstoned, no client filter); P4.3
+  each store is provisioned with `FORCE ROW LEVEL SECURITY` + a transaction-local `app.tenant_id`
+  policy (ADR-0004, `apps/ingestion/vector_store.set_tenant_context`), proven fail-closed under a
+  NOSUPERUSER role; P4.4 `promote_staged_index`/`rollback_staged_index` do the metadata-only
+  pointer-flip (+ `promote_staged_index [--rollback]` command). Additive migrations `documents.0002`,
+  `ingestion.0005` (`IndexStatus.superseded`). Evidence: SQLite 454 passed / 18 skipped (pgvector);
+  PostgreSQL `--create-db` 470 passed / 2 skipped (off-PG guards). **The serving guardrail is now
+  satisfiable** — a bound + promoted scenario serves real ACL-scoped RAG. **Remaining P4 hardening
+  (follow-up):** `FORCE` RLS on the Django-managed tenant tables + a dedicated non-owner app role
+  (CI/local run as the superuser owner which bypasses RLS; the mechanism is proven on the served
+  stores under `SET ROLE`). Next: **P5** — replace the agent `retrieve` stub and the workflow
+  `retrieve`/`generate` stubs with the governed real providers, and add per-node prompt/model binding
+  to the workflow `generate` node (multi-prompt/multi-model workflows).
+- **PHASE 2 provenance — P1 + P2 + P3 COMPLETE (P4 complete, see above).** **P3 (real embeddings + staged
   blue/green indexing) is implemented and verified** in `docs/tasks/phase-2-p3-embeddings/`, in two
   increments: P3.1 — a platform `EmbeddingProfile` catalog + per-tenant grants + opt-in
   `OpenAICompatibleEmbeddingClient` over the shared SSRF-safe transport (profile-id-only,

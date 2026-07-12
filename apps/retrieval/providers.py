@@ -24,6 +24,7 @@ class RetrievalProvider(Protocol):
         profile: dict[str, Any],
         organization_id: int,
         index_versions: list[int],
+        document_set_version_ids: list[int] | None = None,
     ) -> list[RetrievedChunk]: ...
 
 
@@ -40,6 +41,7 @@ class StaticRetrievalProvider:
         profile: dict[str, Any],
         organization_id: int,
         index_versions: list[int],
+        document_set_version_ids: list[int] | None = None,
     ) -> list[RetrievedChunk]:
         top_k = int(profile.get("top_k", len(self._chunks))) if profile else len(self._chunks)
         ranked = sorted(self._chunks, key=lambda c: c.score, reverse=True)
@@ -60,6 +62,7 @@ class DemoRetrievalProvider:
         profile: dict[str, Any],
         organization_id: int,
         index_versions: list[int],
+        document_set_version_ids: list[int] | None = None,
     ) -> list[RetrievedChunk]:
         passage = "Iade sureci: urun tesliminden itibaren 14 gun icinde iade talebi olusturulur."
         return [
@@ -83,7 +86,18 @@ class PgvectorRetrievalProvider:
         profile: dict[str, Any],
         organization_id: int,
         index_versions: list[int],
+        document_set_version_ids: list[int] | None = None,
     ) -> list[RetrievedChunk]:
+        # P4 document-ACL path: when the release pins document-set versions, serve **only** from
+        # their active per-IndexVersion stores (deny-by-default, tenant + RLS scoped). Otherwise
+        # fall back to the legacy source-scoped Chunk table (backward compatible).
+        if document_set_version_ids:
+            return self._retrieve_acl(
+                query=query,
+                profile=profile,
+                organization_id=organization_id,
+                document_set_version_ids=document_set_version_ids,
+            )
         if not index_versions:
             return []
         from pgvector.django import CosineDistance
@@ -115,6 +129,79 @@ class PgvectorRetrievalProvider:
             )
             for row in rows
         ]
+
+    def _retrieve_acl(
+        self,
+        *,
+        query: str,
+        profile: dict[str, Any],
+        organization_id: int,
+        document_set_version_ids: list[int],
+    ) -> list[RetrievedChunk]:
+        """Deny-by-default retrieval from pinned doc-set versions' active per-IndexVersion stores.
+
+        Effective scope = tenant ``organization_id`` (app predicate **and** RLS backstop) ∩ pinned
+        ``document_set_version_ids`` ∩ their **active** index versions ∩ non-tombstoned documents.
+        No filter comes from the client. PostgreSQL-only (the stores are pgvector).
+        """
+        from django.db import connection
+
+        if connection.vendor != "postgresql" or not document_set_version_ids:
+            return []
+        from apps.documents.models import DocumentVersion
+        from apps.ingestion import vector_store
+        from apps.ingestion.embedding import get_embedding_provider
+        from apps.ingestion.models import IndexStatus, IndexVersion
+
+        top_k = min(max(int(profile.get("top_k", 5)), 1), 50) if profile else 5
+        active_indexes = list(
+            IndexVersion.objects.filter(
+                organization_id=organization_id,
+                document_set_version_id__in=document_set_version_ids,
+                status=IndexStatus.ACTIVE,
+                store_ready=True,
+            ).select_related("embedding_profile")
+        )
+        if not active_indexes:
+            return []
+        provider = get_embedding_provider()
+        scored: list[tuple[vector_store.VectorHit, int | None]] = []
+        for index in active_indexes:
+            embedding_profile = index.embedding_profile
+            profile_id = str(embedding_profile.public_id) if embedding_profile is not None else None
+            query_vector = provider.embed([query], profile_id=profile_id).vectors[0]
+            for hit in vector_store.search(
+                index, query_vector, organization_id=organization_id, top_k=top_k
+            ):
+                scored.append((hit, index.document_set_version_id))
+        scored.sort(key=lambda item: item[0].score, reverse=True)
+        scored = scored[:top_k]
+
+        # Exclude tombstoned documents (soft-deleted content is immediately unservable).
+        version_ids = [hit.document_version_id for hit, _ in scored if hit.document_version_id]
+        live = {
+            dv.id: dv
+            for dv in DocumentVersion.objects.filter(
+                id__in=version_ids,
+                organization_id=organization_id,
+                document__deleted_at__isnull=True,
+            ).select_related("document")
+        }
+        results: list[RetrievedChunk] = []
+        for hit, dsv_id in scored:
+            version = live.get(hit.document_version_id) if hit.document_version_id else None
+            if version is None:
+                continue
+            results.append(
+                RetrievedChunk(
+                    text=hit.text,
+                    source_id=f"docset-version:{dsv_id}",
+                    source_uri=version.document.logical_id,
+                    title=version.document.title,
+                    score=hit.score,
+                )
+            )
+        return results
 
 
 def get_retrieval_provider() -> RetrievalProvider:

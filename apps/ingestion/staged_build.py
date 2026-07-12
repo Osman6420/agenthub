@@ -222,6 +222,78 @@ def _fail(index_version: IndexVersion, *, reason: str) -> None:
         )
 
 
+@transaction.atomic
+def promote_staged_index(
+    index_version: IndexVersion, *, actor: str, request_id: str = ""
+) -> IndexVersion:
+    """Pointer-flip a promotable staged index to ``active`` for its document-set version (ADR-0003).
+
+    Metadata-only and atomic: it moves the previously-active index version for the same document-set
+    version to ``superseded`` and this one to ``active`` in one transaction — **no rename, copy, or
+    index rebuild**. At most one active index version per document-set version (the retrieval
+    pointer). The superseded store is left intact for instant rollback.
+    """
+    locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
+    if not locked.store_ready or locked.status != IndexStatus.PROMOTABLE:
+        raise StagedBuildError("INDEX_NOT_PROMOTABLE")
+    if locked.document_set_version_id is None:
+        raise StagedBuildError("INDEX_NOT_DOCSET_SCOPED")
+    superseded = list(
+        IndexVersion.objects.select_for_update()
+        .filter(document_set_version_id=locked.document_set_version_id, status=IndexStatus.ACTIVE)
+        .exclude(pk=locked.pk)
+        .values_list("id", flat=True)
+    )
+    IndexVersion.objects.filter(id__in=superseded).update(status=IndexStatus.SUPERSEDED)
+    locked.status = IndexStatus.ACTIVE
+    locked.save(update_fields=["status", "updated_at"])
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="ingestion.staged_index.promoted",
+        outcome="success",
+        organization_id=locked.organization_id,
+        resource_type="index_version",
+        resource_id=str(locked.pk),
+        request_id=request_id,
+        after={"document_set_version_id": locked.document_set_version_id, "superseded": superseded},
+    )
+    return locked
+
+
+@transaction.atomic
+def rollback_staged_index(
+    index_version: IndexVersion, *, actor: str, request_id: str = ""
+) -> IndexVersion:
+    """Restore a superseded index version as the active one (the inverse pointer flip)."""
+    locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
+    if locked.status != IndexStatus.SUPERSEDED:
+        raise StagedBuildError("INDEX_NOT_ROLLBACKABLE")
+    if locked.document_set_version_id is None:
+        raise StagedBuildError("INDEX_NOT_DOCSET_SCOPED")
+    demoted = list(
+        IndexVersion.objects.select_for_update()
+        .filter(document_set_version_id=locked.document_set_version_id, status=IndexStatus.ACTIVE)
+        .exclude(pk=locked.pk)
+        .values_list("id", flat=True)
+    )
+    IndexVersion.objects.filter(id__in=demoted).update(status=IndexStatus.SUPERSEDED)
+    locked.status = IndexStatus.ACTIVE
+    locked.save(update_fields=["status", "updated_at"])
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="ingestion.staged_index.rolled_back",
+        outcome="success",
+        organization_id=locked.organization_id,
+        resource_type="index_version",
+        resource_id=str(locked.pk),
+        request_id=request_id,
+        after={"document_set_version_id": locked.document_set_version_id, "demoted": demoted},
+    )
+    return locked
+
+
 def retire_staged_index(index_version: IndexVersion, *, actor: str, request_id: str = "") -> None:
     """Drop a staged/superseded store's physical relation (retention/purge), audited.
 

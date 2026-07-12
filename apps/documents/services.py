@@ -358,6 +358,37 @@ def publish_document_set_version(
 # --- Scenario ↔ document-set binding + ACL grants (deny-by-default, P4) --------
 
 
+def pinned_document_set_version_ids(scenario: Scenario) -> list[int]:
+    """Resolve a scenario's bindings to the published document-set version to pin (deny-by-default).
+
+    For each bound document set, pin its latest published (``promotable``/``active``) version. A
+    scenario with **no binding** resolves to an empty list — it retrieves nothing. Used by the
+    release compiler; the resolver later expands each pinned version to its *active* index version
+    (the pointer flip), so promotion/rollback take effect without recompiling.
+    """
+    set_ids = list(
+        ScenarioDocumentSetBinding.objects.filter(scenario=scenario).values_list(
+            "document_set_id", flat=True
+        )
+    )
+    pinned: list[int] = []
+    for set_id in set_ids:
+        version = (
+            DocumentSetVersion.objects.filter(
+                document_set_id=set_id,
+                status__in=[
+                    DocumentSetVersionStatus.PROMOTABLE,
+                    DocumentSetVersionStatus.ACTIVE,
+                ],
+            )
+            .order_by("-version")
+            .first()
+        )
+        if version is not None:
+            pinned.append(version.id)
+    return sorted(set(pinned))
+
+
 @transaction.atomic
 def bind_scenario_document_set(
     *, scenario: Scenario, document_set: DocumentSet, actor: str, request_id: str = ""
