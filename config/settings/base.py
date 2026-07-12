@@ -173,6 +173,11 @@ RUNTIME_RETRIEVAL_PROVIDER = env(
     "RUNTIME_RETRIEVAL_PROVIDER",
     default="apps.retrieval.providers.PgvectorRetrievalProvider",
 )
+# Embedding provider (Phase 2 P3). Empty -> the deterministic 64-dim embedder, so ingestion and
+# CI stay hermetic and open no socket. The opt-in real client (over the ADR-0005 shared SSRF-safe
+# transport, driven by a platform ``EmbeddingProfile`` id) plugs in here; live egress remains a
+# separate environment-specific approval gate.
+RUNTIME_EMBEDDING_PROVIDER = env("RUNTIME_EMBEDDING_PROVIDER", default="")
 
 # --- Tool egress (Sprint 9) -------------------------------------------------
 # "deterministic" (default) performs no outbound call; "http" enables the SSRF-safe

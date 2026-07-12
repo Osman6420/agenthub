@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
+from typing import Any
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from pgvector.django import HnswIndex, VectorField
@@ -9,6 +12,11 @@ from pgvector.django import HnswIndex, VectorField
 from apps.tenancy.models import Organization, TimeStampedModel
 
 EMBEDDING_DIMENSIONS = 64
+
+# pgvector HNSW dimension limits by column type (ADR-0003): an unsupported dimension for the
+# chosen index type is rejected at ingestion start — never silently truncated.
+VECTOR_MAX_DIMENSIONS = 2000
+HALFVEC_MAX_DIMENSIONS = 4000
 
 
 class SourceStatus(models.TextChoices):
@@ -171,3 +179,104 @@ class Chunk(TimeStampedModel):
                 opclasses=["vector_cosine_ops"],
             )
         ]
+
+
+class EmbeddingIndexType(models.TextChoices):
+    VECTOR = "vector", "vector (D<=2000)"
+    HALFVEC = "halfvec", "halfvec (D<=4000)"
+
+
+class EmbeddingProfileStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DISABLED = "disabled", "Disabled"
+
+
+class EmbeddingProfile(models.Model):
+    """Platform-managed, immutable, revisioned embedding-egress configuration.
+
+    Mirrors the P1 ``ModelProfile`` catalog (ADR-0002/0005): artifacts and the runtime reference
+    a profile **by id only** — endpoint/host/scheme/secret/TLS are never author/tenant-supplied.
+    Adds the embedding-specific ``dimensions``/``index_type``/``normalize`` that fix the physical
+    per-``IndexVersion`` vector store (ADR-0003). A used profile is never modified in place; any
+    change to provider/model/dimensions/index_type creates a new revision.
+    """
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    logical_id = models.CharField(max_length=128)
+    revision = models.PositiveIntegerField()
+    provider = models.CharField(max_length=64, default="openai_compatible")
+    scheme = models.CharField(max_length=8, default="https")
+    host = models.CharField(max_length=253)
+    port = models.PositiveIntegerField(default=443)
+    path = models.CharField(max_length=512, default="/v1/embeddings")
+    model = models.CharField(max_length=200)
+    secret_ref = models.CharField(max_length=160)
+    dimensions = models.PositiveIntegerField()
+    index_type = models.CharField(
+        max_length=16, choices=EmbeddingIndexType.choices, default=EmbeddingIndexType.VECTOR
+    )
+    normalize = models.BooleanField(default=True)
+    distance_metric = models.CharField(max_length=16, default="cosine")
+    timeout_seconds = models.PositiveIntegerField(default=30)
+    max_response_bytes = models.PositiveIntegerField(default=5_000_000)
+    max_batch_size = models.PositiveIntegerField(default=64)
+    status = models.CharField(
+        max_length=16,
+        choices=EmbeddingProfileStatus.choices,
+        default=EmbeddingProfileStatus.ACTIVE,
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["logical_id", "revision"],
+                name="uniq_embedding_profile_logical_revision",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"embedding-profile:{self.logical_id}:r{self.revision}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            update_fields = set(kwargs.get("update_fields") or [])
+            if not update_fields or not update_fields <= {"status"}:
+                raise ValueError("EmbeddingProfile is immutable; only status may change")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise ValueError("EmbeddingProfile is immutable and cannot be deleted")
+
+    @property
+    def max_dimensions(self) -> int:
+        return (
+            HALFVEC_MAX_DIMENSIONS
+            if self.index_type == EmbeddingIndexType.HALFVEC
+            else VECTOR_MAX_DIMENSIONS
+        )
+
+
+class TenantEmbeddingProfileGrant(models.Model):
+    """Allowlists a platform ``EmbeddingProfile`` to one tenant (tenants cannot self-create)."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="embedding_profile_grants"
+    )
+    embedding_profile = models.ForeignKey(
+        EmbeddingProfile, on_delete=models.CASCADE, related_name="tenant_grants"
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "embedding_profile"],
+                name="uniq_tenant_embedding_grant",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"embedding-grant:{self.organization_id}:{self.embedding_profile_id}"
