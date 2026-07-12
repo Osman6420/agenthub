@@ -97,7 +97,28 @@ Unauthenticated 401; wrong-role 403; cross-tenant draft denial; node-schema excl
 endpoints/secrets; publish rejects inline secrets via the shared validator; publish is
 role-gated and audited; CSRF enforced on mutations; diagnostics never persist.
 
-## Implementation status
+## Implementation status (2026-07-12)
 
-Planned. Update to "Implemented and evidenced in `verification.md`" once the backend and
-frontend increments land and gates pass.
+Implemented and evidenced in [`verification.md`](verification.md):
+
+- Single validated publish path: `publish_draft` → `create_artifact_version` → shared
+  `validate_body` (inline-secret rejection + workflow compiler). The builder adds no bypass;
+  `test_publish_rejects_inline_secret` confirms a compile-clean but secret-bearing body is
+  refused.
+- Server-side default-deny authorization re-checked on every call: membership read scope +
+  `can_author_scenarios` write gate; 401 (unauthenticated), 403 (wrong role), 404
+  (cross-tenant), CSRF enforced on mutations. The SPA's read-only flag is a mirror, not the
+  gate.
+- Node-schema discloses only binding *role* names + approval flag; tool endpoints,
+  definition manifests, and `secret:<name>` references never leave the backend
+  (`test_node_schema_exposes_roles_never_endpoints_or_secrets`,
+  `test_node_schema_excludes_other_tenant_bindings`).
+- Same-origin static serving reusing the console session/LDAP identity — no CORS, no
+  token/bearer path, no separate identity or authorization system.
+- Bounded draft bodies (256 KiB); audited state changes; no raw draft bodies in logs.
+
+Residual (recorded above): an authorized editor can still author a schema-valid but
+semantically weak workflow (caught by the existing eval/promotion gate); the added JS build
+toolchain broadens the build-time supply chain (pinned lockfile + `npm ci` CI gate); the
+client-side validation is advisory by design (the backend is authoritative). No
+headless-browser/live-server smoke was run.

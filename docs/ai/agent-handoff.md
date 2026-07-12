@@ -53,6 +53,10 @@ such a fact is written.
   also export `MCP_ENABLED=true` and `METRICS_BEARER_TOKEN=<any-non-empty>` or 8
   MCP/metrics tests fail spuriously (they 404 the disabled endpoints). Also verified in
   the [`engineering-rules.md`](engineering-rules.md) verified-state.
+- Node toolchain (Sprint 11): Node v20.20.0 / npm 10.8.2 available locally. The workflow
+  builder frontend lives in `frontend/`; run its gates with
+  `npm --prefix frontend ci && npm --prefix frontend run typecheck && npm --prefix frontend test && npm --prefix frontend run build`.
+  The build writes the gitignored bundle to `apps/builder/static/builder/`.
 - Interpreter: `.venv` (Python 3.13) is canonical and, after Sprint 5, again has all
   dependencies (`boto3`/`pgvector` installed from `requirements.lock`); gates pass in it
   on SQLite and — with the Compose database — on PostgreSQL. `C:\Python314\python.exe`
@@ -133,11 +137,25 @@ Current cross-agent state:
   live-server smoke was run (default deterministic model provider + no-egress tool
   adapter). One approved production dependency added: `langgraph==1.2.9` (exact pin,
   `requirements.lock` regenerated, `pip check` clean, CI fails closed on lock drift).
-  Additive migrations `agents.0001`, `artifacts.0003`. **As of this writing the Sprint 10
-  work is UNCOMMITTED** (verify with `git status`); the standing local Uvicorn/Celery
-  worker (if any) still runs pre-Sprint-10 code — restart both and run `manage.py migrate`
-  before any live Sprint 10 smoke. Not delivered (operational follow-ups): a global
-  start/resume kill switch, the checkpoint retention/purge job, and load/soak tests.
+  Additive migrations `agents.0001`, `artifacts.0003`. Not delivered (operational
+  follow-ups): a global start/resume kill switch, the checkpoint retention/purge job, and
+  load/soak tests. Sprint 10 was committed as `9da4282`.
+- Claude then implemented and verified Sprint 11 (visual workflow builder): `apps.builder`
+  (mutable tenant-scoped `WorkflowDraft` + operator JSON API under `/console/api/builder/`
+  for draft CRUD + diagnostics + node-schema + publish, reusing console LDAP/session +
+  role/tenant authz, CSRF, audited; additive migration `builder.0001`) and a **React Flow
+  SPA** in `frontend/` served same-origin as Django static assets. Backend committed as
+  `36626f3`; the frontend increment follows. Automated evidence only (SQLite 364 passed / 2
+  skipped; PostgreSQL `apps/builder`+`apps/console` 46 passed; frontend 11 vitest tests +
+  `vite build`); no headless-browser/live-server smoke. **New: a Node/npm build toolchain**
+  — five approved production frontend deps (Node/npm, Vite, React, React DOM,
+  `@xyflow/react`), pinned in `frontend/package-lock.json`, with a Node CI job. The built
+  bundle (`apps/builder/static/builder/`) is **gitignored**: run
+  `npm --prefix frontend ci && npm --prefix frontend run build` before serving the
+  `/console/builder/` page or running `collectstatic`. The Python runtime/gates do not
+  depend on the bundle existing. The `builder.0001` migration was exercised via
+  `pytest --create-db` but not necessarily applied to the standing local `agenthub` DB — run
+  `manage.py migrate` before serving Sprint 11 against the persistent local DB.
 
 ## Agent transition checklist
 

@@ -194,6 +194,39 @@ global start/resume kill switch, the checkpoint retention/purge job (the 30/90-d
 is recorded but not automated), and production-like load/soak tests; no live-egress or
 live-server smoke was run (default deterministic model provider + no-egress tool adapter).
 
+Sprint 11 (visual workflow builder) is implemented and verified (SQLite 364 passed / 2
+skipped; PostgreSQL `apps/builder`+`apps/console` run 46 passed; frontend 11 vitest tests +
+`vite build`). `apps.builder` adds the tenant-scoped **mutable** `WorkflowDraft` (author
+working state — not a runtime graph, not an immutable artifact; unique per
+`(organization, logical_id)`; additive migration `builder.0001`) and an **operator** JSON
+API under `/console/api/builder/` (session/LDAP authenticated, CSRF-enforced, 401/403 JSON —
+**not** the consumer gateway; no bearer path, no CORS): draft list/create/retrieve/update/
+delete, `POST diagnostics`, `POST publish`, and `GET node-schema`. Read is membership-scoped
+(`allowed_organization_ids`); create/update/delete/publish require
+`can_author_scenarios`. `diagnose()` runs the same `validate_body`
+(inline-secret rejection + Sprint 8 workflow compiler) as publish and returns the compiled
+checksum without persisting; `publish_draft` routes through the shared
+`create_artifact_version`, producing an immutable `workflow_definition` artifact — the
+builder grants no capability GitOps does not. `node-schema` exposes only builtin node types,
+org-active custom-node refs, and tool **binding roles** + approval flag (never tool
+endpoints, manifests, or `secret:<name>` values). All draft state changes are audited
+(`console.builder.draft.create/update/delete/publish`). The console gains a role-gated
+`/console/builder/` page (`@ensure_csrf_cookie`, tenant-scoped mount config) + nav link. The
+**React Flow SPA** lives in `frontend/` (Vite + React 18.3.1 + TypeScript + `@xyflow/react`
+12.3.5; pinned `frontend/package-lock.json`) and is served **same-origin** as Django static
+assets built to `apps/builder/static/builder/` (**gitignored** — regenerate with
+`npm --prefix frontend run build`; the Python runtime/gates never depend on the bundle
+existing). The client is **non-authoritative**: no validation/authorization/lifecycle/
+promotion/execution logic — draft save/compile/validate/publish are backend round-trips,
+read-only mode is driven by the server `can_write` flag, and DSL serialization is
+deterministic (canonical, sorted). Five approved new **production frontend** dependencies
+(Node/npm toolchain, Vite, React, React DOM, `@xyflow/react`) were added with a Node CI job
+(`npm ci` fails closed on lockfile drift → `tsc --noEmit` → `vitest` → `vite build`); **no
+new Python runtime dependency**. Frontend gates run on Node v20 / npm 10. Not delivered: no
+headless-browser/live-server smoke (the SPA is verified by vitest+jsdom and the build;
+Django static resolution by `findstatic`); in-app (non-unload) navigation away from a dirty
+editor is not additionally guarded.
+
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into
 every agent's context: it is the always-loaded, canonical statement of what is
 implemented/verified and how to run the gates. Update it in the same change that lands

@@ -176,15 +176,27 @@ frontend unit tests plus one end-to-end builder flow.
 
 ## Status
 
-In progress. The **backend increment is implemented and verified** (SQLite 364 passed /
-2 skipped; PostgreSQL affected-app run 46 passed): `apps.builder` adds the tenant-scoped
-mutable `WorkflowDraft`, the operator JSON API (`/console/api/builder/`) for draft CRUD +
-compiler diagnostics + node-schema generation + publish, all reusing the console
-LDAP/session identity and Sprint 1 role/tenant authorization, with CSRF, 401/403 JSON, and
-audited state changes. Diagnostics and publish route through the shared `validate_body` /
-`create_artifact_version` path; the node-schema endpoint exposes only binding *roles* and
-public config schema (no tool endpoints/secrets). The React Flow SPA increment (frontend/)
-is next. See [`verification.md`](verification.md).
+Implemented and Verified (2026-07-12), delivered in two increments.
+
+**Backend (`apps.builder`)** — the tenant-scoped mutable `WorkflowDraft`, the operator JSON
+API (`/console/api/builder/`) for draft CRUD + compiler diagnostics + node-schema generation
++ publish, all reusing the console LDAP/session identity and Sprint 1 role/tenant
+authorization, with CSRF, 401/403 JSON, and audited state changes. Diagnostics and publish
+route through the shared `validate_body` / `create_artifact_version` path; the node-schema
+endpoint exposes only binding *roles* + public config schema (no tool endpoints/secrets).
+Additive migration `builder.0001`. SQLite 364 passed / 2 skipped; PostgreSQL affected-app
+run 46 passed.
+
+**Frontend (`frontend/`)** — a React Flow SPA (Vite + React + TypeScript, pinned lockfile)
+served same-origin as Django static assets (`apps/builder/static/builder/`) and mounted in
+the role-gated console builder page. It provides draft create/edit/save, a node palette with
+drag/drop + click-to-add, typed edge connections (auto-typed condition branches +
+`isValidConnection`), a schema-generated node config panel, backend diagnostics shown on the
+graph, `beforeunload` unsaved-change protection, role-driven read-only mode, and
+deterministic DSL serialization. The client holds **no** authoritative validation,
+authorization, lifecycle, promotion, or execution logic — every operation is a backend
+round-trip. `npm ci`/typecheck/`vitest` (11 tests incl. one e2e builder flow)/`vite build`
+all pass; `findstatic` resolves the bundle. See [`verification.md`](verification.md).
 
 ## Completion criteria
 

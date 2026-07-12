@@ -1,0 +1,101 @@
+// Typed, same-origin client for the operator builder API. Every write carries the Django
+// CSRF token from the cookie; the browser's session cookie authenticates the operator.
+// There is no token/bearer path and no cross-origin request — the SPA is served by Django.
+
+import type { Draft, DiagnosticsResult, NodeSchema } from "./types";
+
+export class ApiError extends Error {
+  code: string;
+  status: number;
+  constructor(status: number, code: string, message: string) {
+    super(message || code);
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export function getCookie(name: string): string {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method ?? "GET").toUpperCase();
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (method !== "GET" && method !== "HEAD") {
+    headers["Content-Type"] = "application/json";
+    headers["X-CSRFToken"] = getCookie("csrftoken");
+  }
+  const response = await fetch(url, {
+    credentials: "same-origin",
+    ...options,
+    headers: { ...headers, ...(options.headers as Record<string, string>) },
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    const err = (data && data.error) || {};
+    throw new ApiError(response.status, err.code ?? "error", err.message ?? "");
+  }
+  return data as T;
+}
+
+export class BuilderApi {
+  constructor(private base: string) {}
+
+  private url(path: string): string {
+    return this.base.replace(/\/$/, "") + path;
+  }
+
+  nodeSchema(organization: string): Promise<NodeSchema> {
+    return request<NodeSchema>(this.url(`/node-schema/?organization=${encodeURIComponent(organization)}`));
+  }
+
+  listDrafts(): Promise<{ drafts: Draft[] }> {
+    return request(this.url("/drafts/"));
+  }
+
+  getDraft(id: number): Promise<Draft> {
+    return request<Draft>(this.url(`/drafts/${id}/`));
+  }
+
+  createDraft(payload: {
+    organization: string;
+    name: string;
+    logical_id: string;
+    body: Record<string, unknown>;
+  }): Promise<Draft> {
+    return request<Draft>(this.url("/drafts/"), {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateDraft(id: number, payload: { name?: string; body?: Record<string, unknown> }): Promise<Draft> {
+    return request<Draft>(this.url(`/drafts/${id}/`), {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deleteDraft(id: number): Promise<{ deleted: boolean }> {
+    return request(this.url(`/drafts/${id}/`), { method: "DELETE" });
+  }
+
+  diagnostics(id: number, body: Record<string, unknown>): Promise<DiagnosticsResult> {
+    return request<DiagnosticsResult>(this.url(`/drafts/${id}/diagnostics/`), {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  publish(id: number): Promise<{
+    published: boolean;
+    artifact_type: string;
+    logical_id: string;
+    version: number;
+    checksum: string;
+  }> {
+    return request(this.url(`/drafts/${id}/publish/`), { method: "POST", body: "{}" });
+  }
+}

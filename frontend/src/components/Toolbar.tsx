@@ -1,0 +1,110 @@
+import type { BuilderController } from "../useBuilder";
+
+// Top toolbar: workflow id, validate/save/publish, and status. Validation and publishing
+// are backend round-trips; the dirty flag and read-only badge reflect client/server state
+// but never gate the server's own authorization.
+export function Toolbar({
+  builder,
+  draftName,
+  busy,
+  onAction,
+}: {
+  builder: BuilderController;
+  draftName: string;
+  busy: boolean;
+  onAction: (action: "validate" | "save" | "publish") => void;
+}) {
+  const { readOnly, isDirty, diagnostics } = builder;
+  return (
+    <div style={{ borderBottom: "1px solid #262b36" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px" }}>
+        <strong>{draftName}</strong>
+        <label style={{ fontSize: 12, color: "#8b95a7" }}>
+          workflow id
+          <input
+            aria-label="workflow id"
+            value={builder.workflowId}
+            disabled={readOnly}
+            onChange={(e) => builder.setWorkflowId(e.target.value)}
+            style={{
+              marginLeft: 6,
+              padding: "4px 8px",
+              borderRadius: 6,
+              border: "1px solid #333a49",
+              background: "#0f1115",
+              color: "#e6e6e6",
+            }}
+          />
+        </label>
+        {readOnly && <span style={badge("#7c5e10", "#fcd34d")}>read-only</span>}
+        {!readOnly && isDirty && <span style={badge("#334155", "#93c5fd")}>unsaved changes</span>}
+        <div style={{ flex: 1 }} />
+        <button type="button" disabled={busy} onClick={() => onAction("validate")} style={btn()}>
+          Validate
+        </button>
+        <button
+          type="button"
+          disabled={busy || readOnly || !isDirty}
+          onClick={() => onAction("save")}
+          style={btn()}
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          disabled={busy || readOnly}
+          onClick={() => onAction("publish")}
+          style={btn("#2563eb")}
+        >
+          Publish
+        </button>
+      </div>
+      {builder.status && (
+        <div style={{ padding: "0 14px 8px", color: "#8b95a7", fontSize: 13 }} role="status">
+          {builder.status}
+        </div>
+      )}
+      {diagnostics && !diagnostics.ok && (
+        <div
+          role="alert"
+          style={{
+            margin: "0 14px 10px",
+            padding: "8px 12px",
+            borderRadius: 7,
+            background: "#3a2226",
+            color: "#fca5a5",
+            fontSize: 13,
+          }}
+        >
+          {diagnostics.errors.map((e, i) => (
+            <div key={i}>
+              <code>{e.code}</code>: {e.message}
+            </div>
+          ))}
+        </div>
+      )}
+      {diagnostics && diagnostics.ok && (
+        <div
+          role="status"
+          style={{ margin: "0 14px 10px", padding: "8px 12px", color: "#86efac", fontSize: 13 }}
+        >
+          Compiles cleanly · checksum {diagnostics.compiled_checksum?.slice(0, 12)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function badge(bg: string, fg: string): React.CSSProperties {
+  return { background: bg, color: fg, padding: "2px 8px", borderRadius: 999, fontSize: 12 };
+}
+function btn(bg = "#222835"): React.CSSProperties {
+  return {
+    padding: "6px 12px",
+    borderRadius: 7,
+    border: "1px solid #333a49",
+    background: bg,
+    color: "#e6e6e6",
+    cursor: "pointer",
+  };
+}

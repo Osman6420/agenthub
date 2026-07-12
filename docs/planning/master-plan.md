@@ -114,6 +114,23 @@ Trajectory eval assertions, a role-gated console agent-run list + redacted trace
 `list_agent_runs` / `cancel_agent_run` commands are included. No LangSmith/Cloud/hosted
 service or new public endpoint. See [`sprint-10-agent-runtime`](../tasks/sprint-10-agent-runtime/plan.md).
 
+Sprint 11 is implemented and verified: the visual workflow builder. `apps.builder` adds a
+tenant-scoped mutable `WorkflowDraft` and an operator JSON API (`/console/api/builder/`) for
+draft CRUD, compiler diagnostics, node-schema generation, and publish — all reusing the
+console LDAP/session identity and Sprint 1 role/tenant authorization (membership read scope;
+`can_author_scenarios` write gate), with CSRF, 401/403 JSON, and audited state changes.
+Diagnostics and publish route through the shared `validate_body` / `create_artifact_version`
+path (producing an immutable `workflow_definition` artifact — no bypass); the node-schema
+endpoint exposes only tool binding *roles* and public config schema, never endpoints or
+secrets. A React Flow SPA (`frontend/`, Vite + React + TypeScript, pinned lockfile) is served
+same-origin as Django static assets and mounted in a role-gated console page: draft
+create/edit/save, node palette + drag/drop canvas, typed edges, schema-generated config
+panel, backend diagnostics on the graph, unsaved-change protection, role-driven read-only
+mode, and deterministic DSL serialization. The frontend is non-authoritative (every
+operation is a backend round-trip). Five approved new production frontend dependencies
+(Node/npm, Vite, React, React DOM, `@xyflow/react`) with a Node CI job; no new Python runtime
+dependency. See [`sprint-11-workflow-builder`](../tasks/sprint-11-workflow-builder/plan.md).
+
 Not yet present: a real LLM/embedding provider or applied production deployment. Sprint 7
 deployment resources are reviewable drafts, not live infrastructure. Model/embedding
 providers are deterministic defaults (no real LLM call yet). Consumer auth is bearer-token
@@ -149,6 +166,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Workflow core (Sprint 8) | Verified | Sprints 6–7 | [sprint-8-workflow-core](../tasks/sprint-8-workflow-core/plan.md) | [v3 target plan §15](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-8-workflow-core/verification.md) |
 | Tool registry + approval (Sprint 9) | Verified | Sprint 8 | [sprint-9-tool-registry-approval](../tasks/sprint-9-tool-registry-approval/plan.md) | [v3 target plan §17](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-9-tool-registry-approval/verification.md) |
 | Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
+| Visual workflow builder (Sprint 11) | Verified | Sprints 2, 8 | [sprint-11-workflow-builder](../tasks/sprint-11-workflow-builder/plan.md) | [v3 target plan §25](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-11-workflow-builder/verification.md) |
 | Gateway and identity context | Planned in target document | Control plane, identity provider | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | RAG runtime and ingestion | Planned in target document | Model/embedding provider, pgvector, workers | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |
 | Evaluation and release | Planned in target document | Runtime, artifact registry | Not created | [v3 target plan](../../agenthub-v3-django-plan.md) | Not available |

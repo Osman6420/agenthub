@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentHub Workflow Builder (dev)</title>
+  </head>
+  <body style="margin: 0; background: #0f1115">
+    <!-- Dev-only host. In production the Django console template provides this mount
+         element with data-api-base and a data island of the operator's organizations. -->
+    <script type="application/json" id="agenthub-builder-orgs">
+      [{ "slug": "dev-org", "name": "Dev Org", "can_write": true }]
+    </script>
+    <div id="agenthub-builder-root" data-api-base="/console/api/builder/" data-orgs-id="agenthub-builder-orgs"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
