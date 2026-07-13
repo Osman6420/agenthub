@@ -174,7 +174,7 @@ class AsyncMarkdownOcrClient:
                 if attempt == 0:
                     continue
                 raise OcrError("OCR_ACK_FAILED") from None
-            if response.status in {204, 410}:
+            if response.status == 204:
                 return
             if response.status == 503 and attempt == 0:
                 continue

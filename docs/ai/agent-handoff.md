@@ -316,12 +316,16 @@ Current cross-agent state:
     recoverable `DocumentOcrJob`. Job id is persisted immediately; Markdown is written to tenant
     object storage + checksumed before idempotent ACK. Mixed/image-only PDFs fail closed without a
     profile; service-returned URLs are ignored. Purge removes derived OCR blobs. Migration
-    `ingestion.0006`. No live host/secret configured or called.
+    `ingestion.0006`. No live host/secret configured or called. The later detailed contract and
+    OpenAPI source are retained in `docs/ocr_api/`; compatibility review corrected ACK handling so
+    only `204` is success and `410 RESULT_GONE` is terminal (targeted OCR/transport: 21 passed).
   - **Evidence (P7 cumulative):** SQLite 519 passed / 22 skipped; PostgreSQL `--create-db` 539 passed /
     2 skipped; lint/type/migration gates pass. Landed in the P7.3 completion commit on
     `feat/foundation-sprint-0-1`; not pushed.
-  - **Next: P7.4** Confluence + generic REST connectors — blocked on their environment-specific API
-    contracts, allowlisted hosts, auth/secret profiles and rate/size limits.
+  - **P7.4 is documentation-only:** `docs/tasks/phase-2-p7-4-connectors/` records the recommended
+    on-premises Confluence Data Center/private-DNS design and threat model. No connector is
+    implemented. Confluence implementation awaits the narrow private-egress ADR/change-boundary
+    review and deployment inputs; generic REST remains contract-gated.
   P6 provenance follows.
 - **P6 COMPLETE.** P6 (authored, governed agent **system prompt**) is implemented
   and verified in `docs/tasks/phase-2-p6-agent-system-prompt/`: `agent_definition` accepts an optional

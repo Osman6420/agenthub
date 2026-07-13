@@ -101,7 +101,16 @@ def _client(factory: _Factory, sleeper=lambda seconds: None) -> AsyncMarkdownOcr
 
 
 def test_contract_flow_multipart_poll_markdown_and_ack() -> None:
-    submit = _Connection(_Response(202, f'{{"job_id":"{JOB_ID}","status":"QUEUED"}}'.encode()))
+    submit = _Connection(
+        _Response(
+            202,
+            (
+                f'{{"job_id":"{JOB_ID}","status":"QUEUED",'
+                f'"status_url":"https://attacker.example/ocr-jobs/{JOB_ID}",'
+                '"created_at":"2026-07-13T12:00:00+03:00"}'
+            ).encode(),
+        )
+    )
     queued = _Connection(_Response(200, f'{{"job_id":"{JOB_ID}","status":"QUEUED"}}'.encode()))
     success = _Connection(_Response(200, f'{{"job_id":"{JOB_ID}","status":"SUCCEEDED"}}'.encode()))
     result = _Connection(_Response(200, b"# title\n\nOCR text", "text/markdown; charset=utf-8"))
@@ -113,12 +122,17 @@ def test_contract_flow_multipart_poll_markdown_and_ack() -> None:
     assert client.submit(_profile(), b"%PDF") == JOB_ID
     method, path, body, headers = submit.requests[0]
     assert method == "POST" and path == "/api/v1/ocr-jobs"
-    assert b'name="file"; filename="document.pdf"' in body
+    assert body.count(b"Content-Disposition: form-data;") == 1
+    assert body.count(b'name="file"; filename="document.pdf"') == 1
     assert headers["Authorization"] == "Bearer token"
     assert headers["Content-Type"].startswith("multipart/form-data; boundary=agenthub-")
     client.wait_for_success(_profile(), JOB_ID)
     assert sleeps == [2.0]
+    # Service-provided URLs are data, never egress destinations.
+    # Poll/result paths are profile-based.
+    assert queued.requests[0][1] == f"/api/v1/ocr-jobs/{JOB_ID}"
     assert client.download(_profile(), JOB_ID).startswith(b"# title")
+    assert result.requests[0][1] == f"/api/v1/ocr-jobs/{JOB_ID}/result"
     client.acknowledge(_profile(), JOB_ID)
     assert ack.requests[0][0:3] == ("POST", f"/api/v1/ocr-jobs/{JOB_ID}/ack", b"")
 
@@ -161,6 +175,35 @@ def test_failed_job_exposes_only_sanitized_error_code() -> None:
     with pytest.raises(OcrError, match="OCR_JOB_FAILED") as exc:
         _client(_Factory(response)).wait_for_success(_profile(), JOB_ID)
     assert exc.value.upstream_code == "OCR_ENGINE_DOWN"
+
+
+@pytest.mark.parametrize("status", ["ACKNOWLEDGED", "EXPIRED"])
+def test_terminal_status_without_download_fails_closed(status: str) -> None:
+    response = _Connection(_Response(200, f'{{"job_id":"{JOB_ID}","status":"{status}"}}'.encode()))
+    with pytest.raises(OcrError, match=f"OCR_JOB_{status}"):
+        _client(_Factory(response)).wait_for_success(_profile(), JOB_ID)
+
+
+def test_ack_retries_transient_503_then_accepts_204() -> None:
+    unavailable = _Connection(
+        _Response(
+            503,
+            b'{"error":{"code":"OBJECT_STORE_UNAVAILABLE","message":"temporary"}}',
+        )
+    )
+    success = _Connection(_Response(204, b"", ""))
+    factory = _Factory(unavailable, success)
+
+    _client(factory).acknowledge(_profile(), JOB_ID)
+
+    assert len(factory.used) == 2
+
+
+def test_ack_result_gone_is_terminal_not_success() -> None:
+    gone = _Connection(_Response(410, b'{"error":{"code":"RESULT_GONE","message":"gone"}}'))
+
+    with pytest.raises(OcrError, match="OCR_RESULT_GONE"):
+        _client(_Factory(gone)).acknowledge(_profile(), JOB_ID)
 
 
 def _blank_pdf() -> bytes:

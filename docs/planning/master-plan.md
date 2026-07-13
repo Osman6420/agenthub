@@ -16,8 +16,9 @@ text-extraction seam), and P7.2 (local pdf/docx/xlsx parsers on the same interfa
 pdfplumber + python-docx + openpyxl, no egress), P7.3 (profile-only external async OCR with durable
 result-before-ACK lineage; no live endpoint configured/called), and P8.1–P8.4 (complete document
 console including effective consumer grants and elevated purge) are implemented and verified.
-Phase 2 implementation continues with P7.4 Confluence/generic-REST connectors, blocked on their
-environment-specific contracts/egress sign-off; later workstreams retain their explicit gates.
+P7.4 remains documentation-only: the Confluence Data Center design is recorded, but implementation
+is blocked on its private-egress ADR/change-boundary review and deployment sign-off; generic REST
+remains contract-gated. Later workstreams retain their explicit gates.
 
 - Sprint 0: bootable Django modular-monolith skeleton — settings split, Celery role
   definitions, unauthenticated health probes, dependency manifest + lockfile, Docker

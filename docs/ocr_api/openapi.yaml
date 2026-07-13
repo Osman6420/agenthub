@@ -1,0 +1,492 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Django olmOCR Service API
+  version: 1.0.0
+  description: |
+    Asynchronous PDF-to-Markdown OCR service.
+
+    A client uploads one PDF, polls the durable job status, downloads the
+    Markdown result, persists it locally, and then acknowledges the result.
+    A successful acknowledgement permanently deletes the transient result.
+
+    Paths are exact and do not have a trailing slash.
+servers:
+  - url: https://ocr.example.internal
+    description: Example deployment host; replace with the real service origin.
+tags:
+  - name: OCR jobs
+    description: Create, poll, download, and acknowledge OCR jobs.
+  - name: Health
+    description: Unauthenticated process and dependency health probes.
+paths:
+  /api/v1/ocr-jobs:
+    post:
+      tags: [OCR jobs]
+      operationId: createOcrJob
+      summary: Create an asynchronous OCR job
+      description: |
+        Accepts exactly one multipart file field named `file`. The upload must
+        start with a PDF signature and pass server-side PDF validation. The
+        default deployment limit is 50 MiB and 500 pages; deployments may
+        configure lower or higher limits.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The single PDF document to process.
+      responses:
+        "202":
+          description: The PDF was accepted and the OCR job was queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobCreateResponse"
+              example:
+                job_id: 4d66bc13-725f-49f2-9a67-997d05d3079e
+                status: QUEUED
+                status_url: https://ocr.example.internal/api/v1/ocr-jobs/4d66bc13-725f-49f2-9a67-997d05d3079e
+                created_at: "2026-07-13T12:00:00+03:00"
+        "400":
+          description: Missing/extra file fields, an empty file, or an invalid PDF.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidFields:
+                  value:
+                    error:
+                      code: INVALID_FILE_FIELDS
+                      message: Exactly one PDF file field named 'file' is required.
+                invalidPdf:
+                  value:
+                    error:
+                      code: INVALID_PDF
+                      message: The uploaded PDF is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          description: The upload exceeds `OCR_MAX_UPLOAD_BYTES`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: UPLOAD_TOO_LARGE
+                  message: The uploaded PDF exceeds the allowed size.
+        "503":
+          description: PDF validation, the queue, or transient object storage is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                queueUnavailable:
+                  value:
+                    error:
+                      code: QUEUE_UNAVAILABLE
+                      message: The OCR queue is temporarily unavailable.
+                storageUnavailable:
+                  value:
+                    error:
+                      code: OBJECT_STORE_UNAVAILABLE
+                      message: Temporary document storage is unavailable.
+
+  /api/v1/ocr-jobs/{job_id}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [OCR jobs]
+      operationId: getOcrJob
+      summary: Get the durable OCR job status
+      description: |
+        Poll this endpoint until the job reaches `SUCCEEDED` or `FAILED`.
+        `ACKNOWLEDGED` and `EXPIRED` are also terminal states.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current job state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobDetail"
+              examples:
+                processing:
+                  value:
+                    job_id: 4d66bc13-725f-49f2-9a67-997d05d3079e
+                    status: PROCESSING
+                    created_at: "2026-07-13T12:00:00+03:00"
+                    updated_at: "2026-07-13T12:00:05+03:00"
+                    started_at: "2026-07-13T12:00:05+03:00"
+                    finished_at: null
+                    expires_at: null
+                    error_code: null
+                    result_url: null
+                succeeded:
+                  value:
+                    job_id: 4d66bc13-725f-49f2-9a67-997d05d3079e
+                    status: SUCCEEDED
+                    created_at: "2026-07-13T12:00:00+03:00"
+                    updated_at: "2026-07-13T12:01:30+03:00"
+                    started_at: "2026-07-13T12:00:05+03:00"
+                    finished_at: "2026-07-13T12:01:30+03:00"
+                    expires_at: "2026-07-14T12:01:30+03:00"
+                    error_code: null
+                    result_url: https://ocr.example.internal/api/v1/ocr-jobs/4d66bc13-725f-49f2-9a67-997d05d3079e/result
+                failed:
+                  value:
+                    job_id: 4d66bc13-725f-49f2-9a67-997d05d3079e
+                    status: FAILED
+                    created_at: "2026-07-13T12:00:00+03:00"
+                    updated_at: "2026-07-13T12:00:20+03:00"
+                    started_at: "2026-07-13T12:00:05+03:00"
+                    finished_at: "2026-07-13T12:00:20+03:00"
+                    expires_at: null
+                    error_code: OLMOCR_FAILED
+                    result_url: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+
+  /api/v1/ocr-jobs/{job_id}/result:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [OCR jobs]
+      operationId: downloadOcrResult
+      summary: Download the Markdown result
+      description: |
+        Available only while the job is `SUCCEEDED`. The response body is raw
+        Markdown, not JSON. Downloading does not delete the result. The client
+        must persist the entire response successfully before sending ACK.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Raw Markdown document.
+          headers:
+            Content-Disposition:
+              description: Attachment filename derived from the original PDF filename.
+              schema:
+                type: string
+              example: attachment; filename="document.md"
+            Cache-Control:
+              description: The result must not be cached by shared intermediaries.
+              schema:
+                type: string
+                const: no-store
+          content:
+            text/markdown:
+              schema:
+                type: string
+              example: |-
+                # Document title
+
+                OCR output...
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "409":
+          description: The job is not ready or failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notReady:
+                  value:
+                    error:
+                      code: JOB_NOT_READY
+                      message: The OCR result is not ready.
+                failed:
+                  value:
+                    error:
+                      code: OLMOCR_FAILED
+                      message: The OCR job failed.
+        "410":
+          $ref: "#/components/responses/ResultGone"
+        "503":
+          $ref: "#/components/responses/ResultUnavailable"
+
+  /api/v1/ocr-jobs/{job_id}/ack:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [OCR jobs]
+      operationId: acknowledgeOcrResult
+      summary: Acknowledge and permanently delete the result
+      description: |
+        Send only after the complete Markdown body has been durably persisted by
+        the client. A successful request deletes the transient result object.
+        Repeating ACK for an already acknowledged job is safe and returns 204.
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: Result acknowledged and deleted, or already acknowledged.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "409":
+          description: The job has not completed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: JOB_NOT_ACKNOWLEDGEABLE
+                  message: Only a completed OCR result can be acknowledged.
+        "410":
+          $ref: "#/components/responses/ResultGone"
+        "503":
+          description: The result object could not be deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: OBJECT_STORE_UNAVAILABLE
+                  message: The OCR result could not be deleted.
+
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Process liveness probe
+      security: []
+      responses:
+        "200":
+          description: Django process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessResponse"
+              example:
+                status: ok
+
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Database and Redis readiness probe
+      security: []
+      responses:
+        "200":
+          description: PostgreSQL and Redis checks succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              example:
+                status: ready
+        "503":
+          description: At least one readiness dependency is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              example:
+                status: not_ready
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      description: OCR job UUID returned by the create operation.
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    JobStatus:
+      type: string
+      enum:
+        - QUEUED
+        - PROCESSING
+        - SUCCEEDED
+        - FAILED
+        - ACKNOWLEDGED
+        - EXPIRED
+
+    JobCreateResponse:
+      type: object
+      additionalProperties: false
+      required: [job_id, status, status_url, created_at]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: QUEUED
+          description: A newly accepted job is always queued.
+        status_url:
+          type: string
+          format: uri
+        created_at:
+          type: string
+          format: date-time
+
+    JobDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - job_id
+        - status
+        - created_at
+        - updated_at
+        - started_at
+        - finished_at
+        - expires_at
+        - error_code
+        - result_url
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, "null"]
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: Result expiry time while status is `SUCCEEDED`.
+        error_code:
+          type: [string, "null"]
+          maxLength: 64
+          description: Stable processing error code when status is `FAILED`.
+        result_url:
+          type: [string, "null"]
+          format: uri
+          description: Present only while status is `SUCCEEDED`.
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error identifier.
+        message:
+          type: string
+          description: Safe human-readable explanation; client logic must use `code`.
+
+    LivenessResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+
+  responses:
+    Unauthorized:
+      description: Bearer API key is missing or invalid.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: AUTHENTICATION_FAILED
+              message: Valid Bearer credentials are required.
+
+    JobNotFound:
+      description: No job exists for the supplied UUID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: REQUEST_FAILED
+              message: The request could not be completed.
+
+    ResultGone:
+      description: The job was acknowledged or its result retention period expired.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: RESULT_GONE
+              message: The OCR result is no longer available.
+
+    ResultUnavailable:
+      description: The transient result storage cannot currently serve the result.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            missingReference:
+              value:
+                error:
+                  code: RESULT_UNAVAILABLE
+                  message: The OCR result is temporarily unavailable.
+            storageUnavailable:
+              value:
+                error:
+                  code: OBJECT_STORE_UNAVAILABLE
+                  message: The OCR result is temporarily unavailable.

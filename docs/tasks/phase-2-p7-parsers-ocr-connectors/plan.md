@@ -48,12 +48,15 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
 
 - Owner supplied and approved the async Markdown OCR contract on 2026-07-13: platform profile base
   `/api/v1`; bearer secret reference; multipart `file` PDF submit (`202`); bounded `2–5s` polling;
-  Markdown result; idempotent ACK only after durable client persistence.
+  Markdown result; idempotent ACK only after durable client persistence. The detailed human-readable
+  and OpenAPI authorities are retained under [`docs/ocr_api`](../../ocr_api/API_CONTRACT.md).
 - Immutable platform `OcrProfile` + tenant grant; environment secret resolves from `OCR_SECRET_*`.
   The caller supplies only a profile id/object, never host/path/credential/TLS policy.
 - Shared validated-IP/TLS transport now supports bounded GET/multipart/empty POST while preserving
   redirect denial, response caps and post-send uncertainty. Submit is never blindly retried; GET is
   bounded-retry; ACK gets one safe retry because the approved contract explicitly makes it idempotent.
+  Only `204` is ACK success; `410 RESULT_GONE` remains a terminal failure and is never mislabeled as
+  acknowledged.
 - Recoverable `DocumentOcrJob` lineage persists the job id immediately. Markdown is checksumed and
   written to the tenant object store + referenced in DB **before ACK**. Retry reuses persisted output;
   purge deletes original and derived blobs. Status/result URLs from the service are ignored so they
@@ -69,6 +72,11 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
   REST connector reusing the existing bounded, allowlisted, redirect-denying SSRF-safe pattern in
   `apps/ingestion/connectors.py` (host allowlist empty by default → unreachable until an endpoint is
   allowlisted and signed off).
+- Detailed implementation plan and extended threat model:
+  [`phase-2-p7-4-connectors`](../phase-2-p7-4-connectors/plan.md). The owner confirmed an on-premises
+  Data Center instance with private corporate DNS and a least-privilege service account. The plan
+  keeps the public-only egress default and gates a narrowly scoped, profile-only private Confluence
+  address policy behind a new ADR/change-boundary review; generic REST remains contract-gated.
 - **Approval gate — Confluence/REST connector endpoints (allowlist + secret).**
 
 ## Non-negotiable constraints (unchanged from prior phases)
@@ -87,5 +95,6 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
 - **P7.2: Implemented + verified** (pdf/docx/xlsx via owner-approved local libraries; no egress).
 - **P7.3: Implemented + verified.** Contract approved, opt-in/profile-ID-only; no
   live endpoint or secret configured/called.
-- **P7.4: Deferred.** Blocked on environment-specific Confluence/REST contracts, allowlists and
-  secret-profile sign-off.
+- **P7.4: Documentation only.** The Confluence Data Center design and risks are recorded in the
+  linked plan, but no connector is implemented. Private egress/rollout approvals and the generic
+  REST contract remain gated.

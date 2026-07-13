@@ -269,8 +269,9 @@ shared egress built once, a real-LLM answer shipped early) elaborates it in
 - Every new production dependency and every new external egress needs **explicit owner
   approval + supply-chain + threat-model review** before implementation. WS1 decision
   (2026-07-12): **no `openai` dependency** for embeddings — the client reuses the Sprint 9
-  SSRF-safe stdlib transport. Parser dependencies and the OCR API contract are approved; P7.4
-  connector contracts and each concrete live endpoint/secret deployment remain gated (see
+  SSRF-safe stdlib transport. Parser dependencies and the OCR API contract are approved. P7.4 is
+  documentation-only: Confluence Data Center implementation remains gated by its private-egress
+  ADR/change-boundary review and deployment sign-off; generic REST remains contract-gated (see
   [`components/document-plane-plan.md`](components/document-plane-plan.md)).
 - Reuse the existing controls: tenant isolation, deny-by-default authorization,
   `secret:<name>` handling, redaction, and the append-only audit trail.

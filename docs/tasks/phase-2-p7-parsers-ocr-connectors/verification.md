@@ -6,6 +6,11 @@
 behind an opt-in platform profile. Tests use an injected offline transport; no live OCR hostname,
 credential or socket was configured/called. P7.4 connectors remain contract/egress-gated.
 
+The detailed service contract and OpenAPI document received on 2026-07-13 are retained under
+[`docs/ocr_api`](../../ocr_api/API_CONTRACT.md). A compatibility review found one semantic mismatch:
+ACK `410 RESULT_GONE` was treated as success. The client now accepts only `204` as ACK success and
+tests `ACKNOWLEDGED`/`EXPIRED`, `503` retry, `410` terminal handling, and service-URL non-following.
+
 ## Acceptance criteria mapping (P7.1)
 
 - **`DocumentParser` interface + registry:** `apps/ingestion/parsers.py` defines the `DocumentParser`
@@ -45,7 +50,8 @@ credential or socket was configured/called. P7.4 connectors remain contract/egre
 - **Platform-only endpoint governance:** immutable revisioned `OcrProfile`, platform-admin create,
   per-tenant grant and `OCR_SECRET_*` resolution. Audit excludes host/secret values.
 - **Exact API contract:** multipart field is exactly `file`, PDF content type, `202` job UUID,
-  catalog-derived GET poll/result paths, raw UTF-8 `text/markdown`, bodyless idempotent ACK.
+  catalog-derived GET poll/result paths, raw UTF-8 `text/markdown`, bodyless idempotent ACK. Only
+  HTTP `204` records ACK success; `410 RESULT_GONE` is terminal.
 - **SSRF/transport:** public-IP validation/pinning, TLS hostname, redirect denial, response caps;
   service-supplied URLs are never followed. Private DNS and redirect tests fail closed.
 - **Retry semantics:** submit timeout is `OCR_SUBMIT_OUTCOME_UNKNOWN` and is not retried; polling is
@@ -70,6 +76,8 @@ credential or socket was configured/called. P7.4 connectors remain contract/egre
 | Targeted P7.1 parsers | `pytest apps/ingestion/tests/test_parsers.py` | 12 passed |
 | Targeted P7.2 binary | `pytest apps/ingestion/tests/test_binary_parsers.py` | 7 passed |
 | Targeted P7.3 + shared transport/lifecycle | `pytest test_ocr.py test_http_adapter.py test_binary_parsers.py test_services.py` | 35 passed |
+| Detailed OCR contract review | `pytest test_ocr.py test_http_adapter.py` | Pass — 21 passed; ACK `410`, terminal statuses, `503` retry, URL non-following covered |
+| Supplied OpenAPI parse/surface | `yaml.safe_load(docs/ocr_api/openapi.yaml)` + exact expected path assertion | Pass — OpenAPI 3.1.0, six expected paths |
 | PostgreSQL OCR e2e | `pytest ...::test_image_only_pdf_ocr_is_persisted_embedded_and_searchable --create-db` | 1 passed |
 | Final SQLite | `pytest -q --basetemp=.tmp/pytest-p7-3-final` (`config.settings.test`) | 519 passed, 22 skipped |
 | Final PostgreSQL | `pytest -q --create-db --basetemp=.tmp/pytest-p7-3-pg-release` (`config.settings.local` + MCP/metrics flags) | 539 passed, 2 skipped |
