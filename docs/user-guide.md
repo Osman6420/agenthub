@@ -57,6 +57,13 @@ The top navigation exposes the tenant-scoped management surfaces:
 | **Builder** | The visual workflow builder (Sprint 11) — see §4 |
 | **Agent runs** | Redacted, tenant-scoped agent run list + trace; cancel |
 | **Consumers** | API consumers and their capability bindings |
+
+The console is moving to a Turkish-first, scenario-centred hierarchy. Open **Senaryolar** and then
+**Aç** to see one scenario's organization/project path, aliases, active release, bound document
+sets, latest index readiness and consumer access in one page. An authorized author can bind/unbind
+sets and grant/revoke retrieval there. These are two distinct gates: a consumer must be bound to
+the scenario, and it must separately have retrieval access to each document set. Set-binding
+changes require a new release compile; consumer grant changes are enforced at retrieval time.
 | **Tool approvals** | Pending high-risk tool invocations awaiting an approver decision |
 
 ---

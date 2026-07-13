@@ -1,79 +1,160 @@
-{% comment %}Minimal operator console shell. Styling is intentionally small and
-self-contained; the Sprint 11 builder replaces/extends this surface.{% endcomment %}
 <!doctype html>
-<html lang="en">
+<html lang="tr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}AgentHub Console{% endblock %}</title>
+  <title>{% block title %}AgentHub{% endblock %}</title>
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      color-scheme: light;
+      --canvas: #f4f6f8; --surface: #ffffff; --surface-soft: #f8fafc;
+      --ink: #18212f; --muted: #667085; --line: #e3e8ef;
+      --nav: #102a2e; --nav-soft: #173b40; --brand: #0d766e; --brand-dark: #075e58;
+      --success: #16794b; --success-bg: #eaf8f0; --warning: #9a6700; --warning-bg: #fff7db;
+      --danger: #b42318; --danger-bg: #fff0ee; --shadow: 0 8px 24px rgba(16, 42, 46, .07);
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-           background: #0f1115; color: #e6e6e6; }
-    header { display: flex; align-items: center; justify-content: space-between;
-             padding: 12px 20px; background: #171a21; border-bottom: 1px solid #262b36; }
-    header .brand { font-weight: 700; letter-spacing: .3px; }
-    nav a { color: #a9b4c4; text-decoration: none; margin-right: 16px; font-size: 14px; }
-    nav a:hover { color: #fff; }
-    main { max-width: 1000px; margin: 24px auto; padding: 0 20px; }
-    .card { background: #171a21; border: 1px solid #262b36; border-radius: 10px;
-            padding: 18px 20px; margin-bottom: 16px; }
-    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
-    .tile .n { font-size: 30px; font-weight: 700; }
-    .tile .l { color: #8b95a7; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; }
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--canvas); color: var(--ink); }
+    a { color: var(--brand-dark); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
+    .sidebar { background: var(--nav); color: #e6f4f3; padding: 24px 16px; display: flex; flex-direction: column; min-height: 100vh; position: sticky; top: 0; height: 100vh; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 24px; font-size: 19px; font-weight: 750; letter-spacing: -.3px; }
+    .brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: #54d3c6; color: var(--nav); font-weight: 900; }
+    .nav-label { margin: 18px 10px 7px; color: #88aaa8; text-transform: uppercase; font-size: 10px; font-weight: 800; letter-spacing: 1.2px; }
+    .sidebar nav { display: grid; gap: 3px; }
+    .sidebar nav a { color: #cbe1df; padding: 9px 11px; border-radius: 8px; font-size: 14px; font-weight: 570; }
+    .sidebar nav a:hover { color: #fff; background: var(--nav-soft); text-decoration: none; }
+    .user-box { margin-top: auto; border-top: 1px solid #315158; padding: 16px 10px 0; }
+    .user-box strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+    .user-box span { color: #9eb8b7; font-size: 12px; }
+    .workspace { min-width: 0; }
+    .topbar { min-height: 64px; background: rgba(255,255,255,.92); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 32px; position: sticky; top: 0; z-index: 5; backdrop-filter: blur(8px); }
+    .topbar-title { font-weight: 700; }
+    main { max-width: 1240px; margin: 0 auto; padding: 32px; }
+    h1, h2, h3, h4 { margin-top: 0; letter-spacing: -.025em; }
+    h1 { margin-bottom: 7px; font-size: clamp(28px, 4vw, 38px); }
+    h2 { font-size: 21px; margin-bottom: 6px; }
+    h3 { font-size: 17px; margin-bottom: 5px; }
+    h4 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .eyebrow { color: var(--brand); text-transform: uppercase; letter-spacing: 1px; font-size: 11px; font-weight: 800; margin: 0 0 7px; }
+    .muted { color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+    .page-heading, .section-heading, .relationship-head, .relationship-body { display: flex; justify-content: space-between; align-items: flex-start; gap: 22px; }
+    .page-heading { margin-bottom: 24px; align-items: center; }
+    .section-heading { margin-bottom: 16px; }
+    .breadcrumbs { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 20px; flex-wrap: wrap; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin-bottom: 18px; box-shadow: var(--shadow); }
+    .summary-grid, .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .summary-card, .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 17px 19px; }
+    .summary-card span, .tile .l { display: block; color: var(--muted); font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; }
+    .summary-card strong, .tile .n { display: block; font-size: 25px; margin-top: 6px; }
+    .table-card { padding: 0; overflow: hidden; }
+    .table-scroll { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #262b36; }
-    th { color: #8b95a7; font-weight: 600; }
-    .muted { color: #8b95a7; }
+    th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { color: var(--muted); background: var(--surface-soft); font-size: 11px; text-transform: uppercase; letter-spacing: .55px; }
+    tr:last-child td { border-bottom: 0; }
+    .row-action { text-align: right; white-space: nowrap; }
+    .path { color: var(--muted); font-size: 13px; }
+    .path b { padding: 0 4px; color: #98a2b3; }
+    .badge, .chip { display: inline-flex; align-items: center; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 4px 8px; background: #edf2f6; color: #475467; margin: 2px; }
+    .badge.active, .badge.succeeded, .badge.promotable { color: var(--success); background: var(--success-bg); }
+    .badge.draft, .badge.building, .badge.warning { color: var(--warning); background: var(--warning-bg); }
+    .badge.failed, .badge.disabled { color: var(--danger); background: var(--danger-bg); }
+    .button, .actions a, .form-card button { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; border: 1px solid transparent; border-radius: 9px; padding: 8px 13px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none; white-space: nowrap; }
+    .button:hover, .actions a:hover { text-decoration: none; }
+    .button.primary, .actions a, .form-card button { background: var(--brand); color: #fff; }
+    .button.primary:hover { background: var(--brand-dark); }
+    .button.secondary { background: #fff; border-color: #b7c7cc; color: var(--brand-dark); }
+    .button.ghost { background: transparent; }
+    .button.danger { color: var(--danger); border-color: #efc3bf; }
+    button.link { background: none; border: none; color: #b9d4d2; cursor: pointer; padding: 7px 0; font: inherit; font-size: 12px; }
     form.inline { display: inline; }
-    button.link { background: none; border: none; color: #a9b4c4; cursor: pointer; font-size: 14px; }
-    button.link:hover { color: #fff; }
-    .login { max-width: 360px; margin: 8vh auto; }
-    .login input { width: 100%; padding: 10px; margin: 6px 0 14px; border-radius: 8px;
-                   border: 1px solid #333a49; background: #0f1115; color: #fff; }
-    .login button { width: 100%; padding: 10px; border: 0; border-radius: 8px;
-                    background: #3b82f6; color: #fff; font-weight: 600; cursor: pointer; }
-    .badge { background: #22303f; color: #9fd0ff; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
-    .actions { display: flex; gap: 10px; margin-bottom: 16px; }
-    .actions a, .form-card button { background: #3b82f6; color: #fff; padding: 8px 12px;
-      border: 0; border-radius: 7px; text-decoration: none; cursor: pointer; }
-    .form-card input, .form-card select { display: block; width: 100%; max-width: 520px;
-      padding: 8px; margin-top: 4px; }
-    .form-card ul.errorlist { color: #fca5a5; }
-    .msg { padding: 8px 12px; border-radius: 7px; margin-bottom: 8px; }
-    .msg.error { background: #3a2226; color: #fca5a5; }
-    .msg.success { background: #1e3329; color: #86efac; }
-    td form.inline button { color: #9fd0ff; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+    .form-card input, .form-card select, .compact-form select { width: 100%; max-width: 560px; padding: 9px 10px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); }
+    .form-card input, .form-card select { display: block; margin-top: 5px; }
+    .form-card ul.errorlist { color: var(--danger); }
+    .compact-form label { display: block; color: var(--muted); font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+    .field-row { display: flex; gap: 8px; }
+    .notice, .warning-box { padding: 13px 15px; border-radius: 9px; font-size: 13px; line-height: 1.5; }
+    .notice { background: #eef8f7; border: 1px solid #c6e7e3; color: #245c58; margin-bottom: 18px; }
+    .warning-box { background: var(--warning-bg); color: #6d4c00; margin-top: 12px; }
+    .relationship-card { border: 1px solid var(--line); border-radius: 12px; margin-top: 14px; overflow: hidden; }
+    .relationship-head { background: var(--surface-soft); padding: 17px; border-bottom: 1px solid var(--line); }
+    .relationship-head p { margin: 0; }
+    .relationship-body { padding: 17px; }
+    .relationship-body > div { flex: 1; min-width: 0; }
+    .status-stack { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+    .access-row { display: grid; grid-template-columns: minmax(160px, 1fr) auto auto; gap: 12px; align-items: center; border-top: 1px solid var(--line); padding: 11px 0; }
+    .access-ok, .access-missing { font-size: 12px; font-weight: 750; }
+    .access-ok { color: var(--success); }
+    .access-missing { color: var(--warning); }
+    .meta-line { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; color: var(--muted); }
+    .empty { padding: 38px 20px; text-align: center; color: var(--muted); }
+    .msg { padding: 11px 14px; border-radius: 9px; margin-bottom: 10px; border: 1px solid; }
+    .msg.error { background: var(--danger-bg); color: var(--danger); border-color: #efc3bf; }
+    .msg.success { background: var(--success-bg); color: var(--success); border-color: #b8e2ca; }
+    .login { max-width: 380px; margin: 8vh auto; }
+    .login input { width: 100%; padding: 10px; margin: 6px 0 14px; border-radius: 8px; border: 1px solid #cbd5df; background: #fff; color: var(--ink); }
+    .login button { width: 100%; padding: 10px; border: 0; border-radius: 8px; background: var(--brand); color: #fff; font-weight: 700; cursor: pointer; }
+    @media (max-width: 900px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; min-height: 0; padding: 14px; }
+      .brand { padding-bottom: 10px; }
+      .sidebar nav { display: flex; overflow-x: auto; padding-bottom: 5px; }
+      .sidebar nav a { white-space: nowrap; }
+      .nav-label, .user-box { display: none; }
+      .topbar { padding: 0 18px; }
+      main { padding: 22px 16px; }
+    }
+    @media (max-width: 680px) {
+      .page-heading, .section-heading, .relationship-head, .relationship-body { align-items: stretch; flex-direction: column; }
+      .summary-grid, .tiles { grid-template-columns: 1fr; }
+      .status-stack { justify-content: flex-start; }
+      .access-row { grid-template-columns: 1fr; }
+      .field-row { flex-direction: column; }
+    }
   </style>
 </head>
 <body>
   {% if user.is_authenticated %}
-  <header>
-    <span class="brand">AgentHub · Operator Console</span>
-    <nav>
-      <a href="{% url 'console:dashboard' %}">Dashboard</a>
-      <a href="{% url 'console:organizations' %}">Organizations</a>
-      <a href="{% url 'console:projects' %}">Projects</a>
-      <a href="{% url 'console:scenarios' %}">Scenarios</a>
-      <a href="{% url 'console:artifacts' %}">Artifacts</a>
-      <a href="{% url 'console:releases' %}">Releases</a>
-      <a href="{% url 'console:builder' %}">Builder</a>
-      <a href="{% url 'console:documents' %}">Documents</a>
-      <a href="{% url 'console:agent_runs' %}">Agent runs</a>
-      <a href="{% url 'console:consumers' %}">Consumers</a>
-      <span class="muted">{{ user.get_username }}</span>
-      <form class="inline" method="post" action="{% url 'console:logout' %}">
-        {% csrf_token %}<button class="link" type="submit">Logout</button>
-      </form>
-    </nav>
-  </header>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="{% url 'console:dashboard' %}"><span class="brand-mark">A</span><span>AgentHub</span></a>
+      <div class="nav-label">Çalışma alanı</div>
+      <nav aria-label="Ana menü">
+        <a href="{% url 'console:dashboard' %}">Genel bakış</a>
+        <a href="{% url 'console:organizations' %}">Organizasyonlar</a>
+        <a href="{% url 'console:projects' %}">Projeler</a>
+        <a href="{% url 'console:scenarios' %}">Senaryolar</a>
+        <a href="{% url 'console:documents' %}">Dokümanlar</a>
+      </nav>
+      <div class="nav-label">Operasyon</div>
+      <nav aria-label="Operasyon menüsü">
+        <a href="{% url 'console:agent_runs' %}">Çalıştırmalar</a>
+        <a href="{% url 'console:consumers' %}">Consumer’lar</a>
+        <a href="{% url 'console:builder' %}">DSL / grafik</a>
+      </nav>
+      <div class="nav-label">Gelişmiş</div>
+      <nav aria-label="Gelişmiş menü">
+        <a href="{% url 'console:artifacts' %}">Artifact’ler</a>
+        <a href="{% url 'console:releases' %}">Release’ler</a>
+      </nav>
+      <div class="user-box"><strong>{{ user.get_username }}</strong><span>Oturum açık</span><form method="post" action="{% url 'console:logout' %}">{% csrf_token %}<button class="link" type="submit">Çıkış yap</button></form></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar"><span class="topbar-title">Operasyon konsolu</span><span class="muted">Güvenli · Denetlenebilir</span></header>
+      <main>
+  {% else %}
+      <main>
   {% endif %}
-  <main>
-    {% if messages %}
-      {% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}
-    {% endif %}
-    {% block content %}{% endblock %}
-  </main>
+        {% if messages %}{% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}{% endif %}
+        {% block content %}{% endblock %}
+      </main>
+  {% if user.is_authenticated %}
+    </div>
+  </div>
+  {% endif %}
 </body>
 </html>

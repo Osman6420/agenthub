@@ -1,0 +1,31 @@
+{% extends "console/base.html" %}
+{% block title %}Senaryolar · AgentHub{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">Çalışma alanı</p>
+    <h1>Senaryolar</h1>
+    <p class="muted">Organizasyon ve proje bağlamında çalışan yapay zekâ senaryoları.</p>
+  </div>
+  {% if can_create %}<a class="button primary" href="{% url 'console:scenario_create' %}">Yeni senaryo</a>{% endif %}
+</div>
+
+<div class="card table-card">
+  {% if scenarios %}
+  <div class="table-scroll"><table>
+    <thead><tr><th>Organizasyon / Proje</th><th>Senaryo</th><th>Tür</th><th>Durum</th><th></th></tr></thead>
+    <tbody>
+      {% for scenario in scenarios %}
+      <tr>
+        <td><span class="path">{{ scenario.project.organization.name }} <b>›</b> {{ scenario.project.name }}</span></td>
+        <td><strong>{{ scenario.name }}</strong><br><span class="muted mono">{{ scenario.slug }}</span></td>
+        <td>{{ scenario.get_type_display }}</td>
+        <td><span class="badge {{ scenario.status }}">{{ scenario.get_status_display }}</span></td>
+        <td class="row-action"><a href="{% url 'console:scenario_detail' scenario.id %}">Aç →</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<div class="empty"><h3>Henüz senaryo yok</h3><p>Yetkiniz olan bir projede yeni senaryo oluşturabilirsiniz.</p></div>{% endif %}
+</div>
+{% endblock %}

@@ -47,7 +47,7 @@ from apps.documents.models import (
 )
 from apps.documents.services import DocumentError
 from apps.evaluations.services import EvalError, run_eval
-from apps.identity.models import Consumer, ConsumerStatus
+from apps.identity.models import BindingStatus, Consumer, ConsumerBinding, ConsumerStatus
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.tenancy.services import (
@@ -142,32 +142,250 @@ def projects(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def scenarios(request: HttpRequest) -> HttpResponse:
-    rows = [
-        {
-            "cols": [
-                s.project.organization.slug,
-                s.project.slug,
-                s.slug,
-                s.type,
-                s.status,
-            ]
-        }
-        for s in scoping.scoped_scenarios(request.user)
-    ]
     return render(
         request,
-        "console/list.html",
+        "console/scenarios.html",
         {
-            "title": "Scenarios",
-            "headers": ["Organization", "Project", "Slug", "Type", "Status"],
-            "rows": rows,
-            "create_links": (
-                [{"url": "console:scenario_create", "label": "New scenario"}]
-                if author_organization_ids(request.user) != set()
-                else []
+            "title": "Senaryolar",
+            "scenarios": scoping.scoped_scenarios(request.user).order_by(
+                "project__organization__name", "project__name", "name"
             ),
+            "can_create": author_organization_ids(request.user) != set(),
         },
     )
+
+
+def _scoped_scenario(user: UserLike, pk: int) -> Scenario:
+    try:
+        return scoping.scoped_scenarios(user).get(pk=pk)
+    except Scenario.DoesNotExist as exc:
+        raise Http404 from exc
+
+
+@login_required
+def scenario_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk)
+    organization_id = scenario.project.organization_id
+    active_release = ScenarioRelease.objects.filter(
+        scenario=scenario, status=ReleaseStatus.ACTIVE
+    ).first()
+    raw_pinned_version_ids = (
+        active_release.manifest.get("document_set_versions", []) if active_release else []
+    )
+    pinned_version_ids = {
+        value
+        for value in raw_pinned_version_ids
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    consumer_bindings = list(
+        ConsumerBinding.objects.select_related("consumer")
+        .filter(scenario=scenario)
+        .order_by("consumer__name", "consumer__subject")
+    )
+    active_consumer_bindings = [
+        binding
+        for binding in consumer_bindings
+        if binding.status == BindingStatus.ACTIVE
+        and binding.consumer.status == ConsumerStatus.ACTIVE
+    ]
+    active_consumer_ids = {binding.consumer_id for binding in active_consumer_bindings}
+    bindings = list(
+        ScenarioDocumentSetBinding.objects.select_related("document_set")
+        .filter(scenario=scenario, organization_id=organization_id)
+        .order_by("document_set__name", "document_set__logical_id")
+    )
+    relationship_rows = []
+    for binding in bindings:
+        document_set = binding.document_set
+        latest_published_version = (
+            document_set.versions.select_related("built_index_version")
+            .filter(
+                status__in=[
+                    DocumentSetVersionStatus.PROMOTABLE,
+                    DocumentSetVersionStatus.ACTIVE,
+                ]
+            )
+            .order_by("-version")
+            .first()
+        )
+        release_version = (
+            document_set.versions.select_related("built_index_version")
+            .filter(id__in=pinned_version_ids)
+            .first()
+        )
+        grants = list(
+            document_set.grants.filter(principal_type=GrantPrincipalType.CONSUMER).order_by(
+                "principal_ref"
+            )
+        )
+        grants_by_consumer_id = {
+            int(grant.principal_ref): grant for grant in grants if grant.principal_ref.isdigit()
+        }
+        relationship_rows.append(
+            {
+                "binding": binding,
+                "document_set": document_set,
+                "latest_version": latest_published_version,
+                "release_version": release_version,
+                "index": release_version.built_index_version if release_version else None,
+                "scenario_count": document_set.scenario_bindings.count(),
+                "consumer_rows": [
+                    {
+                        "binding": consumer_binding,
+                        "grant": grants_by_consumer_id.get(consumer_binding.consumer_id),
+                    }
+                    for consumer_binding in active_consumer_bindings
+                ],
+                "other_grants": [
+                    grant
+                    for grant in grants
+                    if not grant.principal_ref.isdigit()
+                    or int(grant.principal_ref) not in active_consumer_ids
+                ],
+            }
+        )
+    bound_set_ids = {binding.document_set_id for binding in bindings}
+    return render(
+        request,
+        "console/scenario_detail.html",
+        {
+            "title": scenario.name,
+            "scenario": scenario,
+            "aliases": scenario.aliases.order_by("alias"),
+            "active_release": active_release,
+            "consumer_bindings": consumer_bindings,
+            "relationship_rows": relationship_rows,
+            "candidate_document_sets": scoping.scoped_document_sets(request.user)
+            .filter(organization_id=organization_id, status="active")
+            .exclude(id__in=bound_set_ids)
+            .order_by("name", "logical_id"),
+            "can_write": can_author_scenarios(request.user, organization_id),
+        },
+    )
+
+
+@login_required
+@require_POST
+def scenario_bind_document_set(request: HttpRequest, pk: int) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk)
+    organization_id = scenario.project.organization_id
+    if not can_author_scenarios(request.user, organization_id):
+        raise PermissionDenied
+    document_set_id = request.POST.get("document_set_id", "")
+    document_set = (
+        scoping.scoped_document_sets(request.user)
+        .filter(id=document_set_id, organization_id=organization_id, status="active")
+        .first()
+        if document_set_id.isdigit()
+        else None
+    )
+    if document_set is None:
+        messages.error(request, "Bağ kurulamadı: geçersiz doküman seti.")
+    else:
+        try:
+            document_services.bind_scenario_document_set(
+                scenario=scenario,
+                document_set=document_set,
+                actor=request.user.get_username(),
+            )
+            messages.success(
+                request,
+                "Doküman seti bağlandı. Değişiklik yeni release derlendiğinde sabitlenir.",
+            )
+        except DocumentError as exc:
+            messages.error(request, f"Bağ kurulamadı: {exc.code}")
+    return redirect("console:scenario_detail", pk=scenario.pk)
+
+
+@login_required
+@require_POST
+def scenario_unbind_document_set(request: HttpRequest, pk: int, binding_pk: int) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk)
+    organization_id = scenario.project.organization_id
+    if not can_author_scenarios(request.user, organization_id):
+        raise PermissionDenied
+    binding = (
+        ScenarioDocumentSetBinding.objects.select_related("document_set")
+        .filter(pk=binding_pk, scenario=scenario, organization_id=organization_id)
+        .first()
+    )
+    if binding is None:
+        raise Http404
+    document_services.unbind_scenario_document_set(binding, actor=request.user.get_username())
+    messages.success(
+        request, "Doküman seti bağı kaldırıldı. Aktif release yeniden derlenene kadar değişmez."
+    )
+    return redirect("console:scenario_detail", pk=scenario.pk)
+
+
+@login_required
+@require_POST
+def scenario_grant_consumer(request: HttpRequest, pk: int, document_set_pk: int) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk)
+    organization_id = scenario.project.organization_id
+    if not can_author_scenarios(request.user, organization_id):
+        raise PermissionDenied
+    document_set = (
+        scoping.scoped_document_sets(request.user)
+        .filter(
+            pk=document_set_pk,
+            organization_id=organization_id,
+            scenario_bindings__scenario=scenario,
+        )
+        .first()
+    )
+    if document_set is None:
+        raise Http404
+    consumer_id = request.POST.get("consumer_id", "")
+    consumer = (
+        Consumer.objects.filter(
+            id=consumer_id,
+            organization_id=organization_id,
+            status=ConsumerStatus.ACTIVE,
+            bindings__scenario=scenario,
+            bindings__status=BindingStatus.ACTIVE,
+        ).first()
+        if consumer_id.isdigit()
+        else None
+    )
+    if consumer is None:
+        messages.error(request, "Erişim verilemedi: consumer bu senaryoya bağlı değil.")
+    else:
+        try:
+            document_services.grant_document_set(
+                document_set=document_set,
+                principal_type=GrantPrincipalType.CONSUMER,
+                principal_ref=str(consumer.id),
+                actor=request.user.get_username(),
+            )
+            messages.success(request, "Consumer için doküman erişimi verildi.")
+        except DocumentError as exc:
+            messages.error(request, f"Erişim verilemedi: {exc.code}")
+    return redirect("console:scenario_detail", pk=scenario.pk)
+
+
+@login_required
+@require_POST
+def scenario_revoke_consumer(request: HttpRequest, pk: int, grant_pk: int) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk)
+    organization_id = scenario.project.organization_id
+    if not can_author_scenarios(request.user, organization_id):
+        raise PermissionDenied
+    grant = (
+        DocumentSetGrant.objects.select_related("document_set")
+        .filter(
+            pk=grant_pk,
+            organization_id=organization_id,
+            principal_type=GrantPrincipalType.CONSUMER,
+            document_set__scenario_bindings__scenario=scenario,
+        )
+        .first()
+    )
+    if grant is None:
+        raise Http404
+    document_services.revoke_document_set_grant(grant, actor=request.user.get_username())
+    messages.success(request, "Consumer doküman erişimi kaldırıldı.")
+    return redirect("console:scenario_detail", pk=scenario.pk)
 
 
 @login_required

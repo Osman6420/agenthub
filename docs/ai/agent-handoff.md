@@ -293,6 +293,19 @@ Current cross-agent state:
     confirmation; pinned content remains fail-closed. No migration/dependency/egress. Evidence:
     SQLite 511 passed / 21 skipped; PostgreSQL 530 passed / 2 skipped. Landed in the P8 completion
     commit on `feat/foundation-sprint-0-1`; not pushed. P7 provenance follows.
+- **P9 WS2 CONSOLE UX IN PROGRESS — P9.1 IMPLEMENTED + VERIFIED.** The owner accepted Turkish-first
+  (full i18n later), organization → project → scenario navigation, document-set-first bulk upload
+  with explicit index/promotion state, and a future additive `/v1/responses` facade while retaining
+  native gateway routes. P9.1 adds a responsive Turkish console shell and scenario detail where an
+  operator sees scenario consumer bindings separately from per-document-set retrieval grants, set/
+  index readiness, and can bind/unbind/grant/revoke through existing audited services. Cross-tenant
+  and non-author paths fail closed. Evidence: focused SQLite 23 passed; full SQLite 567 passed / 25
+  skipped; focused PostgreSQL 12 passed; format/lint/type/Django/migration checks pass. No migration,
+  dependency, egress or public API change. P9.2–P9.5 remain. Browser visual/accessibility review is
+  still manual. Plan: `docs/tasks/phase-2-p9-console-ux/`.
+- **WS4 PERSONAL IDENTITY REMAINS LAST AND UNDECIDED.** Owner-provided OIDC/group-claim/OBO/
+  group-first proposals are recorded in `phase-2-plan.md` as non-final discussion notes only; do not
+  implement or treat them as approved architecture until WS4 is explicitly reopened.
 - **P7.1–P7.4b COMPLETE + VERIFIED OFFLINE.** P7 parsers/OCR and both connectors are
   verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
   - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed

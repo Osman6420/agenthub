@@ -110,8 +110,17 @@ The interleaved phase plan is in
 ## Workstream 2 — UI modernization + Turkish (priority 2)
 
 - Restyle the operator console + builder (style / color / layout / components).
-- Add **i18n**; **screens in Turkish**. Keep server-side authorization authoritative and
-  encoding safe (no XSS from localized/stored content).
+- **Owner decision (2026-07-13): Turkish-first is the immediate priority; a complete i18n
+  framework is not a prerequisite.** Keep server-side authorization authoritative and encoding
+  safe (no XSS from localized/stored content).
+- Replace the backend-table mental model with an organization → project → scenario hierarchy.
+  Artifacts/releases remain durable backend concepts but appear in scenario context rather than as
+  the primary user journey.
+- Make the scenario → document set → consumer relationship visible and operable in one clear
+  screen. Bulk upload is document-set-first; generated IDs/default filename titles replace
+  mandatory per-file ID/title entry. Upload/index/promotion state must be explicit.
+- Delivery is decomposed as P9.1–P9.5 in
+  [`phase-2-p9-console-ux`](../tasks/phase-2-p9-console-ux/plan.md).
 
 ---
 
@@ -144,6 +153,27 @@ The interleaved phase plan is in
 - This is a **significant identity/authorization expansion** — today only machine/consumer
   identity exists. **Owner decision: do this after all other workstreams; discuss in more
   detail separately.**
+
+### WS4 discussion notes — non-final, revisit when WS4 starts
+
+The owner explicitly asked that these remain discussion inputs, **not final architecture
+decisions**:
+
+- Prefer an OIDC access token for application-to-application user identity; AD/LDAP may remain the
+  credential/directory source. First verify whether the institution currently uses direct LDAP
+  bind, SAML or an OIDC-backed identity provider.
+- Prefer normalized group claims for normal requests plus background AD/directory synchronization;
+  resolve nested/oversized/high-freshness membership through the directory/central authorization
+  source. A directory-derived authorization context is a possible transitional path if OIDC is not
+  available.
+- Prefer per-downstream short-lived scoped OBO/token-exchange, then trusted signed identity
+  propagation, then service account + platform-side ACL as the last option. Build a downstream
+  capability matrix before choosing.
+- Prefer group-first grants. User grants are exceptions (temporary/special/break-glass) and should
+  be time-bounded where possible.
+- For sources fetched by service account (for example Confluence without OBO), preserving upstream
+  ACLs and filtering by verified user/group at retrieval is a proposed requirement, not yet an
+  implemented capability.
 
 ---
 
@@ -311,9 +341,10 @@ milestone/deployment decisions, not open architecture blockers: live Confluence 
 secret provisioning, the live generic REST endpoint/profile/credential, upload malware/type
 scanning, and concrete embedding/OCR deployment profiles.
 
-**Workstreams 2–4 — still open (not yet decomposed):**
+**Workstreams 2–4:**
 
-- UI framework/theming approach and localization ownership (WS2).
+- WS2 is decomposed as P9.1–P9.5; detailed visual language and later localization ownership remain
+  open.
 - AI-authoring LLM prompt/DSL-rule contract and the exact scope of preview-time DSL edits (WS3).
 - Personal-MCP identity source (which IdP), the OBO token format, and the downstream (ERP)
   trust/verification contract (WS4).
@@ -336,7 +367,7 @@ decomposed into component plans.
 | WS | Scope | Status |
 | --- | --- | --- |
 | 1 | Document plane | **P2–P6, P7.1–P7.4b and P8.1–P8.4 implemented and verified** — content, embeddings/indexing, ACL retrieval, FORCE RLS stores, parsers/OCR, offline Confluence, governed REST periodic incremental sync and console operation. Remaining deployment gates: live Confluence/REST profiles and broader Django-table RLS + non-owner app role. Decisions = ADR-0003–0007. |
-| 2 | UI modernization + Turkish | Discovery — not decomposed |
+| 2 | UI modernization + Turkish | **P9.1 implemented and verified; P9.2–P9.5 planned** — Turkish-first responsive shell and scenario-centred document-set/consumer relationship management delivered without a new dependency |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
 | 5 | Live model runtime (real generation) | **P1 + P5 + P6 implemented + verified** — catalog/shared egress/chat provider (opt-in); P5 wired real retrieve/generate into the agent loop + workflow nodes + per-node prompt/model binding; **P6 added the authored, governed agent system prompt**. WS5 runtime is functionally complete for the current scope (real chat + ACL RAG in `/v1/query`, workflows, and agents) |

@@ -23,6 +23,27 @@ urlpatterns = [
     path("projects/new/", views.project_create, name="project_create"),
     path("scenarios/", views.scenarios, name="scenarios"),
     path("scenarios/new/", views.scenario_create, name="scenario_create"),
+    path("scenarios/<int:pk>/", views.scenario_detail, name="scenario_detail"),
+    path(
+        "scenarios/<int:pk>/document-sets/bind/",
+        views.scenario_bind_document_set,
+        name="scenario_bind_document_set",
+    ),
+    path(
+        "scenarios/<int:pk>/document-set-bindings/<int:binding_pk>/remove/",
+        views.scenario_unbind_document_set,
+        name="scenario_unbind_document_set",
+    ),
+    path(
+        "scenarios/<int:pk>/document-sets/<int:document_set_pk>/grant-consumer/",
+        views.scenario_grant_consumer,
+        name="scenario_grant_consumer",
+    ),
+    path(
+        "scenarios/<int:pk>/document-set-grants/<int:grant_pk>/remove/",
+        views.scenario_revoke_consumer,
+        name="scenario_revoke_consumer",
+    ),
     path("consumers/", views.consumers, name="consumers"),
     path("consumers/new/", views.consumer_create, name="consumer_create"),
     path("bindings/new/", views.binding_create, name="binding_create"),
