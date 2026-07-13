@@ -293,7 +293,7 @@ Current cross-agent state:
     confirmation; pinned content remains fail-closed. No migration/dependency/egress. Evidence:
     SQLite 511 passed / 21 skipped; PostgreSQL 530 passed / 2 skipped. Landed in the P8 completion
     commit on `feat/foundation-sprint-0-1`; not pushed. P7 provenance follows.
-- **P7.1 + P7.2 COMPLETE — P7.3/P7.4 deferred by owner.** P7 (parsers) is implemented and
+- **P7.1–P7.3 COMPLETE + VERIFIED — P7.4 remains gated.** P7 parsers/OCR are implemented and
   verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
   - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed
     `DocumentParser` registry (`ParsedContent`/`ParserError`/`get_parser`/`parse_document`) with
@@ -310,12 +310,18 @@ Current cross-agent state:
     parsing is **local/in-process — no network egress**. An image-only PDF fails closed
     (`EMPTY_DOCUMENT`; its OCR is P7.3). **No migration.** A `.venv` created before P7.2 must re-run
     `pip install -e ".[dev]"` to run the pdf/docx/xlsx tests.
-  - **Evidence (P7 cumulative):** SQLite 492 passed / 20 skipped; PostgreSQL `--create-db` 510 passed /
-    2 skipped; `pip check` clean. Both P7.1 and P7.2 committed on `feat/foundation-sprint-0-1`; **not
-    pushed.**
-  - **Next: P7.3** (external OCR egress for image-only pages) and **P7.4** (Confluence + generic-REST
-    connectors) — **both deferred by the owner (2026-07-13)**, blocked on their environment-specific
-    OCR/connector endpoint + secret egress sign-off. No code/endpoint/egress for these yet.
+  - **P7.3 (external OCR):** owner supplied/approved the async `/api/v1` contract on 2026-07-13.
+    Added immutable platform `OcrProfile` + tenant grant, `OCR_SECRET_*` resolution, shared
+    pinned-IP/TLS multipart+GET+empty-POST transport, bounded polling, Markdown validation, and a
+    recoverable `DocumentOcrJob`. Job id is persisted immediately; Markdown is written to tenant
+    object storage + checksumed before idempotent ACK. Mixed/image-only PDFs fail closed without a
+    profile; service-returned URLs are ignored. Purge removes derived OCR blobs. Migration
+    `ingestion.0006`. No live host/secret configured or called.
+  - **Evidence (P7 cumulative):** SQLite 519 passed / 22 skipped; PostgreSQL `--create-db` 539 passed /
+    2 skipped; lint/type/migration gates pass. Landed in the P7.3 completion commit on
+    `feat/foundation-sprint-0-1`; not pushed.
+  - **Next: P7.4** Confluence + generic REST connectors — blocked on their environment-specific API
+    contracts, allowlisted hosts, auth/secret profiles and rate/size limits.
   P6 provenance follows.
 - **P6 COMPLETE.** P6 (authored, governed agent **system prompt**) is implemented
   and verified in `docs/tasks/phase-2-p6-agent-system-prompt/`: `agent_definition` accepts an optional

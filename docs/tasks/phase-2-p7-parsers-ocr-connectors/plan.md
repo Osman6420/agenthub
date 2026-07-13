@@ -44,12 +44,24 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
   untrusted data. An image-only PDF yields no text and fails closed (`EMPTY_DOCUMENT`) — its OCR is
   the deferred P7.3. **No migration.**
 
-### P7.3 — External OCR for image-only pages/embedded images — **GATED: OCR egress sign-off**
+### P7.3 — External OCR for image-only pages/embedded images — **IMPLEMENTED + VERIFIED**
 
-- Image-only PDF pages and embedded images are sent to the **owner's external OCR endpoint** over the
-  shared SSRF-safe egress adapter (ADR-0005), profile-ID-only (ADR-0002), no blind retry. Returned
-  text re-enters the same parser output.
-- **Approval gate — OCR endpoint/profile + secret (environment-specific).**
+- Owner supplied and approved the async Markdown OCR contract on 2026-07-13: platform profile base
+  `/api/v1`; bearer secret reference; multipart `file` PDF submit (`202`); bounded `2–5s` polling;
+  Markdown result; idempotent ACK only after durable client persistence.
+- Immutable platform `OcrProfile` + tenant grant; environment secret resolves from `OCR_SECRET_*`.
+  The caller supplies only a profile id/object, never host/path/credential/TLS policy.
+- Shared validated-IP/TLS transport now supports bounded GET/multipart/empty POST while preserving
+  redirect denial, response caps and post-send uncertainty. Submit is never blindly retried; GET is
+  bounded-retry; ACK gets one safe retry because the approved contract explicitly makes it idempotent.
+- Recoverable `DocumentOcrJob` lineage persists the job id immediately. Markdown is checksumed and
+  written to the tenant object store + referenced in DB **before ACK**. Retry reuses persisted output;
+  purge deletes original and derived blobs. Status/result URLs from the service are ignored so they
+  cannot become SSRF inputs.
+- Fully image-only PDFs and mixed PDFs containing any image-only page use whole-PDF OCR; without an
+  OCR profile the parser fails closed rather than indexing incomplete text.
+- No live endpoint/profile was configured or called; the concrete host and injected secret remain a
+  deployment-time sign-off.
 
 ### P7.4 — Connectors (upload + Confluence + generic REST) — **GATED: connector egress sign-off**
 
@@ -73,5 +85,7 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
 
 - **P7.1: Implemented + verified** (stdlib parsers).
 - **P7.2: Implemented + verified** (pdf/docx/xlsx via owner-approved local libraries; no egress).
-- **P7.3 (OCR) + P7.4 (Confluence/REST connectors): deferred by the owner (2026-07-13)** — blocked on
-  their environment-specific egress sign-off. No code, endpoint, or egress for these yet.
+- **P7.3: Implemented + verified.** Contract approved, opt-in/profile-ID-only; no
+  live endpoint or secret configured/called.
+- **P7.4: Deferred.** Blocked on environment-specific Confluence/REST contracts, allowlists and
+  secret-profile sign-off.

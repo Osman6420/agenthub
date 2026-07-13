@@ -17,6 +17,7 @@ import json
 import socket
 import ssl
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from apps.tools.adapters import (
@@ -45,6 +46,13 @@ class _HttpConnection(Protocol):
 
 # (ip, port, timeout_seconds, server_hostname) -> connection
 ConnectionFactory = Callable[[str, int, float, str], _HttpConnection]
+
+
+@dataclass(frozen=True)
+class BoundedHttpResponse:
+    status: int
+    body: bytes
+    content_type: str
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
@@ -81,6 +89,28 @@ def perform_https_post(
     body: bytes,
 ) -> bytes:
     """Send a bounded, redirect-free HTTPS request to the validated IP; return 2xx bytes."""
+    response = perform_bounded_https_request(
+        factory, request, path=path, headers=headers, body=body
+    )
+    if not 200 <= response.status < 300:
+        raise ToolAdapterError("UPSTREAM_STATUS")
+    return response.body
+
+
+def perform_bounded_https_request(
+    factory: ConnectionFactory,
+    request: ToolAdapterRequest,
+    *,
+    path: str,
+    headers: dict[str, str],
+    body: bytes | None = None,
+) -> BoundedHttpResponse:
+    """Send one bounded redirect-free HTTPS request and return status/content metadata.
+
+    The caller owns endpoint-specific status handling. This lower-level seam exists for governed
+    asynchronous APIs (OCR submit/poll/result/ack); it retains the same validated-IP pinning, TLS,
+    timeout, redirect and response-size controls as ``perform_https_post``.
+    """
     destination = request.destination
     if not destination.ip_addresses:
         raise ToolAdapterError("DESTINATION_UNRESOLVED")
@@ -92,6 +122,8 @@ def perform_https_post(
         response = connection.getresponse()
         status = int(response.status)
         raw = response.read(request.max_response_bytes + 1)
+        getheader = getattr(response, "getheader", None)
+        content_type = str(getheader("Content-Type", "") or "") if getheader else ""
     except TimeoutError as exc:
         # Dispatched, but the outcome cannot be confirmed: never a false success.
         raise ToolAdapterUncertain() from exc
@@ -104,9 +136,7 @@ def perform_https_post(
         raise ToolAdapterError("REDIRECT_NOT_ALLOWED")
     if len(raw) > request.max_response_bytes:
         raise ToolAdapterError("RESPONSE_TOO_LARGE")
-    if not 200 <= status < 300:
-        raise ToolAdapterError("UPSTREAM_STATUS")
-    return raw
+    return BoundedHttpResponse(status=status, body=raw, content_type=content_type)
 
 
 class HttpToolAdapter:

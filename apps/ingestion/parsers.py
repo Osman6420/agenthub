@@ -216,6 +216,7 @@ class PdfParser:
 
         pages: list[str] = []
         page_count = 0
+        image_only_page = False
         try:
             with pdfplumber.open(io.BytesIO(blob)) as pdf:
                 page_count = len(pdf.pages)
@@ -225,10 +226,16 @@ class PdfParser:
                     extracted = (page.extract_text() or "").strip()
                     if extracted:
                         pages.append(extracted)
+                    else:
+                        image_only_page = True
         except ParserError:
             raise
         except Exception as exc:  # pdfminer/pdfplumber raise a wide range on malformed input
             raise ParserError("PDF_PARSE_FAILED") from exc
+        # A mixed PDF must not silently omit scanned/image-only pages. The approved OCR API accepts
+        # the whole PDF, so the staged build sends the complete file when an OCR profile is present.
+        if pages and image_only_page:
+            raise ParserError("PDF_OCR_REQUIRED")
         text = _bounded("\n\n".join(pages))
         return ParsedContent(
             text=text, parser=self.name, page_count=page_count, element_count=len(pages)

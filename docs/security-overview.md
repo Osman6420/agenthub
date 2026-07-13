@@ -161,6 +161,10 @@ channel:
 - **Default adapter opens no socket**: the platform's default tool adapter is deterministic
   and performs **no live egress**; real HTTPS/MCP egress is opt-in and project-owner
   approved.
+- **Model, embedding and OCR destinations are platform profiles**: tenant/request content cannot
+  choose host, path, credential or TLS behavior. OCR service-returned status/result URLs are ignored;
+  only catalog-derived paths are used. Non-idempotent OCR submit is never blindly retried, and ACK
+  occurs only after checksumed tenant-object-store persistence.
 
 ### Human approval with separation of duties
 

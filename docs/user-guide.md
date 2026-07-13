@@ -187,8 +187,15 @@ Run from the repo root in the project virtualenv. Common commands:
 | `start_canary` / `stop_canary` | Consumer-scoped, time-bounded canary routing |
 | `create_consumer_token` | Mint a hashed consumer bearer token |
 | `start_ingestion` / `retry_ingestion` | Drive the ingestion pipeline |
+| `register_ocr_profile` / `grant_ocr_profile` | Platform-admin registration and tenant grant for the async OCR endpoint |
+| `build_staged_index --ocr-profile-id <uuid>` | Build a document-set index with image-only/mixed-PDF OCR fallback |
 | `list_tool_approvals` / `decide_tool_approval` / `cancel_tool_invocation` | Tool approvals |
 | `list_agent_runs` / `cancel_agent_run` | Agent run operations |
+
+OCR profiles hold an allowlisted hostname, `/api/v1` base path, bounds and a `secret:<name>`
+reference; the real bearer value is injected as `OCR_SECRET_<NAME>`. A build without
+`--ocr-profile-id` performs no OCR egress and fails closed on image-only/mixed PDFs. OCR Markdown is
+persisted in tenant object storage and checksumed before the remote result is acknowledged.
 
 ---
 

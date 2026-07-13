@@ -20,7 +20,7 @@ UI). Consumer gateway seam unchanged in contract.
 ## Status
 
 **Decisions A–E approved by the owner on 2026-07-12. M0–M3 and M5 are implemented; M4 local
-parsers are implemented while external OCR and connectors remain gated.** Content storage,
+parsers and external OCR are implemented while connectors remain gated.** Content storage,
 embedding/indexing, binding + effective consumer ACL retrieval, FORCE RLS stores, runtime wiring
 and the operator console are landed. Per-phase external-egress sign-off remains. The M0 outputs:
 
@@ -220,8 +220,9 @@ resolved entirely server-side. Concretely:
   registry keyed by mime/type, same shape as the existing `PARSERS` registry.
 - **Embedding provider interface**: extends the existing `EMBEDDERS` seam with the
   `EmbeddingProfile`-driven `OpenAICompatibleEmbeddingClient`.
-- **OCR egress client**: `ocr(image_bytes) -> text` to the owner-hosted endpoint over the
-  SSRF-safe transport; invoked only by parsers for image-only pages / embedded images.
+- **OCR egress client (implemented P7.3)**: whole-PDF multipart submit to the owner-approved async
+  `/api/v1` service, bounded polling, raw Markdown result and durable-result-before-idempotent-ACK
+  ordering. Immutable `OcrProfile` + tenant grant; tenant/request/service URLs are never followed.
 - **Release/resolver**: manifest gains `document_set_versions`; resolver expands to the active
   `index_versions` (backward-compatible — existing pinned-index releases keep working).
 - **Promotion is a pointer flip**: see Data flows.
@@ -337,8 +338,8 @@ in place), so the milestone numbers below are scope units, not the build order.
   per-tenant grants; `OpenAICompatibleEmbeddingClient` over the SSRF-safe transport; per-
   `IndexVersion` immutable stores; dimension/index-type validation; staged build → eval →
   pointer-flip promotion; retention/purge job for unreferenced stores.
-- **M4 — Parsers & connectors**: `DocumentParser` interface + selected parsers, OCR egress
-  dispatch, upload/Confluence/generic-REST connectors. Parser dependency approval lands here.
+- **M4 — Parsers & connectors**: parser interface, selected parsers, upload and external OCR are
+  implemented; Confluence/generic-REST connectors remain contract/egress-gated.
 - **M5 — Console UI**: per-scenario document sources, set membership, binding, upload,
   soft-delete/purge — role/tenant-scoped, non-authoritative.
 

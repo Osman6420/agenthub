@@ -19,8 +19,10 @@ from apps.documents.models import DocumentSetVersion
 from apps.ingestion import vector_store
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
 from apps.ingestion.models import EmbeddingProfile, IndexStatus
+from apps.ingestion.ocr_services import grant_ocr_profile, register_ocr_profile
 from apps.ingestion.pipeline import embed_deterministic
 from apps.ingestion.staged_build import StagedBuildError, build_staged_index
+from apps.ingestion.tests.test_ocr import _blank_pdf, _PipelineClient
 from apps.tenancy.models import Organization
 
 pg_only = pytest.mark.skipif(
@@ -279,3 +281,62 @@ def test_non_text_mime_fails_closed(settings: object) -> None:
     set_version.refresh_from_db()
     with pytest.raises(StagedBuildError, match="UNSUPPORTED_MIME_FOR_EMBEDDING"):
         build_staged_index(document_set_version=set_version, embedding_profile=profile, actor="op")
+
+
+@pg_only
+@pytest.mark.django_db
+def test_image_only_pdf_ocr_is_persisted_embedded_and_searchable() -> None:
+    org = Organization.objects.create(slug="ocr-build", name="OCR Build")
+    embedding_profile = _granted_profile(org)
+    admin = get_user_model().objects.get(username="platform")
+    ocr_profile = register_ocr_profile(
+        actor=admin,
+        logical_id="ocr",
+        revision=1,
+        provider="async_markdown_ocr",
+        scheme="https",
+        host="ocr.example.com",
+        port=443,
+        base_path="/api/v1",
+        secret_ref="secret:ocr-key",  # noqa: S106
+        timeout_seconds=30,
+        poll_interval_seconds=2,
+        max_poll_attempts=10,
+        max_upload_bytes=52_428_800,
+        max_pages=500,
+        max_result_bytes=1_000_000,
+    )
+    grant_ocr_profile(actor=admin, organization=org, ocr_profile=ocr_profile)
+    doc_set = doc_services.create_document_set(
+        organization=org, logical_id="scans", name="Scans", actor="op"
+    )
+    set_version = doc_services.create_document_set_version(document_set=doc_set, actor="op")
+    version = doc_services.upload_document(
+        organization=org,
+        logical_id="scan",
+        title="Scan",
+        mime_type="application/pdf",
+        data=_blank_pdf(),
+        actor="op",
+    )
+    doc_services.add_document_to_set_version(
+        set_version=set_version, document_version=version, actor="op"
+    )
+    doc_services.publish_document_set_version(set_version=set_version, actor="op")
+    set_version.refresh_from_db()
+
+    index = build_staged_index(
+        document_set_version=set_version,
+        embedding_profile=embedding_profile,
+        ocr_profile=ocr_profile,
+        ocr_client=_PipelineClient(),  # type: ignore[arg-type]
+        actor="op",
+    )
+    hits = vector_store.search(
+        index,
+        embed_deterministic("Persisted markdown"),
+        organization_id=org.id,
+        top_k=1,
+    )
+    assert index.status == IndexStatus.PROMOTABLE
+    assert hits and "Persisted markdown" in hits[0].text

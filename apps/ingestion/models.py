@@ -315,3 +315,116 @@ class TenantEmbeddingProfileGrant(models.Model):
 
     def __str__(self) -> str:
         return f"embedding-grant:{self.organization_id}:{self.embedding_profile_id}"
+
+
+class OcrProfileStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DISABLED = "disabled", "Disabled"
+
+
+class OcrProfile(models.Model):
+    """Platform-managed immutable OCR API destination and operational bounds."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    logical_id = models.CharField(max_length=128)
+    revision = models.PositiveIntegerField()
+    provider = models.CharField(max_length=64, default="async_markdown_ocr")
+    scheme = models.CharField(max_length=8, default="https")
+    host = models.CharField(max_length=253)
+    port = models.PositiveIntegerField(default=443)
+    base_path = models.CharField(max_length=512, default="/api/v1")
+    secret_ref = models.CharField(max_length=160)
+    timeout_seconds = models.PositiveIntegerField(default=30)
+    poll_interval_seconds = models.PositiveSmallIntegerField(default=2)
+    max_poll_attempts = models.PositiveIntegerField(default=150)
+    max_upload_bytes = models.PositiveBigIntegerField(default=52_428_800)
+    max_pages = models.PositiveIntegerField(default=500)
+    max_result_bytes = models.PositiveIntegerField(default=10_000_000)
+    status = models.CharField(
+        max_length=16, choices=OcrProfileStatus.choices, default=OcrProfileStatus.ACTIVE
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["logical_id", "revision"], name="uniq_ocr_profile_logical_revision"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"ocr-profile:{self.logical_id}:r{self.revision}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            update_fields = set(kwargs.get("update_fields") or [])
+            if not update_fields or not update_fields <= {"status"}:
+                raise ValueError("OcrProfile is immutable; only status may change")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise ValueError("OcrProfile is immutable and cannot be deleted")
+
+
+class TenantOcrProfileGrant(models.Model):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="ocr_profile_grants"
+    )
+    ocr_profile = models.ForeignKey(
+        OcrProfile, on_delete=models.CASCADE, related_name="tenant_grants"
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "ocr_profile"], name="uniq_tenant_ocr_grant"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"ocr-grant:{self.organization_id}:{self.ocr_profile_id}"
+
+
+class OcrJobStatus(models.TextChoices):
+    SUBMITTING = "submitting", "Submitting"
+    SUBMITTED = "submitted", "Submitted"
+    OUTCOME_UNKNOWN = "outcome_unknown", "Outcome unknown"
+    RESULT_PERSISTED = "result_persisted", "Result persisted"
+    ACKNOWLEDGED = "acknowledged", "Acknowledged"
+    FAILED = "failed", "Failed"
+
+
+class DocumentOcrJob(TimeStampedModel):
+    """Recoverable OCR lineage; ACK is sent only after result object persistence."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="document_ocr_jobs"
+    )
+    document_version = models.ForeignKey(
+        "documents.DocumentVersion", on_delete=models.CASCADE, related_name="ocr_jobs"
+    )
+    ocr_profile = models.ForeignKey(OcrProfile, on_delete=models.PROTECT, related_name="jobs")
+    job_id = models.UUIDField(unique=True, null=True, blank=True)
+    status = models.CharField(
+        max_length=24, choices=OcrJobStatus.choices, default=OcrJobStatus.SUBMITTING
+    )
+    result_object_key = models.CharField(max_length=512, blank=True)
+    result_checksum = models.CharField(max_length=64, blank=True)
+    error_code = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document_version", "ocr_profile"],
+                name="uniq_document_ocr_profile_job",
+            )
+        ]
+
+    def clean(self) -> None:
+        if self.document_version_id and (
+            self.document_version.organization_id != self.organization_id
+        ):
+            raise ValidationError("OCR job document version must belong to the organization")

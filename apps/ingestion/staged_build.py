@@ -32,8 +32,10 @@ from apps.ingestion.models import (
     EmbeddingProfileStatus,
     IndexStatus,
     IndexVersion,
+    OcrProfile,
     TenantEmbeddingProfileGrant,
 )
+from apps.ingestion.ocr import AsyncMarkdownOcrClient, OcrError
 from apps.ingestion.parsers import ParserError, parse_document
 from apps.ingestion.pipeline import CHUNKERS, PipelineError
 from apps.ingestion.vector_store import (
@@ -62,6 +64,8 @@ def build_staged_index(
     actor: str,
     chunker: str = "fixed",
     request_id: str = "",
+    ocr_profile: OcrProfile | None = None,
+    ocr_client: AsyncMarkdownOcrClient | None = None,
 ) -> IndexVersion:
     if connection.vendor != "postgresql":
         # The per-IndexVersion store is a pgvector-only path (ADR-0003).
@@ -88,9 +92,16 @@ def build_staged_index(
     try:
         provision_store(index_version)
         document_count, chunk_count = _embed_into_store(
-            index_version, document_set_version, embedding_profile, chunk_fn
+            index_version,
+            document_set_version,
+            embedding_profile,
+            chunk_fn,
+            actor=actor,
+            request_id=request_id,
+            ocr_profile=ocr_profile,
+            ocr_client=ocr_client,
         )
-    except (StagedBuildError, VectorStoreError, EmbeddingError, PipelineError):
+    except (StagedBuildError, VectorStoreError, EmbeddingError, PipelineError, OcrError):
         _fail(index_version, reason="build_failed")
         raise
     except Exception:
@@ -152,6 +163,11 @@ def _embed_into_store(
     document_set_version: DocumentSetVersion,
     embedding_profile: EmbeddingProfile,
     chunk_fn: object,
+    *,
+    actor: str,
+    request_id: str,
+    ocr_profile: OcrProfile | None,
+    ocr_client: AsyncMarkdownOcrClient | None,
 ) -> tuple[int, int]:
     from apps.documents.storage import get_object_store
 
@@ -169,12 +185,29 @@ def _embed_into_store(
         version = membership.document_version
         # Deny-by-default parse: only an allowlisted MIME parser runs; the document is untrusted
         # data. Unsupported MIME (e.g. pdf/docx/xlsx before their P7.2 adapter) fails closed.
+        blob = store.get(version.object_key)
         try:
-            parsed = parse_document(version.mime_type, store.get(version.object_key))
+            parsed = parse_document(version.mime_type, blob)
         except ParserError as exc:
-            if exc.code == "PARSER_UNSUPPORTED":
+            if (
+                exc.code in {"EMPTY_DOCUMENT", "PDF_OCR_REQUIRED"}
+                and version.mime_type == "application/pdf"
+                and ocr_profile is not None
+            ):
+                from apps.ingestion.ocr_pipeline import parse_image_only_pdf
+
+                parsed = parse_image_only_pdf(
+                    document_version=version,
+                    pdf=blob,
+                    ocr_profile=ocr_profile,
+                    actor=actor,
+                    client=ocr_client,
+                    request_id=request_id,
+                )
+            elif exc.code == "PARSER_UNSUPPORTED":
                 raise StagedBuildError("UNSUPPORTED_MIME_FOR_EMBEDDING") from exc
-            raise StagedBuildError("DOCUMENT_PARSE_FAILED") from exc
+            else:
+                raise StagedBuildError("DOCUMENT_PARSE_FAILED") from exc
         chunks = chunk_fn(parsed.text)  # type: ignore[operator]
         rows: list[VectorRow] = []
         for start in range(0, len(chunks), batch_size):

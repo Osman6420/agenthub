@@ -209,11 +209,20 @@ def purge_document(document: Document, *, actor: str, request_id: str = "") -> i
     if DocumentSetMembership.objects.filter(document_version__document=document).exists():
         raise DocumentError("DOCUMENT_IN_USE", "document is pinned into a document set")
 
+    from apps.ingestion.models import DocumentOcrJob
+
+    derived_keys = list(
+        DocumentOcrJob.objects.filter(document_version__document=document)
+        .exclude(result_object_key="")
+        .values_list("result_object_key", flat=True)
+    )
     store = get_object_store()
     for version in versions:
         # Idempotent: deleting a missing key is a no-op; only a hard storage error aborts,
         # leaving DB metadata intact for a safe retry.
         store.delete(version.object_key)
+    for object_key in derived_keys:
+        store.delete(object_key)
 
     logical_id = document.logical_id
     organization_id = document.organization_id
@@ -229,7 +238,10 @@ def purge_document(document: Document, *, actor: str, request_id: str = "") -> i
             resource_id=logical_id,
             reason="physical_purge",
             request_id=request_id,
-            after={"versions_removed": len(versions)},
+            after={
+                "versions_removed": len(versions),
+                "derived_objects_removed": len(derived_keys),
+            },
         )
         Document.objects.filter(pk=document.pk).delete()
     return len(versions)

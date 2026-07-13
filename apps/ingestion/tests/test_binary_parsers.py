@@ -10,6 +10,7 @@ import io
 
 import docx
 import openpyxl
+import pdfplumber
 import pytest
 
 from apps.ingestion.parsers import ParserError, parse_document
@@ -57,6 +58,26 @@ def test_pdf_malformed_fails_closed() -> None:
     assert exc.value.code in {"PDF_PARSE_FAILED", "EMPTY_DOCUMENT"}
     # No document bytes leak into the error message.
     assert str(exc.value) == exc.value.code
+
+
+def test_mixed_pdf_requires_ocr_instead_of_silently_dropping_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Pdf:
+        pages = [
+            type("Page", (), {"extract_text": lambda self: "visible text"})(),
+            type("Page", (), {"extract_text": lambda self: ""})(),
+        ]
+
+        def __enter__(self) -> _Pdf:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    monkeypatch.setattr(pdfplumber, "open", lambda stream: _Pdf())
+    with pytest.raises(ParserError, match="PDF_OCR_REQUIRED"):
+        parse_document("application/pdf", b"mixed")
 
 
 def test_docx_paragraphs_and_tables_are_extracted() -> None:

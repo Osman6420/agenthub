@@ -141,7 +141,7 @@ deterministic remains the default and no environment-specific live endpoint was 
   unchanged (prompt is input, never authorization).
 - **Demo:** an agent runs with an authored persona/instructions instead of the raw user objective.
 
-### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1 + P7.2 IMPLEMENTED; P7.3–P7.4 gated (deferred)**
+### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1–P7.3 IMPLEMENTED + VERIFIED; P7.4 gated**
 
 - `DocumentParser` interface + selected parsers (pdf/docx/xlsx→markdown), **external OCR egress**
   for image-only pages/embedded images, and upload/Confluence/generic-REST connectors. Real
@@ -155,12 +155,14 @@ deterministic remains the default and no environment-specific live endpoint was 
   owner-approved **pdfplumber + python-docx + openpyxl** (dependency approval granted post comparison
   table; pdfplumber chosen over pypdf to minimize the surface). Heavy imports deferred; **no egress,
   no migration**. Image-only PDFs fail closed (their OCR is P7.3).
-- **P7.3 — external OCR** for image-only pages: shared SSRF-safe egress, profile-ID-only. **Blocked
-  on the OCR endpoint/profile sign-off.**
+- **P7.3 — DONE (2026-07-13):** owner-approved async Markdown OCR contract; immutable `OcrProfile`
+  + tenant grant, SSRF-safe multipart submit/bounded poll/result/idempotent ACK, recoverable job
+  lineage and durable result-before-ACK storage. Mixed/image-only PDF handling fails closed without
+  a profile. No concrete live host/secret configured or called.
 - **P7.4 — Confluence + generic-REST connectors:** reuse the bounded allowlisted SSRF-safe connector
   pattern. **Blocked on the connector-endpoint sign-off.**
-- **Approval gate:** parser dependency (post comparison table) + OCR egress endpoint + connector
-  endpoints.
+- **Approval gate:** parser dependency and OCR API contract are approved. A live OCR deployment
+  still needs its concrete host/profile + injected secret sign-off; connector endpoints remain gated.
 - **Demo (P7.1):** a CSV/JSON/HTML document set builds a staged index and is retrievable. **Demo
   (P7.2+):** upload a PDF/DOCX/XLSX → parsed → embedded → retrievable, with image content OCR'd via
   the owner's endpoint.
@@ -200,7 +202,7 @@ deterministic remains the default and no environment-specific live endpoint was 
 | --- | --- | --- |
 | P1 | chat model profile/endpoint | none (stdlib client) |
 | P3 | embedding model profile/endpoint | none (stdlib client) |
-| P7 | OCR endpoint + Confluence/REST | document-parser lib (post comparison) |
+| P7 | Confluence/REST contract + endpoint sign-off; live OCR deployment still needs concrete host/secret | document-parser lib approved; OCR adds no dependency |
 
 ## Governance held across all live phases
 
