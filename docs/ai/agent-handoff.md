@@ -268,7 +268,19 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **P5 COMPLETE — continue at P6.** P5 (real retrieve/generate wired into the agent loop + workflow
+- **P6 COMPLETE — continue at P7.** P6 (authored, governed agent **system prompt**) is implemented
+  and verified in `docs/tasks/phase-2-p6-agent-system-prompt/`: `agent_definition` accepts an optional
+  bounded (≤8000 chars, no control chars), redaction-safe `spec.system_prompt` (data, not code); the
+  agent compiler pins it into the checksummed config; `agents/runtime._respond` uses it as the model
+  prompt (objective fallback). It is input, never authorization — the tool proxy/approval/retrieval/
+  output-contract gates are unchanged. **No migration** (compiled-config + validation change only), no
+  new dependency, no live egress; deterministic default keeps CI hermetic. Evidence: SQLite 474 passed
+  / 18 skipped; PostgreSQL `--create-db` 490 passed / 2 skipped. Next: **P7** — `DocumentParser`
+  interface + selected parsers (pdf/docx/xlsx→markdown), external OCR egress for image-only pages, and
+  upload/Confluence/generic-REST connectors. **P7 gates:** document-parser dependency approval (post
+  comparison table — format-specific pypdf/pdfplumber + python-docx + openpyxl is the preferred
+  baseline; OCR is NOT in-app) + OCR endpoint + connector-endpoint egress sign-off. P5 provenance follows.
+- **P5 COMPLETE.** P5 (real retrieve/generate wired into the agent loop + workflow
   nodes) is implemented and verified in `docs/tasks/phase-2-p5-agent-workflow-rag/`: a shared
   `apps/orchestration/rag_steps.py` (`retrieve_for_release` → P4 ACL retrieval; `generate_for_release`
   → P1 chat, over the release bundle) now backs the workflow `retrieve`/`generate` nodes and the

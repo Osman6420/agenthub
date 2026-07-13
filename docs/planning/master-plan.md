@@ -8,10 +8,11 @@ Track project-level intent without treating target designs as implemented behavi
 
 As of 2026-07-13, Sprints 0–11 and Phase 2 P1 (live chat), P2 (content plane & storage), P3 (real
 embeddings + staged blue/green indexing), P4 (document-ACL retrieval + FORCE RLS + pointer-flip
-promotion — the security core; real ACL-scoped tenant RAG is now servable), and P5 (real
-retrieve/generate wired into the agent loop + workflow nodes, with per-node prompt/model binding) are
-implemented and verified. Phase 2 implementation is in progress (next: P6 — authored, governed agent
-system-prompt artifact); later live-egress/dependency milestones retain their explicit gates.
+promotion — the security core; real ACL-scoped tenant RAG is now servable), P5 (real
+retrieve/generate wired into the agent loop + workflow nodes, with per-node prompt/model binding), and
+P6 (authored, governed agent system prompt) are implemented and verified. Phase 2 implementation is in
+progress (next: P7 — parsers + OCR + connectors, which carry the document-parser dependency + OCR/
+connector egress approval gates); later live-egress/dependency milestones retain their explicit gates.
 
 - Sprint 0: bootable Django modular-monolith skeleton — settings split, Celery role
   definitions, unauthenticated health probes, dependency manifest + lockfile, Docker
@@ -189,7 +190,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
 | Visual workflow builder (Sprint 11) | Verified | Sprints 2, 8 | [sprint-11-workflow-builder](../tasks/sprint-11-workflow-builder/plan.md) | [v3 target plan §25](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-11-workflow-builder/verification.md) |
 | Document plane (Phase 2 · WS1) | **P2 + P3 + P4 (ACL retrieval + RLS + promotion) Verified**; P5 next | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) |
-| Live model runtime (Phase 2 · WS5) | **P1 + P5 Verified**; P6 next | Shared egress + `ModelProfile` catalog | [P1 plan](../tasks/phase-2-p1-live-chat/plan.md) + [P5 plan](../tasks/phase-2-p5-agent-workflow-rag/plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P1](../tasks/phase-2-p1-live-chat/verification.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/verification.md) |
+| Live model runtime (Phase 2 · WS5) | **P1 + P5 + P6 Verified** (WS5 runtime scope complete) | Shared egress + `ModelProfile` catalog | [P1](../tasks/phase-2-p1-live-chat/plan.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/plan.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P1](../tasks/phase-2-p1-live-chat/verification.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/verification.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/verification.md) |
 
 ## Cross-cutting concerns
 

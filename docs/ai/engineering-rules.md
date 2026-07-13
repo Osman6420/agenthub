@@ -52,8 +52,11 @@ proven on the served stores). Phase 2 P5 wired the **same governed retrieve/gene
 workflow (`retrieve`/`generate` nodes) and agent (retrieve step + `_respond`) via
 `apps/orchestration/rag_steps.py`, so agents/workflows now do real P4 ACL retrieval + P1 generation
 (not stubs); the workflow `generate` node gained optional per-node `prompt_ref`/`model_profile_ref`
-binding (multi-prompt/multi-model workflows). The agent still uses the user objective as its prompt —
-an authored agent **system prompt** is **P6**. Deterministic providers remain default (CI hermetic);
+binding (multi-prompt/multi-model workflows). Phase 2 P6 added an authored, governed agent **system
+prompt**: `agent_definition` accepts an optional bounded, redaction-safe `spec.system_prompt` (data,
+not code — ≤8000 chars, no control chars) that the compiler pins into the checksummed agent config
+and `_respond` uses as the model prompt (objective fallback); it is input, never authorization (tool/
+decision/output-contract gates unchanged). Deterministic providers remain default (CI hermetic);
 providers plug in via
 `RUNTIME_MODEL_PROVIDER`/`RUNTIME_EMBEDDING_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
 The repository contains
@@ -264,10 +267,11 @@ under `docs/planning/archive/`. Phase 2 is a discussion draft at
 personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and P1
 (live chat), P2 (content plane & storage), P3 (real embeddings + staged blue/green indexing), and P4
 (document-ACL retrieval + FORCE RLS + pointer-flip promotion — the security core that unlocks
-serving real, ACL-scoped tenant corpora), and P5 (real retrieve/generate wired into the agent loop
-and workflow generate/retrieve nodes + per-node prompt/model binding) are verified; continue at P6
-(authored, governed agent system-prompt artifact). Its M0 architecture decisions are accepted as
-ADR-0002–0005, with the
+serving real, ACL-scoped tenant corpora), P5 (real retrieve/generate wired into the agent loop
+and workflow generate/retrieve nodes + per-node prompt/model binding), and P6 (authored, governed
+agent system prompt) are verified; continue at P7 (parsers + OCR + connectors — carries the
+document-parser dependency approval + OCR/Confluence/REST egress sign-off gates). Its M0 architecture
+decisions are accepted as ADR-0002–0005, with the
 remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 

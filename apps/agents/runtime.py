@@ -370,12 +370,14 @@ def _validate_decision(decision: AgentDecision, config: dict[str, Any]) -> None:
 def _respond(
     objective: str, state: dict[str, Any], config: dict[str, Any], release: Any
 ) -> tuple[dict[str, Any], int, int]:
-    # Generate over the governed model provider using the retrieved context (P5). The objective is
-    # the prompt until P6 adds an authored agent system prompt; the release model_profile is used.
+    # Generate over the governed model provider using the retrieved context (P5). The prompt is the
+    # authored, release-pinned agent system prompt when present (P6), else the user objective; the
+    # objective still drives retrieval. The system prompt is input, never authorization.
     from apps.orchestration.rag_steps import chunks_from_state, generate_for_release
 
     context = chunks_from_state(state)
-    response = generate_for_release(release=release, context=context, prompt=objective or "")
+    prompt = config.get("system_prompt") or objective or ""
+    response = generate_for_release(release=release, context=context, prompt=prompt)
     sources = state.get("retrieval", {}).get("chunks", []) if isinstance(state, dict) else []
     output = {"answer": response.text, "sources": sources if isinstance(sources, list) else []}
     return output, response.input_tokens, response.output_tokens

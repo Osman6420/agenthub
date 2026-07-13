@@ -1,13 +1,14 @@
 """Structural validation for the ``agent_definition`` artifact type (Sprint 10).
 
 An agent definition is *data, not code*: it declares an objective source, an optional
-retrieval step, a bounded allowlist of tool *binding roles* the agent may propose, and
-optional limit overrides that may only lower the hard caps. It never declares an
-endpoint, package, prompt text, or executable — the model's decisions at runtime are
-proposals that the governed tool proxy, retrieval, and output-contract gates
-re-validate. Diagnostics are content-free (v3 plan §17). This module is DB-free; the
-existence of declared tool bindings is checked at release-compile time, and every tool
-call is still authorized by the release-pinned proxy.
+retrieval step, an optional authored **system prompt** (bounded, redaction-safe text — the
+agent's persona/instructions, P6), a bounded allowlist of tool *binding roles* the agent may
+propose, and optional limit overrides that may only lower the hard caps. It never declares an
+endpoint, package, or executable, and the system prompt is **input, never authorization** — the
+model's decisions at runtime are proposals that the governed tool proxy, retrieval, and
+output-contract gates re-validate. Diagnostics are content-free (v3 plan §17). This module is
+DB-free; the existence of declared tool bindings is checked at release-compile time, and every
+tool call is still authorized by the release-pinned proxy.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from apps.agents.limits import LIMIT_FIELDS, field_bounds
 
 MAX_IDENTIFIER_LENGTH = 128
 MAX_TOOLS = 10
+MAX_SYSTEM_PROMPT_LENGTH = 8000
 
 
 class AgentArtifactError(ValueError):
@@ -43,7 +45,7 @@ def validate_agent_definition_body(body: dict[str, Any]) -> None:
         spec,
         {"tools"},
         "agent spec",
-        optional={"retrieval", "limits", "objective_key", "output_key"},
+        optional={"retrieval", "limits", "objective_key", "output_key", "system_prompt"},
     )
 
     _validate_tools(spec.get("tools"))
@@ -55,6 +57,20 @@ def validate_agent_definition_body(body: dict[str, Any]) -> None:
         _identifier(spec.get("objective_key"), "objective_key")
     if "output_key" in spec:
         _identifier(spec.get("output_key"), "output_key")
+    if "system_prompt" in spec:
+        _validate_system_prompt(spec.get("system_prompt"))
+
+
+def _validate_system_prompt(value: Any) -> None:
+    """Authored persona/instructions: bounded text, no control chars (P6). Data, not code."""
+    if not isinstance(value, str) or not value.strip():
+        raise AgentArtifactError("system_prompt must be a non-empty string")
+    if len(value) > MAX_SYSTEM_PROMPT_LENGTH:
+        raise AgentArtifactError(
+            f"system_prompt must be at most {MAX_SYSTEM_PROMPT_LENGTH} characters"
+        )
+    if any(ord(character) < 32 and character not in "\n\r\t" for character in value):
+        raise AgentArtifactError("system_prompt contains control characters")
 
 
 def _validate_tools(value: Any) -> None:

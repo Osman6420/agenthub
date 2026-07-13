@@ -55,6 +55,9 @@ def compile_agent(body: dict[str, Any]) -> CompiledAgent:
         "agent_id": body["metadata"]["id"],
         "objective_key": spec.get("objective_key", DEFAULT_OBJECTIVE_KEY),
         "output_key": spec.get("output_key", DEFAULT_OUTPUT_KEY),
+        # Authored persona/instructions (P6). Empty when unset; pinned into the checksum so a run
+        # stays bound to exactly this system prompt. It is input to the model, never authorization.
+        "system_prompt": spec.get("system_prompt", ""),
         "retrieval": {"enabled": bool(retrieval.get("enabled", False))},
         # Declared order is preserved: the deterministic planner proposes tools in this
         # order. The list is the agent's entire tool surface; the proxy still authorizes
