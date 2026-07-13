@@ -2,11 +2,11 @@
 {% block title %}{{ title }} · AgentHub Console{% endblock %}
 {% block content %}
 <div class="card form-card">
-  <h2>{{ title }}</h2>
+  <h1>{{ title }}</h1>
   <form method="post">
     {% csrf_token %}
     {{ form.as_p }}
-    <button type="submit">Create</button>
+    <button type="submit">Oluştur</button>
   </form>
 </div>
 {% endblock %}

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
 import type { BuilderInitial, OrgOption } from "./types";
+import "./builder.css";
 
 // Mount into the Django-rendered element. Configuration (API base, the operator's
 // in-scope organizations) is provided by the server template — never hardcoded here.

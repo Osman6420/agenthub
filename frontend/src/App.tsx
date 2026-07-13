@@ -66,7 +66,7 @@ export function App({
     if (drafts.some((draft) => draft.id === initial.draft_id)) {
       void open(initial.draft_id);
     } else {
-      setError("not_found: draft is outside the selected organization");
+      setError("not_found: draft seçilen organizasyonun dışında");
     }
   }, [deepLinkHandled, drafts, initial?.draft_id, open, schema]);
 
@@ -91,7 +91,7 @@ export function App({
     return (
       <div>
         <button type="button" onClick={() => setActive(null)} style={backBtn}>
-          ← Drafts
+          ← Draft'lar
         </button>
         <Editor api={api} schema={schema} draft={active} />
       </div>
@@ -105,11 +105,11 @@ export function App({
           {error}
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <div className="ah-builder-org-row">
         <label style={{ color: "#8b95a7", fontSize: 13 }}>
-          Organization
+          Organizasyon
           <select
-            aria-label="organization"
+            aria-label="organizasyon"
             value={orgSlug}
             onChange={(e) => setOrgSlug(e.target.value)}
             style={{ marginLeft: 8, padding: "6px 8px" }}
@@ -121,36 +121,36 @@ export function App({
             ))}
           </select>
         </label>
-        {!canWrite && <span style={{ color: "#fcd34d", fontSize: 12 }}>read-only</span>}
+        {!canWrite && <span style={{ color: "#fcd34d", fontSize: 12 }}>salt okunur</span>}
       </div>
 
-      <h3 style={{ margin: "8px 0" }}>Drafts</h3>
-      {drafts.length === 0 && <div style={{ color: "#8b95a7" }}>No drafts yet.</div>}
+      <h2 style={{ margin: "8px 0" }}>Draft'lar</h2>
+      {drafts.length === 0 && <div style={{ color: "#8b95a7" }}>Henüz draft yok.</div>}
       <ul style={{ listStyle: "none", padding: 0 }}>
         {drafts.map((d) => (
-          <li key={d.id} style={draftRow}>
+          <li key={d.id} className="ah-builder-draft-row" style={draftRow}>
             <span>
               <strong>{d.name}</strong>{" "}
               <span style={{ color: "#8b95a7" }}>({d.logical_id})</span>
               {d.last_published_version > 0 && (
                 <span style={{ color: "#86efac", marginLeft: 8 }}>
-                  v{d.last_published_version} published
+                  v{d.last_published_version} yayımlandı
                 </span>
               )}
             </span>
             <button type="button" onClick={() => void open(d.id)} style={openBtn}>
-              Open
+              Aç
             </button>
           </li>
         ))}
       </ul>
 
       {canWrite && (
-        <div style={{ marginTop: 20, borderTop: "1px solid #262b36", paddingTop: 16 }}>
-          <h3 style={{ margin: "0 0 8px" }}>New draft</h3>
+        <div className="ah-builder-create" style={{ marginTop: 20, borderTop: "1px solid #262b36", paddingTop: 16 }}>
+          <h2 style={{ margin: "0 0 8px" }}>Yeni draft</h2>
           <input
-            aria-label="draft name"
-            placeholder="Name"
+            aria-label="draft adı"
+            placeholder="Ad"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             style={createInput}
@@ -163,7 +163,7 @@ export function App({
             style={createInput}
           />
           <button type="button" disabled={!newName || !newId} onClick={() => void create()} style={openBtn}>
-            Create
+            Oluştur
           </button>
         </div>
       )}

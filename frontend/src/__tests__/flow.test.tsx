@@ -133,7 +133,7 @@ describe("end-to-end builder flow", () => {
     await act(async () => {
       await result.current.publish();
     });
-    expect(result.current.status).toContain("Published");
+    expect(result.current.status).toContain("Yayımlandı");
 
     // The DSL sent to diagnostics carried the full graph, and writes carried CSRF.
     const diag = calls.find((c) => c.url.includes("/diagnostics/"));

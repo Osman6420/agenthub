@@ -17,10 +17,10 @@ export function Toolbar({
   const { readOnly, isDirty, diagnostics } = builder;
   return (
     <div style={{ borderBottom: "1px solid #262b36" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px" }}>
+      <div className="ah-builder-toolbar-row">
         <strong>{draftName}</strong>
         <label style={{ fontSize: 12, color: "#8b95a7" }}>
-          workflow id
+          workflow ID
           <input
             aria-label="workflow id"
             value={builder.workflowId}
@@ -36,11 +36,11 @@ export function Toolbar({
             }}
           />
         </label>
-        {readOnly && <span style={badge("#7c5e10", "#fcd34d")}>read-only</span>}
-        {!readOnly && isDirty && <span style={badge("#334155", "#93c5fd")}>unsaved changes</span>}
+        {readOnly && <span style={badge("#7c5e10", "#fcd34d")}>salt okunur</span>}
+        {!readOnly && isDirty && <span style={badge("#334155", "#93c5fd")}>kaydedilmemiş değişiklik</span>}
         <div style={{ flex: 1 }} />
         <button type="button" disabled={busy} onClick={() => onAction("validate")} style={btn()}>
-          Validate
+          Doğrula
         </button>
         <button
           type="button"
@@ -48,7 +48,7 @@ export function Toolbar({
           onClick={() => onAction("save")}
           style={btn()}
         >
-          Save
+          Kaydet
         </button>
         <button
           type="button"
@@ -56,7 +56,7 @@ export function Toolbar({
           onClick={() => onAction("publish")}
           style={btn("#2563eb")}
         >
-          Publish
+          Yayımla
         </button>
       </div>
       {builder.status && (
@@ -88,7 +88,7 @@ export function Toolbar({
           role="status"
           style={{ margin: "0 14px 10px", padding: "8px 12px", color: "#86efac", fontSize: 13 }}
         >
-          Compiles cleanly · checksum {diagnostics.compiled_checksum?.slice(0, 12)}
+          Derleme başarılı · checksum {diagnostics.compiled_checksum?.slice(0, 12)}
         </div>
       )}
     </div>

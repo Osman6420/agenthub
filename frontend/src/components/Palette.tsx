@@ -13,9 +13,9 @@ export function Palette({
   onAdd: (type: string) => void;
 }) {
   return (
-    <aside style={{ width: 180, borderRight: "1px solid #262b36", padding: 12, overflowY: "auto" }}>
+    <aside className="ah-builder-palette">
       <div style={{ color: "#8b95a7", fontSize: 12, textTransform: "uppercase", marginBottom: 8 }}>
-        Nodes
+        Node'lar
       </div>
       {schema.node_types.map((nt) => (
         <button

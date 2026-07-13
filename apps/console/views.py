@@ -201,11 +201,11 @@ def organizations(request: HttpRequest) -> HttpResponse:
         request,
         "console/list.html",
         {
-            "title": "Organizations",
-            "headers": ["Slug", "Name", "Status"],
+            "title": "Organizasyonlar",
+            "headers": ["Slug", "Ad", "Durum"],
             "rows": rows,
             "create_links": (
-                [{"url": "console:organization_create", "label": "New organization"}]
+                [{"url": "console:organization_create", "label": "Yeni organizasyon"}]
                 if can_create_organization(request.user)
                 else []
             ),
@@ -223,11 +223,11 @@ def projects(request: HttpRequest) -> HttpResponse:
         request,
         "console/list.html",
         {
-            "title": "AI Projects",
-            "headers": ["Organization", "Slug", "Name", "Risk", "Status"],
+            "title": "AI projeleri",
+            "headers": ["Organizasyon", "Slug", "Ad", "Risk", "Durum"],
             "rows": rows,
             "create_links": (
-                [{"url": "console:project_create", "label": "New project"}]
+                [{"url": "console:project_create", "label": "Yeni proje"}]
                 if admin_organization_ids(request.user) != set()
                 else []
             ),
@@ -615,13 +615,13 @@ def consumers(request: HttpRequest) -> HttpResponse:
         request,
         "console/list.html",
         {
-            "title": "Consumers",
-            "headers": ["Organization", "Name", "Subject", "Protocol", "Status"],
+            "title": "Consumer'lar",
+            "headers": ["Organizasyon", "Ad", "Subject", "Protokol", "Durum"],
             "rows": rows,
             "create_links": (
                 [
-                    {"url": "console:consumer_create", "label": "New consumer"},
-                    {"url": "console:binding_create", "label": "New binding"},
+                    {"url": "console:consumer_create", "label": "Yeni consumer"},
+                    {"url": "console:binding_create", "label": "Yeni consumer bağı"},
                 ]
                 if admin_organization_ids(request.user) != set()
                 else []
@@ -743,7 +743,9 @@ def releases(request: HttpRequest) -> HttpResponse:
         for c in canary_qs
     ]
     return render(
-        request, "console/releases.html", {"title": "Releases", "rows": rows, "canaries": canaries}
+        request,
+        "console/releases.html",
+        {"title": "Release'ler", "rows": rows, "canaries": canaries},
     )
 
 
@@ -767,10 +769,10 @@ def release_run_eval(request: HttpRequest, release_id: int) -> HttpResponse:
     try:
         run = run_eval(release=release, created_by=request.user.get_username())
         messages.success(
-            request, f"Eval {run.status}: {run.passed_cases}/{run.total_cases} cases passed."
+            request, f"Eval {run.status}: {run.passed_cases}/{run.total_cases} vaka geçti."
         )
     except EvalError as exc:
-        messages.error(request, f"Eval could not start: {exc.code}")
+        messages.error(request, f"Eval başlatılamadı: {exc.code}")
     return redirect("console:releases")
 
 
@@ -780,9 +782,9 @@ def release_promote(request: HttpRequest, release_id: int) -> HttpResponse:
     release = _manageable_release(request.user, release_id)
     try:
         promote(release=release, actor=request.user.get_username())
-        messages.success(request, f"Release {release.pk} promoted to active.")
+        messages.success(request, f"Release {release.pk} aktif edildi.")
     except LifecycleError as exc:
-        messages.error(request, f"Promotion denied: {exc.code}")
+        messages.error(request, f"Aktivasyon reddedildi: {exc.code}")
     return redirect("console:releases")
 
 
@@ -792,9 +794,9 @@ def release_rollback(request: HttpRequest, release_id: int) -> HttpResponse:
     release = _manageable_release(request.user, release_id)
     try:
         rollback(scenario=release.scenario, target=release, actor=request.user.get_username())
-        messages.success(request, f"Rolled back to release {release.pk}.")
+        messages.success(request, f"Release {release.pk} sürümüne geri dönüldü.")
     except LifecycleError as exc:
-        messages.error(request, f"Rollback denied: {exc.code}")
+        messages.error(request, f"Geri alma reddedildi: {exc.code}")
     return redirect("console:releases")
 
 
@@ -810,14 +812,14 @@ def canary_start(request: HttpRequest, release_id: int) -> HttpResponse:
                 ttl_seconds=form.cleaned_data["ttl_hours"] * 3600,
                 actor=request.user.get_username(),
             )
-            messages.success(request, "Canary started.")
+            messages.success(request, "Canary başlatıldı.")
             return redirect("console:releases")
         except LifecycleError as exc:
-            messages.error(request, f"Canary denied: {exc.code}")
+            messages.error(request, f"Canary reddedildi: {exc.code}")
     return render(
         request,
         "console/form.html",
-        {"title": f"Start canary for release {release.pk}", "form": form},
+        {"title": f"Release {release.pk} için canary başlat", "form": form},
     )
 
 
@@ -835,9 +837,9 @@ def canary_stop(request: HttpRequest, canary_id: int) -> HttpResponse:
         raise PermissionDenied
     try:
         stop_canary(canary=canary, actor=request.user.get_username())
-        messages.success(request, "Canary stopped.")
+        messages.success(request, "Canary durduruldu.")
     except LifecycleError as exc:
-        messages.error(request, f"Stop denied: {exc.code}")
+        messages.error(request, f"Durdurma reddedildi: {exc.code}")
     return redirect("console:releases")
 
 
@@ -868,7 +870,7 @@ def tool_approvals(request: HttpRequest) -> HttpResponse:
                 "can_decide": bool(set(roles or []) & set(approval.approver_roles)),
             }
         )
-    return render(request, "console/tool_approvals.html", {"title": "Tool approvals", "rows": rows})
+    return render(request, "console/tool_approvals.html", {"title": "Tool onayları", "rows": rows})
 
 
 @login_required
@@ -895,10 +897,10 @@ def tool_approval_decide(request: HttpRequest, approval_id: int) -> HttpResponse
             reason=request.POST.get("reason", ""),
         )
         messages.success(
-            request, f"Approval {approval.pk} {'approved' if approve else 'rejected'}."
+            request, f"Onay {approval.pk} {'kabul edildi' if approve else 'reddedildi'}."
         )
     except ToolApprovalError as exc:
-        messages.error(request, f"Decision denied: {exc.code}")
+        messages.error(request, f"Karar reddedildi: {exc.code}")
     return redirect("console:tool_approvals")
 
 
@@ -916,9 +918,9 @@ def tool_invocation_cancel(request: HttpRequest, invocation_id: int) -> HttpResp
             organization_id=invocation.organization_id,
             actor=request.user.get_username(),
         )
-        messages.success(request, f"Invocation {invocation.pk} cancelled.")
+        messages.success(request, f"Tool çağrısı {invocation.pk} iptal edildi.")
     except ToolApprovalError as exc:
-        messages.error(request, f"Cancel denied: {exc.code}")
+        messages.error(request, f"İptal reddedildi: {exc.code}")
     return redirect("console:tool_approvals")
 
 
@@ -937,7 +939,9 @@ def agent_runs(request: HttpRequest) -> HttpResponse:
         }
         for run in scoping.scoped_agent_runs(request.user).order_by("-created_at")[:200]
     ]
-    return render(request, "console/agent_runs.html", {"title": "Agent runs", "rows": rows})
+    return render(
+        request, "console/agent_runs.html", {"title": "Agent çalıştırmaları", "rows": rows}
+    )
 
 
 @login_required
@@ -977,7 +981,7 @@ def agent_run_detail(request: HttpRequest, public_id: str) -> HttpResponse:
     return render(
         request,
         "console/agent_run_detail.html",
-        {"title": f"Agent run {public[:8]}", "run": summary, "events": events},
+        {"title": f"Agent çalıştırması {public[:8]}", "run": summary, "events": events},
     )
 
 
@@ -2014,9 +2018,9 @@ def agent_run_cancel(request: HttpRequest, public_id: str) -> HttpResponse:
             organization_id=run.organization_id,
             actor=request.user.get_username(),
         )
-        messages.success(request, f"Agent run {run.public_id} cancelled.")
+        messages.success(request, f"Agent çalıştırması {run.public_id} iptal edildi.")
     except AgentRequestError as exc:
-        messages.error(request, f"Cancel denied: {exc.code}")
+        messages.error(request, f"İptal reddedildi: {exc.code}")
     return redirect("console:agent_run_detail", public_id=str(run.public_id))
 
 
@@ -2089,7 +2093,7 @@ def organization_create(request: HttpRequest) -> HttpResponse:
     return _create(
         request,
         form_class=OrganizationForm,
-        title="New organization",
+        title="Yeni organizasyon",
         resource_type="organization",
         permission=lambda _org_id: True,
         success_url="console:organizations",
@@ -2101,7 +2105,7 @@ def project_create(request: HttpRequest) -> HttpResponse:
     return _create(
         request,
         form_class=ProjectForm,
-        title="New project",
+        title="Yeni proje",
         resource_type="project",
         permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
         success_url="console:projects",
@@ -2113,7 +2117,7 @@ def scenario_create(request: HttpRequest) -> HttpResponse:
     return _create(
         request,
         form_class=ScenarioForm,
-        title="New scenario",
+        title="Yeni senaryo",
         resource_type="scenario",
         permission=lambda org_id: org_id is not None and can_author_scenarios(request.user, org_id),
         success_url="console:scenarios",
@@ -2125,7 +2129,7 @@ def consumer_create(request: HttpRequest) -> HttpResponse:
     return _create(
         request,
         form_class=ConsumerForm,
-        title="New consumer",
+        title="Yeni consumer",
         resource_type="consumer",
         permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
         success_url="console:consumers",
@@ -2137,7 +2141,7 @@ def binding_create(request: HttpRequest) -> HttpResponse:
     return _create(
         request,
         form_class=BindingForm,
-        title="New consumer binding",
+        title="Yeni consumer bağı",
         resource_type="binding",
         permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
         success_url="console:consumers",

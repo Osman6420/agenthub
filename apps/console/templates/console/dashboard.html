@@ -1,22 +1,21 @@
 {% extends "console/base.html" %}
-{% block title %}Dashboard · AgentHub Console{% endblock %}
+{% block title %}Genel bakış · AgentHub{% endblock %}
 {% block content %}
 <div class="card">
-  <h2>Dashboard
-    {% if is_platform_admin %}<span class="badge">platform admin · all tenants</span>
-    {% else %}<span class="badge">scoped to your organizations</span>{% endif %}
-  </h2>
+  <h1>Genel bakış</h1>
+  <p class="muted">{% if is_platform_admin %}Platform yöneticisi olarak tüm organizasyonları görüyorsunuz.{% else %}Yalnız üyesi olduğunuz organizasyonların verileri gösteriliyor.{% endif %}</p>
+  <h2 class="sr-only">Kapsamdaki kayıt sayıları</h2>
   <div class="tiles">
-    <div class="tile"><div class="n">{{ counts.organizations }}</div><div class="l">Organizations</div></div>
-    <div class="tile"><div class="n">{{ counts.projects }}</div><div class="l">Projects</div></div>
-    <div class="tile"><div class="n">{{ counts.scenarios }}</div><div class="l">Scenarios</div></div>
-    <div class="tile"><div class="n">{{ counts.artifacts }}</div><div class="l">Artifacts</div></div>
-    <div class="tile"><div class="n">{{ counts.releases }}</div><div class="l">Releases</div></div>
-    <div class="tile"><div class="n">{{ counts.consumers }}</div><div class="l">Consumers</div></div>
+    <div class="tile"><div class="n">{{ counts.organizations }}</div><div class="l">Organizasyon</div></div>
+    <div class="tile"><div class="n">{{ counts.projects }}</div><div class="l">Proje</div></div>
+    <div class="tile"><div class="n">{{ counts.scenarios }}</div><div class="l">Senaryo</div></div>
+    <div class="tile"><div class="n">{{ counts.artifacts }}</div><div class="l">Artifact</div></div>
+    <div class="tile"><div class="n">{{ counts.releases }}</div><div class="l">Release</div></div>
+    <div class="tile"><div class="n">{{ counts.consumers }}</div><div class="l">Consumer</div></div>
   </div>
 </div>
-<div class="card muted" style="font-size:13px">
-  Sprint 1 — read-only, tenant-scoped catalog. Editing, releases, and runs arrive in
-  later sprints. Django Admin is not the management surface (see ADR-0001).
+<div class="notice">
+  Bu konsol tenant kapsamını ve sunucu tarafındaki rol kontrollerini uygular. Görünmeyen bir kaynak
+  için UI durumuna güvenilmez; tüm işlemler backend tarafından yeniden yetkilendirilir.
 </div>
 {% endblock %}

@@ -85,6 +85,9 @@ P9.4 treats release manifest roles/refs and artifact JSON as untrusted stored da
 parsed with bounded syntax, resolved inside the scenario tenant, serialized canonically and escaped
 by the template. Builder organization/draft hints are validated against server-side membership
 scope before entering bootstrap data; they grant no new API capability. Copy behavior is local-only.
+P9.5 changes presentation and operator guidance only. Visible read-only/disabled state remains
+non-authoritative; server authorization is unchanged. Focus/status treatment adds no client-supplied
+HTML, and all stored labels continue through Django/React escaping.
 
 ## Residual risks
 
@@ -102,3 +105,5 @@ P9.3 requires profile/secret redaction, invalid/cross-tenant source IDs, exact-g
 contract/preview payloads, schedule interval/mode/target checks, queue failure and ID-only payloads.
 P9.4 requires malformed manifest refs, cross-tenant artifact/deep-link IDs, stored HTML/script in
 artifact JSON, missing drafts, read-only users and frontend bootstrap fallbacks.
+P9.5 requires authenticated semantic-shell rendering, named responsive tables, Turkish empty/action
+states and regression coverage for existing release/tool/run authorization flows.

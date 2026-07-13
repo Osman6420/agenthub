@@ -13,7 +13,8 @@
 <div class="card table-card">
   {% if scenarios %}
   <div class="table-scroll"><table>
-    <thead><tr><th>Organizasyon / Proje</th><th>Senaryo</th><th>Tür</th><th>Durum</th><th></th></tr></thead>
+    <caption class="sr-only">Yetki kapsamındaki senaryolar</caption>
+    <thead><tr><th>Organizasyon / Proje</th><th>Senaryo</th><th>Tür</th><th>Durum</th><th>İşlem</th></tr></thead>
     <tbody>
       {% for scenario in scenarios %}
       <tr>

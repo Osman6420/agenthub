@@ -84,7 +84,15 @@ effective retrieval scope in one place. The owner accepted these product directi
   accepts a server-validated organization/draft deep link without widening list/API scope.
 - [x] P9.4: operators can copy a bounded workflow DSL guide derived from compiler constants; the
   guide and artifact display are read-only and create no alternate publish/validation path.
-- [ ] P9.5 criteria are refined before the increment begins.
+- [x] P9.5: authenticated pages provide a keyboard-visible skip link, persistent focus-visible
+  treatment, semantic main target and announced status messages without changing authorization.
+- [x] P9.5: primary data tables remain horizontally usable at narrow widths, carry an accessible
+  name, and row actions remain keyboard-operable with non-color status text.
+- [x] P9.5: dashboard, generic catalog/create, release, run and tool-approval surfaces use coherent
+  Turkish-first labels and empty states; protocol identifiers such as artifact/release/consumer
+  remain recognizable where translation would obscure the domain contract.
+- [x] P9.5: automated rendering/regression checks and a documented responsive/accessibility review
+  checklist pass; final visual/operator acceptance remains a named manual review.
 
 ## Affected components
 
@@ -100,7 +108,7 @@ effective retrieval scope in one place. The owner accepted these product directi
 
 ## Data impact
 
-P9.1–P9.4 add no schema. P9.2 writes ordinary document/version/set-membership and index-version
+P9.1–P9.5 add no schema. P9.2 writes ordinary document/version/set-membership and index-version
 rows. P9.3 writes existing immutable contract/source, schedule/target and sync-run rows through
 governed services.
 
@@ -125,11 +133,11 @@ synthetic content, credentials, input values and bearer tokens must not enter lo
 
 ## Migration impact
 
-None for P9.1–P9.4.
+None for P9.1–P9.5.
 
 ## Dependencies
 
-No new production dependency for P9.1–P9.4. Later visual work must reuse the existing frontend stack or
+No new production dependency for P9.1–P9.5. Later visual work must reuse the existing frontend stack or
 pass the repository dependency approval gate.
 
 ## Implementation steps
@@ -144,7 +152,8 @@ pass the repository dependency approval gate.
    run-now and safe-status controls over the existing audited backend.
 7. Implement P9.4 as scenario-centred release/artifact DSL visibility, safe artifact detail, a
    copyable compiler-aligned DSL guide and scoped builder deep links.
-8. Refine and implement P9.5.
+8. Implement P9.5 as a Turkish-first terminology, keyboard/focus, named-table and responsive
+   builder/console pass; retain owner browser acceptance as explicit manual review.
 
 ## Test plan
 
@@ -192,7 +201,8 @@ the new screen are ordinary audited domain rows and remain manageable from legac
 
 ## Status
 
-In progress — P9.1–P9.4 implemented and verified; P9.5 planned.
+Implementation complete — P9.1–P9.5 implemented and automated verification passed. Final owner
+browser/operator acceptance remains explicitly manual.
 
 ## Completion criteria
 

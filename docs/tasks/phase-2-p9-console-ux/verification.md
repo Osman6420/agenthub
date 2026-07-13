@@ -33,6 +33,11 @@
 | P9.4 full SQLite | `pytest -q --basetemp=.pytest-tmp-p9-4-full` | Pass | 585 passed, 25 skipped | PostgreSQL-only tests skipped as declared |
 | P9.4 focused PostgreSQL | `pytest test_scenario_artifact_console.py test_scenario_relationship_console.py -q --create-db` | Pass | 10 passed | Tenant scope and relationship compatibility on PostgreSQL |
 | P9.4 frontend | `npm --prefix frontend run typecheck`; `npm --prefix frontend test -- --run` | Pass | Typecheck; 12 tests passed | Includes initial organization/draft deep link |
+| P9.5 repository gates | `ruff format --check .`; `ruff check .`; `mypy apps config`; Django/migration checks | Pass | 346 files; 345 typed sources; 0 issues; no changes | Presentation-only increment |
+| P9.5 focused SQLite | `pytest test_console_accessibility.py test_console.py test_release_actions.py test_tool_approval_views.py test_scenario_artifact_console.py -q` | Pass | 29 passed | Semantic shell, Turkish render and operation compatibility |
+| P9.5 full SQLite | `pytest -q --basetemp=.pytest-tmp-p9-5-final` | Pass | 591 passed, 25 skipped | PostgreSQL-only tests skipped as declared |
+| P9.5 focused PostgreSQL | `pytest test_console_accessibility.py test_release_actions.py test_tool_approval_views.py apps/agents/tests/test_console.py -q --create-db` | Pass | 19 passed | Render plus release/tool/run compatibility |
+| P9.5 frontend | `npm --prefix frontend run typecheck`; `npm --prefix frontend test -- --run`; `npm --prefix frontend run build` | Pass | Typecheck; 12 tests; 202 modules built | Turkish/responsive builder bundle |
 
 ## Acceptance criteria mapping
 
@@ -46,6 +51,8 @@
   no-egress REST mapping preview, bounded schedules, run-now and role-gated automation.
 - The scenario/artifact workspace resolves exact immutable release pins inside the tenant, renders
   bounded escaped canonical JSON, and opens only server-validated builder organization/draft links.
+- The console and builder expose Turkish-first operational wording, keyboard skip/focus treatment,
+  named scrollable tables and a stacked narrow-screen builder without changing server contracts.
 
 ## Security requirement mapping
 
@@ -62,6 +69,8 @@ P9.3 verifies author source/run/stage controls, release-manager-only automatic p
 denial; exact-set profile grants and bound scenario targets are revalidated server-side.
 P9.4 is read-only; artifact IDs and builder query parameters are scoped server-side. Foreign
 artifact/draft/organization identifiers return 404 without widening the builder API list scope.
+P9.5 changes presentation only; existing release/tool/run authorization suites remain green on
+SQLite and PostgreSQL.
 
 ## Cross-tenant tests
 
@@ -96,15 +105,16 @@ the scenario list/base shell presentation. Public gateway/MCP contracts are unch
 
 ## Checks not run
 
-- Browser-assisted visual/accessibility smoke was not run; only template rendering and responsive
-  CSS inspection are verified.
-- Full PostgreSQL suite was not rerun because P9.1 changes only console presentation/querying;
-  focused PostgreSQL authorization tests passed.
+- Browser-assisted visual/accessibility smoke was not run because the repository has no approved
+  browser automation dependency/tool. Template rendering, semantic assertions, responsive CSS
+  inspection and frontend build passed.
+- Full PostgreSQL suite was not rerun; focused P9.5 operation/render tests and earlier connector/RLS
+  suites passed on PostgreSQL.
 
 ## Remaining risks
 
-Legacy pages remain partly English until P9.5. Configured-vs-release-effective state still
-requires operator understanding despite the explanatory notice.
+Protocol/domain identifiers remain intentionally English where translation would obscure contracts.
+Configured-vs-release-effective state still requires operator understanding despite the explanatory notice.
 Bulk storage is intentionally per-file, not transactionally atomic across object storage; a
 mid-batch storage failure preserves completed files and reports the partial count. Queue dispatch
 is at-least-once and the worker's existing-index guard prevents ordinary duplicate builds, but a
@@ -117,9 +127,18 @@ PostgreSQL regression was not rerun; focused connector/RLS and P9.4 tenant cover
 
 ## Human review required
 
-Visual hierarchy, Turkish terminology, configured-vs-effective explanation, keyboard/focus behavior
-and narrow-screen UX require browser review.
+Owner browser acceptance remains required on the served console:
+
+- 390 px: sidebar navigation scroll, tables scroll horizontally, actions wrap, and builder palette/
+  canvas/config stack without hiding controls.
+- 900 px and 1440 px: hierarchy, line lengths, table density and scenario configured-vs-effective
+  explanation remain legible.
+- Keyboard-only: the skip link reaches `main`, focus is always visible, forms/buttons/tables are
+  reachable in a logical order, and status/error messages are announced by the target screen reader.
+- Turkish/domain terminology: translations are understandable to operators while artifact,
+  release, consumer, workflow and protocol identifiers remain unambiguous.
 
 ## Final status
 
-Verified for P9.1–P9.4; overall P9 remains In progress pending P9.5.
+P9.1–P9.5 implementation and automated verification complete. Final owner browser/operator
+acceptance remains open and is the only P9 closeout item.

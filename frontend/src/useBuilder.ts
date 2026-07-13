@@ -164,21 +164,21 @@ export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): B
     const result = await api.diagnostics(draft.id, body as unknown as Record<string, unknown>);
     setDiagnostics(result);
     applyErrorHighlights(result);
-    setStatus(result.ok ? "Valid workflow" : "Validation found problems");
+    setStatus(result.ok ? "Workflow geçerli" : "Doğrulama sorun buldu");
   }, [api, applyErrorHighlights, body, draft.id]);
 
   const save = useCallback(async () => {
     if (readOnly) return;
     await api.updateDraft(draft.id, { body: body as unknown as Record<string, unknown> });
     setSavedCanonical(canonicalJson(body));
-    setStatus("Draft saved");
+    setStatus("Draft kaydedildi");
   }, [api, body, draft.id, readOnly]);
 
   const publish = useCallback(async () => {
     if (readOnly) return;
     if (isDirty) await save();
     const result = await api.publish(draft.id);
-    setStatus(`Published ${result.logical_id} v${result.version}`);
+    setStatus(`Yayımlandı: ${result.logical_id} v${result.version}`);
   }, [api, draft.id, isDirty, readOnly, save]);
 
   return {

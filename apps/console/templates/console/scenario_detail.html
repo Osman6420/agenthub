@@ -36,7 +36,7 @@
 
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Sürüm geçmişi</p><h2>Release'ler</h2></div><a href="{% url 'console:releases' %}">Tüm release operasyonları →</a></div>
-  {% if release_rows %}<div class="table-scroll"><table><thead><tr><th>Release</th><th>Durum</th><th>Runtime</th><th>Artifact rolleri</th><th>Oluşturulma</th></tr></thead><tbody>{% for item in release_rows %}<tr><td>#{{ item.release.id }}</td><td><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></td><td>{{ item.release.runtime_version }}</td><td>{{ item.artifacts|length }}</td><td>{{ item.release.created_at }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">Bu senaryo için release yok.</p>{% endif %}
+  {% if release_rows %}<div class="table-scroll"><table><caption class="sr-only">Senaryonun release geçmişi</caption><thead><tr><th>Release</th><th>Durum</th><th>Runtime</th><th>Artifact rolleri</th><th>Oluşturulma</th></tr></thead><tbody>{% for item in release_rows %}<tr><td>#{{ item.release.id }}</td><td><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></td><td>{{ item.release.runtime_version }}</td><td>{{ item.artifacts|length }}</td><td>{{ item.release.created_at }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">Bu senaryo için release yok.</p>{% endif %}
 </section>
 
 <section class="card">
@@ -101,7 +101,7 @@
 
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Çağıran sistemler</p><h2>Consumer–senaryo bağları</h2></div><a href="{% url 'console:consumers' %}">Consumer yönetimi →</a></div>
-  {% if consumer_bindings %}<div class="table-scroll"><table><thead><tr><th>Consumer</th><th>Protokol</th><th>Yetkiler</th><th>Durum</th></tr></thead><tbody>
+  {% if consumer_bindings %}<div class="table-scroll"><table><caption class="sr-only">Senaryoya bağlı consumer'lar</caption><thead><tr><th>Consumer</th><th>Protokol</th><th>Yetkiler</th><th>Durum</th></tr></thead><tbody>
     {% for binding in consumer_bindings %}<tr><td><strong>{{ binding.consumer.name }}</strong><br><span class="muted mono">{{ binding.consumer.subject }}</span></td><td>{{ binding.consumer.get_protocol_display }}</td><td>{% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</td><td><span class="badge {{ binding.status }}">{{ binding.get_status_display }}</span></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="muted">Bu senaryoyu çağırmaya yetkili consumer yok.</p>{% endif %}
 </section>

@@ -99,11 +99,11 @@ export function Editor({
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "78vh" }}>
       <Toolbar builder={builder} draftName={draft.name} busy={busy} onAction={runAction} />
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+      <div className="ah-builder-editor-body">
         <Palette schema={schema} disabled={builder.readOnly} onAdd={builder.addNode} />
         <div
           ref={wrapper}
-          style={{ flex: 1, minWidth: 0 }}
+          className="ah-builder-canvas"
           onDrop={onDrop}
           onDragOver={(e) => e.preventDefault()}
         >

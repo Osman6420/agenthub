@@ -48,15 +48,16 @@ The top navigation exposes the tenant-scoped management surfaces:
 
 | Surface | Purpose |
 | --- | --- |
-| **Dashboard** | Scoped counts of orgs, projects, scenarios, consumers, artifacts, releases |
-| **Organizations** | Tenants (platform admin creates them) |
-| **Projects** | Projects within an organization |
-| **Scenarios** | RAG / workflow / agent scenarios + their stable aliases |
-| **Artifacts** | Immutable, versioned, checksummed definitions (contracts, prompts, policies, workflows, tools, agents, eval suites) |
-| **Releases** | Compiled `ScenarioRelease`s; run eval, promote, rollback, start/stop canary |
-| **Builder** | The visual workflow builder (Sprint 11) — see §4 |
-| **Agent runs** | Redacted, tenant-scoped agent run list + trace; cancel |
-| **Consumers** | API consumers and their capability bindings |
+| **Genel bakış** | Kapsamdaki organizasyon, proje, senaryo, consumer, artifact ve release sayıları |
+| **Organizasyonlar** | Tenant'lar; yalnız platform admin oluşturur |
+| **Projeler** | Organizasyon içindeki AI projeleri |
+| **Senaryolar** | RAG / workflow / agent senaryoları ve stable alias'ları |
+| **Artifact'ler** | Immutable, versioned ve checksummed tanımlar |
+| **Release'ler** | Derlenmiş release'ler; eval, aktivasyon, rollback ve canary işlemleri |
+| **DSL / grafik** | Görsel workflow builder — bkz. §4 |
+| **Çalıştırmalar** | Redacted, tenant-scoped agent run listesi ve iz kaydı |
+| **Consumer'lar** | API consumer'ları ve capability bağları |
+| **Tool onayları** | Onay bekleyen yüksek riskli tool çağrıları |
 
 The console is moving to a Turkish-first, scenario-centred hierarchy. Open **Senaryolar** and then
 **Aç** to see one scenario's organization/project path, aliases, active release, bound document
@@ -64,7 +65,11 @@ sets, latest index readiness and consumer access in one page. An authorized auth
 sets and grant/revoke retrieval there. These are two distinct gates: a consumer must be bound to
 the scenario, and it must separately have retrieval access to each document set. Set-binding
 changes require a new release compile; consumer grant changes are enforced at retrieval time.
-| **Tool approvals** | Pending high-risk tool invocations awaiting an approver decision |
+
+Klavye kullanıcıları sayfanın başındaki **Ana içeriğe geç** bağlantısıyla navigasyonu atlayabilir.
+Odak göstergesi tüm link/form kontrollerinde görünürdür; geniş tablolar dar ekranda yatay kaydırılır.
+Builder 760 px altında palette, canvas ve config panelini dikey sıraya alır. Bu davranışların son
+görsel kabulü hedef tarayıcı ve ekran ölçeklerinde deployment öncesi manuel yapılmalıdır.
 
 ### Senaryo release ve artifact görünürlüğü
 

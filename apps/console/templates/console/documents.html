@@ -12,7 +12,7 @@
 {% endif %}
 
 <div class="card table-card">
-  {% if sets %}<div class="table-scroll"><table><thead><tr><th>Organizasyon</th><th>Doküman seti</th><th>Durum</th><th>Sürüm</th><th></th></tr></thead><tbody>
+  {% if sets %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki doküman setleri</caption><thead><tr><th>Organizasyon</th><th>Doküman seti</th><th>Durum</th><th>Sürüm</th><th>İşlem</th></tr></thead><tbody>
   {% for s in sets %}<tr><td>{{ s.org }}</td><td><strong>{{ s.name }}</strong><div class="mono muted">{{ s.logical_id }}</div></td><td><span class="badge {{ s.status }}">{{ s.status }}</span></td><td>{{ s.versions }}</td><td class="row-action"><a class="button secondary" href="{% url 'console:document_set_detail' s.id %}">Çalışma alanını aç</a></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">Yetki kapsamınızda doküman seti yok.</div>{% endif %}
 </div>
@@ -20,7 +20,7 @@
 <details class="card">
   <summary><strong>Gelişmiş: tekil doküman envanteri</strong></summary>
   <p class="muted">Bu görünüm saklama ve silme operasyonları içindir. Yeni içerik eklemek için doküman seti çalışma alanını kullanın.</p>
-  {% if documents %}<div class="table-scroll"><table><thead><tr><th>Organizasyon</th><th>ID / başlık</th><th>Sürüm</th><th>Durum</th><th></th></tr></thead><tbody>
+  {% if documents %}<div class="table-scroll"><table><caption class="sr-only">Tekil doküman envanteri</caption><thead><tr><th>Organizasyon</th><th>ID / başlık</th><th>Sürüm</th><th>Durum</th><th>İşlem</th></tr></thead><tbody>
   {% for d in documents %}<tr><td>{{ d.org }}</td><td><span class="mono">{{ d.logical_id }}</span><div>{{ d.title }}</div></td><td>v{{ d.version }}</td><td>{% if d.tombstoned %}<span class="badge disabled">silinmiş</span>{% else %}<span class="badge active">aktif</span>{% endif %}</td><td class="row-action">{% if d.can_write and not d.tombstoned %}<form class="inline" method="post" action="{% url 'console:document_soft_delete' d.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Soft-delete</button></form>{% elif d.tombstoned and d.can_purge %}<form method="post" action="{% url 'console:document_purge' d.id %}">{% csrf_token %}<label class="muted">Kalıcı silmek için <strong>{{ d.logical_id }}</strong> yazın <input name="confirm_logical_id" required autocomplete="off"></label><button class="button danger" type="submit">Kalıcı sil</button></form>{% else %}—{% endif %}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="muted">Tekil doküman yok.</p>{% endif %}
 </details>

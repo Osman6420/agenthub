@@ -2,13 +2,14 @@
 {% block title %}{{ title }} · AgentHub Console{% endblock %}
 {% block content %}
 <div class="card">
-  <h2>{{ title }}</h2>
+  <h1>{{ title }}</h1>
   {% if rows %}
-  <table>
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Bekleyen tool onayları</caption>
     <thead>
       <tr>
-        <th>ID</th><th>Organization</th><th>Invocation</th><th>Tool</th>
-        <th>Risk</th><th>Expires</th><th>Actions</th>
+        <th>ID</th><th>Organizasyon</th><th>Çağrı</th><th>Tool</th>
+        <th>Risk</th><th>Sona erme</th><th>İşlemler</th>
       </tr>
     </thead>
     <tbody>
@@ -25,24 +26,24 @@
           <form class="inline" method="post" action="{% url 'console:tool_approval_decide' r.id %}">
             {% csrf_token %}
             <input type="hidden" name="decision" value="approve">
-            <button class="link" type="submit">Approve</button>
+            <button class="link" type="submit">Onayla</button>
           </form>
           <form class="inline" method="post" action="{% url 'console:tool_approval_decide' r.id %}">
             {% csrf_token %}
             <input type="hidden" name="decision" value="reject">
-            <button class="link" type="submit">Reject</button>
+            <button class="link" type="submit">Reddet</button>
           </form>
           {% endif %}
           <form class="inline" method="post" action="{% url 'console:tool_invocation_cancel' r.invocation %}">
-            {% csrf_token %}<button class="link" type="submit">Cancel</button>
+            {% csrf_token %}<button class="link" type="submit">İptal et</button>
           </form>
         </td>
       </tr>
       {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% else %}
-  <p class="muted">No pending tool approvals in your scope.</p>
+  <p class="muted">Yetki kapsamınızda bekleyen tool onayı yok.</p>
   {% endif %}
 </div>
 {% endblock %}

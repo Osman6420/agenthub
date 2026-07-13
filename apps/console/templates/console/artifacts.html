@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">Immutable registry</p><h1>Artifact'ler</h1><p class="muted">Artifact'ler backend yapı taşlarıdır; aktif kullanım senaryo release'i içindeki exact pin ile belirlenir.</p></div></div>
 <div class="card table-card">
-  {% if rows %}<div class="table-scroll"><table><thead><tr><th>Organizasyon</th><th>Tür</th><th>Artifact</th><th>Checksum</th><th></th></tr></thead><tbody>
+  {% if rows %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki artifact sürümleri</caption><thead><tr><th>Organizasyon</th><th>Tür</th><th>Artifact</th><th>Checksum</th><th>İşlem</th></tr></thead><tbody>
   {% for artifact in rows %}<tr><td>{{ artifact.organization.slug }}</td><td><span class="badge">{{ artifact.get_type_display }}</span></td><td><strong>{{ artifact.logical_id }}</strong> · v{{ artifact.version }}</td><td class="mono">{{ artifact.checksum|slice:':12' }}</td><td class="row-action"><a class="button secondary" href="{% url 'console:artifact_detail' artifact.id %}">DSL / detay</a></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">Yetki kapsamınızda artifact yok.</div>{% endif %}
 </div>

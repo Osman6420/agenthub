@@ -2,13 +2,14 @@
 {% block title %}{{ title }} · AgentHub Console{% endblock %}
 {% block content %}
 <div class="card">
-  <h2>{{ title }}</h2>
+  <h1>{{ title }}</h1>
   {% if rows %}
-  <table>
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Agent çalıştırmaları</caption>
     <thead>
       <tr>
-        <th>Run</th><th>Organization</th><th>Scenario</th><th>Status</th>
-        <th>Steps</th><th>Tool calls</th><th>Error</th><th>Created</th>
+        <th>Çalıştırma</th><th>Organizasyon</th><th>Senaryo</th><th>Durum</th>
+        <th>Adım</th><th>Tool çağrısı</th><th>Hata</th><th>Oluşturulma</th>
       </tr>
     </thead>
     <tbody>
@@ -25,9 +26,9 @@
       </tr>
       {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% else %}
-  <p class="muted">No agent runs in your scope.</p>
+  <p class="muted">Yetki kapsamınızda agent çalıştırması yok.</p>
   {% endif %}
 </div>
 {% endblock %}

@@ -3,19 +3,19 @@
 {% block content %}
 <div class="card login">
   <p class="eyebrow">AgentHub</p>
-  <h2>Operatör girişi</h2>
+  <h1>Operatör girişi</h1>
   <p class="muted" style="font-size:13px">
     {% if ldap_enabled %}Kurumsal dizin (LDAP) bilgilerinizle giriş yapın.
     {% else %}Bu ortamda LDAP kapalıdır; yerel hesabınızla giriş yapın.{% endif %}
   </p>
   {% if form.errors %}
-    <p style="color:#b42318">Kullanıcı adı veya parola geçersiz.</p>
+    <p class="msg error" role="alert">Kullanıcı adı veya parola geçersiz.</p>
   {% endif %}
   <form method="post">
     {% csrf_token %}
-    <label>Kullanıcı adı</label>
+    <label for="id_username">Kullanıcı adı</label>
     {{ form.username }}
-    <label>Parola</label>
+    <label for="id_password">Parola</label>
     {{ form.password }}
     <input type="hidden" name="next" value="{{ next }}">
     <button type="submit">Giriş yap</button>

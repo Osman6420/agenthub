@@ -20,8 +20,8 @@ export function NodeConfigPanel({
 }) {
   if (!node) {
     return (
-      <aside style={panelStyle}>
-        <div style={{ color: "#8b95a7" }}>Select a node to configure it.</div>
+      <aside className="ah-builder-config" style={panelStyle}>
+        <div style={{ color: "#8b95a7" }}>Yapılandırmak için bir node seçin.</div>
       </aside>
     );
   }
@@ -33,12 +33,12 @@ export function NodeConfigPanel({
   };
 
   return (
-    <aside style={panelStyle}>
+    <aside className="ah-builder-config" style={panelStyle}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>{node.data.nodeType}</div>
       <div style={{ color: "#8b95a7", fontSize: 12, marginBottom: 12 }}>id: {node.id}</div>
 
       {typeSchema && typeSchema.fields.length === 0 && (
-        <div style={{ color: "#8b95a7", fontSize: 13 }}>This node has no configuration.</div>
+        <div style={{ color: "#8b95a7", fontSize: 13 }}>Bu node için yapılandırma yok.</div>
       )}
 
       {typeSchema?.fields.map((field) => {
@@ -99,7 +99,7 @@ export function NodeConfigPanel({
 
       {!disabled && (
         <button type="button" onClick={onRemove} style={removeStyle}>
-          Remove node
+          Node'u kaldır
         </button>
       )}
     </aside>
@@ -115,8 +115,6 @@ function safeJson(text: string): unknown {
 }
 
 const panelStyle: React.CSSProperties = {
-  width: 280,
-  borderLeft: "1px solid #262b36",
   padding: 14,
   overflowY: "auto",
 };

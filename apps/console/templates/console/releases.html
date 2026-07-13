@@ -2,13 +2,14 @@
 {% block title %}{{ title }} · AgentHub Console{% endblock %}
 {% block content %}
 <div class="card">
-  <h2>{{ title }}</h2>
+  <h1>{{ title }}</h1>
   {% if rows %}
-  <table>
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Yetki kapsamındaki release'ler</caption>
     <thead>
       <tr>
-        <th>ID</th><th>Organization</th><th>Scenario</th><th>Status</th>
-        <th>Runtime</th><th>Manifest</th><th>Actions</th>
+        <th>ID</th><th>Organizasyon</th><th>Senaryo</th><th>Durum</th>
+        <th>Runtime</th><th>Manifest</th><th>İşlemler</th>
       </tr>
     </thead>
     <tbody>
@@ -23,36 +24,37 @@
         <td>
           {% if r.can_eval %}
           <form class="inline" method="post" action="{% url 'console:release_run_eval' r.id %}">
-            {% csrf_token %}<button class="link" type="submit">Run eval</button>
+            {% csrf_token %}<button class="link" type="submit">Eval çalıştır</button>
           </form>
           {% endif %}
           {% if r.can_promote %}
           <form class="inline" method="post" action="{% url 'console:release_promote' r.id %}">
-            {% csrf_token %}<button class="link" type="submit">Promote</button>
+            {% csrf_token %}<button class="link" type="submit">Aktif et</button>
           </form>
           {% endif %}
-          {% if r.can_canary %}<a href="{% url 'console:canary_start' r.id %}">Canary</a>{% endif %}
+          {% if r.can_canary %}<a href="{% url 'console:canary_start' r.id %}">Canary başlat</a>{% endif %}
           {% if r.can_rollback %}
           <form class="inline" method="post" action="{% url 'console:release_rollback' r.id %}">
-            {% csrf_token %}<button class="link" type="submit">Rollback</button>
+            {% csrf_token %}<button class="link" type="submit">Geri al</button>
           </form>
           {% endif %}
         </td>
       </tr>
       {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% else %}
-  <p class="muted">No releases in your scope.</p>
+  <p class="muted">Yetki kapsamınızda release yok.</p>
   {% endif %}
 </div>
 
 {% if canaries %}
 <div class="card">
-  <h2>Active canaries</h2>
-  <table>
+  <h2>Aktif canary yönlendirmeleri</h2>
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Aktif canary yönlendirmeleri</caption>
     <thead>
-      <tr><th>ID</th><th>Scenario</th><th>Consumer</th><th>Release</th><th>Expires</th><th></th></tr>
+      <tr><th>ID</th><th>Senaryo</th><th>Consumer</th><th>Release</th><th>Sona erme</th><th>İşlem</th></tr>
     </thead>
     <tbody>
       {% for c in canaries %}
@@ -65,14 +67,14 @@
         <td>
           {% if c.can_stop %}
           <form class="inline" method="post" action="{% url 'console:canary_stop' c.id %}">
-            {% csrf_token %}<button class="link" type="submit">Stop</button>
+            {% csrf_token %}<button class="link" type="submit">Durdur</button>
           </form>
           {% endif %}
         </td>
       </tr>
       {% endfor %}
     </tbody>
-  </table>
+  </table></div>
 </div>
 {% endif %}
 {% endblock %}

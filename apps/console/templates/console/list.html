@@ -2,23 +2,24 @@
 {% block title %}{{ title }} · AgentHub Console{% endblock %}
 {% block content %}
 <div class="card">
-  <h2>{{ title }}</h2>
+  <h1>{{ title }}</h1>
   {% if create_links %}
   <div class="actions">
     {% for link in create_links %}<a href="{% url link.url %}">{{ link.label }}</a>{% endfor %}
   </div>
   {% endif %}
   {% if rows %}
-  <table>
+  <div class="table-scroll"><table>
+    <caption class="sr-only">{{ title }} tablosu</caption>
     <thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in rows %}
       <tr>{% for c in row.cols %}<td>{{ c }}</td>{% endfor %}</tr>
       {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   {% else %}
-  <p class="muted">No records in your scope.</p>
+  <p class="muted">Yetki kapsamınızda kayıt yok.</p>
   {% endif %}
 </div>
 {% endblock %}

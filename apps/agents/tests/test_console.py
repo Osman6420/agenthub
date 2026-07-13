@@ -52,7 +52,7 @@ def test_agent_run_detail_shows_redacted_trace() -> None:
     response = client.get(reverse("console:agent_run_detail", args=[str(run.public_id)]))
     assert response.status_code == 200
     body = response.content.decode()
-    assert "Trace" in body
+    assert "İz kaydı" in body
     assert "run_completed" in body
     # The raw objective must never appear in the trace view.
     assert "hello" not in body
