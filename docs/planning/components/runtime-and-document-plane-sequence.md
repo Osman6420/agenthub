@@ -141,14 +141,26 @@ deterministic remains the default and no environment-specific live endpoint was 
   unchanged (prompt is input, never authorization).
 - **Demo:** an agent runs with an authored persona/instructions instead of the raw user objective.
 
-### P7 — Parsers + OCR + connectors · WS1 M4
+### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1 IMPLEMENTED; P7.2–P7.4 gated**
 
 - `DocumentParser` interface + selected parsers (pdf/docx/xlsx→markdown), **external OCR egress**
   for image-only pages/embedded images, and upload/Confluence/generic-REST connectors. Real
   document RAG runs on `text`/markdown from P3–P4; this phase adds the richer formats.
+- **P7.1 — DONE (2026-07-13, [`phase-2-p7-parsers-ocr-connectors`](../../tasks/phase-2-p7-parsers-ocr-connectors/plan.md)):**
+  the deny-by-default `DocumentParser` interface + registry (`apps/ingestion/parsers.py`) with
+  **dependency-free stdlib parsers** (text/markdown/csv/json/html), wired into the staged build's
+  text-extraction seam. No dependency, no egress, no migration; deterministic + hermetic. Binary
+  MIME (pdf/docx/xlsx) still fails closed until P7.2.
+- **P7.2 — binary parsers (pdf/docx/xlsx):** opt-in adapters on the same interface. **Blocked on the
+  document-parser dependency approval (post comparison table).**
+- **P7.3 — external OCR** for image-only pages: shared SSRF-safe egress, profile-ID-only. **Blocked
+  on the OCR endpoint/profile sign-off.**
+- **P7.4 — Confluence + generic-REST connectors:** reuse the bounded allowlisted SSRF-safe connector
+  pattern. **Blocked on the connector-endpoint sign-off.**
 - **Approval gate:** parser dependency (post comparison table) + OCR egress endpoint + connector
   endpoints.
-- **Demo:** upload a PDF/DOCX/XLSX → parsed → embedded → retrievable, with image content OCR'd via
+- **Demo (P7.1):** a CSV/JSON/HTML document set builds a staged index and is retrievable. **Demo
+  (P7.2+):** upload a PDF/DOCX/XLSX → parsed → embedded → retrievable, with image content OCR'd via
   the owner's endpoint.
 
 ### P8 — Console UI · WS1 M5

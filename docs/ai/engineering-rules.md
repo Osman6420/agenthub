@@ -268,10 +268,15 @@ personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff
 (live chat), P2 (content plane & storage), P3 (real embeddings + staged blue/green indexing), and P4
 (document-ACL retrieval + FORCE RLS + pointer-flip promotion — the security core that unlocks
 serving real, ACL-scoped tenant corpora), P5 (real retrieve/generate wired into the agent loop
-and workflow generate/retrieve nodes + per-node prompt/model binding), and P6 (authored, governed
-agent system prompt) are verified; continue at P7 (parsers + OCR + connectors — carries the
-document-parser dependency approval + OCR/Confluence/REST egress sign-off gates). Its M0 architecture
-decisions are accepted as ADR-0002–0005, with the
+and workflow generate/retrieve nodes + per-node prompt/model binding), P6 (authored, governed
+agent system prompt), and **P7.1** (the deny-by-default `DocumentParser` interface + registry
+`apps/ingestion/parsers.py` with **dependency-free stdlib parsers** — text/markdown/csv/json/html —
+wired into the staged-build text-extraction seam; bounded output, counts-only telemetry, content-free
+fail-closed errors; no dependency/egress/migration; binary MIME pdf/docx/xlsx still fails closed) are
+verified; continue at **P7.2** (opt-in pdf/docx/xlsx parser adapters — **blocked on the
+document-parser dependency approval**, post comparison table), then **P7.3** (external OCR egress) and
+**P7.4** (Confluence/generic-REST connectors) — **both blocked on their environment-specific egress
+sign-off**. Its M0 architecture decisions are accepted as ADR-0002–0005, with the
 remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 

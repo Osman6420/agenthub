@@ -4,8 +4,10 @@ Builds a **staged** ``IndexVersion`` (its own immutable per-version vector store
 ``DocumentVersion``s pinned into a published ``DocumentSetVersion``, using a tenant-granted
 ``EmbeddingProfile``. The result is left ``promotable`` — it is **not served to consumers**: the
 serving guardrail holds real corpora back until P4 wires deny-by-default binding + RLS and the
-pointer-flip promotion. Embedding runs over ``text``/``markdown`` bytes; richer formats (pdf/docx/
-xlsx via parsers, OCR) arrive in P7.
+pointer-flip promotion. Text extraction runs through the deny-by-default ``apps.ingestion.parsers``
+seam (P7.1: text/markdown/csv/json/html via stdlib parsers); richer binary formats (pdf/docx/xlsx
+via opt-in adapters, external OCR) plug into that same seam under their P7.2+ dependency/egress
+approval.
 
 The embedder is the deterministic default unless ``RUNTIME_EMBEDDING_PROVIDER`` selects the real
 opt-in client; either way the vector dimension must equal the profile's declared dimension (no
@@ -32,6 +34,7 @@ from apps.ingestion.models import (
     IndexVersion,
     TenantEmbeddingProfileGrant,
 )
+from apps.ingestion.parsers import ParserError, parse_document
 from apps.ingestion.pipeline import CHUNKERS, PipelineError
 from apps.ingestion.vector_store import (
     VectorRow,
@@ -44,7 +47,6 @@ from apps.ingestion.vector_store import (
 # Bounds so one build cannot exhaust resources.
 _MAX_DOCUMENTS = 5_000
 _MAX_CHUNKS = 200_000
-_EMBEDDABLE_MIME = frozenset({"text/plain", "text/markdown"})
 
 
 class StagedBuildError(RuntimeError):
@@ -165,13 +167,15 @@ def _embed_into_store(
         "ordinal", "id"
     ):
         version = membership.document_version
-        if version.mime_type not in _EMBEDDABLE_MIME:
-            raise StagedBuildError("UNSUPPORTED_MIME_FOR_EMBEDDING")
+        # Deny-by-default parse: only an allowlisted MIME parser runs; the document is untrusted
+        # data. Unsupported MIME (e.g. pdf/docx/xlsx before their P7.2 adapter) fails closed.
         try:
-            text = store.get(version.object_key).decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise StagedBuildError("DOCUMENT_NOT_UTF8") from exc
-        chunks = chunk_fn(text)  # type: ignore[operator]
+            parsed = parse_document(version.mime_type, store.get(version.object_key))
+        except ParserError as exc:
+            if exc.code == "PARSER_UNSUPPORTED":
+                raise StagedBuildError("UNSUPPORTED_MIME_FOR_EMBEDDING") from exc
+            raise StagedBuildError("DOCUMENT_PARSE_FAILED") from exc
+        chunks = chunk_fn(parsed.text)  # type: ignore[operator]
         rows: list[VectorRow] = []
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]

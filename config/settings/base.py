@@ -217,6 +217,7 @@ DOCUMENTS_ALLOWED_MIME_TYPES = env.list(
         "text/plain",
         "text/markdown",
         "text/csv",
+        "text/html",
         "application/json",
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
