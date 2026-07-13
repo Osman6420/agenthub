@@ -269,9 +269,9 @@ shared egress built once, a real-LLM answer shipped early) elaborates it in
 - Every new production dependency and every new external egress needs **explicit owner
   approval + supply-chain + threat-model review** before implementation. WS1 decision
   (2026-07-12): **no `openai` dependency** for embeddings — the client reuses the Sprint 9
-  SSRF-safe stdlib transport. Parser dependencies and the OCR API contract are approved. P7.4 is
-  documentation-only: Confluence Data Center implementation remains gated by its private-egress
-  ADR/change-boundary review and deployment sign-off; generic REST remains contract-gated (see
+  SSRF-safe stdlib transport. Parser dependencies and the OCR API contract are approved. P7.4a
+  Confluence Data Center is implemented and verified offline under ADR-0006's connector-specific
+  private policy; live deployment inputs remain gated. P7.4b generic REST remains contract-gated (see
   [`components/document-plane-plan.md`](components/document-plane-plan.md)).
 - Reuse the existing controls: tenant isolation, deny-by-default authorization,
   `secret:<name>` handling, redaction, and the append-only audit trail.
@@ -303,10 +303,10 @@ granularity + index isolation (hybrid — tenant is the physical boundary, docum
 is the logical ACL/retrieval unit; no per-scenario physical index), embedding
 dimension/reindex (platform-managed `EmbeddingProfile` + immutable blue/green reindex +
 metadata-atomic pointer-flip promotion), and the parser approach (format-specific stack behind
-a `DocumentParser` interface; final library chosen at M4). Remaining WS1 items are milestone
-decisions, not open blockers: Confluence/REST connector auth + rate/size limits, upload storage
-backend + malware/type scanning (M4), and the concrete embedding/OCR endpoints, egress
-allowlist, and secret provisioning (deployment config).
+a `DocumentParser` interface; approved libraries implemented at M4). Remaining WS1 items are
+milestone/deployment decisions, not open architecture blockers: live Confluence profile/network/CA/
+secret provisioning, the generic REST contract, upload malware/type scanning, and concrete
+embedding/OCR deployment profiles.
 
 **Workstreams 2–4 — still open (not yet decomposed):**
 
@@ -331,7 +331,7 @@ decomposed into component plans.
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | **P2–P6, P7.1–P7.3 and P8.1–P8.4 implemented + verified** — content, embeddings/indexing, effective consumer-grant ACL retrieval, FORCE RLS stores, runtime wiring, local parsers, profile-only async OCR and full console operation. Remaining: P7.4 Confluence/REST (contract + egress sign-off), broader Django-table RLS + non-owner app role. M0 = ADR-0003/0004/0005. |
+| 1 | Document plane | **P2–P6, P7.1–P7.4a and P8.1–P8.4 implemented + verified** — content, embeddings/indexing, effective consumer-grant ACL retrieval, FORCE RLS stores, runtime wiring, local parsers, profile-only async OCR, offline-verified Confluence and full console operation. Remaining: live Confluence deployment review, P7.4b generic REST contract, broader Django-table RLS + non-owner app role. M0 = ADR-0003/0004/0005/0006. |
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |

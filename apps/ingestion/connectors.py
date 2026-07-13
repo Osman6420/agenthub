@@ -121,7 +121,18 @@ class S3Connector:
         return [RawDocument(uri=f"s3://{bucket}/{key}", content=content)]
 
 
-CONNECTORS: dict[str, type[Connector]] = {"https": HttpsConnector, "s3": S3Connector}
+class ConfluenceConnector:
+    """Prevent the legacy one-shot pipeline from bypassing governed Confluence sync lineage."""
+
+    def fetch(self, source: Source) -> list[RawDocument]:
+        raise ConnectorError("CONFLUENCE_SYNC_REQUIRED")
+
+
+CONNECTORS: dict[str, type[Connector]] = {
+    "https": HttpsConnector,
+    "s3": S3Connector,
+    "confluence_dc": ConfluenceConnector,
+}
 
 
 def get_connector(name: str) -> Connector:

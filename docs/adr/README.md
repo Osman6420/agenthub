@@ -13,3 +13,4 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 | [0003](0003-vector-storage-blue-green-per-index-version.md) | Accepted | WS1 M0 vector-store decision; composes with ADR-0004. |
 | [0004](0004-tenant-isolation-postgres-rls-connection-context.md) | Accepted | WS1 M0 PostgreSQL RLS and transaction-local tenant context. |
 | [0005](0005-shared-ssrf-safe-egress-adapter.md) | Accepted | WS1/WS5 M0 implementation contract detailing ADR-0002's shared egress mechanism; does not supersede ADR-0002. |
+| [0006](0006-confluence-private-corporate-egress.md) | Accepted | P7.4 connector-specific private corporate egress; preserves ADR-0005 public-only defaults. |

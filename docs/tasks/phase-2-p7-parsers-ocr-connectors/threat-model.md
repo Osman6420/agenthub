@@ -1,6 +1,8 @@
 # Threat Model — P7 Parsers + OCR + Connectors
 
-Scope: **P7.1–P7.3**. P7.4 connectors extend this model when approved and implemented.
+Scope: **P7.1–P7.3 plus P7.4a Confluence**. The detailed Confluence boundary is maintained in
+[`phase-2-p7-4-connectors/threat-model.md`](../phase-2-p7-4-connectors/threat-model.md). P7.4b generic
+REST remains disabled and contract-gated.
 
 ## Assets & trust boundary
 
@@ -54,4 +56,6 @@ Scope: **P7.1–P7.3**. P7.4 connectors extend this model when approved and impl
   exhaustively fuzzed; the failure mode is a controlled error, not a crash or unbounded work.
 - A live OCR deployment is unverified until concrete host, platform profile, allowlist resolution
   and injected secret are approved and exercised. CI uses an offline injected transport.
-- P7.4 connectors are not covered and remain blocked on their own contracts/egress sign-off.
+- P7.4a live Confluence deployment is unverified until its endpoint, DNS/CIDRs, CA, firewall,
+  service-account scope and injected secret pass the manual rollout review. P7.4b generic REST is
+  not covered beyond its fail-closed contract gate.

@@ -56,7 +56,12 @@ binding (multi-prompt/multi-model workflows). Phase 2 P6 added an authored, gove
 prompt**: `agent_definition` accepts an optional bounded, redaction-safe `spec.system_prompt` (data,
 not code — ≤8000 chars, no control chars) that the compiler pins into the checksummed agent config
 and `_respond` uses as the model prompt (objective fallback); it is input, never authorization (tool/
-decision/output-contract gates unchanged). Deterministic providers remain default (CI hermetic);
+decision/output-contract gates unchanged). Phase 2 P7.1–P7.2 added bounded local parsers; P7.3 added
+profile-only async OCR with durable result-before-ACK lineage; and P7.4a added governed Confluence
+Data Center snapshot ingestion under ADR-0006's connector-only private-corporate policy. Confluence
+is verified offline only; live network/CA/secret/service-account inputs remain deployment-gated and
+P7.4b generic REST remains contract-gated. P8.1–P8.4 completed the role/tenant-scoped document
+console, effective consumer grants, and elevated purge. Deterministic providers remain default (CI hermetic);
 providers plug in via
 `RUNTIME_MODEL_PROVIDER`/`RUNTIME_EMBEDDING_PROVIDER`/`RUNTIME_RETRIEVAL_PROVIDER`.)
 The repository contains
@@ -267,29 +272,14 @@ builder is being repurposed toward AI-assisted authoring. The single canonical S
 record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan is archived
 under `docs/planning/archive/`. Phase 2 is a discussion draft at
 `docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
-personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and P1
-(live chat), P2 (content plane & storage), P3 (real embeddings + staged blue/green indexing), and P4
-(document-ACL retrieval + FORCE RLS + pointer-flip promotion — the security core that unlocks
-serving real, ACL-scoped tenant corpora), P5 (real retrieve/generate wired into the agent loop
-and workflow generate/retrieve nodes + per-node prompt/model binding), P6 (authored, governed
-agent system prompt), **P7.1** (the deny-by-default `DocumentParser` interface + registry
-`apps/ingestion/parsers.py` with **dependency-free stdlib parsers** — text/markdown/csv/json/html —
-wired into the staged-build text-extraction seam; bounded output, counts-only telemetry, content-free
-fail-closed errors; no dependency/egress/migration), and **P7.2** (local `pdf`/`docx`/`xlsx` parsers
-on the same interface via **owner-approved pdfplumber + python-docx + openpyxl** — heavy imports
-deferred, parsing is in-process with **no network egress**, image-only PDFs fail closed pending P7.3
-OCR; the three permissive-licensed deps were pinned in `pyproject.toml`, `requirements.lock`
-regenerated, `pip check` clean, langgraph trio pin unchanged; **no `openai`/network dependency, no
-migration**) are verified; continue at **P7.3** (external OCR egress) and **P7.4** (Confluence/
-generic-REST connectors) — **both deferred by the owner and blocked on their environment-specific
-egress sign-off** — and **P8.1 + P8.2** (the document-plane operator console UI: server-rendered
-`/console/documents/` with a tenant-scoped document/set list, author-gated multipart upload
-re-checking `can_author_scenarios` server-side, and cross-tenant-safe soft-delete; plus a
-`/console/document-sets/<pk>/` detail page for the full set lifecycle — create set → draft version →
-add member (pins the document's current version) → publish/freeze — all audited via
-`apps.documents.services`; no dependency/egress/migration; P8.3 binding/grants + P8.4 purge UI
-planned, no gate). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
-remaining environment-specific egress and dependency approvals still enforced. See
+personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and
+P1–P6, **P7.1–P7.3**, **P7.4a**, and **P8.1–P8.4** are implemented and verified. P7.4a provides
+immutable Confluence profiles, exact tenant+document-set grants, bounded private-DNS Data Center
+reads, recoverable incremental snapshots, draft candidates, and FORCE-RLS lineage; it adds no
+dependency and makes no default/live egress. Its actual corporate endpoint, CIDRs/DNS, CA, firewall,
+PAT and service-account permissions still require manual rollout review. **P7.4b generic REST is
+disabled and contract-gated**, so P7.4 as a whole remains open. M0 architecture decisions are
+accepted as ADR-0002–0006, with environment-specific egress approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 
 This "Repository-specific verified state" section is `@`-imported by `CLAUDE.md` into

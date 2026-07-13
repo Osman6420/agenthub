@@ -253,11 +253,11 @@ resolved entirely server-side. Concretely:
 - Tenant is the **physical** security boundary (enforced by app predicate + RLS); document-set
   version is the **logical** ACL/retrieval unit; each `IndexVersion` is a **physically isolated
   immutable store**. Cross-tenant and cross-set access is deny-by-default and tested negatively.
-- All external egress (embedding endpoint, OCR endpoint, Confluence, generic REST) reuses the
-  Sprint 9 SSRF-safe transport: scheme/host allowlist, resolved-IP pinning, connect/read
-  timeouts, response-size caps, bounded retries, `secret:<name>` credentials, redacted audit.
-  Metadata/private/link-local ranges blocked. Embedding/OCR endpoints are platform-allowlisted;
-  no tenant/request `base_url`.
+- All external egress reuses the Sprint 9 bounded/pinned TLS transport: scheme/host governance,
+  resolved-IP pinning, connect/read timeouts, response-size caps, bounded retries,
+  `secret:<name>` credentials, and redacted audit. Embedding/OCR/tool destinations remain
+  public-unicast-only. ADR-0006 adds a separate Confluence-only, deployment-owned private-CIDR
+  policy; it does not relax the public validator. No tenant/request `base_url`.
 - Uploaded/parsed bytes are untrusted: validate content and size independently of filename;
   store outside executable paths; bound decompression; treat document text as data, never as
   instructions.
@@ -267,16 +267,16 @@ resolved entirely server-side. Concretely:
 
 ## Dependencies
 
-Each item below is **approval-gated at its milestone and not yet added**:
+Each item below is **approval-gated at its milestone**. Current status:
 
 - **Embedding client** — **no dependency**: an `OpenAICompatibleEmbeddingClient` adapter over the
   existing Sprint 9 SSRF-safe stdlib transport (decision 3). `openai` is explicitly **not** added
   here.
-- **Parser libraries** — selected after the decision-E comparison (below); permissive license,
-  no external service calls, air-gapped installable, OCR optional (we call the external OCR
-  endpoint). No parser dependency is added before that comparison and approval (M4).
-- **External egress**: owner-hosted embedding endpoint, owner-hosted OCR endpoint, Confluence,
-  generic REST — each needs an allowlist entry + threat-model sign-off at its milestone.
+- **Parser libraries** — pdfplumber, python-docx and openpyxl were owner-approved and added for
+  local parsing; no parser opens network egress. OCR remains an external profile-only service.
+- **External egress**: embedding/OCR and offline Confluence implementations are profile-only and
+  threat-modeled. Each live environment still needs its concrete profile/network/secret sign-off.
+  Generic REST remains disabled pending a concrete contract.
 
 ### Parser comparison (decision E — to complete before any dependency is added)
 
@@ -338,8 +338,9 @@ in place), so the milestone numbers below are scope units, not the build order.
   per-tenant grants; `OpenAICompatibleEmbeddingClient` over the SSRF-safe transport; per-
   `IndexVersion` immutable stores; dimension/index-type validation; staged build → eval →
   pointer-flip promotion; retention/purge job for unreferenced stores.
-- **M4 — Parsers & connectors**: parser interface, selected parsers, upload and external OCR are
-  implemented; Confluence/generic-REST connectors remain contract/egress-gated.
+- **M4 — Parsers & connectors**: parser interface, selected parsers, upload, external OCR and P7.4a
+  Confluence are implemented and verified offline. Live Confluence rollout remains deployment-gated;
+  P7.4b generic REST remains contract-gated.
 - **M5 — Console UI**: per-scenario document sources, set membership, binding, upload,
   soft-delete/purge — role/tenant-scoped, non-authoritative.
 
@@ -378,8 +379,9 @@ Remaining (non-blocking, decided at their milestone):
 - Parser library selection — pending the M4 comparison; format-specific stack is the preferred
   baseline. No dependency added before sign-off.
 - Blob dedup by checksum — optional; defer unless storage pressure warrants.
-- Connector specifics — Confluence Cloud vs Data Center + auth; generic-REST source definition
-  shape; upload size/type/scan limits — detailed in M4.
+- Connector specifics — Confluence is Data Center with a least-privilege PAT profile and
+  connector-specific private policy (ADR-0006); generic-REST source definition and auth remain
+  contract-gated; upload size/type/scan limits remain an M4 operational concern.
 - Vector storage — the separate immutable store is decided by ADR-0003; changing it requires a
   superseding ADR.
 

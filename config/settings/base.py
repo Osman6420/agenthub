@@ -205,6 +205,11 @@ INGESTION_MAX_SOURCE_BYTES = env.int("INGESTION_MAX_SOURCE_BYTES", default=10_00
 INGESTION_HTTP_TIMEOUT_SECONDS = env.int("INGESTION_HTTP_TIMEOUT_SECONDS", default=15)
 INGESTION_EMBEDDING_DIMENSIONS = 64
 
+# P7.4 Confluence-only private egress. Mapping values are deployment-owned CIDR lists; the secure
+# default is empty, so a profile cannot resolve a private destination until operations provisions a
+# reviewed policy. Existing public-only egress callers never consult this setting (ADR-0006).
+CONFLUENCE_NETWORK_POLICIES = env.json("CONFLUENCE_NETWORK_POLICIES", default={})
+
 # --- Document content plane (Phase 2 P2) ------------------------------------
 # Blob backend: "s3" (real object store, local/production) or "memory" (hermetic, tests).
 DOCUMENTS_OBJECT_STORE_BACKEND = env("DOCUMENTS_OBJECT_STORE_BACKEND", default="s3")

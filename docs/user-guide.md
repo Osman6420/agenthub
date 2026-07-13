@@ -189,6 +189,9 @@ Run from the repo root in the project virtualenv. Common commands:
 | `start_ingestion` / `retry_ingestion` | Drive the ingestion pipeline |
 | `register_ocr_profile` / `grant_ocr_profile` | Platform-admin registration and tenant grant for the async OCR endpoint |
 | `build_staged_index --ocr-profile-id <uuid>` | Build a document-set index with image-only/mixed-PDF OCR fallback |
+| `register_confluence_profile` / `grant_confluence_profile` / `disable_confluence_profile` | Platform-admin lifecycle for an immutable Confluence Data Center profile |
+| `create_confluence_source` | Create an author-owned source bound to one granted profile and one document set |
+| `sync_confluence_source` | Queue a governed incremental snapshot sync |
 | `list_tool_approvals` / `decide_tool_approval` / `cancel_tool_invocation` | Tool approvals |
 | `list_agent_runs` / `cancel_agent_run` | Agent run operations |
 
@@ -196,6 +199,13 @@ OCR profiles hold an allowlisted hostname, `/api/v1` base path, bounds and a `se
 reference; the real bearer value is injected as `OCR_SECRET_<NAME>`. A build without
 `--ocr-profile-id` performs no OCR egress and fails closed on image-only/mixed PDFs. OCR Markdown is
 persisted in tenant object storage and checksumed before the remote result is acknowledged.
+
+Confluence is disabled until deployment supplies a `CONFLUENCE_NETWORK_POLICIES` private-CIDR map,
+corporate CA trust, and the referenced `CONFLUENCE_SECRET_<NAME>` bearer PAT. Register the immutable
+platform profile first, grant it to the exact organization + document set, create the source with
+numeric root page IDs, then queue sync. A successful sync creates a **draft** document-set candidate;
+it never builds, publishes, or promotes automatically. Copied pages use AgentHub ACLs, not
+Confluence per-user ACLs. Generic REST ingestion is not available.
 
 ---
 

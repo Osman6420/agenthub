@@ -5,7 +5,8 @@ Authority for scope: [`runtime-and-document-plane-sequence.md`](../../planning/c
 [`document-plane-plan.md`](../../planning/components/document-plane-plan.md), and the parent
 [`phase-2-p7-parsers-ocr-connectors`](../phase-2-p7-parsers-ocr-connectors/plan.md) task.
 Existing public-egress governance is defined by
-[ADR-0005](../../adr/0005-shared-ssrf-safe-egress-adapter.md).
+[ADR-0005](../../adr/0005-shared-ssrf-safe-egress-adapter.md); the accepted connector-specific
+private policy is [ADR-0006](../../adr/0006-confluence-private-corporate-egress.md).
 
 ## Task summary
 
@@ -47,10 +48,10 @@ authoritative component/phase plans are updated.
 5. No additional live endpoint, CA-chain, Data Center version, or generic REST contract is
    available yet.
 
-These decisions unblock detailed planning only. They do **not** by themselves authorize a
-production dependency, a global relaxation of private-network blocking, or live egress. The
-connector-specific address-policy ADR and the concrete environment profile/secret/CA provisioning
-remain change-boundary approvals before implementation/live rollout respectively.
+The owner instructed implementation to begin on 2026-07-13, accepting the connector-specific
+private-egress boundary recorded in ADR-0006. This does **not** authorize a production dependency, a
+global relaxation of private-network blocking, or live egress. Concrete environment profile/secret/
+CA/firewall provisioning remains a separate live-rollout gate.
 
 ## Scope
 
@@ -175,9 +176,9 @@ Requirements:
 
 ## Private-corporate egress decision and ADR gate
 
-ADR-0005 currently requires every resolved address to be public unicast. Before connector code is
-merged, create and accept a narrowly scoped ADR that preserves that default and adds a separate
-**platform-only private destination policy** for the Confluence connector:
+ADR-0005 requires every resolved address to be public unicast. Accepted ADR-0006 preserves that
+default and adds a separate **platform-only private destination policy** for the Confluence
+connector:
 
 - The global/public validator and all existing callers remain unchanged and public-only.
 - A Confluence profile references a deployment-owned `network_policy_id`; tenant/source/request data
@@ -511,10 +512,12 @@ Confluence ACL bypass, or automatic promotion should be rejected.
 
 ## Status
 
-**Documentation-only plan.** P7.4a's contract and recommended design are documented; this task does
-not claim connector implementation. Implementation is gated by the private-egress ADR/change-boundary
-approval, and live rollout has additional environment gates. P7.4b generic REST remains
-contract-gated.
+**P7.4a implemented and verified offline on 2026-07-13.** ADR-0006 accepts the connector-specific
+private-egress boundary. The additive schema, governed profile/grant/source services, bounded Data
+Center client, recoverable snapshot sync, draft-candidate workflow, RLS policies, commands, and
+negative tests are complete. No live endpoint, secret, corporate CA, DNS, or firewall rule was
+configured or exercised; those remain rollout gates. P7.4b generic REST remains contract-gated and
+is not part of this implementation increment, so P7.4 as a whole remains open.
 
 ## Completion criteria
 

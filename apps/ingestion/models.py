@@ -27,6 +27,64 @@ class SourceStatus(models.TextChoices):
 class ConnectorType(models.TextChoices):
     HTTPS = "https", "Allowlisted HTTPS"
     S3 = "s3", "S3/MinIO object"
+    CONFLUENCE_DC = "confluence_dc", "Confluence Data Center"
+
+
+class ConfluenceProfileStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DISABLED = "disabled", "Disabled"
+
+
+class ConfluenceProfile(models.Model):
+    """Immutable platform catalog entry for one Confluence Data Center revision."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    logical_id = models.CharField(max_length=128)
+    revision = models.PositiveIntegerField()
+    provider = models.CharField(max_length=32, default="confluence_dc")
+    scheme = models.CharField(max_length=8, default="https")
+    host = models.CharField(max_length=253)
+    port = models.PositiveIntegerField(default=443)
+    context_path = models.CharField(max_length=512, blank=True)
+    secret_ref = models.CharField(max_length=160)
+    network_policy_id = models.CharField(max_length=128)
+    timeout_seconds = models.PositiveIntegerField(default=30)
+    page_size = models.PositiveSmallIntegerField(default=50)
+    max_pages = models.PositiveIntegerField(default=5_000)
+    max_depth = models.PositiveSmallIntegerField(default=50)
+    max_requests = models.PositiveIntegerField(default=20_000)
+    max_retries = models.PositiveSmallIntegerField(default=2)
+    max_response_bytes = models.PositiveIntegerField(default=5_000_000)
+    max_page_body_bytes = models.PositiveIntegerField(default=4_000_000)
+    max_total_bytes = models.PositiveBigIntegerField(default=100_000_000)
+    status = models.CharField(
+        max_length=16,
+        choices=ConfluenceProfileStatus.choices,
+        default=ConfluenceProfileStatus.ACTIVE,
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["logical_id", "revision"],
+                name="uniq_confluence_profile_logical_revision",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"confluence-profile:{self.logical_id}:r{self.revision}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            update_fields = set(kwargs.get("update_fields") or [])
+            if not update_fields or not update_fields <= {"status"}:
+                raise ValueError("ConfluenceProfile is immutable; only status may change")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise ValueError("ConfluenceProfile is immutable and cannot be deleted")
 
 
 class Source(TimeStampedModel):
@@ -35,6 +93,20 @@ class Source(TimeStampedModel):
     name = models.CharField(max_length=200)
     connector_type = models.CharField(max_length=16, choices=ConnectorType.choices)
     connector_config = models.JSONField(default=dict)
+    confluence_profile = models.ForeignKey(
+        ConfluenceProfile,
+        on_delete=models.PROTECT,
+        related_name="sources",
+        null=True,
+        blank=True,
+    )
+    document_set = models.ForeignKey(
+        "documents.DocumentSet",
+        on_delete=models.PROTECT,
+        related_name="connector_sources",
+        null=True,
+        blank=True,
+    )
     parser = models.CharField(max_length=32, default="text")
     chunker = models.CharField(max_length=32, default="fixed")
     embedder = models.CharField(max_length=32, default="deterministic")
@@ -44,7 +116,21 @@ class Source(TimeStampedModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["organization", "slug"], name="uniq_source_org_slug")
+            models.UniqueConstraint(fields=["organization", "slug"], name="uniq_source_org_slug"),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        connector_type=ConnectorType.CONFLUENCE_DC,
+                        confluence_profile__isnull=False,
+                        document_set__isnull=False,
+                    )
+                    | (
+                        ~models.Q(connector_type=ConnectorType.CONFLUENCE_DC)
+                        & models.Q(confluence_profile__isnull=True, document_set__isnull=True)
+                    )
+                ),
+                name="source_confluence_binding_consistent",
+            ),
         ]
 
     def clean(self) -> None:
@@ -56,12 +142,60 @@ class Source(TimeStampedModel):
         allowed: dict[str, set[str]] = {
             ConnectorType.HTTPS: {"url"},
             ConnectorType.S3: {"bucket", "key"},
+            ConnectorType.CONFLUENCE_DC: {
+                "root_page_ids",
+                "include_root",
+                "excluded_page_ids",
+            },
         }
         unknown = set(self.connector_config) - allowed.get(self.connector_type, set())
         if unknown:
             raise ValidationError(
                 {"connector_config": f"unsupported keys: {', '.join(sorted(unknown))}"}
             )
+        if self.connector_type == ConnectorType.CONFLUENCE_DC:
+            from apps.ingestion.confluence_schema import (
+                ConfluenceValidationError,
+                validate_confluence_source_config,
+            )
+
+            try:
+                validate_confluence_source_config(self.connector_config)
+            except ConfluenceValidationError as exc:
+                raise ValidationError({"connector_config": str(exc)}) from exc
+            if not self.confluence_profile_id or not self.document_set_id:
+                raise ValidationError("Confluence source requires profile and document set")
+            if self.document_set.organization_id != self.organization_id:  # type: ignore[union-attr]
+                raise ValidationError("Confluence document set must belong to the organization")
+        elif self.confluence_profile_id or self.document_set_id:
+            raise ValidationError("non-Confluence source cannot have Confluence bindings")
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.connector_type == ConnectorType.CONFLUENCE_DC:
+            self.clean()
+        if self.pk is not None:
+            previous = (
+                Source.objects.filter(pk=self.pk)
+                .values("connector_type", "confluence_profile_id", "document_set_id")
+                .first()
+            )
+            if previous is not None and (
+                previous["connector_type"] == ConnectorType.CONFLUENCE_DC
+                or self.connector_type == ConnectorType.CONFLUENCE_DC
+            ):
+                binding = (
+                    self.connector_type,
+                    self.confluence_profile_id,
+                    self.document_set_id,
+                )
+                previous_binding = (
+                    previous["connector_type"],
+                    previous["confluence_profile_id"],
+                    previous["document_set_id"],
+                )
+                if binding != previous_binding:
+                    raise ValueError("Confluence source binding is immutable")
+        super().save(*args, **kwargs)
 
     @property
     def is_active(self) -> bool:
@@ -160,6 +294,155 @@ class IngestionRun(TimeStampedModel):
             raise ValidationError("run organization must match source organization")
         if self.max_attempts < 1:
             raise ValidationError({"max_attempts": "must be at least 1"})
+
+
+class TenantConfluenceProfileGrant(models.Model):
+    """Platform approval for one profile, tenant, and exact document set."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="confluence_profile_grants"
+    )
+    document_set = models.ForeignKey(
+        "documents.DocumentSet",
+        on_delete=models.CASCADE,
+        related_name="confluence_profile_grants",
+    )
+    confluence_profile = models.ForeignKey(
+        ConfluenceProfile, on_delete=models.PROTECT, related_name="tenant_document_set_grants"
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "document_set", "confluence_profile"],
+                name="uniq_tenant_docset_confluence_grant",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"confluence-grant:{self.organization_id}:"
+            f"{self.document_set_id}:{self.confluence_profile_id}"
+        )
+
+    def clean(self) -> None:
+        if self.document_set_id and self.document_set.organization_id != self.organization_id:
+            raise ValidationError("Confluence grant document set must belong to the organization")
+
+
+class ConfluenceSyncStatus(models.TextChoices):
+    QUEUED = "queued", "Queued"
+    RUNNING = "running", "Running"
+    RETRY = "retry", "Retry"
+    SUCCEEDED = "succeeded", "Succeeded"
+    DEAD_LETTER = "dead_letter", "Dead letter"
+
+
+class ConfluenceSyncRun(TimeStampedModel):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="confluence_sync_runs"
+    )
+    source = models.ForeignKey(
+        Source, on_delete=models.CASCADE, related_name="confluence_sync_runs"
+    )
+    confluence_profile = models.ForeignKey(
+        ConfluenceProfile, on_delete=models.PROTECT, related_name="sync_runs"
+    )
+    status = models.CharField(
+        max_length=16, choices=ConfluenceSyncStatus.choices, default=ConfluenceSyncStatus.QUEUED
+    )
+    attempt = models.PositiveSmallIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField(default=3)
+    error_code = models.CharField(max_length=64, blank=True)
+    snapshot_complete = models.BooleanField(default=False)
+    discovered_count = models.PositiveIntegerField(default=0)
+    changed_count = models.PositiveIntegerField(default=0)
+    unchanged_count = models.PositiveIntegerField(default=0)
+    missing_count = models.PositiveIntegerField(default=0)
+    fetched_bytes = models.PositiveBigIntegerField(default=0)
+    candidate_set_version = models.ForeignKey(
+        "documents.DocumentSetVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="confluence_sync_runs",
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    def clean(self) -> None:
+        if self.source_id and self.source.organization_id != self.organization_id:
+            raise ValidationError("Confluence run source must belong to the organization")
+        if self.source_id and self.source.confluence_profile_id != self.confluence_profile_id:
+            raise ValidationError("Confluence run profile must match its source")
+        if (
+            self.candidate_set_version_id
+            and self.candidate_set_version.organization_id != self.organization_id  # type: ignore[union-attr]
+        ):
+            raise ValidationError("Confluence candidate must belong to the organization")
+        if not 1 <= self.max_attempts <= 3:
+            raise ValidationError({"max_attempts": "must be between 1 and 3"})
+
+
+class ConfluenceCursorState(models.TextChoices):
+    ACTIVE = "active", "Active"
+    MISSING = "missing", "Missing"
+
+
+class ConfluenceDocumentCursor(TimeStampedModel):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="confluence_document_cursors"
+    )
+    source = models.ForeignKey(
+        Source, on_delete=models.CASCADE, related_name="confluence_document_cursors"
+    )
+    external_page_id = models.CharField(max_length=64)
+    root_page_id = models.CharField(max_length=64)
+    external_version = models.PositiveBigIntegerField()
+    external_updated_at = models.DateTimeField(null=True, blank=True)
+    document = models.ForeignKey(
+        "documents.Document", on_delete=models.CASCADE, related_name="confluence_cursors"
+    )
+    document_version = models.ForeignKey(
+        "documents.DocumentVersion",
+        on_delete=models.PROTECT,
+        related_name="confluence_cursors",
+    )
+    last_seen_run = models.ForeignKey(
+        ConfluenceSyncRun,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="seen_cursors",
+    )
+    state = models.CharField(
+        max_length=16, choices=ConfluenceCursorState.choices, default=ConfluenceCursorState.ACTIVE
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "external_page_id"],
+                name="uniq_confluence_source_external_page",
+            )
+        ]
+
+    def clean(self) -> None:
+        if self.source_id and self.source.organization_id != self.organization_id:
+            raise ValidationError("Confluence cursor source must belong to the organization")
+        if self.document_id and self.document.organization_id != self.organization_id:
+            raise ValidationError("Confluence cursor document must belong to the organization")
+        if self.document_version_id:
+            if self.document_version.organization_id != self.organization_id:
+                raise ValidationError("Confluence cursor version must belong to the organization")
+            if self.document_version.document_id != self.document_id:
+                raise ValidationError("Confluence cursor version must belong to its document")
+        if self.last_seen_run_id:
+            last_seen_run = self.last_seen_run
+            if last_seen_run is None or last_seen_run.organization_id != self.organization_id:
+                raise ValidationError("Confluence cursor run must belong to the organization")
 
 
 class IndexedDocument(TimeStampedModel):

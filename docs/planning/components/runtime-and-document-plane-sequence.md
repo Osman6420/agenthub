@@ -141,7 +141,7 @@ deterministic remains the default and no environment-specific live endpoint was 
   unchanged (prompt is input, never authorization).
 - **Demo:** an agent runs with an authored persona/instructions instead of the raw user objective.
 
-### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1–P7.3 IMPLEMENTED + VERIFIED; P7.4 gated**
+### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1–P7.4a VERIFIED; P7.4b gated**
 
 - `DocumentParser` interface + selected parsers (pdf/docx/xlsx→markdown), **external OCR egress**
   for image-only pages/embedded images, and upload/Confluence/generic-REST connectors. Real
@@ -159,8 +159,10 @@ deterministic remains the default and no environment-specific live endpoint was 
   + tenant grant, SSRF-safe multipart submit/bounded poll/result/idempotent ACK, recoverable job
   lineage and durable result-before-ACK storage. Mixed/image-only PDF handling fails closed without
   a profile. No concrete live host/secret configured or called.
-- **P7.4 — Confluence + generic-REST connectors:** reuse the bounded allowlisted SSRF-safe connector
-  pattern. **Blocked on the connector-endpoint sign-off.**
+- **P7.4a — DONE OFFLINE (2026-07-13):** governed Confluence Data Center profiles/grants/sources,
+  connector-only private-CIDR transport (ADR-0006), bounded fixed-path traversal, recoverable
+  snapshots and draft candidates. Live endpoint/network/CA/secret/service-account review remains.
+- **P7.4b — generic REST:** disabled and blocked on its concrete contract and endpoint sign-off.
 - **Approval gate:** parser dependency and OCR API contract are approved. A live OCR deployment
   still needs its concrete host/profile + injected secret sign-off; connector endpoints remain gated.
 - **Demo (P7.1):** a CSV/JSON/HTML document set builds a staged index and is retrievable. **Demo
@@ -202,13 +204,14 @@ deterministic remains the default and no environment-specific live endpoint was 
 | --- | --- | --- |
 | P1 | chat model profile/endpoint | none (stdlib client) |
 | P3 | embedding model profile/endpoint | none (stdlib client) |
-| P7 | Confluence/REST contract + endpoint sign-off; live OCR deployment still needs concrete host/secret | document-parser lib approved; OCR adds no dependency |
+| P7 | Live OCR and Confluence deployment profiles; generic REST contract + endpoint sign-off | document-parser libs approved; OCR/Confluence add no dependency |
 
 ## Governance held across all live phases
 
 - **Egress:** platform-catalog profile referenced by ID only (no author/tenant/request `base_url`/
   host/scheme/credential/TLS choice); shared transport verifies TLS, pins the resolved IP, denies
-  redirects, blocks private/link-local/metadata ranges, and caps timeout/response size (ADR-0002).
+  redirects, and caps timeout/response size. Public destinations block private/link-local/metadata
+  ranges; only Confluence may use ADR-0006's deployment-owned private-CIDR policy.
 - **Idempotency:** no blind retry — a chat/embedding call failing *after send* is an unknown
   outcome (double-cost/divergent-answer risk), failed for controlled re-drive, never re-sent.
 - **Prompt injection:** document/retrieved/user text is untrusted **data**; system instructions are

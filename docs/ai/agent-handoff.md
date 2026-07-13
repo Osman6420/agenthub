@@ -293,7 +293,7 @@ Current cross-agent state:
     confirmation; pinned content remains fail-closed. No migration/dependency/egress. Evidence:
     SQLite 511 passed / 21 skipped; PostgreSQL 530 passed / 2 skipped. Landed in the P8 completion
     commit on `feat/foundation-sprint-0-1`; not pushed. P7 provenance follows.
-- **P7.1–P7.3 COMPLETE + VERIFIED — P7.4 remains gated.** P7 parsers/OCR are implemented and
+- **P7.1–P7.4a COMPLETE + VERIFIED OFFLINE — P7.4b remains gated.** P7 parsers/OCR and Confluence are
   verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
   - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed
     `DocumentParser` registry (`ParsedContent`/`ParserError`/`get_parser`/`parse_document`) with
@@ -322,10 +322,15 @@ Current cross-agent state:
   - **Evidence (P7 cumulative):** SQLite 519 passed / 22 skipped; PostgreSQL `--create-db` 539 passed /
     2 skipped; lint/type/migration gates pass. Landed in the P7.3 completion commit on
     `feat/foundation-sprint-0-1`; not pushed.
-  - **P7.4 is documentation-only:** `docs/tasks/phase-2-p7-4-connectors/` records the recommended
-    on-premises Confluence Data Center/private-DNS design and threat model. No connector is
-    implemented. Confluence implementation awaits the narrow private-egress ADR/change-boundary
-    review and deployment inputs; generic REST remains contract-gated.
+  - **P7.4a (Confluence Data Center):** ADR-0006 accepts a connector-only private-corporate egress
+    policy without weakening the existing public-only validator. Immutable platform profiles,
+    exact tenant+document-set grants, governed sources, bounded fixed-path traversal, recoverable
+    incremental snapshots, draft candidates, management commands and FORCE-RLS lineage are
+    implemented in `ingestion.0007`; no new dependency. Evidence: targeted SQLite 41 passed / 2
+    skipped, targeted PostgreSQL 42 passed, full SQLite 541 passed / 23 skipped, full PostgreSQL 562
+    passed / 2 skipped; lint/type/migration gates pass. No live endpoint, secret, CA, DNS, firewall
+    or service-account permission was configured/called.
+    **P7.4b generic REST remains contract-gated and unimplemented.**
   P6 provenance follows.
 - **P6 COMPLETE.** P6 (authored, governed agent **system prompt**) is implemented
   and verified in `docs/tasks/phase-2-p6-agent-system-prompt/`: `agent_definition` accepts an optional

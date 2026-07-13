@@ -165,6 +165,11 @@ channel:
   choose host, path, credential or TLS behavior. OCR service-returned status/result URLs are ignored;
   only catalog-derived paths are used. Non-idempotent OCR submit is never blindly retried, and ACK
   occurs only after checksumed tenant-object-store persistence.
+- **Confluence private egress is an isolated exception (ADR-0006)**: only immutable platform
+  profiles may select a deployment-owned private-CIDR policy. Every DNS answer must be in that
+  policy; pinned-IP TLS/SNI, redirect denial, fixed REST paths, mandatory CA validation, response
+  caps and late secret resolution still apply. The public-only validator used by all other egress is
+  unchanged. Tenant/source/page data cannot choose destinations or follow response-provided links.
 
 ### Human approval with separation of duties
 

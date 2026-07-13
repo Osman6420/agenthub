@@ -1,7 +1,8 @@
 # Threat Model — Phase 2 · P7.4 connectors
 
-Scope: the planned Confluence Data Center connector and the contract gate for generic REST. This
-extends the parent P7 threat model; P7.1–P7.3 behavior is unchanged.
+Scope: the implemented offline Confluence Data Center connector and the contract gate for generic
+REST. This extends the parent P7 threat model; P7.1–P7.3 behavior is unchanged. Live corporate
+network/identity rollout remains unverified.
 
 ## Assets
 

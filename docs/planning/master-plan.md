@@ -14,10 +14,10 @@ P6 (authored, governed agent system prompt), P7.1 (the deny-by-default `Document
 dependency-free stdlib parsers — text/markdown/csv/json/html — wired into the staged-build
 text-extraction seam), and P7.2 (local pdf/docx/xlsx parsers on the same interface via owner-approved
 pdfplumber + python-docx + openpyxl, no egress), P7.3 (profile-only external async OCR with durable
-result-before-ACK lineage; no live endpoint configured/called), and P8.1–P8.4 (complete document
-console including effective consumer grants and elevated purge) are implemented and verified.
-P7.4 remains documentation-only: the Confluence Data Center design is recorded, but implementation
-is blocked on its private-egress ADR/change-boundary review and deployment sign-off; generic REST
+result-before-ACK lineage; no live endpoint configured/called), P7.4a (governed Confluence Data
+Center ingestion over a connector-specific private-corporate policy, verified offline), and
+P8.1–P8.4 (complete document console including effective consumer grants and elevated purge) are
+implemented and verified. Live Confluence rollout remains deployment-gated; P7.4b generic REST
 remains contract-gated. Later workstreams retain their explicit gates.
 
 - Sprint 0: bootable Django modular-monolith skeleton — settings split, Celery role
@@ -195,7 +195,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Tool registry + approval (Sprint 9) | Verified | Sprint 8 | [sprint-9-tool-registry-approval](../tasks/sprint-9-tool-registry-approval/plan.md) | [v3 target plan §17](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-9-tool-registry-approval/verification.md) |
 | Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
 | Visual workflow builder (Sprint 11) | Verified | Sprints 2, 8 | [sprint-11-workflow-builder](../tasks/sprint-11-workflow-builder/plan.md) | [v3 target plan §25](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-11-workflow-builder/verification.md) |
-| Document plane (Phase 2 · WS1) | **P2–P6 + P7.1–P7.3 + P8.1–P8.4 Verified**; effective consumer grants and profile-only async OCR implemented; P7.4 connectors remain egress-gated | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) + [P7](../tasks/phase-2-p7-parsers-ocr-connectors/verification.md) + [P8](../tasks/phase-2-p8-console-ui/verification.md) |
+| Document plane (Phase 2 · WS1) | **P2–P6 + P7.1–P7.4a + P8.1–P8.4 Verified**; Confluence is offline-verified, live rollout is deployment-gated, and P7.4b generic REST remains contract-gated | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) + [P7](../tasks/phase-2-p7-parsers-ocr-connectors/verification.md) + [P8](../tasks/phase-2-p8-console-ui/verification.md) |
 | Live model runtime (Phase 2 · WS5) | **P1 + P5 + P6 Verified** (WS5 runtime scope complete) | Shared egress + `ModelProfile` catalog | [P1](../tasks/phase-2-p1-live-chat/plan.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/plan.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P1](../tasks/phase-2-p1-live-chat/verification.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/verification.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/verification.md) |
 
 ## Cross-cutting concerns

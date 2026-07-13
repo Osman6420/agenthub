@@ -66,18 +66,18 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
 - No live endpoint/profile was configured or called; the concrete host and injected secret remain a
   deployment-time sign-off.
 
-### P7.4 — Connectors (upload + Confluence + generic REST) — **GATED: connector egress sign-off**
+### P7.4 — Connectors (upload + Confluence + generic REST) — **P7.4a VERIFIED OFFLINE; P7.4b GATED**
 
-- Upload already exists (`apps/documents` upload service). Add a Confluence connector and a generic
-  REST connector reusing the existing bounded, allowlisted, redirect-denying SSRF-safe pattern in
-  `apps/ingestion/connectors.py` (host allowlist empty by default → unreachable until an endpoint is
-  allowlisted and signed off).
+- Upload already exists (`apps/documents` upload service). The Confluence Data Center connector now
+  uses its own profile-only private-corporate egress policy while leaving the existing public-only
+  validator unchanged. Generic REST is not implemented.
 - Detailed implementation plan and extended threat model:
   [`phase-2-p7-4-connectors`](../phase-2-p7-4-connectors/plan.md). The owner confirmed an on-premises
   Data Center instance with private corporate DNS and a least-privilege service account. The plan
-  keeps the public-only egress default and gates a narrowly scoped, profile-only private Confluence
-  address policy behind a new ADR/change-boundary review; generic REST remains contract-gated.
-- **Approval gate — Confluence/REST connector endpoints (allowlist + secret).**
+  keeps the public-only egress default; ADR-0006 accepts the narrowly scoped, profile-only private
+  Confluence address policy. Generic REST remains contract-gated.
+- **Live rollout gate — Confluence endpoint/network policy/CA/secret/service account.**
+- **Implementation gate — generic REST contract and endpoint governance.**
 
 ## Non-negotiable constraints (unchanged from prior phases)
 
@@ -95,6 +95,8 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
 - **P7.2: Implemented + verified** (pdf/docx/xlsx via owner-approved local libraries; no egress).
 - **P7.3: Implemented + verified.** Contract approved, opt-in/profile-ID-only; no
   live endpoint or secret configured/called.
-- **P7.4: Documentation only.** The Confluence Data Center design and risks are recorded in the
-  linked plan, but no connector is implemented. Private egress/rollout approvals and the generic
-  REST contract remain gated.
+- **P7.4a: Implemented + verified offline.** Confluence Data Center profile/grant/source governance,
+  private-policy transport, bounded traversal, recoverable sync, draft candidates and FORCE RLS are
+  implemented without a new dependency or live call. Deployment inputs remain gated.
+- **P7.4b: Not implemented.** Generic REST remains contract-gated; therefore P7.4 is not complete as
+  a whole.

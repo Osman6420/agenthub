@@ -4,7 +4,8 @@
 
 **P7.1–P7.3 Verified 2026-07-13.** P7.3 implements the owner-approved async Markdown OCR contract
 behind an opt-in platform profile. Tests use an injected offline transport; no live OCR hostname,
-credential or socket was configured/called. P7.4 connectors remain contract/egress-gated.
+credential or socket was configured/called. **P7.4a Confluence is also implemented and verified
+offline**; its live deployment inputs remain gated. P7.4b generic REST remains contract-gated.
 
 The detailed service contract and OpenAPI document received on 2026-07-13 are retained under
 [`docs/ocr_api`](../../ocr_api/API_CONTRACT.md). A compatibility review found one semantic mismatch:
@@ -82,6 +83,14 @@ tests `ACKNOWLEDGED`/`EXPIRED`, `503` retry, `410` terminal handling, and servic
 | Final SQLite | `pytest -q --basetemp=.tmp/pytest-p7-3-final` (`config.settings.test`) | 519 passed, 22 skipped |
 | Final PostgreSQL | `pytest -q --create-db --basetemp=.tmp/pytest-p7-3-pg-release` (`config.settings.local` + MCP/metrics flags) | 539 passed, 2 skipped |
 
+## P7.4a Confluence evidence
+
+The detailed acceptance mapping is in
+[`phase-2-p7-4-connectors/verification.md`](../phase-2-p7-4-connectors/verification.md). Final P7.4a
+gates passed: Ruff, mypy (324 files), Django check, migration drift, targeted SQLite 41 passed / 2
+skipped, targeted PostgreSQL 42 passed, full SQLite 541 passed / 23 skipped, and full PostgreSQL 562
+passed / 2 skipped. No live Confluence deployment input or socket was used.
+
 Baseline before P7 (P6): SQLite 474 passed / 18 skipped; PostgreSQL 490 passed / 2 skipped.
 Cumulative P7.3 delta from P8 baseline: +7 offline OCR/profile/persistence tests, +1 mixed-PDF
 fail-closed test and +1 PostgreSQL OCR-to-index e2e, plus migration coverage.
@@ -90,7 +99,8 @@ fail-closed test and +1 PostgreSQL OCR-to-index e2e, plus migration coverage.
 
 - No live OCR endpoint exercised; concrete host, platform profile registration, allowlist DNS and
   injected bearer secret remain deployment verification.
-- Confluence/REST connectors are not implemented (P7.4); their contracts and egress sign-off remain.
+- No live Confluence endpoint/DNS/CA/secret/firewall/service-account test; see the dedicated P7.4
+  verification. Generic REST is not implemented and remains contract-gated.
 - No headless/live-server smoke of an uploaded PDF/DOCX/XLSX through the operator API + a real object
   store; parsing is proven by unit round-trips and the PostgreSQL end-to-end staged-build tests.
 

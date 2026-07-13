@@ -9,6 +9,7 @@ from django.db import connection
 from apps.audit.models import AuditEvent
 from apps.ingestion.connectors import (
     CONNECTORS,
+    ConfluenceConnector,
     ConnectorError,
     RawDocument,
     S3Connector,
@@ -107,6 +108,11 @@ def test_s3_connector_denies_cross_tenant_key(source: Source, settings: Any) -> 
     source.connector_config = {"bucket": "agenthub", "key": "other-org/private.txt"}
     with pytest.raises(ConnectorError, match="OBJECT_KEY_DENIED"):
         S3Connector().fetch(source)
+
+
+def test_confluence_source_cannot_use_legacy_one_shot_pipeline(source: Source) -> None:
+    with pytest.raises(ConnectorError, match="CONFLUENCE_SYNC_REQUIRED"):
+        ConfluenceConnector().fetch(source)
 
 
 @pytest.mark.django_db(transaction=True)
