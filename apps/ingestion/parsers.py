@@ -7,11 +7,14 @@ only a registered, allowlisted parser runs; an unknown MIME fails closed. Output
 is **counts only** (elements/pages) — never document content — matching
 ``DocumentVersion.element_count``/``page_count`` and the observability redaction rules.
 
-This module ships the **dependency-free, deterministic** stdlib parsers (plain text, markdown,
-CSV, JSON, HTML). Richer binary formats (pdf/docx/xlsx) and external OCR are opt-in adapters added
-under their own supply-chain / egress approval (P7.2+); they plug into *this* interface and
-registry without changing the build. Because the default parsers are pure-stdlib and
-deterministic, CI stays hermetic and opens no socket.
+This module ships the **deterministic** stdlib parsers (plain text, markdown, CSV, JSON, HTML) and
+— from P7.2 (owner-approved 2026-07-13) — the **local binary-format** parsers pdf/docx/xlsx built on
+``pdfplumber``/``python-docx``/``openpyxl``. All parsing is **in-process and opens no socket**: the
+binary libraries do local text extraction only (no network). Their heavy imports are **deferred**
+into the parse method, so importing this module needs only the stdlib and a text-only deployment
+never loads them. External OCR (P7.3) and the Confluence/generic-REST connectors (P7.4) remain
+deferred behind their egress sign-off; they plug into *this* same interface without changing the
+build. CI stays hermetic — no parser opens a socket.
 
 Security notes:
 - Parsers treat the document as **untrusted data**. The HTML parser drops ``<script>``/``<style>``
@@ -199,14 +202,119 @@ class HtmlParser:
         return ParsedContent(text=text, parser=self.name)
 
 
-# Deny-by-default MIME -> parser registry. Only these MIME types are embeddable in P7.1; binary
-# formats (pdf/docx/xlsx) remain unsupported until their opt-in adapter + dependency land (P7.2+).
+class PdfParser:
+    """Extract text (and simple tables) from a PDF via ``pdfplumber`` (local, no network).
+
+    An image-only page yields no extractable text here; OCR of image content is P7.3 (deferred), so
+    a fully image-only PDF fails closed as ``EMPTY_DOCUMENT`` for now.
+    """
+
+    name = "pdf"
+
+    def parse(self, blob: bytes) -> ParsedContent:
+        import pdfplumber  # deferred: heavy optional dep, loaded only to parse a PDF
+
+        pages: list[str] = []
+        page_count = 0
+        try:
+            with pdfplumber.open(io.BytesIO(blob)) as pdf:
+                page_count = len(pdf.pages)
+                for page in pdf.pages:
+                    if len(pages) > MAX_ELEMENTS:
+                        raise ParserError("TOO_MANY_ELEMENTS")
+                    extracted = (page.extract_text() or "").strip()
+                    if extracted:
+                        pages.append(extracted)
+        except ParserError:
+            raise
+        except Exception as exc:  # pdfminer/pdfplumber raise a wide range on malformed input
+            raise ParserError("PDF_PARSE_FAILED") from exc
+        text = _bounded("\n\n".join(pages))
+        return ParsedContent(
+            text=text, parser=self.name, page_count=page_count, element_count=len(pages)
+        )
+
+
+class DocxParser:
+    """Extract paragraph + table text from a DOCX via ``python-docx`` (local, no network)."""
+
+    name = "docx"
+
+    def parse(self, blob: bytes) -> ParsedContent:
+        import docx  # python-docx, deferred
+
+        try:
+            document = docx.Document(io.BytesIO(blob))
+        except Exception as exc:
+            raise ParserError("DOCX_PARSE_FAILED") from exc
+        lines: list[str] = []
+        try:
+            for paragraph in document.paragraphs:
+                if len(lines) > MAX_ELEMENTS:
+                    raise ParserError("TOO_MANY_ELEMENTS")
+                para_text = paragraph.text.strip()
+                if para_text:
+                    lines.append(para_text)
+            for table in document.tables:
+                for row in table.rows:
+                    if len(lines) > MAX_ELEMENTS:
+                        raise ParserError("TOO_MANY_ELEMENTS")
+                    cells = [cell.text.strip() for cell in row.cells]
+                    if any(cells):
+                        lines.append(" | ".join(cells))
+        except ParserError:
+            raise
+        except Exception as exc:
+            raise ParserError("DOCX_PARSE_FAILED") from exc
+        text = _bounded("\n".join(lines))
+        return ParsedContent(text=text, parser=self.name, element_count=len(lines))
+
+
+class XlsxParser:
+    """Flatten XLSX cells to deterministic pipe-joined rows via ``openpyxl`` (local, no network)."""
+
+    name = "xlsx"
+
+    def parse(self, blob: bytes) -> ParsedContent:
+        import openpyxl  # deferred
+
+        try:
+            workbook = openpyxl.load_workbook(io.BytesIO(blob), read_only=True, data_only=True)
+        except Exception as exc:
+            raise ParserError("XLSX_PARSE_FAILED") from exc
+        lines: list[str] = []
+        try:
+            for worksheet in workbook.worksheets:
+                for row in worksheet.iter_rows(values_only=True):
+                    if len(lines) > MAX_ELEMENTS:
+                        raise ParserError("TOO_MANY_ELEMENTS")
+                    cells = ["" if value is None else str(value).strip() for value in row]
+                    if any(cells):
+                        lines.append(" | ".join(cells))
+        except ParserError:
+            raise
+        except Exception as exc:
+            raise ParserError("XLSX_PARSE_FAILED") from exc
+        finally:
+            workbook.close()
+        text = _bounded("\n".join(lines))
+        return ParsedContent(text=text, parser=self.name, element_count=len(lines))
+
+
+# Deny-by-default MIME -> parser registry. Text formats use stdlib parsers; the pdf/docx/xlsx
+# entries use the owner-approved (P7.2) local binary libraries via deferred imports. Any MIME not
+# listed here (e.g. image/* — OCR is P7.3) fails closed at the build.
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PARSERS: dict[str, DocumentParser] = {
     "text/plain": PlainTextParser(),
     "text/markdown": MarkdownParser(),
     "text/csv": CsvParser(),
     "application/json": JsonParser(),
     "text/html": HtmlParser(),
+    "application/pdf": PdfParser(),
+    _DOCX_MIME: DocxParser(),
+    _XLSX_MIME: XlsxParser(),
 }
 
 

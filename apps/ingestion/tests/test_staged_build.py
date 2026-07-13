@@ -159,6 +159,56 @@ def test_csv_document_parses_and_is_searchable() -> None:
 
 @pg_only
 @pytest.mark.django_db
+def test_docx_document_parses_and_is_searchable() -> None:
+    # Proves the P7.2 binary path flows end-to-end: a real .docx is parsed (python-docx) to text,
+    # chunked, embedded, and retrievable.
+    import io
+
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph("iade policy: thirty day return window")
+    document.add_paragraph("shipping takes three days")
+    buffer = io.BytesIO()
+    document.save(buffer)
+
+    org = Organization.objects.create(slug="docx-org", name="DOCX Org")
+    profile = _granted_profile(org)
+    doc_set = doc_services.create_document_set(
+        organization=org, logical_id="kb", name="KB", actor="op"
+    )
+    set_version = doc_services.create_document_set_version(document_set=doc_set, actor="op")
+    version = doc_services.upload_document(
+        organization=org,
+        logical_id="doc-docx",
+        title="Policy",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        data=buffer.getvalue(),
+        actor="op",
+    )
+    doc_services.add_document_to_set_version(
+        set_version=set_version, document_version=version, actor="op"
+    )
+    doc_services.publish_document_set_version(set_version=set_version, actor="op")
+    set_version.refresh_from_db()
+
+    index_version = build_staged_index(
+        document_set_version=set_version, embedding_profile=profile, actor="op"
+    )
+    assert index_version.status == IndexStatus.PROMOTABLE
+    assert index_version.document_count == 1
+
+    hits = vector_store.search(
+        index_version,
+        embed_deterministic("iade policy: thirty day return window"),
+        organization_id=org.id,
+        top_k=1,
+    )
+    assert len(hits) == 1 and "iade" in hits[0].text
+
+
+@pg_only
+@pytest.mark.django_db
 def test_build_requires_tenant_grant() -> None:
     org = Organization.objects.create(slug="ng-org", name="NG Org")
     admin = get_user_model().objects.create_superuser(username="platform", password=None)
@@ -201,8 +251,14 @@ def test_unpublished_set_version_is_rejected() -> None:
 
 @pg_only
 @pytest.mark.django_db
-def test_non_text_mime_fails_closed() -> None:
-    org = Organization.objects.create(slug="pdf-org", name="PDF Org")
+def test_non_text_mime_fails_closed(settings: object) -> None:
+    # A MIME an operator allowed for storage but that has no registered parser (image OCR is the
+    # deferred P7.3) must still fail closed at the build (defense in depth over upload validation).
+    settings.DOCUMENTS_ALLOWED_MIME_TYPES = [  # type: ignore[attr-defined]
+        *settings.DOCUMENTS_ALLOWED_MIME_TYPES,  # type: ignore[attr-defined]
+        "image/png",
+    ]
+    org = Organization.objects.create(slug="img-org", name="IMG Org")
     profile = _granted_profile(org)
     doc_set = doc_services.create_document_set(
         organization=org, logical_id="kb", name="KB", actor="op"
@@ -210,10 +266,10 @@ def test_non_text_mime_fails_closed() -> None:
     set_version = doc_services.create_document_set_version(document_set=doc_set, actor="op")
     version = doc_services.upload_document(
         organization=org,
-        logical_id="doc-pdf",
+        logical_id="doc-img",
         title="Doc",
-        mime_type="application/pdf",  # parsing arrives in P7
-        data=b"%PDF-1.4 ...",
+        mime_type="image/png",  # image OCR arrives in P7.3 (deferred); still unsupported here
+        data=b"\x89PNG\r\n\x1a\n ...",
         actor="op",
     )
     doc_services.add_document_to_set_version(

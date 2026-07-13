@@ -268,23 +268,29 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **P7.1 COMPLETE — continue at P7.2 (dependency-gated).** P7.1 (the `DocumentParser` interface +
-  dependency-free stdlib parsers) is implemented and verified in
-  `docs/tasks/phase-2-p7-parsers-ocr-connectors/`: new `apps/ingestion/parsers.py` — a deny-by-default,
-  MIME-keyed `DocumentParser` registry (`ParsedContent`/`ParserError`/`get_parser`/`parse_document`)
-  with **stdlib-only, deterministic** parsers (text/plain, text/markdown, text/csv, application/json,
-  text/html) — wired into `staged_build._embed_into_store`, replacing the hardcoded
-  text/plain|text/markdown UTF-8-only path. Governance: bounded output (`MAX_PARSED_CHARS`/
-  `MAX_ELEMENTS`), counts-only telemetry, content-free stable-code errors, HTML drops `<script>`/
-  `<style>` and fetches nothing; documents are untrusted data. Unsupported MIME (pdf/docx/xlsx) still
-  **fails closed** (`UNSUPPORTED_MIME_FOR_EMBEDDING`); a parse failure fails closed
-  (`DOCUMENT_PARSE_FAILED`). **No dependency, no egress, no migration**; deterministic + hermetic.
-  `text/html` added to the `DOCUMENTS_ALLOWED_MIME_TYPES` upload default. Evidence: SQLite 486 passed /
-  19 skipped; PostgreSQL `--create-db` 503 passed / 2 skipped. **Next: P7.2** — opt-in pdf/docx/xlsx
-  parser adapters on the same interface, **blocked on the document-parser dependency approval** (post
-  comparison table — preferred baseline pypdf/pdfplumber + python-docx + openpyxl; **OCR NOT in-app**);
-  then **P7.3** external OCR egress and **P7.4** Confluence/generic-REST connectors, **both blocked on
-  their environment-specific egress sign-off**. Committed on `feat/foundation-sprint-0-1`; not pushed.
+- **P7.1 + P7.2 COMPLETE — continue at P7.3/P7.4 (deferred by owner).** P7 (parsers) is implemented and
+  verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
+  - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed
+    `DocumentParser` registry (`ParsedContent`/`ParserError`/`get_parser`/`parse_document`) with
+    **stdlib-only, deterministic** parsers (text/plain, text/markdown, text/csv, application/json,
+    text/html), wired into `staged_build._embed_into_store` (replacing the hardcoded UTF-8-only path).
+    Governance: bounded output (`MAX_PARSED_CHARS`/`MAX_ELEMENTS`), counts-only telemetry, content-free
+    stable-code errors, HTML drops `<script>`/`<style>` and fetches nothing. `text/html` added to the
+    `DOCUMENTS_ALLOWED_MIME_TYPES` upload default. Commit `485748b`.
+  - **P7.2 (local binary parsers):** `PdfParser`/`DocxParser`/`XlsxParser` on the same interface,
+    registering pdf/docx/xlsx MIME types. The owner **approved the dependencies (2026-07-13)** —
+    **pdfplumber + python-docx + openpyxl** (baseline + pdfplumber for PDF tables; pypdf omitted as
+    redundant). Pins in `pyproject.toml`; `requirements.lock` regenerated (`pip check` clean; langgraph
+    trio unchanged). Heavy imports are **deferred** so importing `parsers.py` needs only the stdlib;
+    parsing is **local/in-process — no network egress**. An image-only PDF fails closed
+    (`EMPTY_DOCUMENT`; its OCR is P7.3). **No migration.** A `.venv` created before P7.2 must re-run
+    `pip install -e ".[dev]"` to run the pdf/docx/xlsx tests.
+  - **Evidence (P7 cumulative):** SQLite 492 passed / 20 skipped; PostgreSQL `--create-db` 510 passed /
+    2 skipped; `pip check` clean. Both P7.1 and P7.2 committed on `feat/foundation-sprint-0-1`; **not
+    pushed.**
+  - **Next: P7.3** (external OCR egress for image-only pages) and **P7.4** (Confluence + generic-REST
+    connectors) — **both deferred by the owner (2026-07-13)**, blocked on their environment-specific
+    OCR/connector endpoint + secret egress sign-off. No code/endpoint/egress for these yet.
   P6 provenance follows.
 - **P6 COMPLETE.** P6 (authored, governed agent **system prompt**) is implemented
   and verified in `docs/tasks/phase-2-p6-agent-system-prompt/`: `agent_definition` accepts an optional

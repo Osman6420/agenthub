@@ -116,7 +116,10 @@ commands include `ruff`, `mypy`, `pytest` (SQLite and — via `config.settings.l
 Repository-verified commands run from the repo root in the project virtualenv
 (`.venv`, Python 3.13; `requires-python >= 3.13`). Re-run `pip install -e ".[dev]"`
 after any dependency change — a venv created before Sprint 5 lacks `boto3`/`pgvector`
-and cannot import `apps.ingestion`. Gates: `ruff format --check .`, `ruff check .`,
+and cannot import `apps.ingestion`; a venv created before Phase 2 P7.2 lacks
+`pdfplumber`/`python-docx`/`openpyxl` and cannot run the pdf/docx/xlsx parser tests (the
+default text parsers still import, since the binary libs load lazily). Gates:
+`ruff format --check .`, `ruff check .`,
 `mypy .`, `python manage.py makemigrations --check --dry-run`, `python manage.py
 check`, and `pytest`. They pass both under `DJANGO_SETTINGS_MODULE=config.settings.test`
 (isolated in-memory SQLite; no external services) and — via
@@ -269,14 +272,17 @@ personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff
 (document-ACL retrieval + FORCE RLS + pointer-flip promotion — the security core that unlocks
 serving real, ACL-scoped tenant corpora), P5 (real retrieve/generate wired into the agent loop
 and workflow generate/retrieve nodes + per-node prompt/model binding), P6 (authored, governed
-agent system prompt), and **P7.1** (the deny-by-default `DocumentParser` interface + registry
+agent system prompt), **P7.1** (the deny-by-default `DocumentParser` interface + registry
 `apps/ingestion/parsers.py` with **dependency-free stdlib parsers** — text/markdown/csv/json/html —
 wired into the staged-build text-extraction seam; bounded output, counts-only telemetry, content-free
-fail-closed errors; no dependency/egress/migration; binary MIME pdf/docx/xlsx still fails closed) are
-verified; continue at **P7.2** (opt-in pdf/docx/xlsx parser adapters — **blocked on the
-document-parser dependency approval**, post comparison table), then **P7.3** (external OCR egress) and
-**P7.4** (Confluence/generic-REST connectors) — **both blocked on their environment-specific egress
-sign-off**. Its M0 architecture decisions are accepted as ADR-0002–0005, with the
+fail-closed errors; no dependency/egress/migration), and **P7.2** (local `pdf`/`docx`/`xlsx` parsers
+on the same interface via **owner-approved pdfplumber + python-docx + openpyxl** — heavy imports
+deferred, parsing is in-process with **no network egress**, image-only PDFs fail closed pending P7.3
+OCR; the three permissive-licensed deps were pinned in `pyproject.toml`, `requirements.lock`
+regenerated, `pip check` clean, langgraph trio pin unchanged; **no `openai`/network dependency, no
+migration**) are verified; continue at **P7.3** (external OCR egress) and **P7.4** (Confluence/
+generic-REST connectors) — **both deferred by the owner and blocked on their environment-specific
+egress sign-off**. Its M0 architecture decisions are accepted as ADR-0002–0005, with the
 remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 

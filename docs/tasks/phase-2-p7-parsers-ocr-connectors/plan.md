@@ -27,16 +27,22 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
   parse errors carry a **stable code only**, never document bytes.
 - **No new dependency, no egress, no migration.** CI stays hermetic (pure stdlib, deterministic).
 
-### P7.2 — Real binary-format parsers (pdf/docx/xlsx → markdown) — **GATED: dependency approval**
+### P7.2 — Real binary-format parsers (pdf/docx/xlsx → text) — **IMPLEMENTED (dependency approved 2026-07-13)**
 
-- Opt-in adapters implementing the same `DocumentParser` interface, selected like the other opt-in
-  real providers (deterministic/stdlib default; the binary adapter is enabled only when its
-  dependency is installed and its MIME is registered). Follows the established
-  `RUNTIME_*_PROVIDER` opt-in pattern (default keeps CI hermetic).
-- **Approval gate — document-parser dependency (supply-chain review).** Owner preference recorded in
-  the component plan: permissive-licensed, air-gap-installable, format-specific baseline
-  **pypdf / pdfplumber (pdf) + python-docx (docx) + openpyxl (xlsx)**; **OCR is NOT in-app**. A
-  comparison table is produced for the owner **before** any dependency is added to `pyproject`.
+- `PdfParser`/`DocxParser`/`XlsxParser` implement the same `DocumentParser` interface and register
+  their MIME types in `PARSERS`. The heavy libraries are imported **lazily inside the parse method**,
+  so `import apps.ingestion.parsers` needs only the stdlib and a text-only deployment never loads
+  them. Parsing is **local and in-process — no network egress**.
+- **Dependency approval — GRANTED by the owner (2026-07-13):** the comparison table was presented and
+  the owner approved **pdfplumber + python-docx + openpyxl** (the "baseline + pdfplumber for PDF
+  tables" option). pdfplumber supersedes pypdf for text+tables, so pypdf was omitted to keep the
+  dependency surface minimal. Pins added to `pyproject.toml`; `requirements.lock` regenerated (`pip
+  check` clean; langgraph trio unchanged). All permissive-licensed; **no `openai`/network dependency;
+  OCR is NOT in-app.**
+- Governance carried from P7.1: bounded output, counts-only telemetry (pages/elements), content-free
+  stable-code errors (`PDF_PARSE_FAILED`/`DOCX_PARSE_FAILED`/`XLSX_PARSE_FAILED`), documents are
+  untrusted data. An image-only PDF yields no text and fails closed (`EMPTY_DOCUMENT`) — its OCR is
+  the deferred P7.3. **No migration.**
 
 ### P7.3 — External OCR for image-only pages/embedded images — **GATED: OCR egress sign-off**
 
@@ -65,6 +71,7 @@ contracts**, and honoring the per-phase dependency/egress approval gates.
 
 ## Status
 
-- **P7.1: Implemented + verified (this change).**
-- **P7.2/P7.3/P7.4: Planned — blocked on the owner's dependency + egress approvals** (see the
-  approvals summary in the sequence doc). No code, dependency, or egress for these yet.
+- **P7.1: Implemented + verified** (stdlib parsers).
+- **P7.2: Implemented + verified** (pdf/docx/xlsx via owner-approved local libraries; no egress).
+- **P7.3 (OCR) + P7.4 (Confluence/REST connectors): deferred by the owner (2026-07-13)** — blocked on
+  their environment-specific egress sign-off. No code, endpoint, or egress for these yet.

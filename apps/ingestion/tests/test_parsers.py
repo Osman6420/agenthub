@@ -74,7 +74,8 @@ def test_html_extracts_visible_text_and_drops_script_style() -> None:
 
 
 def test_unsupported_mime_denies_by_default() -> None:
-    for mime in ("application/pdf", "application/octet-stream", "image/png", ""):
+    # image/* (OCR is the deferred P7.3), octet-stream, and empty MIME have no registered parser.
+    for mime in ("image/png", "image/jpeg", "application/octet-stream", ""):
         with pytest.raises(ParserError) as exc:
             parse_document(mime, b"data")
         assert exc.value.code == "PARSER_UNSUPPORTED"

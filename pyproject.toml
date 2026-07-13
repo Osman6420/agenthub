@@ -28,6 +28,14 @@ dependencies = [
     # pin; the resolved transitive tree is captured in requirements.lock. No
     # LangSmith/LangGraph Cloud/hosted services are used.
     "langgraph==1.2.9",
+    # Phase 2 P7.2 document parsers (owner-approved 2026-07-13): local, in-process
+    # text extraction only — NO network egress. pdfplumber (pdf text + tables),
+    # python-docx (docx), openpyxl (xlsx); all permissive-licensed. They plug into the
+    # apps.ingestion.parsers DocumentParser interface. External OCR (P7.3) and the
+    # Confluence/REST connectors (P7.4) remain deferred behind their egress sign-off.
+    "pdfplumber>=0.11,<0.12",
+    "python-docx>=1.1,<2",
+    "openpyxl>=3.1,<4",
 ]
 
 [project.optional-dependencies]

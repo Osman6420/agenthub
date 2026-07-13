@@ -141,7 +141,7 @@ deterministic remains the default and no environment-specific live endpoint was 
   unchanged (prompt is input, never authorization).
 - **Demo:** an agent runs with an authored persona/instructions instead of the raw user objective.
 
-### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1 IMPLEMENTED; P7.2–P7.4 gated**
+### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1 + P7.2 IMPLEMENTED; P7.3–P7.4 gated (deferred)**
 
 - `DocumentParser` interface + selected parsers (pdf/docx/xlsx→markdown), **external OCR egress**
   for image-only pages/embedded images, and upload/Confluence/generic-REST connectors. Real
@@ -151,8 +151,10 @@ deterministic remains the default and no environment-specific live endpoint was 
   **dependency-free stdlib parsers** (text/markdown/csv/json/html), wired into the staged build's
   text-extraction seam. No dependency, no egress, no migration; deterministic + hermetic. Binary
   MIME (pdf/docx/xlsx) still fails closed until P7.2.
-- **P7.2 — binary parsers (pdf/docx/xlsx):** opt-in adapters on the same interface. **Blocked on the
-  document-parser dependency approval (post comparison table).**
+- **P7.2 — DONE (2026-07-13):** local `pdf`/`docx`/`xlsx` parsers on the same interface via
+  owner-approved **pdfplumber + python-docx + openpyxl** (dependency approval granted post comparison
+  table; pdfplumber chosen over pypdf to minimize the surface). Heavy imports deferred; **no egress,
+  no migration**. Image-only PDFs fail closed (their OCR is P7.3).
 - **P7.3 — external OCR** for image-only pages: shared SSRF-safe egress, profile-ID-only. **Blocked
   on the OCR endpoint/profile sign-off.**
 - **P7.4 — Confluence + generic-REST connectors:** reuse the bounded allowlisted SSRF-safe connector
