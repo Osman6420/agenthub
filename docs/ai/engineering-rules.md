@@ -282,11 +282,13 @@ OCR; the three permissive-licensed deps were pinned in `pyproject.toml`, `requir
 regenerated, `pip check` clean, langgraph trio pin unchanged; **no `openai`/network dependency, no
 migration**) are verified; continue at **P7.3** (external OCR egress) and **P7.4** (Confluence/
 generic-REST connectors) — **both deferred by the owner and blocked on their environment-specific
-egress sign-off** — and **P8.1** (the document-plane operator console UI: server-rendered
+egress sign-off** — and **P8.1 + P8.2** (the document-plane operator console UI: server-rendered
 `/console/documents/` with a tenant-scoped document/set list, author-gated multipart upload
-re-checking `can_author_scenarios` server-side, and cross-tenant-safe soft-delete, all audited via
-`apps.documents.services`; no dependency/egress/migration; P8.2–P8.4 sets/binding/purge UI planned,
-no gate). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
+re-checking `can_author_scenarios` server-side, and cross-tenant-safe soft-delete; plus a
+`/console/document-sets/<pk>/` detail page for the full set lifecycle — create set → draft version →
+add member (pins the document's current version) → publish/freeze — all audited via
+`apps.documents.services`; no dependency/egress/migration; P8.3 binding/grants + P8.4 purge UI
+planned, no gate). Its M0 architecture decisions are accepted as ADR-0002–0005, with the
 remaining environment-specific egress and dependency approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 

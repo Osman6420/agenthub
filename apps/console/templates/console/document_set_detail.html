@@ -1,0 +1,53 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+
+<div class="card">
+  <p class="muted"><a href="{% url 'console:documents' %}">← Documents</a></p>
+  <h2>{{ set.logical_id }} <span class="badge">{{ set.status }}</span></h2>
+  <p class="muted">{{ set.org }} · {{ set.name }}</p>
+  {% if can_write %}
+  <form class="inline" method="post" action="{% url 'console:document_set_version_create' set.id %}">
+    {% csrf_token %}<button class="link" type="submit">New draft version</button>
+  </form>
+  {% endif %}
+</div>
+
+{% for v in versions %}
+<div class="card">
+  <h3>Version v{{ v.version }} <span class="badge">{{ v.status }}</span></h3>
+  {% if v.members %}
+  <table>
+    <thead><tr><th>Ordinal</th><th>Document</th><th>Version</th></tr></thead>
+    <tbody>
+      {% for m in v.members %}
+      <tr><td>{{ m.ordinal }}</td><td>{{ m.logical_id }}</td><td>v{{ m.version }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No members.</p>
+  {% endif %}
+
+  {% if can_write and v.is_draft %}
+  <div class="form-card" style="margin-top:12px;">
+    <form class="inline" method="post" action="{% url 'console:document_set_add_member' v.id %}">
+      {% csrf_token %}
+      <select name="document_id">
+        {% for d in candidate_docs %}
+        <option value="{{ d.id }}">{{ d.logical_id }} (v{{ d.version }})</option>
+        {% endfor %}
+      </select>
+      <button class="link" type="submit">Add member</button>
+    </form>
+    <form class="inline" method="post" action="{% url 'console:document_set_version_publish' v.id %}">
+      {% csrf_token %}<button class="link" type="submit">Publish version</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% empty %}
+<div class="card"><p class="muted">No versions yet.</p></div>
+{% endfor %}
+
+{% endblock %}

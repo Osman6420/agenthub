@@ -46,6 +46,17 @@
   {% endif %}
 </div>
 
+{% if can_upload %}
+<div class="card form-card">
+  <h2>New document set</h2>
+  <form method="post" action="{% url 'console:document_set_create' %}">
+    {% csrf_token %}
+    {{ set_form.as_p }}
+    <button type="submit">Create set</button>
+  </form>
+</div>
+{% endif %}
+
 <div class="card">
   <h2>Document sets</h2>
   {% if sets %}
@@ -57,7 +68,7 @@
       {% for s in sets %}
       <tr>
         <td>{{ s.org }}</td>
-        <td>{{ s.logical_id }}</td>
+        <td><a href="{% url 'console:document_set_detail' s.id %}">{{ s.logical_id }}</a></td>
         <td>{{ s.name }}</td>
         <td><span class="badge">{{ s.status }}</span></td>
         <td>{{ s.versions }}</td>

@@ -165,16 +165,18 @@ deterministic remains the default and no environment-specific live endpoint was 
   (P7.2+):** upload a PDF/DOCX/XLSX → parsed → embedded → retrievable, with image content OCR'd via
   the owner's endpoint.
 
-### P8 — Console UI · WS1 M5 — **P8.1 IMPLEMENTED; P8.2–P8.4 planned (no gate)**
+### P8 — Console UI · WS1 M5 — **P8.1 + P8.2 IMPLEMENTED; P8.3–P8.4 planned (no gate)**
 
 - Operator UI for per-scenario document sources, set membership, binding, upload, soft-delete,
   purge — role/tenant-scoped, non-authoritative (reuses console LDAP/session authz).
-- **P8.1 — DONE (2026-07-13, [`phase-2-p8-console-ui`](../../tasks/phase-2-p8-console-ui/plan.md)):**
-  server-rendered `/console/documents/` — tenant-scoped list of documents + sets, author-gated
-  multipart upload (`can_author_scenarios` re-checked server-side), and soft-delete (cross-tenant →
-  404), all audited via `apps.documents.services`. No dependency/egress/migration.
-- **P8.2 (sets: create/version/membership/publish), P8.3 (scenario binding + ACL grants), P8.4
-  (elevated purge):** planned console UI over the existing P2/P4 services; **no approval gate**.
+- **P8.1 + P8.2 — DONE (2026-07-13, [`phase-2-p8-console-ui`](../../tasks/phase-2-p8-console-ui/plan.md)):**
+  server-rendered `/console/documents/` (tenant-scoped list, author-gated multipart upload,
+  cross-tenant-safe soft-delete) and a `/console/document-sets/<pk>/` detail page (create set →
+  draft version → add member (pins the document's current version) → publish/freeze). All
+  author-gated (`can_author_scenarios`, re-checked server-side) and audited via
+  `apps.documents.services`. No dependency/egress/migration.
+- **P8.3 (scenario binding + ACL grants), P8.4 (elevated purge):** planned console UI over the
+  existing P2/P4 services; **no approval gate**.
 - **Demo:** the whole document plane is operable from the console (still GitOps-compatible).
 
 ## Sequencing rationale & alternatives

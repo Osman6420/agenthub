@@ -27,13 +27,21 @@ from apps.console.forms import (
     BindingForm,
     CanaryForm,
     ConsumerForm,
+    DocumentSetForm,
     DocumentUploadForm,
     OrganizationForm,
     ProjectForm,
     ScenarioForm,
 )
 from apps.documents import services as document_services
-from apps.documents.models import Document
+from apps.documents.models import (
+    Document,
+    DocumentLifecycle,
+    DocumentSet,
+    DocumentSetVersion,
+    DocumentSetVersionStatus,
+    DocumentVersion,
+)
 from apps.documents.services import DocumentError
 from apps.evaluations.services import EvalError, run_eval
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
@@ -514,6 +522,7 @@ def documents(request: HttpRequest) -> HttpResponse:
     user = request.user
     sets = [
         {
+            "id": s.id,
             "org": s.organization.slug,
             "logical_id": s.logical_id,
             "name": s.name,
@@ -535,6 +544,7 @@ def documents(request: HttpRequest) -> HttpResponse:
         for d in scoping.scoped_documents(user).order_by("organization_id", "logical_id")
     ]
     upload_form = DocumentUploadForm(user=user)
+    set_form = DocumentSetForm(user=user)
     # An operator can upload iff they may author in at least one org (None = platform admin).
     can_upload = author_organization_ids(user) != set()
     return render(
@@ -544,6 +554,7 @@ def documents(request: HttpRequest) -> HttpResponse:
             "title": "Documents",
             "sets": sets,
             "documents": docs,
+            "set_form": set_form,
             "form": upload_form,
             "can_upload": can_upload,
         },
@@ -592,6 +603,158 @@ def _scoped_document(user: UserLike, pk: int) -> Document:
     try:
         return scoping.scoped_documents(user).get(pk=pk)
     except Document.DoesNotExist as exc:
+        raise Http404 from exc
+
+
+@login_required
+@require_POST
+def document_set_create(request: HttpRequest) -> HttpResponse:
+    form = DocumentSetForm(request.POST, user=request.user)
+    if not form.is_valid():
+        messages.error(request, "Create failed: check the form fields.")
+        return redirect("console:documents")
+    organization = form.cleaned_data["organization"]
+    if not can_author_scenarios(request.user, organization.id):
+        raise PermissionDenied
+    try:
+        document_services.create_document_set(
+            organization=organization,
+            logical_id=form.cleaned_data["logical_id"],
+            name=form.cleaned_data["name"],
+            actor=request.user.get_username(),
+        )
+        messages.success(request, "Document set created.")
+    except DocumentError as exc:
+        messages.error(request, f"Create failed: {exc.code}")
+    return redirect("console:documents")
+
+
+@login_required
+def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    can_write = can_author_scenarios(request.user, document_set.organization_id)
+    versions = [
+        {
+            "id": v.id,
+            "version": v.version,
+            "status": v.status,
+            "is_draft": v.status == DocumentSetVersionStatus.DRAFT,
+            "members": [
+                {
+                    "logical_id": m.document_version.document.logical_id,
+                    "version": m.document_version.version,
+                    "ordinal": m.ordinal,
+                }
+                for m in v.memberships.select_related("document_version__document").order_by(
+                    "ordinal"
+                )
+            ],
+        }
+        for v in document_set.versions.order_by("-version")
+    ]
+    # Active, uploaded documents in this set's tenant, offered as members of a draft version.
+    candidate_docs = [
+        {"id": d.id, "logical_id": d.logical_id, "version": d.current_version}
+        for d in Document.objects.filter(
+            organization_id=document_set.organization_id,
+            lifecycle_state=DocumentLifecycle.ACTIVE,
+            current_version__gt=0,
+        ).order_by("logical_id")
+    ]
+    return render(
+        request,
+        "console/document_set_detail.html",
+        {
+            "title": f"Document set · {document_set.logical_id}",
+            "set": {
+                "id": document_set.id,
+                "org": document_set.organization.slug,
+                "logical_id": document_set.logical_id,
+                "name": document_set.name,
+                "status": document_set.status,
+            },
+            "versions": versions,
+            "candidate_docs": candidate_docs,
+            "can_write": can_write,
+        },
+    )
+
+
+@login_required
+@require_POST
+def document_set_version_create(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    if not can_author_scenarios(request.user, document_set.organization_id):
+        raise PermissionDenied
+    document_services.create_document_set_version(
+        document_set=document_set, actor=request.user.get_username()
+    )
+    messages.success(request, "Draft version created.")
+    return redirect("console:document_set_detail", pk=document_set.pk)
+
+
+@login_required
+@require_POST
+def document_set_add_member(request: HttpRequest, version_pk: int) -> HttpResponse:
+    set_version = _scoped_set_version(request.user, version_pk)
+    if not can_author_scenarios(request.user, set_version.organization_id):
+        raise PermissionDenied
+    document_id = request.POST.get("document_id", "")
+    document = (
+        Document.objects.filter(
+            pk=document_id,
+            organization_id=set_version.organization_id,
+            lifecycle_state=DocumentLifecycle.ACTIVE,
+            current_version__gt=0,
+        ).first()
+        if document_id.isdigit()
+        else None
+    )
+    version = (
+        DocumentVersion.objects.filter(document=document, version=document.current_version).first()
+        if document is not None
+        else None
+    )
+    if version is None:
+        messages.error(request, "Add member failed: invalid document.")
+        return redirect("console:document_set_detail", pk=set_version.document_set_id)
+    try:
+        document_services.add_document_to_set_version(
+            set_version=set_version, document_version=version, actor=request.user.get_username()
+        )
+        messages.success(request, "Member added.")
+    except DocumentError as exc:
+        messages.error(request, f"Add member failed: {exc.code}")
+    return redirect("console:document_set_detail", pk=set_version.document_set_id)
+
+
+@login_required
+@require_POST
+def document_set_version_publish(request: HttpRequest, version_pk: int) -> HttpResponse:
+    set_version = _scoped_set_version(request.user, version_pk)
+    if not can_author_scenarios(request.user, set_version.organization_id):
+        raise PermissionDenied
+    try:
+        document_services.publish_document_set_version(
+            set_version=set_version, actor=request.user.get_username()
+        )
+        messages.success(request, "Version published.")
+    except DocumentError as exc:
+        messages.error(request, f"Publish failed: {exc.code}")
+    return redirect("console:document_set_detail", pk=set_version.document_set_id)
+
+
+def _scoped_document_set(user: UserLike, pk: int) -> DocumentSet:
+    try:
+        return scoping.scoped_document_sets(user).get(pk=pk)
+    except DocumentSet.DoesNotExist as exc:
+        raise Http404 from exc
+
+
+def _scoped_set_version(user: UserLike, pk: int) -> DocumentSetVersion:
+    try:
+        return scoping.scoped_document_set_versions(user).get(pk=pk)
+    except DocumentSetVersion.DoesNotExist as exc:
         raise Http404 from exc
 
 

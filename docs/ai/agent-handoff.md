@@ -268,19 +268,26 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **P8.1 COMPLETE — document-plane console UI (P8.2–P8.4 planned, no gate).** P8.1 is implemented and
-  verified in `docs/tasks/phase-2-p8-console-ui/`: a server-rendered `/console/documents/` page —
-  tenant-scoped list of documents + document sets (`scoping.scoped_documents`/`scoped_document_sets`),
-  an author-gated multipart **upload** (`DocumentUploadForm` scoped to `author_organization_ids`; the
-  view re-checks `can_author_scenarios` server-side and calls `upload_document`), and a cross-tenant-
-  safe **soft-delete** (scoped queryset → 404 for another tenant's doc). Nav link added; all writes
-  audited by `apps.documents.services`. **Non-authoritative, no dependency/egress/migration.** Test
-  gotcha (fixed): the autouse fixture must force `settings.DOCUMENTS_OBJECT_STORE_BACKEND="memory"`
-  (config.settings.local defaults to "s3" → uploads need MinIO otherwise). Evidence: SQLite 497
-  passed / 20 skipped; PostgreSQL 515 passed / 2 skipped. **P8.2 (sets: create/version/membership/
-  publish), P8.3 (scenario binding + ACL grants), P8.4 (elevated purge)** are planned console UI over
-  the existing P2/P4 services — **no approval gate**. Committed on `feat/foundation-sprint-0-1`; not
-  pushed. P7 provenance follows.
+- **P8.1 + P8.2 COMPLETE — document-plane console UI (P8.3–P8.4 planned, no gate).** Implemented and
+  verified in `docs/tasks/phase-2-p8-console-ui/`.
+  - **P8.1:** a server-rendered `/console/documents/` page — tenant-scoped list of documents +
+    document sets, an author-gated multipart **upload** (`DocumentUploadForm` scoped to
+    `author_organization_ids`; the view re-checks `can_author_scenarios` server-side and calls
+    `upload_document`), and a cross-tenant-safe **soft-delete** (scoped queryset → 404). Committed
+    `f1f1eb4`.
+  - **P8.2:** a `/console/document-sets/<pk>/` detail page + create form — create set
+    (`create_document_set`), open a draft version (`create_document_set_version`), add a member (pins
+    the chosen document's current `DocumentVersion` via `add_document_to_set_version`), and publish/
+    freeze (`publish_document_set_version` → promotable; empty version → graceful `SET_VERSION_EMPTY`).
+    All author-gated + tenant-scoped (cross-tenant → 404).
+  - Nav link added; all writes audited by `apps.documents.services`. **Non-authoritative, no
+    dependency/egress/migration.** **Test gotcha:** the autouse fixture must force
+    `settings.DOCUMENTS_OBJECT_STORE_BACKEND="memory"` (config.settings.local defaults to "s3" →
+    uploads need MinIO otherwise). Evidence: SQLite 502 passed / 20 skipped; PostgreSQL 520 passed /
+    2 skipped.
+  - **P8.3 (scenario binding + ACL grants), P8.4 (elevated purge)** are planned console UI over the
+    existing P2/P4 services — **no approval gate**. Committed on `feat/foundation-sprint-0-1`; not
+    pushed. P7 provenance follows.
 - **P7.1 + P7.2 COMPLETE — P7.3/P7.4 deferred by owner.** P7 (parsers) is implemented and
   verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
   - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed

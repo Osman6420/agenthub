@@ -170,6 +170,21 @@ class DocumentUploadForm(forms.Form):
         )
 
 
+class DocumentSetForm(forms.Form):
+    """Create a document set in an author-scoped organization (P8.2)."""
+
+    organization = forms.ModelChoiceField(queryset=Organization.objects.none())
+    logical_id = forms.SlugField(max_length=128)
+    name = forms.CharField(max_length=200)
+
+    def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        ids = author_organization_ids(user)
+        cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
+            Organization.objects.all(), ids
+        )
+
+
 class CanaryForm(forms.Form):
     """Start-canary form: pick a consumer in the release's org and a bounded lifetime."""
 

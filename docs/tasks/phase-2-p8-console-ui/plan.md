@@ -25,11 +25,19 @@ new SPA).
   tenant-scoped (cross-tenant target → 404) and author-gated.
 - Nav link added; all actions audited by the underlying services.
 
-### P8.2 — Document sets: create + version + membership + publish — **PLANNED**
+### P8.2 — Document sets: create + version + membership + publish — **IMPLEMENTED (this change)**
 
-- Create a set, open a draft version, add/remove members (pin `DocumentVersion`s), and publish
-  (freeze) — over `create_document_set` / `create_document_set_version` /
-  `add_document_to_set_version` / `publish_document_set_version`.
+- `POST /console/document-sets/new/` — create a set (`DocumentSetForm`, author-scoped org) via
+  `create_document_set`.
+- `GET /console/document-sets/<pk>/` — a set-detail page: versions (newest first) with their
+  membership, and, for a **draft** version, an add-member picker (the tenant's active documents) +
+  publish action. Tenant-scoped (cross-tenant → 404).
+- `POST .../versions/new/` → `create_document_set_version` (draft).
+- `POST /console/document-set-versions/<pk>/add-member/` → pins the chosen document's current
+  `DocumentVersion` via `add_document_to_set_version` (validated same-tenant, active, draft-only).
+- `POST /console/document-set-versions/<pk>/publish/` → `publish_document_set_version` (freeze →
+  promotable); an empty version fails gracefully (redirect + `SET_VERSION_EMPTY`, not a 500).
+- All author-gated (`can_author_scenarios`) and audited by the services.
 
 ### P8.3 — Scenario ↔ document-set binding + ACL grants — **PLANNED**
 
@@ -53,6 +61,7 @@ new SPA).
 
 ## Status
 
-- **P8.1: Implemented + verified (this change).**
-- **P8.2–P8.4: Planned.** No blockers (no dependency/egress gates) — they are console UI over
-  services that already exist and are tested.
+- **P8.1: Implemented + verified** (documents list/upload/soft-delete).
+- **P8.2: Implemented + verified** (document-set create/version/membership/publish).
+- **P8.3–P8.4: Planned.** No blockers (no dependency/egress gates) — console UI over existing,
+  tested services (`bind_scenario_document_set` / `grant_document_set` / `purge_document`).

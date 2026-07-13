@@ -41,6 +41,23 @@ urlpatterns = [
         views.document_soft_delete,
         name="document_soft_delete",
     ),
+    path("document-sets/new/", views.document_set_create, name="document_set_create"),
+    path("document-sets/<int:pk>/", views.document_set_detail, name="document_set_detail"),
+    path(
+        "document-sets/<int:pk>/versions/new/",
+        views.document_set_version_create,
+        name="document_set_version_create",
+    ),
+    path(
+        "document-set-versions/<int:version_pk>/add-member/",
+        views.document_set_add_member,
+        name="document_set_add_member",
+    ),
+    path(
+        "document-set-versions/<int:version_pk>/publish/",
+        views.document_set_version_publish,
+        name="document_set_version_publish",
+    ),
     path("agent-runs/", views.agent_runs, name="agent_runs"),
     path("agent-runs/<str:public_id>/", views.agent_run_detail, name="agent_run_detail"),
     path(
