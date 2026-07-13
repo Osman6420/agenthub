@@ -76,6 +76,11 @@ auto-escaping, stable generic errors, domain services, and explicit configured-v
 P9.2 additionally applies file-count/per-file/aggregate byte limits, server-generated slug IDs,
 the existing MIME allowlist, tenant-granted immutable profile selection, identifier-only task
 payloads, tenant context in the worker, and release-manager-only promotion.
+P9.3 keeps connector destinations, authentication, secret references and source-input values out
+of the tenant read model; exact set grants and same-tenant contracts are revalidated by domain
+services. Synthetic REST preview is size/item bounded, performs no egress and returns metadata only.
+Schedule targets are restricted to scenarios already bound to the source set, with release-manager
+authorization for automatic promotion; queued sync tasks carry run and organization IDs only.
 
 ## Residual risks
 
@@ -89,3 +94,5 @@ Authentication redirect, membership-less/cross-tenant 404, cross-tenant mutation
 non-author 403, CSRF behavior, audit creation/removal evidence, and escaped stored labels.
 P9.2 also requires bulk boundary/duplicate/MIME tests, draft replacement/baseline tests, profile
 grant and cross-tenant denial, author-vs-release-manager checks, queue dispatch and promotion audit.
+P9.3 requires profile/secret redaction, invalid/cross-tenant source IDs, exact-grant denial, malicious
+contract/preview payloads, schedule interval/mode/target checks, queue failure and ID-only payloads.

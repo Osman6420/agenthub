@@ -66,6 +66,41 @@ urlpatterns = [
     path("document-sets/new/", views.document_set_create, name="document_set_create"),
     path("document-sets/<int:pk>/", views.document_set_detail, name="document_set_detail"),
     path(
+        "document-sets/<int:pk>/connectors/",
+        views.document_set_connectors,
+        name="document_set_connectors",
+    ),
+    path(
+        "document-sets/<int:pk>/connectors/confluence/new/",
+        views.confluence_source_create,
+        name="confluence_source_create",
+    ),
+    path(
+        "document-sets/<int:pk>/connectors/rest-contract/preview/",
+        views.rest_contract_preview,
+        name="rest_contract_preview",
+    ),
+    path(
+        "document-sets/<int:pk>/connectors/rest-contract/new/",
+        views.rest_contract_create,
+        name="rest_contract_create",
+    ),
+    path(
+        "document-sets/<int:pk>/connectors/rest/new/",
+        views.rest_source_create,
+        name="rest_source_create",
+    ),
+    path(
+        "connector-sources/<int:source_pk>/run/",
+        views.connector_source_run,
+        name="connector_source_run",
+    ),
+    path(
+        "connector-sources/<int:source_pk>/schedule/",
+        views.connector_schedule_configure,
+        name="connector_schedule_configure",
+    ),
+    path(
         "document-sets/<int:pk>/bulk-upload/",
         views.document_set_bulk_upload,
         name="document_set_bulk_upload",

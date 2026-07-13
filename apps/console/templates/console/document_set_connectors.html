@@ -1,0 +1,51 @@
+{% extends "console/base.html" %}
+{% block title %}{{ set.name }} kaynakları · AgentHub{% endblock %}
+{% block content %}
+
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><a href="{% url 'console:document_set_detail' set.id %}">{{ set.name }}</a><span>›</span><span>Kaynaklar</span></div>
+<div class="page-heading"><div><p class="eyebrow">{{ set.organization.name }} · {{ set.logical_id }}</p><h1>Kaynaklar ve yenileme</h1><p class="muted">Kaynak değişiklikleri yeni bir taslak aday üretir; aktif indeks yalnız seçilen otomasyon ve mevcut promotion kapılarından sonra değişir.</p></div></div>
+
+<div class="card">
+  <div class="section-heading"><div><h2>Bağlı kaynaklar</h2><p class="muted">Hedef adresi, kimlik bilgisi, REST input değerleri ve doküman içeriği bu ekranda gösterilmez.</p></div></div>
+  {% for source in sources %}
+  <div class="relationship-card">
+    <div class="relationship-head"><div><h3>{{ source.object.name }}</h3><p class="muted mono">{{ source.object.slug }} · {{ source.type_label }}</p></div><span class="badge {{ source.object.status }}">{{ source.object.status }}</span></div>
+    <div class="relationship-body">
+      <div>
+        <h4>Güvenli kaynak özeti</h4>
+        <p><strong>Profil:</strong> {{ source.profile_label }}</p><p><strong>Mapping:</strong> {{ source.contract_label }}</p><p class="muted">{{ source.config_summary }}</p>
+        {% if source.latest_run %}<div class="notice"><strong>Son run #{{ source.latest_run.id }} · {{ source.latest_run.status }}</strong><p class="muted">Bulunan {{ source.latest_run.discovered_count }} · değişen {{ source.latest_run.changed_count }} · değişmeyen {{ source.latest_run.unchanged_count }} · eksilen {{ source.latest_run.missing_count }} · {{ source.latest_run.fetched_bytes }} byte</p>{% if source.latest_run.error_code %}<p class="muted">Hata kodu: {{ source.latest_run.error_code }}</p>{% endif %}</div>{% else %}<p class="muted">Henüz senkron çalışmadı.</p>{% endif %}
+        {% if can_write %}<form method="post" action="{% url 'console:connector_source_run' source.object.id %}">{% csrf_token %}<button class="button secondary" type="submit">Şimdi çalıştır</button></form>{% endif %}
+      </div>
+      <div>
+        <h4>Periyodik yenileme ve otomasyon</h4>
+        {% if source.schedule %}<p class="muted">Sonraki slot: {{ source.schedule.next_run_at }} · otomasyon: {{ source.schedule.automation_status }}</p>{% else %}<p class="muted">Plan henüz oluşturulmadı.</p>{% endif %}
+        {% if source.can_configure %}<form class="compact-form" method="post" action="{% url 'console:connector_schedule_configure' source.object.id %}">{% csrf_token %}{{ source.schedule_form.as_p }}<p class="muted">Otomatik promotion yalnız release manager rolüne ve bu sete bağlı senaryolara açıktır.</p><button class="button secondary" type="submit">Planı kaydet</button></form>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% empty %}<div class="empty">Bu sete bağlı connector kaynağı yok.</div>{% endfor %}
+</div>
+
+{% if can_write %}
+<div class="relationship-grid">
+  <div class="card form-card">
+    <h2>Confluence kaynağı ekle</h2><p class="muted">Yalnız platform yöneticisinin bu sete grant ettiği profil seçilebilir. Kök sayfa alt ağacı periyodik olarak değişiklik kontrolünden geçer.</p>
+    <form method="post" action="{% url 'console:confluence_source_create' set.id %}">{% csrf_token %}{{ confluence_form.as_p }}<button type="submit">Confluence kaynağı oluştur</button></form>
+  </div>
+  <div class="card form-card">
+    <h2>Generic REST kaynağı ekle</h2><p class="muted">Önce aşağıda immutable mapping sözleşmesini oluşturun. Hedef ve credential platform profilinden gelir; input JSON URL/header/secret taşıyamaz.</p>
+    <form method="post" action="{% url 'console:rest_source_create' set.id %}">{% csrf_token %}{{ rest_source_form.as_p }}<button type="submit">REST kaynağı oluştur</button></form>
+  </div>
+</div>
+
+<div class="card form-card">
+  <div class="section-heading"><div><h2>REST mapping sözleşmesi</h2><p class="muted">RFC 6901 pointer ve kapalı placeholder kuralları kullanılır. Sentetik response preview ağ isteği yapmaz ve içerik alanını göstermez.</p></div></div>
+  <form method="post">{% csrf_token %}{{ contract_form.as_p }}
+    <div class="button-row"><button class="button secondary" type="submit" formaction="{% url 'console:rest_contract_preview' set.id %}">Sözleşmeyi / preview'ı doğrula</button><button type="submit" formaction="{% url 'console:rest_contract_create' set.id %}">Immutable revizyonu oluştur</button></div>
+  </form>
+  {% if preview_valid %}<div class="notice success"><strong>Mapping doğrulandı; ağ isteği yapılmadı.</strong>{% for item in preview_items %}<p><span class="mono">{{ item.external_id }}</span> · {{ item.title }} · rev {{ item.revision }}{% if item.deleted %} · silinmiş{% endif %}</p>{% empty %}<p class="muted">Sentetik response verilmedi veya item listesi boş.</p>{% endfor %}</div>{% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

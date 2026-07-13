@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from apps.audit.models import ActorType, Outcome
 from apps.audit.services import record_event
@@ -26,6 +27,7 @@ from apps.ingestion.models import (
     RestPullProfile,
     RestPullProfileStatus,
     RestSyncRun,
+    RestSyncStatus,
     ScheduleAutomationMode,
     Source,
     SourceStatus,
@@ -307,6 +309,32 @@ def create_rest_sync_run(
             request_id=request_id,
         )
     return run
+
+
+@transaction.atomic
+def mark_rest_dispatch_failed(
+    *, run: RestSyncRun, actor: UserLike, request_id: str = ""
+) -> RestSyncRun:
+    """Close a manual run whose broker dispatch failed; never leave it queued forever."""
+    set_tenant_context(run.organization_id)
+    locked = RestSyncRun.objects.select_for_update().get(
+        pk=run.pk, organization_id=run.organization_id
+    )
+    if locked.status == RestSyncStatus.QUEUED:
+        locked.status = RestSyncStatus.DEAD_LETTER
+        locked.error_code = "BROKER_UNAVAILABLE"
+        locked.finished_at = timezone.now()
+        locked.save(update_fields=["status", "error_code", "finished_at", "updated_at"])
+        _audit(
+            "rest_sync.dispatch_failed",
+            _actor_id(actor),
+            Outcome.FAILURE,
+            organization_id=locked.organization_id,
+            resource_id=str(locked.pk),
+            reason="BROKER_UNAVAILABLE",
+            request_id=request_id,
+        )
+    return locked
 
 
 def configure_sync_schedule(

@@ -63,12 +63,26 @@ effective retrieval scope in one place. The owner accepted these product directi
   ingestion queue with identifier-only resource references, and never promote automatically.
 - [x] P9.2 implemented: bulk/build/promotion paths deny cross-tenant IDs and unauthorized roles and retain
   domain audit evidence.
-- [ ] P9.3–P9.5 criteria are refined before each increment begins.
+- [x] P9.3: a scoped operator can see each Confluence/REST source attached to a document set,
+  its safe profile/contract identity, schedule/automation state, latest bounded counters and run
+  status without seeing destination, credential, source-input value or document-content fields.
+- [x] P9.3: an author can create a Confluence source only from an exact set grant and can create an
+  immutable REST contract/source only from an exact set grant plus a same-tenant contract; all
+  mutations use the existing audited services.
+- [x] P9.3: the REST mapping editor validates the closed contract and a bounded synthetic response
+  without network egress, logging or rendering mapped content.
+- [x] P9.3: an author can run a source now and configure a bounded interval with `draft_only` or
+  `stage_only`; only a release manager can choose `promote_if_safe` and exact scenarios already
+  bound to the source document set.
+- [x] P9.3: run/schedule actions enqueue identifier-only payloads, reject cross-tenant/unauthorized
+  IDs and keep profile destinations/secrets out of HTML, messages, logs and task payloads.
+- [ ] P9.4–P9.5 criteria are refined before each increment begins.
 
 ## Affected components
 
 - `apps.console` views, URLs, templates and tests.
 - `apps.documents` membership services and `apps.ingestion` staged-build task/read model in P9.2.
+- Existing `apps.ingestion` connector contracts/services/tasks plus safe preview helper in P9.3.
 - Phase/master/current-behavior documentation.
 
 ## Interfaces affected
@@ -78,14 +92,16 @@ effective retrieval scope in one place. The owner accepted these product directi
 
 ## Data impact
 
-P9.1 and P9.2 add no schema. P9.2 writes ordinary document/version/set-membership and index-version
-rows through existing models and domain services.
+P9.1–P9.3 add no schema. P9.2 writes ordinary document/version/set-membership and index-version
+rows. P9.3 writes existing immutable contract/source, schedule/target and sync-run rows through
+governed services.
 
 ## Security impact
 
-The relationship page exposes authorization topology, so every queryset must be scoped before
-rendering. POSTed scenario, document-set, consumer, binding and grant identifiers are untrusted.
-CSRF remains mandatory. Stored names and titles rely on Django auto-escaping.
+The relationship and connector pages expose authorization topology, so every queryset must be
+scoped before rendering. POSTed scenario, document-set, consumer, binding, grant, profile,
+contract, source and schedule identifiers are untrusted. CSRF remains mandatory. Stored names and
+titles rely on Django auto-escaping. Connector destination/auth/secret details remain platform-only.
 
 ## Authorization impact
 
@@ -95,16 +111,17 @@ The UI is non-authoritative. Personal `user`/`group` grants remain inert.
 
 ## Observability impact
 
-Existing binding/grant service audit events remain the state-change authority. P9.1 adds no
-high-cardinality metrics and must not log document contents, credentials or bearer tokens.
+Existing binding/grant/connector service audit events remain the state-change authority. P9.3 adds
+dispatch-failure audit and durable dead-letter state but no high-cardinality metrics; document and
+synthetic content, credentials, input values and bearer tokens must not enter logs.
 
 ## Migration impact
 
-None for P9.1–P9.2.
+None for P9.1–P9.3.
 
 ## Dependencies
 
-No new production dependency for P9.1. Later visual work must reuse the existing frontend stack or
+No new production dependency for P9.1–P9.3. Later visual work must reuse the existing frontend stack or
 pass the repository dependency approval gate.
 
 ## Implementation steps
@@ -115,7 +132,9 @@ pass the repository dependency approval gate.
 4. Verify P9.1 and update current-state docs/handoff.
 5. Implement P9.2 as a document-set-first workspace: bounded bulk upload, draft upsert, lifecycle
    state, queued staged build and separately role-gated manual promotion.
-6. Refine and implement P9.3, P9.4 and P9.5 sequentially.
+6. Implement P9.3 as set-scoped connector source, closed REST mapping/preview, schedule/automation,
+   run-now and safe-status controls over the existing audited backend.
+7. Refine and implement P9.4 and P9.5 sequentially.
 
 ## Test plan
 
@@ -129,6 +148,8 @@ pass the repository dependency approval gate.
   MIME denial, draft baseline preservation and same-document replacement.
 - P9.2 build-profile tenant scoping, author/release-manager separation, queue payload, failed build
   state and promotion denial.
+- P9.3 safe read model/redaction, exact profile grant, contract/source validation, synthetic preview
+  bounds/no-egress, schedule role split/target binding, run-now queue payload and cross-tenant denial.
 - Formatter, linter, type check, Django check, migration drift and focused/full tests.
 
 ## Rollout plan
@@ -159,7 +180,7 @@ the new screen are ordinary audited domain rows and remain manageable from legac
 
 ## Status
 
-In progress — P9.1–P9.2 verified; P9.3–P9.5 planned.
+In progress — P9.1–P9.3 verified; P9.4–P9.5 planned.
 
 ## Completion criteria
 

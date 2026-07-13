@@ -80,6 +80,21 @@ olduğunda yalnız `release_manager`/`organization_admin` rolü **Aktif et** iş
 Çalışma alanı taslak, yayımlanmış set, building/promotable indeks ve aktif indeks durumlarını ayrı
 gösterir. Manuel akış otomatik promotion yapmaz.
 
+### Connector kaynakları ve periyodik güncelleme
+
+Doküman seti çalışma alanındaki **Kaynakları yönet** bağlantısı Confluence ve generic REST
+kaynaklarını aynı set altında gösterir. Ekran yalnız güvenli profil/contract kimliğini, son run
+durumunu ve değişen/değişmeyen sayaçlarını gösterir; hedef host, credential/secret, REST input
+değerleri ve doküman içeriği gösterilmez.
+
+Author, platform yöneticisinin exact document-set grant verdiği Confluence/REST profilini seçerek
+kaynak oluşturabilir. REST için kapalı JSON mapping sözleşmesi immutable revizyon olarak oluşturulur;
+isteğe bağlı sentetik response preview ağ isteği yapmadan pointer/metadata eşleşmesini doğrular ve
+içeriği response'a yansıtmaz. Kaynak **Şimdi çalıştır** ile ingestion kuyruğuna alınabilir veya 15
+dakika–7 gün aralığında periyodik çalıştırılabilir. Değişiklik sonrası `draft_only` ve `stage_only`
+author seçenekleridir; `promote_if_safe` yalnız release manager tarafından, sete zaten bağlı exact
+senaryolar için seçilebilir.
+
 ---
 
 ## 3. The end-to-end scenario lifecycle

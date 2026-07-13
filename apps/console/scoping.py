@@ -13,6 +13,7 @@ from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import Document, DocumentSet, DocumentSetVersion
 from apps.identity.models import Consumer
+from apps.ingestion.models import ConnectorType, Source
 from apps.releases.models import ScenarioRelease
 from apps.tenancy.models import Organization
 from apps.tenancy.services import allowed_organization_ids
@@ -81,4 +82,14 @@ def scoped_document_sets(user: UserLike) -> QuerySet[DocumentSet]:
 def scoped_document_set_versions(user: UserLike) -> QuerySet[DocumentSetVersion]:
     allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = DocumentSetVersion.objects.select_related("document_set", "organization")
+    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+
+
+def scoped_connector_sources(user: UserLike) -> QuerySet[Source]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = Source.objects.filter(
+        connector_type__in=[ConnectorType.CONFLUENCE_DC, ConnectorType.GENERIC_REST]
+    ).select_related(
+        "organization", "document_set", "confluence_profile", "rest_profile", "rest_contract"
+    )
     return qs if allowed is None else qs.filter(organization_id__in=allowed)

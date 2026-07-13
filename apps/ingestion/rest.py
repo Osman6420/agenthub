@@ -47,6 +47,63 @@ class RestPullItem:
     raw_content: Any
 
 
+def map_rest_item(spec: dict[str, Any], raw: dict[str, Any]) -> RestPullItem:
+    """Apply the closed response mapping to one item without performing egress."""
+    try:
+        external = resolve_pointer(raw, spec["id_pointer"])
+        revision = (
+            resolve_pointer(raw, spec["revision_pointer"]) if "revision_pointer" in spec else ""
+        )
+        title = resolve_pointer(raw, spec["title_pointer"]) if "title_pointer" in spec else ""
+        deleted = (
+            resolve_pointer(raw, spec["deleted_pointer"]) if "deleted_pointer" in spec else False
+        )
+        content = (
+            resolve_pointer(raw, spec["content_pointer"]) if "content_pointer" in spec else None
+        )
+    except RestContractError as exc:
+        raise RestPullError(exc.code) from exc
+    if (
+        not isinstance(external, (str, int))
+        or isinstance(external, bool)
+        or not str(external)
+        or len(str(external)) > 256
+    ):
+        raise RestPullError("REST_EXTERNAL_ID_INVALID")
+    if revision is None:
+        revision = ""
+    if (
+        not isinstance(revision, (str, int))
+        or isinstance(revision, bool)
+        or len(str(revision)) > 256
+    ):
+        raise RestPullError("REST_REVISION_INVALID")
+    if title is None:
+        title = ""
+    if not isinstance(title, str) or len(title) > 500 or not isinstance(deleted, bool):
+        raise RestPullError("REST_ITEM_METADATA_INVALID")
+    return RestPullItem(str(external), str(revision), title, deleted, content)
+
+
+def preview_rest_response(
+    definition: dict[str, Any], payload: object, *, max_items: int = 20
+) -> list[RestPullItem]:
+    """Validate a bounded synthetic response and return mapped items without content egress."""
+    validated = validate_contract(definition)
+    try:
+        items = resolve_pointer(payload, validated["response"]["items_pointer"])
+    except RestContractError as exc:
+        raise RestPullError(exc.code) from exc
+    if not isinstance(items, list) or len(items) > max_items:
+        raise RestPullError("REST_PREVIEW_ITEMS_INVALID")
+    mapped: list[RestPullItem] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            raise RestPullError("REST_ITEM_INVALID")
+        mapped.append(map_rest_item(validated["response"], raw))
+    return mapped
+
+
 class GovernedRestClient:
     def __init__(
         self,
@@ -129,7 +186,7 @@ class GovernedRestClient:
                 item_count += 1
                 if item_count > profile.max_items:
                     raise RestPullError("REST_ITEM_LIMIT_EXCEEDED")
-                yield self._map_item(response_spec, raw_item)
+                yield map_rest_item(response_spec, raw_item)
             if mode == "none" or not items:
                 return
             if mode in {"page_number", "offset"} and len(items) < page_size:
@@ -184,44 +241,6 @@ class GovernedRestClient:
         if not content or len(content) > profile.max_decoded_item_bytes:
             raise RestPullError("REST_CONTENT_SIZE_INVALID")
         return content
-
-    def _map_item(self, spec: dict[str, Any], raw: dict[str, Any]) -> RestPullItem:
-        try:
-            external = resolve_pointer(raw, spec["id_pointer"])
-            revision = (
-                resolve_pointer(raw, spec["revision_pointer"]) if "revision_pointer" in spec else ""
-            )
-            title = resolve_pointer(raw, spec["title_pointer"]) if "title_pointer" in spec else ""
-            deleted = (
-                resolve_pointer(raw, spec["deleted_pointer"])
-                if "deleted_pointer" in spec
-                else False
-            )
-            content = (
-                resolve_pointer(raw, spec["content_pointer"]) if "content_pointer" in spec else None
-            )
-        except RestContractError as exc:
-            raise RestPullError(exc.code) from exc
-        if (
-            not isinstance(external, (str, int))
-            or isinstance(external, bool)
-            or not str(external)
-            or len(str(external)) > 256
-        ):
-            raise RestPullError("REST_EXTERNAL_ID_INVALID")
-        if revision is None:
-            revision = ""
-        if (
-            not isinstance(revision, (str, int))
-            or isinstance(revision, bool)
-            or len(str(revision)) > 256
-        ):
-            raise RestPullError("REST_REVISION_INVALID")
-        if title is None:
-            title = ""
-        if not isinstance(title, str) or len(title) > 500 or not isinstance(deleted, bool):
-            raise RestPullError("REST_ITEM_METADATA_INVALID")
-        return RestPullItem(str(external), str(revision), title, deleted, content)
 
     def _request_json(
         self,

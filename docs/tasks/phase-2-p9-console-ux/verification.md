@@ -20,6 +20,13 @@
 | P9.2 focused SQLite | `pytest test_document_workspace_console.py test_document_sets_console.py test_scenario_relationship_console.py -q` | Pass | 18 passed | Bulk, draft, tenant/profile and promotion authorization |
 | P9.2 full SQLite | `pytest -q --basetemp=.pytest-tmp-p9-2-full-20260713` | Pass | 574 passed, 25 skipped | PostgreSQL-only tests skipped as declared |
 | P9.2 focused PostgreSQL | `pytest test_document_workspace_console.py test_document_sets_console.py test_scenario_relationship_console.py -q --create-db` | Pass | 18 passed | Local PostgreSQL |
+| P9.3 repository format/lint | `ruff format --check .`; `ruff check .` | Pass | 344 files formatted; all checks passed | Final P9.3 code |
+| P9.3 type check | `mypy apps config` | Pass | 343 source files, no issues | Final P9.3 code |
+| P9.3 Django/migration | `manage.py check`; `makemigrations --check --dry-run` | Pass | 0 issues; no changes | No schema change |
+| P9.3 focused SQLite | `pytest test_connector_workspace_console.py -q` | Pass | 7 passed | Redaction, preview, exact grants, authz, queue and automation |
+| P9.3 related SQLite | `pytest test_connector_workspace_console.py test_document_workspace_console.py test_rest_pull.py test_confluence.py -q` | Pass | 45 passed, 2 skipped | RLS cases are PostgreSQL-only |
+| P9.3 full SQLite | `pytest -q --basetemp=.pytest-tmp-p9-3-full` | Pass | 581 passed, 25 skipped | PostgreSQL-only tests skipped as declared |
+| P9.3 focused PostgreSQL | `pytest test_connector_workspace_console.py test_rest_pull.py test_confluence.py -q --create-db` | Pass | 40 passed | Includes existing REST/Confluence FORCE-RLS tests |
 
 ## Acceptance criteria mapping
 
@@ -29,6 +36,8 @@
 - Turkish-first responsive shell and scenario screens are implemented without a dependency.
 - The document-set workspace generates metadata, updates a preserved draft candidate, separates
   publish/build/promotion and displays set/index lifecycle state.
+- The connector workspace exposes safe Confluence/REST source status, exact-grant creation,
+  no-egress REST mapping preview, bounded schedules, run-now and role-gated automation.
 
 ## Security requirement mapping
 
@@ -41,6 +50,8 @@
 Author happy-path and auditor mutation denial pass on SQLite; focused suite passes on PostgreSQL.
 P9.2 additionally verifies author-only upload/build and release-manager-only index promotion on
 SQLite and PostgreSQL.
+P9.3 verifies author source/run/stage controls, release-manager-only automatic promotion and auditor
+denial; exact-set profile grants and bound scenario targets are revalidated server-side.
 
 ## Cross-tenant tests
 
@@ -50,14 +61,17 @@ scenario before the scenario screen can grant document retrieval.
 
 ## Logging and redaction tests
 
-No new logs/metrics and no content-bearing fields added. Static diff review found no credential or
-token handling in P9.1.
+No new logs/metrics and no content-bearing log fields added. P9.3 response tests prove connector
+hosts, secret references, REST input values and synthetic content are absent from rendered HTML;
+task assertions prove queue payloads contain resource/tenant IDs only.
 
 ## Audit event tests
 
 Binding create/remove and grant create/remove events asserted in the P9.1 test.
 P9.2 asserts per-document upload/upsert audit and staged-build authorization audit; existing index
 promotion service retains its audited pointer flip.
+P9.3 reuses contract/source/schedule/run audit events and asserts a broker dispatch failure closes
+the durable run as `dead_letter` with `rest_sync.dispatch_failed` evidence.
 
 ## Migration verification
 
@@ -77,12 +91,15 @@ the scenario list/base shell presentation. Public gateway/MCP contracts are unch
 
 ## Remaining risks
 
-Legacy pages remain partly English until P9.3–P9.5. Configured-vs-release-effective state still
+Legacy pages remain partly English until P9.4–P9.5. Configured-vs-release-effective state still
 requires operator understanding despite the explanatory notice.
 Bulk storage is intentionally per-file, not transactionally atomic across object storage; a
 mid-batch storage failure preserves completed files and reports the partial count. Queue dispatch
 is at-least-once and the worker's existing-index guard prevents ordinary duplicate builds, but a
 broker ambiguity can still require operator status review.
+The JSON mapping editor is intentionally schema-oriented rather than a drag-and-drop mapper;
+profile/grant creation remains platform-admin command/service work and live connector egress remains
+deployment-gated. Full PostgreSQL regression was not rerun; focused connector/RLS coverage passed.
 
 ## Human review required
 
@@ -91,4 +108,4 @@ and narrow-screen UX require browser review.
 
 ## Final status
 
-Verified for P9.1 and P9.2; overall P9 remains In progress.
+Verified for P9.1–P9.3; overall P9 remains In progress.

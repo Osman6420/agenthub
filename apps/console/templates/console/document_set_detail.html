@@ -14,6 +14,11 @@
   <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Release derlemesinde pinlenir</small></div>
 </div>
 
+<div class="card action-card">
+  <div><h2>Bağlı kaynaklar ve periyodik yenileme</h2><p class="muted">Confluence veya generic REST kaynaklarını, mapping sözleşmelerini ve değişiklik sonrası otomasyonu bu set için yönetin.</p></div>
+  <a class="button secondary" href="{% url 'console:document_set_connectors' set.id %}">Kaynakları yönet</a>
+</div>
+
 {% if can_write %}
 <div class="card">
   <div class="section-heading"><div><h2>Toplu doküman yükle</h2><p class="muted">Dosya adından başlık ve stabil ID üretilir; yükleme son taslağı günceller, yayına çıkmaz.</p></div></div>

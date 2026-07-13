@@ -8,7 +8,9 @@ screen comes from :mod:`apps.console.scoping`.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
@@ -18,6 +20,7 @@ from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
@@ -30,6 +33,8 @@ from apps.console import scoping
 from apps.console.forms import (
     BindingForm,
     CanaryForm,
+    ConfluenceSourceForm,
+    ConnectorScheduleForm,
     ConsumerForm,
     DocumentSetBuildForm,
     DocumentSetBulkUploadForm,
@@ -37,6 +42,8 @@ from apps.console.forms import (
     DocumentUploadForm,
     OrganizationForm,
     ProjectForm,
+    RestContractForm,
+    RestSourceForm,
     ScenarioForm,
 )
 from apps.documents import services as document_services
@@ -55,9 +62,38 @@ from apps.documents.services import DocumentError
 from apps.documents.storage import StorageError
 from apps.evaluations.services import EvalError, run_eval
 from apps.identity.models import BindingStatus, Consumer, ConsumerBinding, ConsumerStatus
-from apps.ingestion.models import IndexStatus, IndexVersion
+from apps.ingestion.confluence_services import (
+    ConfluenceAuthorizationError,
+    ConfluenceServiceError,
+    create_confluence_source,
+    create_confluence_sync_run,
+    mark_confluence_dispatch_failed,
+)
+from apps.ingestion.models import (
+    ConnectorType,
+    IndexStatus,
+    IndexVersion,
+    ScheduleAutomationMode,
+    Source,
+)
+from apps.ingestion.rest import RestPullError, preview_rest_response
+from apps.ingestion.rest_schema import RestContractError, validate_contract
+from apps.ingestion.rest_services import (
+    RestAuthorizationError,
+    RestServiceError,
+    configure_sync_schedule,
+    create_rest_contract,
+    create_rest_source,
+    create_rest_sync_run,
+    mark_rest_dispatch_failed,
+)
 from apps.ingestion.staged_build import StagedBuildError, promote_staged_index
-from apps.ingestion.tasks import build_document_set_index_task
+from apps.ingestion.tasks import (
+    build_document_set_index_task,
+    sync_confluence_source,
+    sync_rest_source,
+)
+from apps.ingestion.vector_store import set_tenant_context
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.tenancy.services import (
@@ -101,6 +137,25 @@ _TURKISH_SLUG_TRANSLATION = str.maketrans(
         "Ü": "U",
     }
 )
+_REST_CONTRACT_EXAMPLE = {
+    "version": 1,
+    "inputs": {"space": {"type": "string", "max_length": 64}},
+    "request": {
+        "method": "GET",
+        "path": "/documents/{input:space}",
+        "query": {},
+    },
+    "response": {
+        "items_pointer": "/data/items",
+        "id_pointer": "/id",
+        "revision_pointer": "/revision",
+        "title_pointer": "/title",
+        "content_pointer": "/content",
+        "content_encoding": "utf8_text",
+        "mime_type": "text/markdown",
+    },
+    "pagination": {"mode": "none"},
+}
 
 
 def _audit_create(
@@ -1034,6 +1089,364 @@ def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "max_batch_files": int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20)),
         },
     )
+
+
+def _connector_context(
+    request: HttpRequest,
+    document_set: DocumentSet,
+    *,
+    contract_form: RestContractForm | None = None,
+    preview_items: list[dict[str, object]] | None = None,
+    preview_valid: bool = False,
+) -> dict[str, object]:
+    can_write = can_author_scenarios(request.user, document_set.organization_id)
+    can_promote = can_manage_releases(request.user, document_set.organization_id)
+    sources: list[dict[str, object]] = []
+    source_qs = (
+        scoping.scoped_connector_sources(request.user)
+        .filter(document_set=document_set)
+        .order_by("name", "slug")
+    )
+    for source in source_qs:
+        latest_run: object | None
+        if source.connector_type == ConnectorType.CONFLUENCE_DC:
+            latest_run = source.confluence_sync_runs.order_by("-created_at", "-pk").first()
+            confluence_profile = source.confluence_profile
+            profile_label = (
+                f"{confluence_profile.logical_id} · r{confluence_profile.revision}"
+                if confluence_profile is not None
+                else "—"
+            )
+            contract_label = "Confluence sayfa ağacı"
+            config_summary = f"{len(source.connector_config.get('root_page_ids', []))} kök sayfa"
+        else:
+            latest_run = source.rest_sync_runs.order_by("-created_at", "-pk").first()
+            rest_profile = source.rest_profile
+            contract = source.rest_contract
+            profile_label = (
+                f"{rest_profile.logical_id} · r{rest_profile.revision}"
+                if rest_profile is not None
+                else "—"
+            )
+            contract_label = (
+                f"{contract.logical_id} · r{contract.revision}" if contract is not None else "—"
+            )
+            config_summary = "Input değerleri güvenlik nedeniyle gösterilmez"
+        schedule = getattr(source, "sync_schedule", None)
+        schedule_initial = {
+            "interval_seconds": schedule.interval_seconds if schedule else 86_400,
+            "enabled": schedule.enabled if schedule else False,
+            "automation_mode": (
+                schedule.automation_mode if schedule else ScheduleAutomationMode.DRAFT_ONLY
+            ),
+            "embedding_profile": schedule.embedding_profile_id if schedule else None,
+            "scenarios": (
+                list(schedule.promotion_targets.values_list("scenario_id", flat=True))
+                if schedule
+                else []
+            ),
+        }
+        sources.append(
+            {
+                "object": source,
+                "type_label": (
+                    "Confluence" if source.connector_type == ConnectorType.CONFLUENCE_DC else "REST"
+                ),
+                "profile_label": profile_label,
+                "contract_label": contract_label,
+                "config_summary": config_summary,
+                "schedule": schedule,
+                "schedule_form": ConnectorScheduleForm(
+                    document_set=document_set,
+                    allow_authoring=can_write,
+                    allow_promotion=can_promote,
+                    prefix=f"schedule-{source.pk}",
+                    initial=schedule_initial,
+                ),
+                "latest_run": latest_run,
+                "can_configure": can_write or can_promote,
+            }
+        )
+    return {
+        "set": document_set,
+        "sources": sources,
+        "can_write": can_write,
+        "can_promote": can_promote,
+        "confluence_form": ConfluenceSourceForm(document_set=document_set, prefix="confluence"),
+        "contract_form": contract_form
+        or RestContractForm(
+            prefix="contract",
+            initial={
+                "revision": 1,
+                "definition": json.dumps(_REST_CONTRACT_EXAMPLE, ensure_ascii=False, indent=2),
+            },
+        ),
+        "rest_source_form": RestSourceForm(
+            document_set=document_set,
+            prefix="rest-source",
+            initial={"inputs": "{}"},
+        ),
+        "preview_items": preview_items,
+        "preview_valid": preview_valid,
+    }
+
+
+@login_required
+@transaction.atomic
+def document_set_connectors(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    set_tenant_context(document_set.organization_id)
+    return render(
+        request,
+        "console/document_set_connectors.html",
+        _connector_context(request, document_set),
+    )
+
+
+def _validate_rest_contract_preview(
+    form: RestContractForm,
+) -> tuple[list[dict[str, object]], bool]:
+    definition = form.cleaned_data["definition"]
+    validate_contract(definition)
+    synthetic = form.cleaned_data.get("synthetic_response")
+    if synthetic is None:
+        return [], True
+    items = preview_rest_response(definition, synthetic, max_items=20)
+    return [
+        {
+            "external_id": item.external_id,
+            "revision": item.revision,
+            "title": item.title,
+            "deleted": item.deleted,
+        }
+        for item in items
+    ], True
+
+
+def _clear_synthetic_response(form: RestContractForm) -> None:
+    """Do not reflect synthetic document content after validation, including error responses."""
+    data: dict[str, object] = {key: form.data[key] for key in form.data}
+    data[form.add_prefix("synthetic_response")] = ""
+    form.data = data
+
+
+@login_required
+@transaction.atomic
+@require_POST
+def rest_contract_preview(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    set_tenant_context(document_set.organization_id)
+    if not can_author_scenarios(request.user, document_set.organization_id):
+        raise PermissionDenied
+    form = RestContractForm(request.POST, prefix="contract")
+    preview_items: list[dict[str, object]] = []
+    preview_valid = False
+    if form.is_valid():
+        try:
+            preview_items, preview_valid = _validate_rest_contract_preview(form)
+        except (RestContractError, RestPullError) as exc:
+            form.add_error("synthetic_response", f"Preview reddedildi: {exc.code}")
+    _clear_synthetic_response(form)
+    return render(
+        request,
+        "console/document_set_connectors.html",
+        _connector_context(
+            request,
+            document_set,
+            contract_form=form,
+            preview_items=preview_items,
+            preview_valid=preview_valid,
+        ),
+    )
+
+
+@login_required
+@transaction.atomic
+@require_POST
+def rest_contract_create(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    set_tenant_context(document_set.organization_id)
+    if not can_author_scenarios(request.user, document_set.organization_id):
+        raise PermissionDenied
+    form = RestContractForm(request.POST, prefix="contract")
+    if form.is_valid():
+        try:
+            _validate_rest_contract_preview(form)
+            contract = create_rest_contract(
+                actor=request.user,
+                organization=document_set.organization,
+                logical_id=form.cleaned_data["logical_id"],
+                revision=form.cleaned_data["revision"],
+                definition=form.cleaned_data["definition"],
+            )
+            messages.success(
+                request,
+                f"REST sözleşmesi {contract.logical_id} r{contract.revision} oluşturuldu.",
+            )
+            return redirect("console:document_set_connectors", pk=document_set.pk)
+        except (RestAuthorizationError, RestServiceError, RestContractError, RestPullError) as exc:
+            code = getattr(exc, "code", str(exc))
+            form.add_error(None, f"Sözleşme oluşturulamadı: {code}")
+    _clear_synthetic_response(form)
+    return render(
+        request,
+        "console/document_set_connectors.html",
+        _connector_context(request, document_set, contract_form=form),
+    )
+
+
+@login_required
+@transaction.atomic
+@require_POST
+def confluence_source_create(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    set_tenant_context(document_set.organization_id)
+    if not can_author_scenarios(request.user, document_set.organization_id):
+        raise PermissionDenied
+    form = ConfluenceSourceForm(request.POST, document_set=document_set, prefix="confluence")
+    if form.is_valid():
+        try:
+            create_confluence_source(
+                actor=request.user,
+                organization=document_set.organization,
+                document_set=document_set,
+                confluence_profile=form.cleaned_data["confluence_profile"],
+                slug=form.cleaned_data["slug"],
+                name=form.cleaned_data["name"],
+                connector_config={
+                    "root_page_ids": form.cleaned_data["root_page_ids"],
+                    "excluded_page_ids": form.cleaned_data["excluded_page_ids"],
+                    "include_root": form.cleaned_data["include_root"],
+                },
+            )
+            messages.success(request, "Confluence kaynağı oluşturuldu.")
+        except (ConfluenceAuthorizationError, ConfluenceServiceError) as exc:
+            messages.error(request, f"Confluence kaynağı oluşturulamadı: {exc}")
+    else:
+        messages.error(request, "Confluence kaynağı formunu kontrol edin.")
+    return redirect("console:document_set_connectors", pk=document_set.pk)
+
+
+@login_required
+@transaction.atomic
+@require_POST
+def rest_source_create(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    set_tenant_context(document_set.organization_id)
+    if not can_author_scenarios(request.user, document_set.organization_id):
+        raise PermissionDenied
+    form = RestSourceForm(request.POST, document_set=document_set, prefix="rest-source")
+    if form.is_valid():
+        try:
+            create_rest_source(
+                actor=request.user,
+                organization=document_set.organization,
+                document_set=document_set,
+                rest_profile=form.cleaned_data["rest_profile"],
+                rest_contract=form.cleaned_data["rest_contract"],
+                slug=form.cleaned_data["slug"],
+                name=form.cleaned_data["name"],
+                inputs=form.cleaned_data["inputs"],
+            )
+            messages.success(request, "REST kaynağı oluşturuldu.")
+        except (RestAuthorizationError, RestServiceError) as exc:
+            messages.error(request, f"REST kaynağı oluşturulamadı: {exc}")
+    else:
+        messages.error(request, "REST kaynağı formunu kontrol edin.")
+    return redirect("console:document_set_connectors", pk=document_set.pk)
+
+
+def _scoped_connector_source(user: UserLike, source_pk: int) -> Source:
+    source = scoping.scoped_connector_sources(user).filter(pk=source_pk).first()
+    if source is None or source.document_set_id is None:
+        raise Http404
+    return source
+
+
+@login_required
+@require_POST
+def connector_source_run(request: HttpRequest, source_pk: int) -> HttpResponse:
+    source = _scoped_connector_source(request.user, source_pk)
+    if not can_author_scenarios(request.user, source.organization_id):
+        raise PermissionDenied
+    try:
+        if source.connector_type == ConnectorType.CONFLUENCE_DC:
+            confluence_run = create_confluence_sync_run(actor=request.user, source=source)
+            try:
+                sync_confluence_source.apply_async(
+                    args=[confluence_run.pk, source.organization_id], queue="ingestion"
+                )
+            except Exception:
+                mark_confluence_dispatch_failed(run=confluence_run, actor=request.user)
+                raise
+            run_id = confluence_run.pk
+        else:
+            rest_run = create_rest_sync_run(actor=request.user, source=source)
+            try:
+                sync_rest_source.apply_async(
+                    args=[rest_run.pk, source.organization_id], queue="ingestion"
+                )
+            except Exception:
+                mark_rest_dispatch_failed(run=rest_run, actor=request.user)
+                raise
+            run_id = rest_run.pk
+        messages.success(request, f"Senkron işi kuyruğa alındı (run #{run_id}).")
+    except (
+        ConfluenceAuthorizationError,
+        ConfluenceServiceError,
+        RestAuthorizationError,
+        RestServiceError,
+    ) as exc:
+        messages.error(request, f"Senkron başlatılamadı: {exc}")
+    except Exception:
+        messages.error(request, "Senkron kuyruğuna erişilemedi; run başarısız kapatıldı.")
+    return redirect("console:document_set_connectors", pk=source.document_set_id)
+
+
+@login_required
+@transaction.atomic
+@require_POST
+def connector_schedule_configure(request: HttpRequest, source_pk: int) -> HttpResponse:
+    source = _scoped_connector_source(request.user, source_pk)
+    set_tenant_context(source.organization_id)
+    can_author = can_author_scenarios(request.user, source.organization_id)
+    can_promote = can_manage_releases(request.user, source.organization_id)
+    if not can_author and not can_promote:
+        raise PermissionDenied
+    requested_mode = request.POST.get(f"schedule-{source.pk}-automation_mode", "")
+    if requested_mode == ScheduleAutomationMode.PROMOTE_IF_SAFE and not can_promote:
+        raise PermissionDenied
+    if requested_mode != ScheduleAutomationMode.PROMOTE_IF_SAFE and not can_author:
+        raise PermissionDenied
+    document_set = source.document_set
+    if document_set is None:
+        raise Http404
+    form = ConnectorScheduleForm(
+        request.POST,
+        document_set=document_set,
+        allow_authoring=can_author,
+        allow_promotion=can_promote,
+        prefix=f"schedule-{source.pk}",
+    )
+    if form.is_valid():
+        try:
+            interval = form.cleaned_data["interval_seconds"]
+            configure_sync_schedule(
+                actor=request.user,
+                source=source,
+                interval_seconds=interval,
+                enabled=form.cleaned_data["enabled"],
+                next_run_at=timezone.now() + timedelta(seconds=interval),
+                automation_mode=form.cleaned_data["automation_mode"],
+                embedding_profile=form.cleaned_data["embedding_profile"],
+                scenarios=form.cleaned_data["scenarios"],
+            )
+            messages.success(request, "Kaynak yenileme planı güncellendi.")
+        except (RestAuthorizationError, RestServiceError, ValueError) as exc:
+            messages.error(request, f"Plan güncellenemedi: {exc}")
+    else:
+        messages.error(request, "Plan formunu ve rolünüze açık seçenekleri kontrol edin.")
+    return redirect("console:document_set_connectors", pk=document_set.pk)
 
 
 def _bulk_upload_metadata(files: list[object], document_set: DocumentSet) -> list[dict[str, str]]:

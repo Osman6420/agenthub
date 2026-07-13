@@ -46,6 +46,8 @@
     .breadcrumbs { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 20px; flex-wrap: wrap; }
     .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin-bottom: 18px; box-shadow: var(--shadow); }
     .summary-grid, .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .relationship-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .action-card, .button-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
     .summary-card, .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 17px 19px; }
     .summary-card span, .tile .l { display: block; color: var(--muted); font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; }
     .summary-card strong, .tile .n { display: block; font-size: 25px; margin-top: 6px; }
@@ -72,8 +74,8 @@
     button.link { background: none; border: none; color: #b9d4d2; cursor: pointer; padding: 7px 0; font: inherit; font-size: 12px; }
     form.inline { display: inline; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
-    .form-card input, .form-card select, .compact-form select { width: 100%; max-width: 560px; padding: 9px 10px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); }
-    .form-card input, .form-card select { display: block; margin-top: 5px; }
+    .form-card input, .form-card select, .form-card textarea, .compact-form select { width: 100%; max-width: 760px; padding: 9px 10px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); }
+    .form-card input, .form-card select, .form-card textarea { display: block; margin-top: 5px; }
     .form-card ul.errorlist { color: var(--danger); }
     .compact-form label { display: block; color: var(--muted); font-size: 12px; font-weight: 700; margin-bottom: 5px; }
     .field-row { display: flex; gap: 8px; }
@@ -110,7 +112,7 @@
     }
     @media (max-width: 680px) {
       .page-heading, .section-heading, .relationship-head, .relationship-body { align-items: stretch; flex-direction: column; }
-      .summary-grid, .tiles { grid-template-columns: 1fr; }
+      .summary-grid, .tiles, .relationship-grid { grid-template-columns: 1fr; }
       .status-stack { justify-content: flex-start; }
       .access-row { grid-template-columns: 1fr; }
       .field-row { flex-direction: column; }
