@@ -3,8 +3,8 @@
 ## Status
 
 The high-level **delivery order is owner-set** (2026-07-12); this document **elaborates** it into
-a phase plan and **invents no new scope**. **Implementation is not yet approved** — the M0 spikes
-and per-phase egress sign-off remain the gates. Authorities:
+a phase plan and **invents no new scope**. The implemented WS1/WS5 increments are approved and
+verified; environment-specific live egress and later workstreams retain their gates. Authorities:
 
 - WS1 design: [`document-plane-plan.md`](document-plane-plan.md) + [threat model](document-plane-threat-model.md).
 - WS5 scope: [`../phase-2-plan.md`](../phase-2-plan.md) → "Workstream 5 — Live model runtime".
@@ -141,7 +141,7 @@ deterministic remains the default and no environment-specific live endpoint was 
   unchanged (prompt is input, never authorization).
 - **Demo:** an agent runs with an authored persona/instructions instead of the raw user objective.
 
-### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1–P7.4a VERIFIED; P7.4b gated**
+### P7 — Parsers + OCR + connectors · WS1 M4 — **P7.1–P7.4b VERIFIED OFFLINE**
 
 - `DocumentParser` interface + selected parsers (pdf/docx/xlsx→markdown), **external OCR egress**
   for image-only pages/embedded images, and upload/Confluence/generic-REST connectors. Real
@@ -162,7 +162,10 @@ deterministic remains the default and no environment-specific live endpoint was 
 - **P7.4a — DONE OFFLINE (2026-07-13):** governed Confluence Data Center profiles/grants/sources,
   connector-only private-CIDR transport (ADR-0006), bounded fixed-path traversal, recoverable
   snapshots and draft candidates. Live endpoint/network/CA/secret/service-account review remains.
-- **P7.4b — generic REST:** disabled and blocked on its concrete contract and endpoint sign-off.
+- **P7.4b — DONE OFFLINE (2026-07-13):** closed tenant-authored JSON mapping under an immutable
+  public-only platform profile, exact grants, periodic revision/checksum sync, compatible unchanged
+  vector reuse and selectable existing-gate automation (ADR-0007). Live endpoint/credential/
+  schedule approval remains gated; its visual editor is WS2 scope.
 - **Approval gate:** parser dependency and OCR API contract are approved. A live OCR deployment
   still needs its concrete host/profile + injected secret sign-off; connector endpoints remain gated.
 - **Demo (P7.1):** a CSV/JSON/HTML document set builds a staged index and is retrievable. **Demo
@@ -204,7 +207,7 @@ deterministic remains the default and no environment-specific live endpoint was 
 | --- | --- | --- |
 | P1 | chat model profile/endpoint | none (stdlib client) |
 | P3 | embedding model profile/endpoint | none (stdlib client) |
-| P7 | Live OCR and Confluence deployment profiles; generic REST contract + endpoint sign-off | document-parser libs approved; OCR/Confluence add no dependency |
+| P7 | Live OCR, Confluence and generic REST deployment-profile/endpoint sign-off | document-parser libs approved; OCR/Confluence/REST add no dependency |
 
 ## Governance held across all live phases
 

@@ -192,6 +192,9 @@ Run from the repo root in the project virtualenv. Common commands:
 | `register_confluence_profile` / `grant_confluence_profile` / `disable_confluence_profile` | Platform-admin lifecycle for an immutable Confluence Data Center profile |
 | `create_confluence_source` | Create an author-owned source bound to one granted profile and one document set |
 | `sync_confluence_source` | Queue a governed incremental snapshot sync |
+| `register_rest_profile` / `grant_rest_profile` / `disable_rest_profile` | Register, grant or disable a public-only immutable REST destination profile |
+| `create_rest_contract` / `create_rest_source` / `sync_rest_source` | Validate a closed JSON mapping, bind exact inputs, and queue a REST snapshot |
+| `configure_connector_schedule` | Configure periodic Confluence/REST refresh and its on-change action |
 | `list_tool_approvals` / `decide_tool_approval` / `cancel_tool_invocation` | Tool approvals |
 | `list_agent_runs` / `cancel_agent_run` | Agent run operations |
 
@@ -205,7 +208,16 @@ corporate CA trust, and the referenced `CONFLUENCE_SECRET_<NAME>` bearer PAT. Re
 platform profile first, grant it to the exact organization + document set, create the source with
 numeric root page IDs, then queue sync. A successful sync creates a **draft** document-set candidate;
 it never builds, publishes, or promotes automatically. Copied pages use AgentHub ACLs, not
-Confluence per-user ACLs. Generic REST ingestion is not available.
+Confluence per-user ACLs. Its schedule defaults to `draft_only`.
+
+Generic REST is also disabled by default. A platform admin registers a public-HTTPS profile and
+injects any credential as `REST_PULL_SECRET_<NAME>`, then grants the profile to one organization +
+document set. An author supplies a version-1 JSON contract and exact inputs. The contract maps
+bounded GET or profile-approved read-only POST JSON with RFC 6901 pointers, but cannot choose a URL,
+header or secret or execute code/templates. Compatible refresh builds reuse unchanged vectors.
+`promote_if_safe` is opt-in, release-manager-targeted, eval-gated and candidate-idempotent; failure
+leaves the previous active release served. Promotion targets use the exact repeated command form
+`--scenario <project-slug>/<scenario-slug>`; a scenario slug alone is intentionally rejected.
 
 ---
 

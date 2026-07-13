@@ -14,8 +14,6 @@ from apps.audit.services import record_event
 from apps.documents.models import Document, DocumentLifecycle, DocumentVersion
 from apps.documents.services import (
     DocumentError,
-    add_document_to_set_version,
-    create_document_set_version,
     upload_document,
 )
 from apps.ingestion.confluence import ConfluenceDataCenterClient, ConfluenceError, ConfluencePage
@@ -31,6 +29,7 @@ from apps.ingestion.models import (
     TenantConfluenceProfileGrant,
 )
 from apps.ingestion.services import source_lock
+from apps.ingestion.snapshot import create_material_candidate
 from apps.ingestion.vector_store import set_tenant_context
 
 
@@ -188,8 +187,10 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
             unchanged += 1
         else:
             body_page, body = client.get_page_body(profile, page.page_id, page.root_page_id)
-            _persist_changed_page(run, body_page, body, cursor)
-            changed += 1
+            if _persist_changed_page(run, body_page, body, cursor):
+                changed += 1
+            else:
+                unchanged += 1
         with transaction.atomic():
             set_tenant_context(run.organization_id)
             ConfluenceSyncRun.objects.filter(pk=run.pk).update(
@@ -209,10 +210,6 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
         document_set = source.document_set
         if document_set is None:
             raise ConfluenceError("CONFLUENCE_SOURCE_BINDING_INVALID")
-        candidate = create_document_set_version(
-            document_set=document_set,
-            actor="confluence-worker",
-        )
         active_cursors = list(
             ConfluenceDocumentCursor.objects.filter(
                 source=source,
@@ -223,16 +220,16 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
             .select_related("document_version")
             .order_by("external_page_id")
         )
-        for ordinal, cursor in enumerate(active_cursors):
-            add_document_to_set_version(
-                set_version=candidate,
-                document_version=cursor.document_version,
-                ordinal=ordinal,
-                actor="confluence-worker",
-            )
+        candidate = create_material_candidate(
+            document_set=document_set,
+            source_id=source.pk,
+            source_document_version_ids=(cursor.document_version_id for cursor in active_cursors),
+            actor="confluence-worker",
+        )
         locked = ConfluenceSyncRun.objects.select_for_update().get(pk=run.pk)
         locked.status = ConfluenceSyncStatus.SUCCEEDED
         locked.snapshot_complete = True
+        locked.material_change = candidate is not None
         locked.discovered_count = discovered
         locked.changed_count = changed
         locked.unchanged_count = unchanged
@@ -244,6 +241,7 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
             update_fields=[
                 "status",
                 "snapshot_complete",
+                "material_change",
                 "discovered_count",
                 "changed_count",
                 "unchanged_count",
@@ -263,7 +261,8 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
             resource_type="confluence_sync_run",
             resource_id=str(locked.pk),
             after={
-                "candidate_set_version_id": candidate.pk,
+                "candidate_set_version_id": candidate.pk if candidate else None,
+                "material_change": candidate is not None,
                 "discovered_count": discovered,
                 "changed_count": changed,
                 "unchanged_count": unchanged,
@@ -278,7 +277,7 @@ def _persist_changed_page(
     page: ConfluencePage,
     body: bytes,
     existing_cursor: ConfluenceDocumentCursor | None,
-) -> None:
+) -> bool:
     source = run.source
     logical_id = f"confluence-{source.pk}-{page.page_id}"
     checksum = hashlib.sha256(body).hexdigest()
@@ -302,9 +301,16 @@ def _persist_changed_page(
             source=source,
         )
         document = version.document
+        material_change = True
     else:
         version = reusable
         document = reusable.document
+        if page.title and document.title != page.title:
+            document.title = page.title
+            document.save(update_fields=["title", "updated_at"])
+        material_change = (
+            existing_cursor is None or existing_cursor.document_version_id != version.pk
+        )
 
     with transaction.atomic():
         set_tenant_context(run.organization_id)
@@ -336,6 +342,7 @@ def _persist_changed_page(
             cursor.state = ConfluenceCursorState.ACTIVE
         cursor.full_clean(validate_unique=False, validate_constraints=False)
         cursor.save()
+    return material_change
 
 
 def _reusable_crash_version(
@@ -350,9 +357,7 @@ def _reusable_crash_version(
     ).first()
     if latest is None:
         return None
-    if cursor is None or latest.id != cursor.document_version_id:
-        return latest
-    return None
+    return latest
 
 
 def _fail_run(run_id: int, *, organization_id: int, code: str, fetched_bytes: int) -> str:

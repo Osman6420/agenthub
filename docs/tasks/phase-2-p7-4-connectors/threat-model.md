@@ -33,7 +33,9 @@ network/identity rollout remains unverified.
 - Sync command/Celery task carrying database identifiers only.
 - Corporate DNS, TLS handshake, Data Center JSON/HTML responses, status codes, and headers.
 - Object-store and database writes for document versions, cursors, runs, and candidates.
-- Future generic REST contract/configuration (disabled until approved).
+- Governed generic REST profile/contract/source/schedule configuration; its detailed threats and
+  residual rollout risks are maintained in
+  [`phase-2-p7-4b-generic-rest-periodic-sync`](../phase-2-p7-4b-generic-rest-periodic-sync/threat-model.md).
 
 ## Trust boundaries
 

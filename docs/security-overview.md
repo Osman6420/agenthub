@@ -170,6 +170,11 @@ channel:
   policy; pinned-IP TLS/SNI, redirect denial, fixed REST paths, mandatory CA validation, response
   caps and late secret resolution still apply. The public-only validator used by all other egress is
   unchanged. Tenant/source/page data cannot choose destinations or follow response-provided links.
+- **Generic REST remains public-only and non-programmable (ADR-0007)**: platform profiles own the
+  destination, auth, method and bounds; tenant contracts are closed JSON mappings using exact
+  placeholders and RFC 6901 pointers. Response URLs/headers/code/templates are rejected, cursor
+  state cannot become a path/destination, and uncertain POST dispatch is not retried. Exact grants
+  and FORCE-RLS lineage/schedule tables are rechecked by workers.
 
 ### Human approval with separation of duties
 

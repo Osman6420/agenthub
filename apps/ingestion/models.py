@@ -28,11 +28,125 @@ class ConnectorType(models.TextChoices):
     HTTPS = "https", "Allowlisted HTTPS"
     S3 = "s3", "S3/MinIO object"
     CONFLUENCE_DC = "confluence_dc", "Confluence Data Center"
+    GENERIC_REST = "generic_rest", "Governed generic REST"
 
 
 class ConfluenceProfileStatus(models.TextChoices):
     ACTIVE = "active", "Active"
     DISABLED = "disabled", "Disabled"
+
+
+class RestPullProfileStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DISABLED = "disabled", "Disabled"
+
+
+class RestPullMethod(models.TextChoices):
+    GET = "GET", "GET"
+    POST = "POST", "POST (read-only contract)"
+
+
+class RestPullAuthMode(models.TextChoices):
+    NONE = "none", "None"
+    BEARER = "bearer", "Bearer"
+    API_KEY_HEADER = "api_key_header", "API key header"
+
+
+class RestPullProfile(models.Model):
+    """Immutable platform-owned destination and transport limits for generic REST."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    logical_id = models.CharField(max_length=128)
+    revision = models.PositiveIntegerField()
+    scheme = models.CharField(max_length=8, default="https")
+    host = models.CharField(max_length=253)
+    port = models.PositiveIntegerField(default=443)
+    path_prefix = models.CharField(max_length=512, default="/")
+    method = models.CharField(
+        max_length=8, choices=RestPullMethod.choices, default=RestPullMethod.GET
+    )
+    auth_mode = models.CharField(
+        max_length=24, choices=RestPullAuthMode.choices, default=RestPullAuthMode.NONE
+    )
+    secret_ref = models.CharField(max_length=160, blank=True)
+    api_key_header_name = models.CharField(max_length=64, blank=True)
+    timeout_seconds = models.PositiveIntegerField(default=30)
+    max_response_bytes = models.PositiveIntegerField(default=5_000_000)
+    max_total_bytes = models.PositiveBigIntegerField(default=100_000_000)
+    max_requests = models.PositiveIntegerField(default=1_000)
+    max_items = models.PositiveIntegerField(default=50_000)
+    max_pages = models.PositiveIntegerField(default=1_000)
+    max_retries = models.PositiveSmallIntegerField(default=2)
+    max_decoded_item_bytes = models.PositiveIntegerField(default=25_000_000)
+    status = models.CharField(
+        max_length=16,
+        choices=RestPullProfileStatus.choices,
+        default=RestPullProfileStatus.ACTIVE,
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["logical_id", "revision"], name="uniq_rest_profile_logical_revision"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"rest-profile:{self.logical_id}:r{self.revision}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            update_fields = set(kwargs.get("update_fields") or [])
+            if not update_fields or not update_fields <= {"status"}:
+                raise ValueError("RestPullProfile is immutable; only status may change")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise ValueError("RestPullProfile is immutable and cannot be deleted")
+
+
+class RestPullContractStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DISABLED = "disabled", "Disabled"
+
+
+class RestPullContract(TimeStampedModel):
+    """Tenant-authored immutable closed mapping contract; it never carries authority."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="rest_pull_contracts"
+    )
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    logical_id = models.CharField(max_length=128)
+    revision = models.PositiveIntegerField()
+    definition = models.JSONField()
+    checksum = models.CharField(max_length=64, editable=False)
+    status = models.CharField(
+        max_length=16,
+        choices=RestPullContractStatus.choices,
+        default=RestPullContractStatus.ACTIVE,
+    )
+    created_by = models.CharField(max_length=255)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "logical_id", "revision"],
+                name="uniq_rest_contract_org_logical_revision",
+            )
+        ]
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            update_fields = set(kwargs.get("update_fields") or [])
+            if not update_fields or not update_fields <= {"status", "updated_at"}:
+                raise ValueError("RestPullContract is immutable; only status may change")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise ValueError("RestPullContract is immutable and cannot be deleted")
 
 
 class ConfluenceProfile(models.Model):
@@ -100,6 +214,20 @@ class Source(TimeStampedModel):
         null=True,
         blank=True,
     )
+    rest_profile = models.ForeignKey(
+        RestPullProfile,
+        on_delete=models.PROTECT,
+        related_name="sources",
+        null=True,
+        blank=True,
+    )
+    rest_contract = models.ForeignKey(
+        RestPullContract,
+        on_delete=models.PROTECT,
+        related_name="sources",
+        null=True,
+        blank=True,
+    )
     document_set = models.ForeignKey(
         "documents.DocumentSet",
         on_delete=models.PROTECT,
@@ -123,13 +251,52 @@ class Source(TimeStampedModel):
                         connector_type=ConnectorType.CONFLUENCE_DC,
                         confluence_profile__isnull=False,
                         document_set__isnull=False,
+                        rest_profile__isnull=True,
+                        rest_contract__isnull=True,
                     )
                     | (
                         ~models.Q(connector_type=ConnectorType.CONFLUENCE_DC)
-                        & models.Q(confluence_profile__isnull=True, document_set__isnull=True)
+                        & models.Q(confluence_profile__isnull=True)
                     )
                 ),
                 name="source_confluence_binding_consistent",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        connector_type=ConnectorType.GENERIC_REST,
+                        rest_profile__isnull=False,
+                        rest_contract__isnull=False,
+                        document_set__isnull=False,
+                        confluence_profile__isnull=True,
+                    )
+                    | (
+                        ~models.Q(connector_type=ConnectorType.GENERIC_REST)
+                        & models.Q(rest_profile__isnull=True, rest_contract__isnull=True)
+                    )
+                ),
+                name="source_rest_binding_consistent",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        connector_type__in=[
+                            ConnectorType.CONFLUENCE_DC,
+                            ConnectorType.GENERIC_REST,
+                        ],
+                        document_set__isnull=False,
+                    )
+                    | (
+                        ~models.Q(
+                            connector_type__in=[
+                                ConnectorType.CONFLUENCE_DC,
+                                ConnectorType.GENERIC_REST,
+                            ]
+                        )
+                        & models.Q(document_set__isnull=True)
+                    )
+                ),
+                name="source_document_set_binding_consistent",
             ),
         ]
 
@@ -147,6 +314,7 @@ class Source(TimeStampedModel):
                 "include_root",
                 "excluded_page_ids",
             },
+            ConnectorType.GENERIC_REST: {"inputs"},
         }
         unknown = set(self.connector_config) - allowed.get(self.connector_type, set())
         if unknown:
@@ -167,34 +335,72 @@ class Source(TimeStampedModel):
                 raise ValidationError("Confluence source requires profile and document set")
             if self.document_set.organization_id != self.organization_id:  # type: ignore[union-attr]
                 raise ValidationError("Confluence document set must belong to the organization")
-        elif self.confluence_profile_id or self.document_set_id:
-            raise ValidationError("non-Confluence source cannot have Confluence bindings")
+        elif self.connector_type == ConnectorType.GENERIC_REST:
+            from apps.ingestion.rest_schema import validate_source_inputs
+
+            if not self.rest_profile_id or not self.rest_contract_id or not self.document_set_id:
+                raise ValidationError(
+                    "generic REST source requires profile, contract and document set"
+                )
+            if self.confluence_profile_id:
+                raise ValidationError("generic REST source cannot have a Confluence profile")
+            if self.rest_contract.organization_id != self.organization_id:  # type: ignore[union-attr]
+                raise ValidationError("REST contract must belong to the organization")
+            if self.document_set.organization_id != self.organization_id:  # type: ignore[union-attr]
+                raise ValidationError("REST document set must belong to the organization")
+            rest_contract = self.rest_contract
+            if rest_contract is None:
+                raise ValidationError("generic REST contract is required")
+            try:
+                validate_source_inputs(
+                    rest_contract.definition, self.connector_config.get("inputs")
+                )
+            except ValueError as exc:
+                raise ValidationError({"connector_config": str(exc)}) from exc
+        elif (
+            self.confluence_profile_id
+            or self.rest_profile_id
+            or self.rest_contract_id
+            or self.document_set_id
+        ):
+            raise ValidationError("unbound source cannot have governed connector bindings")
 
     def save(self, *args: Any, **kwargs: Any) -> None:
-        if self.connector_type == ConnectorType.CONFLUENCE_DC:
+        if self.connector_type in {ConnectorType.CONFLUENCE_DC, ConnectorType.GENERIC_REST}:
             self.clean()
         if self.pk is not None:
             previous = (
                 Source.objects.filter(pk=self.pk)
-                .values("connector_type", "confluence_profile_id", "document_set_id")
+                .values(
+                    "connector_type",
+                    "confluence_profile_id",
+                    "rest_profile_id",
+                    "rest_contract_id",
+                    "document_set_id",
+                )
                 .first()
             )
             if previous is not None and (
-                previous["connector_type"] == ConnectorType.CONFLUENCE_DC
-                or self.connector_type == ConnectorType.CONFLUENCE_DC
+                previous["connector_type"]
+                in {ConnectorType.CONFLUENCE_DC, ConnectorType.GENERIC_REST}
+                or self.connector_type in {ConnectorType.CONFLUENCE_DC, ConnectorType.GENERIC_REST}
             ):
                 binding = (
                     self.connector_type,
                     self.confluence_profile_id,
+                    self.rest_profile_id,
+                    self.rest_contract_id,
                     self.document_set_id,
                 )
                 previous_binding = (
                     previous["connector_type"],
                     previous["confluence_profile_id"],
+                    previous["rest_profile_id"],
+                    previous["rest_contract_id"],
                     previous["document_set_id"],
                 )
                 if binding != previous_binding:
-                    raise ValueError("Confluence source binding is immutable")
+                    raise ValueError("governed connector source binding is immutable")
         super().save(*args, **kwargs)
 
     @property
@@ -245,6 +451,18 @@ class IndexVersion(TimeStampedModel):
     )
     document_count = models.PositiveIntegerField(default=0)
     chunk_count = models.PositiveIntegerField(default=0)
+    pipeline_fingerprint = models.CharField(max_length=64, blank=True)
+    parent_index_version = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="derived_index_versions",
+    )
+    embedded_document_count = models.PositiveIntegerField(default=0)
+    embedded_chunk_count = models.PositiveIntegerField(default=0)
+    reused_document_count = models.PositiveIntegerField(default=0)
+    reused_chunk_count = models.PositiveIntegerField(default=0)
 
     class Meta:
         constraints = [
@@ -264,6 +482,10 @@ class IndexVersion(TimeStampedModel):
             and self.document_set_version.organization_id != self.organization_id  # type: ignore[union-attr]
         ):
             raise ValidationError("index organization must match document-set-version organization")
+        if self.parent_index_version_id:
+            parent = self.parent_index_version
+            if parent is None or parent.organization_id != self.organization_id:
+                raise ValidationError("parent index must belong to the organization")
 
 
 class RunStatus(models.TextChoices):
@@ -332,6 +554,261 @@ class TenantConfluenceProfileGrant(models.Model):
             raise ValidationError("Confluence grant document set must belong to the organization")
 
 
+class TenantRestPullProfileGrant(models.Model):
+    """Platform approval for one REST profile, tenant, and exact document set."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="rest_pull_profile_grants"
+    )
+    document_set = models.ForeignKey(
+        "documents.DocumentSet", on_delete=models.CASCADE, related_name="rest_pull_profile_grants"
+    )
+    rest_profile = models.ForeignKey(
+        RestPullProfile, on_delete=models.PROTECT, related_name="tenant_document_set_grants"
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "document_set", "rest_profile"],
+                name="uniq_tenant_docset_rest_grant",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"rest-grant:{self.organization_id}:{self.document_set_id}:{self.rest_profile_id}"
+
+    def clean(self) -> None:
+        if self.document_set_id and self.document_set.organization_id != self.organization_id:
+            raise ValidationError("REST grant document set must belong to the organization")
+
+
+class RestSyncStatus(models.TextChoices):
+    QUEUED = "queued", "Queued"
+    RUNNING = "running", "Running"
+    RETRY = "retry", "Retry"
+    SUCCEEDED = "succeeded", "Succeeded"
+    DEAD_LETTER = "dead_letter", "Dead letter"
+
+
+class RestSyncRun(TimeStampedModel):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="rest_sync_runs"
+    )
+    source = models.ForeignKey(Source, on_delete=models.CASCADE, related_name="rest_sync_runs")
+    rest_profile = models.ForeignKey(
+        RestPullProfile, on_delete=models.PROTECT, related_name="sync_runs"
+    )
+    rest_contract = models.ForeignKey(
+        RestPullContract, on_delete=models.PROTECT, related_name="sync_runs"
+    )
+    status = models.CharField(
+        max_length=16, choices=RestSyncStatus.choices, default=RestSyncStatus.QUEUED
+    )
+    attempt = models.PositiveSmallIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField(default=3)
+    error_code = models.CharField(max_length=64, blank=True)
+    snapshot_complete = models.BooleanField(default=False)
+    material_change = models.BooleanField(default=False)
+    discovered_count = models.PositiveIntegerField(default=0)
+    changed_count = models.PositiveIntegerField(default=0)
+    unchanged_count = models.PositiveIntegerField(default=0)
+    missing_count = models.PositiveIntegerField(default=0)
+    fetched_bytes = models.PositiveBigIntegerField(default=0)
+    candidate_set_version = models.ForeignKey(
+        "documents.DocumentSetVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rest_sync_runs",
+    )
+    schedule = models.ForeignKey(
+        "ConnectorSyncSchedule",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rest_runs",
+    )
+    schedule_slot = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["schedule", "schedule_slot"],
+                condition=models.Q(schedule__isnull=False, schedule_slot__isnull=False),
+                name="uniq_rest_schedule_slot",
+            )
+        ]
+
+    def clean(self) -> None:
+        if self.source_id and self.source.organization_id != self.organization_id:
+            raise ValidationError("REST run source must belong to the organization")
+        if self.source_id and (
+            self.source.rest_profile_id != self.rest_profile_id
+            or self.source.rest_contract_id != self.rest_contract_id
+        ):
+            raise ValidationError("REST run bindings must match its source")
+        if not 1 <= self.max_attempts <= 3:
+            raise ValidationError({"max_attempts": "must be between 1 and 3"})
+
+
+class RestDocumentCursor(TimeStampedModel):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="rest_document_cursors"
+    )
+    source = models.ForeignKey(
+        Source, on_delete=models.CASCADE, related_name="rest_document_cursors"
+    )
+    external_id = models.CharField(max_length=256)
+    external_revision = models.CharField(max_length=256, blank=True)
+    content_checksum = models.CharField(max_length=64)
+    document = models.ForeignKey(
+        "documents.Document", on_delete=models.CASCADE, related_name="rest_cursors"
+    )
+    document_version = models.ForeignKey(
+        "documents.DocumentVersion", on_delete=models.PROTECT, related_name="rest_cursors"
+    )
+    last_seen_run = models.ForeignKey(
+        RestSyncRun, on_delete=models.SET_NULL, null=True, blank=True, related_name="seen_cursors"
+    )
+    state = models.CharField(
+        max_length=16,
+        choices=[("active", "Active"), ("missing", "Missing")],
+        default="active",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "external_id"], name="uniq_rest_source_external_id"
+            )
+        ]
+
+    def clean(self) -> None:
+        if self.source_id and self.source.organization_id != self.organization_id:
+            raise ValidationError("REST cursor source must belong to the organization")
+        if self.document_id and self.document.organization_id != self.organization_id:
+            raise ValidationError("REST cursor document must belong to the organization")
+        if self.document_version_id and (
+            self.document_version.organization_id != self.organization_id
+            or self.document_version.document_id != self.document_id
+        ):
+            raise ValidationError("REST cursor version must belong to its document and tenant")
+
+
+class ScheduleAutomationMode(models.TextChoices):
+    DRAFT_ONLY = "draft_only", "Draft only"
+    STAGE_ONLY = "stage_only", "Publish and build staged index"
+    PROMOTE_IF_SAFE = "promote_if_safe", "Promote after existing gates pass"
+
+
+class ConnectorAutomationStatus(models.TextChoices):
+    IDLE = "idle", "Idle"
+    RUNNING = "running", "Running"
+    SUCCEEDED = "succeeded", "Succeeded"
+    FAILED = "failed", "Failed"
+
+
+class ConnectorSyncSchedule(TimeStampedModel):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="connector_sync_schedules"
+    )
+    source = models.OneToOneField(Source, on_delete=models.CASCADE, related_name="sync_schedule")
+    interval_seconds = models.PositiveIntegerField(default=86_400)
+    enabled = models.BooleanField(default=False)
+    next_run_at = models.DateTimeField()
+    last_slot_at = models.DateTimeField(null=True, blank=True)
+    automation_mode = models.CharField(
+        max_length=24,
+        choices=ScheduleAutomationMode.choices,
+        default=ScheduleAutomationMode.DRAFT_ONLY,
+    )
+    embedding_profile = models.ForeignKey(
+        "EmbeddingProfile",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connector_schedules",
+    )
+    ocr_profile = models.ForeignKey(
+        "OcrProfile",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connector_schedules",
+    )
+    configured_by = models.CharField(max_length=255)
+    promotion_approved_by = models.CharField(max_length=255, blank=True)
+    last_automation_candidate = models.ForeignKey(
+        "documents.DocumentSetVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="connector_automation_schedules",
+    )
+    automation_status = models.CharField(
+        max_length=16,
+        choices=ConnectorAutomationStatus.choices,
+        default=ConnectorAutomationStatus.IDLE,
+    )
+    automation_error_code = models.CharField(max_length=64, blank=True)
+
+    def clean(self) -> None:
+        if self.source_id and self.source.organization_id != self.organization_id:
+            raise ValidationError("schedule source must belong to the organization")
+        if self.source_id and self.source.connector_type not in {
+            ConnectorType.CONFLUENCE_DC,
+            ConnectorType.GENERIC_REST,
+        }:
+            raise ValidationError("schedule source connector is unsupported")
+        if not 900 <= self.interval_seconds <= 604_800:
+            raise ValidationError({"interval_seconds": "must be between 900 and 604800"})
+        if (
+            self.automation_mode != ScheduleAutomationMode.DRAFT_ONLY
+            and not self.embedding_profile_id
+        ):
+            raise ValidationError("staging automation requires an embedding profile")
+        if (
+            self.automation_mode == ScheduleAutomationMode.PROMOTE_IF_SAFE
+            and not self.promotion_approved_by
+        ):
+            raise ValidationError("automatic promotion requires release-manager approval")
+
+
+class ConnectorSchedulePromotionTarget(models.Model):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="connector_promotion_targets"
+    )
+    schedule = models.ForeignKey(
+        ConnectorSyncSchedule, on_delete=models.CASCADE, related_name="promotion_targets"
+    )
+    scenario = models.ForeignKey(
+        "catalog.Scenario", on_delete=models.CASCADE, related_name="connector_promotion_targets"
+    )
+    approved_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["schedule", "scenario"], name="uniq_connector_schedule_scenario"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"connector-promotion-target:{self.schedule_id}:{self.scenario_id}"
+
+    def clean(self) -> None:
+        if self.schedule_id and self.schedule.organization_id != self.organization_id:
+            raise ValidationError("promotion target schedule must belong to the organization")
+        if self.scenario_id and self.scenario.project.organization_id != self.organization_id:
+            raise ValidationError("promotion target scenario must belong to the organization")
+
+
 class ConfluenceSyncStatus(models.TextChoices):
     QUEUED = "queued", "Queued"
     RUNNING = "running", "Running"
@@ -357,6 +834,7 @@ class ConfluenceSyncRun(TimeStampedModel):
     max_attempts = models.PositiveSmallIntegerField(default=3)
     error_code = models.CharField(max_length=64, blank=True)
     snapshot_complete = models.BooleanField(default=False)
+    material_change = models.BooleanField(default=False)
     discovered_count = models.PositiveIntegerField(default=0)
     changed_count = models.PositiveIntegerField(default=0)
     unchanged_count = models.PositiveIntegerField(default=0)
@@ -369,8 +847,25 @@ class ConfluenceSyncRun(TimeStampedModel):
         blank=True,
         related_name="confluence_sync_runs",
     )
+    schedule = models.ForeignKey(
+        ConnectorSyncSchedule,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="confluence_runs",
+    )
+    schedule_slot = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["schedule", "schedule_slot"],
+                condition=models.Q(schedule__isnull=False, schedule_slot__isnull=False),
+                name="uniq_confluence_schedule_slot",
+            )
+        ]
 
     def clean(self) -> None:
         if self.source_id and self.source.organization_id != self.organization_id:

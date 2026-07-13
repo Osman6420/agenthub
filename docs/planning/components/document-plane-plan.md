@@ -276,7 +276,8 @@ Each item below is **approval-gated at its milestone**. Current status:
   local parsing; no parser opens network egress. OCR remains an external profile-only service.
 - **External egress**: embedding/OCR and offline Confluence implementations are profile-only and
   threat-modeled. Each live environment still needs its concrete profile/network/secret sign-off.
-  Generic REST remains disabled pending a concrete contract.
+  Generic REST is implemented offline under ADR-0007; live profiles remain disabled pending
+  environment-specific endpoint, credential and capacity review.
 
 ### Parser comparison (decision E — to complete before any dependency is added)
 
@@ -340,7 +341,8 @@ in place), so the milestone numbers below are scope units, not the build order.
   pointer-flip promotion; retention/purge job for unreferenced stores.
 - **M4 — Parsers & connectors**: parser interface, selected parsers, upload, external OCR and P7.4a
   Confluence are implemented and verified offline. Live Confluence rollout remains deployment-gated;
-  P7.4b generic REST remains contract-gated.
+  P7.4b generic REST, periodic no-op refresh and compatible unchanged-vector reuse are implemented
+  and verified offline under ADR-0007; live endpoint/credential rollout remains gated.
 - **M5 — Console UI**: per-scenario document sources, set membership, binding, upload,
   soft-delete/purge — role/tenant-scoped, non-authoritative.
 
@@ -381,7 +383,7 @@ Remaining (non-blocking, decided at their milestone):
 - Blob dedup by checksum — optional; defer unless storage pressure warrants.
 - Connector specifics — Confluence is Data Center with a least-privilege PAT profile and
   connector-specific private policy (ADR-0006); generic-REST source definition and auth remain
-  contract-gated; upload size/type/scan limits remain an M4 operational concern.
+  governed by ADR-0007; live source/auth review and upload size/type/scan limits remain operational gates.
 - Vector storage — the separate immutable store is decided by ADR-0003; changing it requires a
   superseding ADR.
 

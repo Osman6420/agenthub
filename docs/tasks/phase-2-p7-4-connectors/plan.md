@@ -18,11 +18,8 @@ base. The registration interface accepts the instance base URL as a **platform-o
 canonicalizes it into an immutable profile; a `Source`, tenant, artifact, or request never carries a
 raw base URL, credential, TLS switch, or network policy.
 
-P7.4 also retains the planned generic REST connector, but that increment remains gated until its
-response/pagination/identity contract and concrete destination are supplied and approved. The
-Confluence increment may be implemented and verified independently; P7.4 as a whole is not complete
-until the generic REST gate is either implemented or explicitly re-scoped by the owner and the
-authoritative component/phase plans are updated.
+P7.4b now implements the owner-approved closed generic REST contract, periodic refresh and
+incremental vector reuse. Concrete live destinations and credentials remain deployment gates.
 
 ## Background
 
@@ -45,8 +42,9 @@ authoritative component/phase plans are updated.
 3. Profile registration accepts a **base URL parameter**.
 4. The credential belongs to a least-privilege service account scoped to the applicable
    scenario/dataset/knowledge base and should see only that corpus.
-5. No additional live endpoint, CA-chain, Data Center version, or generic REST contract is
-   available yet.
+5. No additional live endpoint, CA-chain or Data Center version is available. The generic REST
+   contract boundary is accepted in ADR-0007, but no concrete live REST endpoint/credential is
+   approved.
 
 The owner instructed implementation to begin on 2026-07-13, accepting the connector-specific
 private-egress boundary recorded in ADR-0006. This does **not** authorize a production dependency, a
@@ -77,15 +75,17 @@ CA/firewall provisioning remains a separate live-rollout gate.
   source sync. A console extension is a follow-up unless explicitly added to this task; backend
   authorization remains authoritative either way.
 
-### P7.4b — Generic REST connector (contract-gated)
+### P7.4b — Generic REST connector
 
-- Record the minimum contract required before implementation: GET/read-only method set, canonical
-  profile destination/path prefix, auth scheme, stable item ID/revision fields, MIME/body extraction,
-  pagination/termination, deletion semantics, rate limits, response/item/total byte caps, and retry
-  semantics.
-- Do not introduce a tenant-authored URL, arbitrary headers, arbitrary JSONPath/JMESPath, templates,
-  executable transformations, or response-provided next URLs.
-- Implement only after the owner supplies/approves the contract and environment-specific profile.
+- The owner requested a tenant-authored input/output mapping plus periodic change detection and
+  changed-document-only embedding on 2026-07-13. The discussion draft is maintained in
+  [`phase-2-p7-4b-generic-rest-periodic-sync`](../phase-2-p7-4b-generic-rest-periodic-sync/plan.md).
+- The proposed split keeps destination/auth/egress in an immutable platform profile while allowing
+  an authorized tenant author to define a bounded, checksummed declarative request/response mapping
+  and exact source inputs. It explicitly excludes executable templates/expressions and response URL
+  following.
+- The owner approved GET/profile-approved read-only POST, UTF-8/base64/detail content, selectable
+  gated automation, backend commands now and a visual editor in WS2. ADR-0007 is authoritative.
 
 ## Non-goals
 
@@ -267,11 +267,10 @@ tenant, source, document set, document, or egress destination.
 - Per-source locking prevents concurrent sync. Retry/dead-letter state and audit are recoverable and
   use stable error codes.
 
-### Generic REST gate
+### Generic REST acceptance
 
-- No generic REST implementation is merged until all contract fields listed in Scope are decided,
-  threat-modeled, and approved. A future implementation reuses profile-only destination governance
-  and cannot be a general-purpose HTTP client.
+- The closed mapping, profile-only destination, exact grants, no-op refresh, schedule idempotency,
+  vector reuse and gated promotion requirements are covered by the P7.4b plan and tests.
 
 ## Affected components
 
@@ -354,7 +353,7 @@ must not turn the generic egress adapter into an internal-network client. The co
 - Live rollout depends on the actual canonical base URL/context path, DNS answer allowlist, corporate
   CA installation, Bearer PAT secret reference, Data Center version compatibility, firewall rule,
   and least-privilege service-account verification.
-- Generic REST remains dependent on its missing contract and endpoint sign-off.
+- Generic REST implementation follows ADR-0007; each live endpoint/profile still requires sign-off.
 
 ## Implementation steps
 
@@ -374,7 +373,7 @@ must not turn the generic egress adapter into an internal-network client. The co
    live Confluence in CI.
 8. Run repository checks, review the final diff as staff engineer/AppSec/SRE, record verification,
    update current-behavior docs/plans/handoff, and archive only when P7.4 scope is actually complete.
-9. Keep P7.4b disabled until its separate contract addendum and approval are recorded.
+9. Implement P7.4b under ADR-0007; keep live profiles/schedules disabled pending environment review.
 
 ## Test plan
 
@@ -482,8 +481,8 @@ Not required to finish the plan, but required before the corresponding stage:
 - **Before live Confluence rollout:** actual base URL/context path, Data Center version, corporate DNS
   allowlist/network-policy ID, CA chain, firewall rule, secret reference, page/request/byte limits,
   and service-account out-of-scope denial evidence.
-- **Before P7.4b implementation:** generic REST endpoint, auth, item identity/version, body/MIME,
-  pagination, deletion, rate/size, retry, and data-classification contract.
+- **Before live P7.4b rollout:** actual endpoint/auth, identity/revision semantics, MIME, pagination,
+  deletion, rate/size, retry, data classification and service-account scope.
 - Decide whether connector-source CRUD/sync controls belong in a P8.5 console increment or remain
   platform command/API-only for the first rollout. This does not change backend authorization.
 
@@ -501,23 +500,22 @@ The recommended and, given the repository's current trust boundaries, **correct 
    `verify_ssl=False` from the old project.
 5. Use one least-privilege service-account profile per scenario/dataset/knowledge base, bind the
    source to one same-tenant document set, and still treat AgentHub ACL/RLS as the serving authority.
-6. Reconcile missing pages only after a fully successful snapshot and never auto-promote synchronized
-   content.
-7. Leave generic REST disabled until its concrete contract is known rather than inventing a
-   general-purpose HTTP/extraction DSL.
+6. Reconcile missing pages only after a successful snapshot; default to `draft_only` and require
+   release-manager + existing eval gates for optional promotion.
+7. Keep generic REST declarative and profile-governed rather than a general HTTP/extraction DSL.
 
 Any review outcome that permits tenant-controlled base URLs/CIDRs/TLS switches, global private-
 network access, redirect following, disabled certificate validation, content-bearing logs, dynamic
-Confluence ACL bypass, or automatic promotion should be rejected.
+Confluence ACL bypass, or ungated promotion should be rejected.
 
 ## Status
 
-**P7.4a implemented and verified offline on 2026-07-13.** ADR-0006 accepts the connector-specific
+**P7.4a and P7.4b are verified offline as of 2026-07-13.** ADR-0006 accepts the connector-specific
 private-egress boundary. The additive schema, governed profile/grant/source services, bounded Data
 Center client, recoverable snapshot sync, draft-candidate workflow, RLS policies, commands, and
 negative tests are complete. No live endpoint, secret, corporate CA, DNS, or firewall rule was
-configured or exercised; those remain rollout gates. P7.4b generic REST remains contract-gated and
-is not part of this implementation increment, so P7.4 as a whole remains open.
+configured or exercised; those remain rollout gates. ADR-0007 governs P7.4b's closed mapping,
+periodic incremental refresh/vector reuse and optional existing-gate promotion.
 
 ## Completion criteria
 

@@ -32,7 +32,7 @@ dependencies = [
     # text extraction only — NO network egress. pdfplumber (pdf text + tables),
     # python-docx (docx), openpyxl (xlsx); all permissive-licensed. They plug into the
     # apps.ingestion.parsers DocumentParser interface. External OCR (P7.3) and the
-    # Confluence/REST connectors (P7.4) remain deferred behind their egress sign-off.
+    # Confluence/REST connectors (P7.4) use stdlib transport and add no dependency.
     "pdfplumber>=0.11,<0.12",
     "python-docx>=1.1,<2",
     "openpyxl>=3.1,<4",

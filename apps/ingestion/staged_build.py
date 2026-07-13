@@ -17,6 +17,9 @@ build fails closed for controlled re-drive — the partial store is dropped, nev
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from django.db import connection, transaction
 from django.db.models import Max
 
@@ -41,6 +44,8 @@ from apps.ingestion.pipeline import CHUNKERS, PipelineError
 from apps.ingestion.vector_store import (
     VectorRow,
     VectorStoreError,
+    chunk_counts_by_document,
+    copy_chunks,
     drop_store,
     provision_store,
     write_chunks,
@@ -88,10 +93,34 @@ def build_staged_index(
     if chunk_fn is None:
         raise StagedBuildError("CHUNKER_UNSUPPORTED")
 
-    index_version = _create_index_version(document_set_version, embedding_profile)
+    fingerprint = _pipeline_fingerprint(
+        embedding_profile=embedding_profile, chunker=chunker, ocr_profile=ocr_profile
+    )
+    parent = _compatible_parent(
+        document_set_version=document_set_version,
+        pipeline_fingerprint=fingerprint,
+    )
+    index_version = _create_index_version(
+        document_set_version,
+        embedding_profile,
+        pipeline_fingerprint=fingerprint,
+        parent=parent,
+    )
     try:
         provision_store(index_version)
-        document_count, chunk_count = _embed_into_store(
+        member_ids = list(
+            document_set_version.memberships.order_by("ordinal", "id").values_list(
+                "document_version_id", flat=True
+            )
+        )
+        reused_counts = chunk_counts_by_document(parent, member_ids) if parent is not None else {}
+        reusable_ids = sorted(reused_counts)
+        reused_chunks = (
+            copy_chunks(parent, index_version, reusable_ids) if parent is not None else 0
+        )
+        if reused_chunks != sum(reused_counts.values()):
+            raise StagedBuildError("VECTOR_REUSE_COUNT_MISMATCH")
+        embedded_documents, embedded_chunks = _embed_into_store(
             index_version,
             document_set_version,
             embedding_profile,
@@ -100,7 +129,12 @@ def build_staged_index(
             request_id=request_id,
             ocr_profile=ocr_profile,
             ocr_client=ocr_client,
+            only_document_version_ids=set(member_ids) - set(reusable_ids),
         )
+        document_count = len(reusable_ids) + embedded_documents
+        chunk_count = reused_chunks + embedded_chunks
+        if document_count != len(member_ids):
+            raise StagedBuildError("BUILD_DOCUMENT_COUNT_MISMATCH")
     except (StagedBuildError, VectorStoreError, EmbeddingError, PipelineError, OcrError):
         _fail(index_version, reason="build_failed")
         raise
@@ -114,8 +148,22 @@ def build_staged_index(
         locked.store_ready = True
         locked.document_count = document_count
         locked.chunk_count = chunk_count
+        locked.embedded_document_count = embedded_documents
+        locked.embedded_chunk_count = embedded_chunks
+        locked.reused_document_count = len(reusable_ids)
+        locked.reused_chunk_count = reused_chunks
         locked.save(
-            update_fields=["status", "store_ready", "document_count", "chunk_count", "updated_at"]
+            update_fields=[
+                "status",
+                "store_ready",
+                "document_count",
+                "chunk_count",
+                "embedded_document_count",
+                "embedded_chunk_count",
+                "reused_document_count",
+                "reused_chunk_count",
+                "updated_at",
+            ]
         )
         record_event(
             actor_type="user",
@@ -131,6 +179,10 @@ def build_staged_index(
                 "embedding_profile_id": str(embedding_profile.public_id),
                 "documents": document_count,
                 "chunks": chunk_count,
+                "embedded_documents": embedded_documents,
+                "embedded_chunks": embedded_chunks,
+                "reused_documents": len(reusable_ids),
+                "reused_chunks": reused_chunks,
             },
         )
     index_version.refresh_from_db()
@@ -138,7 +190,11 @@ def build_staged_index(
 
 
 def _create_index_version(
-    document_set_version: DocumentSetVersion, embedding_profile: EmbeddingProfile
+    document_set_version: DocumentSetVersion,
+    embedding_profile: EmbeddingProfile,
+    *,
+    pipeline_fingerprint: str,
+    parent: IndexVersion | None,
 ) -> IndexVersion:
     with transaction.atomic():
         latest = (
@@ -155,7 +211,46 @@ def _create_index_version(
             index_type=embedding_profile.index_type,
             version=latest + 1,
             status=IndexStatus.BUILDING,
+            pipeline_fingerprint=pipeline_fingerprint,
+            parent_index_version=parent,
         )
+
+
+def _pipeline_fingerprint(
+    *, embedding_profile: EmbeddingProfile, chunker: str, ocr_profile: OcrProfile | None
+) -> str:
+    payload = {
+        "schema": 1,
+        "embedding_profile": str(embedding_profile.public_id),
+        "embedding_revision": embedding_profile.revision,
+        "dimensions": embedding_profile.dimensions,
+        "index_type": embedding_profile.index_type,
+        "normalize": embedding_profile.normalize,
+        "distance_metric": embedding_profile.distance_metric,
+        "parser_pipeline": "allowlisted-parsers-v2",
+        "chunker": chunker,
+        "chunker_config": {"size": 1000, "overlap": 100},
+        "ocr_profile": str(ocr_profile.public_id) if ocr_profile else None,
+        "ocr_revision": ocr_profile.revision if ocr_profile else None,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _compatible_parent(
+    *, document_set_version: DocumentSetVersion, pipeline_fingerprint: str
+) -> IndexVersion | None:
+    return (
+        IndexVersion.objects.filter(
+            organization_id=document_set_version.organization_id,
+            document_set_version__document_set_id=document_set_version.document_set_id,
+            pipeline_fingerprint=pipeline_fingerprint,
+            store_ready=True,
+            status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE, IndexStatus.SUPERSEDED],
+        )
+        .order_by("-created_at", "-id")
+        .first()
+    )
 
 
 def _embed_into_store(
@@ -168,6 +263,7 @@ def _embed_into_store(
     request_id: str,
     ocr_profile: OcrProfile | None,
     ocr_client: AsyncMarkdownOcrClient | None,
+    only_document_version_ids: set[int] | None = None,
 ) -> tuple[int, int]:
     from apps.documents.storage import get_object_store
 
@@ -183,6 +279,8 @@ def _embed_into_store(
         "ordinal", "id"
     ):
         version = membership.document_version
+        if only_document_version_ids is not None and version.pk not in only_document_version_ids:
+            continue
         # Deny-by-default parse: only an allowlisted MIME parser runs; the document is untrusted
         # data. Unsupported MIME (e.g. pdf/docx/xlsx before their P7.2 adapter) fails closed.
         blob = store.get(version.object_key)

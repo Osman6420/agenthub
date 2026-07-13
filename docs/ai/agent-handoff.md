@@ -17,7 +17,7 @@ branches, stashes, and reflog. Do not infer the active task only from open IDE t
 
 ## Local runtime snapshot
 
-Last checked: 2026-07-12, Europe/Istanbul.
+Last checked: 2026-07-13, Europe/Istanbul.
 
 **Live demo is up and manually smoke-tested (2026-07-12).** Current topology:
 
@@ -49,8 +49,8 @@ such a fact is written.
 - Health: `GET /v1/health/live` returned `200 {"status":"ok"}`.
 - Web process: `.venv` Python 3.13 `manage.py runserver` (see the live-demo block above),
   not the Compose `web` service. (Earlier sessions used host Python 3.14 + uvicorn.)
-- Infrastructure: Docker Compose PostgreSQL/pgvector and Redis are running on the
-  published localhost ports. MinIO was not running at the last check.
+- Infrastructure: Docker Compose PostgreSQL/pgvector, Redis and MinIO are healthy on their
+  published localhost ports. This was rechecked before the P7.4b PostgreSQL gate.
 - Runtime logs: `.runtime/web.stdout.log` and `.runtime/web.stderr.log` (gitignored).
 - Uvicorn is started without `--reload`; source changes require a web-process restart.
 - The stale-process hazard from earlier sprints is now **resolved** (see the live-demo
@@ -293,7 +293,7 @@ Current cross-agent state:
     confirmation; pinned content remains fail-closed. No migration/dependency/egress. Evidence:
     SQLite 511 passed / 21 skipped; PostgreSQL 530 passed / 2 skipped. Landed in the P8 completion
     commit on `feat/foundation-sprint-0-1`; not pushed. P7 provenance follows.
-- **P7.1–P7.4a COMPLETE + VERIFIED OFFLINE — P7.4b remains gated.** P7 parsers/OCR and Confluence are
+- **P7.1–P7.4b COMPLETE + VERIFIED OFFLINE.** P7 parsers/OCR and both connectors are
   verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
   - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed
     `DocumentParser` registry (`ParsedContent`/`ParserError`/`get_parser`/`parse_document`) with
@@ -330,7 +330,15 @@ Current cross-agent state:
     skipped, targeted PostgreSQL 42 passed, full SQLite 541 passed / 23 skipped, full PostgreSQL 562
     passed / 2 skipped; lint/type/migration gates pass. No live endpoint, secret, CA, DNS, firewall
     or service-account permission was configured/called.
-    **P7.4b generic REST remains contract-gated and unimplemented.**
+  - **P7.4b (generic REST + periodic incremental refresh):** ADR-0007 records the closed
+    tenant-authored mapping/platform-profile split. Public-only GET/profile-approved read-only POST,
+    exact grants, revision+checksum no-op sync, merged candidates, bounded schedules, compatible
+    vector reuse and selectable `draft_only`/`stage_only`/release-manager+eval-gated
+    `promote_if_safe` are implemented with additive migrations `ingestion.0008/0009/0010`. No
+    dependency or live profile/secret was added. Evidence: full SQLite 561 passed / 25 skipped; full
+    PostgreSQL 584 passed / 2 skipped; format/lint/type/migration/Django checks pass. The visual
+    contract editor remains WS2 scope; live endpoint/credential/schedule approval remains a rollout
+    gate. See the P7.4b verification record.
   P6 provenance follows.
 - **P6 COMPLETE.** P6 (authored, governed agent **system prompt**) is implemented
   and verified in `docs/tasks/phase-2-p6-agent-system-prompt/`: `agent_definition` accepts an optional

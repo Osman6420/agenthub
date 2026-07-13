@@ -2,65 +2,78 @@
 
 ## Status
 
-**P7.4a Confluence implemented and verified offline on 2026-07-13.** P7.4b generic REST remains
-contract-gated and unimplemented, so P7.4 as a whole remains open. No live Confluence hostname,
-credential, corporate CA, DNS policy, firewall rule, or socket was configured or exercised.
+**P7.4a Confluence and P7.4b generic REST are verified offline as of 2026-07-13.** No
+live Confluence/REST hostname, credential, CA, DNS policy, firewall rule or connector socket was
+configured.
 
 ## Acceptance evidence
 
-- ADR-0006 keeps all existing model/embedding/OCR/tool destinations public-only and introduces a
-  separate, deployment-owned private-CIDR policy exclusively for immutable Confluence profiles.
-- Platform-admin profile registration/grant/disable and same-tenant author source/sync operations
-  enforce exact profile + document-set scope. Denials and state changes are audited without endpoint,
-  IP/CIDR, secret, title, page body, or upstream error content.
-- The stdlib Data Center client constructs only fixed REST paths, validates every DNS answer, pins
-  the selected IP while preserving TLS SNI/Host, denies redirects, ignores response links, resolves
-  bearer secrets only at call time, and bounds traversal/depth/requests/pages/body/total bytes.
-- Incremental snapshot sync reuses unchanged versions, persists changed HTML through the existing
-  tenant object-store service, reconciles missing pages only after a complete snapshot, and creates
-  a DRAFT document-set candidate without automatic build, publish, or promotion.
-- Additive lineage/grant/run tables use FORCE RLS and transaction-local tenant context. A worker
-  cannot claim a foreign-tenant run even if handed its primary key.
-- The legacy one-shot connector path fails closed, preventing bypass of governed sync lineage.
+- ADR-0006 keeps existing model/embedding/OCR/tool destinations public-only and introduces a
+  deployment-owned private-CIDR policy only for immutable Confluence profiles.
+- ADR-0007 separates platform-owned REST destination/auth/method authority from a tenant-authored,
+  closed JSON mapping. Unknown fields, URL/header/code/template surfaces and path escapes fail closed.
+- Exact platform profile grants are tenant + document-set scoped. Runtime workers recheck immutable
+  source/profile/contract bindings under transaction-local tenant context.
+- Successful snapshots merge one connector slice with the trusted document-set baseline. Revisions
+  and checksums prevent duplicate versions/candidates; only changed versions reach embedding.
+- Periodic scheduling uses bounded intervals, unique slots, no backlog replay, source backpressure
+  and same-run redrive for a schedule-owned queued/retry delivery lost by the broker.
+- Optional `promote_if_safe` is candidate-idempotent, checks the current release-manager authority
+  and exact scenario binding before publish/build, then uses the existing pinned eval and release
+  promotion gates. Failure leaves the previous active release/index served.
+- New tenant tables use PostgreSQL FORCE RLS. Compatible vector copy additionally requires the exact
+  tenant, document set, geometry and pipeline fingerprint.
 
 ## Checks and evidence
 
 | Check | Result |
 | --- | --- |
-| `ruff format --check .` | Pass |
+| `ruff format --check .` | Pass — 341 files |
 | `ruff check .` | Pass |
-| `mypy apps config` | Pass |
+| `mypy apps config` | Pass — 340 source files |
 | `manage.py check` | Pass |
-| `makemigrations --check --dry-run` | Pass — `ingestion.0007` current |
-| Targeted SQLite Confluence/egress/legacy ingestion | Pass — 41 passed, 2 skipped |
-| Targeted PostgreSQL including FORCE RLS | Pass — 42 passed |
-| Full SQLite suite | Pass — 541 passed, 23 skipped |
-| Full PostgreSQL suite | Pass — 562 passed, 2 skipped |
-| `git diff --check` and final staff/AppSec/SRE diff review | Pass |
+| `makemigrations --check --dry-run` | Pass — `ingestion.0010` current |
+| Targeted SQLite Confluence/egress/legacy ingestion | Pass — 41 passed, 2 skipped (P7.4a evidence) |
+| Targeted PostgreSQL Confluence/FORCE RLS | Pass — 42 passed (P7.4a evidence) |
+| P7.4b targeted SQLite | Pass — 20 passed, 1 PostgreSQL-only skipped |
+| P7.4b + staged-build targeted PostgreSQL | Pass — 25 passed, 1 off-PostgreSQL guard skipped |
+| Full SQLite suite | Pass — 561 passed, 25 skipped |
+| Full PostgreSQL suite | Pass — 584 passed, 2 skipped |
+| `git diff --check` | Pass |
 
-Tests cover exact-private allow, public/unlisted/mixed/loopback denial, private corporate FQDNs,
-fixed paths, malicious links, retry/redirect behavior, response ID mismatch, governance/redaction,
-ungranted and cross-tenant denial, immutable bindings, incremental/partial/recovery behavior, draft
-candidates, worker tenant context, PostgreSQL FORCE RLS, and the legacy-path denial.
+Coverage includes private/public network boundary separation, fixed destinations/paths, response-link
+non-following, uncertain-POST no-retry, percent-encoded path denial, exact grants, role and tenant
+denials, immutable bindings, revision/checksum no-op sync, merged candidates, schedule backpressure,
+lost-delivery redrive, revoked promotion authority, stale automation-claim recovery, PostgreSQL
+FORCE RLS and exact compatible vector reuse with changed-only provider calls.
 
 ## Checks not run
 
-- No live Confluence request, corporate DNS lookup, TLS handshake/CA validation, secret-store
-  resolution, service-account permission check, firewall verification, Celery broker delivery, or
-  production object-store call.
-- No browser/console workflow exists for P7.4a; operations use management commands.
-- No generic REST implementation or test; its contract is intentionally unknown and disabled.
+- No live Confluence/REST request, corporate DNS lookup, TLS/CA handshake, secret-store resolution,
+  service-account permission check, firewall verification or production object-store call.
+- No dedicated live Celery broker delivery or scheduler multi-replica soak was run; offline/eager
+  idempotency, redrive and source-backpressure paths are covered.
+- P7.4b has backend services and management commands. Its visual REST contract/source/schedule
+  editor is intentionally deferred to WS2.
+- No destructive migration reversal was run. Additive forward migrations were exercised by fresh
+  SQLite and PostgreSQL test databases.
 
 ## Residual risk and rollout gate
 
-The live deployment must record the actual base URL/context path, supported Data Center version,
-DNS answers/private CIDRs, corporate CA chain, firewall destination, injected PAT reference,
-least-privilege account roots, and operational limits. Test one allowed root and one deliberately
-out-of-scope page before enabling scheduled sync. Confluence ACLs are an upstream import boundary;
-copied content is subsequently governed by AgentHub document-set/release/consumer ACLs.
+- The deployment must separately approve exact endpoint/path/auth/credential scope, identity and
+  revision semantics, MIME/content limits, pagination, schedule capacity and alert thresholds.
+- AgentHub cannot prove that a platform-approved POST endpoint is side-effect-free.
+- Removing the final source document creates an empty draft; existing publication rules reject
+  empty versions, so automatic staging/promotion fails closed until an explicit empty-corpus policy
+  is approved.
+- Dedicated connector Prometheus series are not added in this increment. Durable run/index counters
+  and bounded audit events exist; production alerts remain rollout configuration.
+- Confluence ACLs are an upstream import boundary. Imported content is subsequently controlled by
+  AgentHub document-set/release/consumer ACLs rather than per-user Confluence ACLs.
 
 ## Manual review required
 
-Approve the environment-specific profile/network/CA/secret/service-account configuration before
-live rollout. Separately provide and approve the generic REST contract or explicitly re-scope P7.4b
-in the authoritative plans.
+Approve each live Confluence network/CA/secret/service-account profile and each live REST
+endpoint/credential/schedule before enabling it. For `promote_if_safe`, confirm the exact
+`project/scenario` targets and release-manager ownership. WS2 should decide how empty-corpus removal
+is presented and whether dedicated connector metrics are required before broad rollout.

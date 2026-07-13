@@ -1,9 +1,10 @@
 # AgentHub — Phase 2 Plan (IN PROGRESS)
 
 > **Status: IN PROGRESS.** The owner approved implementation kickoff on 2026-07-12. P1 is
-> implemented and verified; later phases retain their milestone-specific dependency and live-egress
+> implemented and verified; WS1's P2–P8 backend/console scope and WS5 are verified, while later
+> workstreams retain their milestone-specific dependency and live-egress
 > gates. This file captures the Phase 2 intent, the owner's decisions to date,
-> and the open questions we still need to resolve before any code is written. Every new
+> and the open questions that remain for later workstreams and live rollout. Every new
 > production dependency and every new external egress named below is a change-boundary item
 > that requires explicit approval + a supply-chain/threat-model review first
 > (see [`AGENTS.md`](../../AGENTS.md)).
@@ -262,7 +263,8 @@ the same explicit-approval + supply-chain/threat-review gate.
 The **interleaved delivery order for WS1 + WS5 is owner-set**; the detailed phase plan (value-first,
 shared egress built once, a real-LLM answer shipped early) elaborates it in
 [`components/runtime-and-document-plane-sequence.md`](components/runtime-and-document-plane-sequence.md).
-**Implementation itself is not yet approved** (M0 spikes + per-phase egress sign-off remain gates).
+The Phase 2 kickoff and implemented increments are approved; environment-specific live egress,
+later workstreams and any new dependency still retain their explicit gates.
 
 ## Cross-cutting constraints
 
@@ -271,7 +273,8 @@ shared egress built once, a real-LLM answer shipped early) elaborates it in
   (2026-07-12): **no `openai` dependency** for embeddings — the client reuses the Sprint 9
   SSRF-safe stdlib transport. Parser dependencies and the OCR API contract are approved. P7.4a
   Confluence Data Center is implemented and verified offline under ADR-0006's connector-specific
-  private policy; live deployment inputs remain gated. P7.4b generic REST remains contract-gated (see
+  private policy; live deployment inputs remain gated. P7.4b generic REST is implemented offline
+  under ADR-0007; live profiles/credentials remain deployment-gated (see
   [`components/document-plane-plan.md`](components/document-plane-plan.md)).
 - Reuse the existing controls: tenant isolation, deny-by-default authorization,
   `secret:<name>` handling, redaction, and the append-only audit trail.
@@ -305,8 +308,8 @@ dimension/reindex (platform-managed `EmbeddingProfile` + immutable blue/green re
 metadata-atomic pointer-flip promotion), and the parser approach (format-specific stack behind
 a `DocumentParser` interface; approved libraries implemented at M4). Remaining WS1 items are
 milestone/deployment decisions, not open architecture blockers: live Confluence profile/network/CA/
-secret provisioning, the generic REST contract, upload malware/type scanning, and concrete
-embedding/OCR deployment profiles.
+secret provisioning, the live generic REST endpoint/profile/credential, upload malware/type
+scanning, and concrete embedding/OCR deployment profiles.
 
 **Workstreams 2–4 — still open (not yet decomposed):**
 
@@ -324,6 +327,7 @@ RLS connection-context ([ADR-0004](../adr/0004-tenant-isolation-postgres-rls-con
 and the shared SSRF-safe egress adapter ([ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md),
 implementing [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)). The
 Phase 2 kickoff is approved; remaining gates are **per-phase egress/dependency sign-off**.
+**Workstream 1 and Workstream 5 are implemented and verified for their current offline scope.**
 **Workstreams 2–4 remain in discovery** and are not yet
 decomposed into component plans.
 
@@ -331,7 +335,7 @@ decomposed into component plans.
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | **P2–P6, P7.1–P7.4a and P8.1–P8.4 implemented + verified** — content, embeddings/indexing, effective consumer-grant ACL retrieval, FORCE RLS stores, runtime wiring, local parsers, profile-only async OCR, offline-verified Confluence and full console operation. Remaining: live Confluence deployment review, P7.4b generic REST contract, broader Django-table RLS + non-owner app role. M0 = ADR-0003/0004/0005/0006. |
+| 1 | Document plane | **P2–P6, P7.1–P7.4b and P8.1–P8.4 implemented and verified** — content, embeddings/indexing, ACL retrieval, FORCE RLS stores, parsers/OCR, offline Confluence, governed REST periodic incremental sync and console operation. Remaining deployment gates: live Confluence/REST profiles and broader Django-table RLS + non-owner app role. Decisions = ADR-0003–0007. |
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |

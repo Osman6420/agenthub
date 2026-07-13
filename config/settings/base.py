@@ -126,6 +126,13 @@ CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TIME_LIMIT = 60 * 30
 CELERY_TASK_SOFT_TIME_LIMIT = 60 * 25
+CELERY_BEAT_SCHEDULE = {
+    "dispatch-governed-connector-schedules": {
+        "task": "apps.ingestion.tasks.dispatch_connector_schedules",
+        "schedule": 60.0,
+        "options": {"queue": "ingestion"},
+    }
+}
 
 # --- Gateway / DRF ----------------------------------------------------------
 REST_FRAMEWORK = {

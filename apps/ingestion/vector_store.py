@@ -174,6 +174,66 @@ def write_chunks(index_version: IndexVersion, rows: list[VectorRow]) -> int:
     return len(params)
 
 
+def chunk_counts_by_document(
+    index_version: IndexVersion, document_version_ids: list[int]
+) -> dict[int, int]:
+    """Return exact chunk counts for requested immutable document versions under tenant RLS."""
+    _require_postgres()
+    if not document_version_ids:
+        return {}
+    name = store_name(index_version)
+    ids = sorted({int(value) for value in document_version_ids})
+    with transaction.atomic():
+        set_tenant_context(int(index_version.organization_id))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'SELECT document_version_id, COUNT(*) FROM "{name}" '  # noqa: S608
+                "WHERE organization_id = %s AND document_version_id = ANY(%s) "
+                "GROUP BY document_version_id",
+                [index_version.organization_id, ids],
+            )
+            return {int(row[0]): int(row[1]) for row in cursor.fetchall()}
+
+
+def copy_chunks(parent: IndexVersion, target: IndexVersion, document_version_ids: list[int]) -> int:
+    """Copy compatible immutable rows between int-derived stores under the same tenant context."""
+    _require_postgres()
+    if parent.organization_id != target.organization_id:
+        raise VectorStoreError("VECTOR_COPY_TENANT_MISMATCH")
+    if parent.dimensions != target.dimensions or parent.index_type != target.index_type:
+        raise VectorStoreError("VECTOR_COPY_GEOMETRY_MISMATCH")
+    if (
+        not parent.pipeline_fingerprint
+        or parent.pipeline_fingerprint != target.pipeline_fingerprint
+    ):
+        raise VectorStoreError("VECTOR_COPY_PIPELINE_MISMATCH")
+    parent_set_version = parent.document_set_version
+    target_set_version = target.document_set_version
+    if (
+        parent_set_version is None
+        or target_set_version is None
+        or parent_set_version.document_set_id != target_set_version.document_set_id
+    ):
+        raise VectorStoreError("VECTOR_COPY_DOCUMENT_SET_MISMATCH")
+    ids = sorted({int(value) for value in document_version_ids})
+    if not ids:
+        return 0
+    parent_name = store_name(parent)
+    target_name = store_name(target)
+    with transaction.atomic():
+        set_tenant_context(int(target.organization_id))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'INSERT INTO "{target_name}" '  # noqa: S608
+                "(organization_id, document_version_id, ordinal, text, embedding) "
+                f"SELECT organization_id, document_version_id, ordinal, text, embedding "
+                f'FROM "{parent_name}" '  # noqa: S608
+                "WHERE organization_id = %s AND document_version_id = ANY(%s)",
+                [target.organization_id, ids],
+            )
+            return int(cursor.rowcount)
+
+
 def search(
     index_version: IndexVersion,
     query_embedding: list[float],

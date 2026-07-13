@@ -17,6 +17,7 @@ from apps.documents import services as doc_services
 from apps.documents import storage
 from apps.documents.models import DocumentSetVersion
 from apps.ingestion import vector_store
+from apps.ingestion.embedding import DeterministicEmbeddingProvider, EmbeddingResult
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
 from apps.ingestion.models import EmbeddingProfile, IndexStatus
 from apps.ingestion.ocr_services import grant_ocr_profile, register_ocr_profile
@@ -340,3 +341,82 @@ def test_image_only_pdf_ocr_is_persisted_embedded_and_searchable() -> None:
     )
     assert index.status == IndexStatus.PROMOTABLE
     assert hits and "Persisted markdown" in hits[0].text
+
+
+@pg_only
+@pytest.mark.django_db
+def test_compatible_build_reuses_unchanged_vectors_and_embeds_only_changed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org = Organization.objects.create(slug="reuse-org", name="Reuse Org")
+    profile = _granted_profile(org)
+    document_set = doc_services.create_document_set(
+        organization=org, logical_id="kb", name="KB", actor="op"
+    )
+    unchanged = doc_services.upload_document(
+        organization=org,
+        logical_id="unchanged",
+        title="Unchanged",
+        mime_type="text/markdown",
+        data=b"stable text",
+        actor="op",
+    )
+    old_changed = doc_services.upload_document(
+        organization=org,
+        logical_id="changed",
+        title="Changed",
+        mime_type="text/markdown",
+        data=b"old text",
+        actor="op",
+    )
+    first_set = doc_services.create_document_set_version(document_set=document_set, actor="op")
+    for version in (unchanged, old_changed):
+        doc_services.add_document_to_set_version(
+            set_version=first_set, document_version=version, actor="op"
+        )
+    doc_services.publish_document_set_version(set_version=first_set, actor="op")
+    first_set.refresh_from_db()
+    first = build_staged_index(
+        document_set_version=first_set, embedding_profile=profile, actor="op"
+    )
+
+    new_changed = doc_services.upload_document(
+        organization=org,
+        logical_id="changed",
+        title="Changed",
+        mime_type="text/markdown",
+        data=b"new text",
+        actor="op",
+    )
+    second_set = doc_services.create_document_set_version(document_set=document_set, actor="op")
+    for version in (unchanged, new_changed):
+        doc_services.add_document_to_set_version(
+            set_version=second_set, document_version=version, actor="op"
+        )
+    doc_services.publish_document_set_version(set_version=second_set, actor="op")
+    second_set.refresh_from_db()
+
+    provider = DeterministicEmbeddingProvider()
+    submitted: list[str] = []
+
+    class CountingProvider:
+        def embed(self, texts: list[str], *, profile_id: str | None = None) -> EmbeddingResult:
+            submitted.extend(texts)
+            return provider.embed(texts, profile_id=profile_id)
+
+    monkeypatch.setattr(
+        "apps.ingestion.staged_build.get_embedding_provider", lambda: CountingProvider()
+    )
+    second = build_staged_index(
+        document_set_version=second_set, embedding_profile=profile, actor="op"
+    )
+
+    assert second.parent_index_version_id == first.pk
+    assert second.reused_document_count == 1
+    assert second.embedded_document_count == 1
+    assert second.reused_chunk_count >= 1
+    assert submitted == ["new text"]
+
+    second.pipeline_fingerprint = "incompatible"
+    with pytest.raises(vector_store.VectorStoreError, match="VECTOR_COPY_PIPELINE_MISMATCH"):
+        vector_store.copy_chunks(first, second, [unchanged.pk])
