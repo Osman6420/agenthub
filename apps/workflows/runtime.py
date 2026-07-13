@@ -243,7 +243,9 @@ def _execute_node(
         from apps.orchestration.rag_steps import retrieve_for_release
 
         try:
-            state["retrieval"] = retrieve_for_release(release=release, query=_workflow_query(state))
+            state["retrieval"] = retrieve_for_release(
+                release=release, query=_workflow_query(state), consumer_id=run.consumer_id
+            )
         except Exception as exc:  # provider-opaque failure -> fail the node with a stable code
             raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_FAILED") from exc
         return None

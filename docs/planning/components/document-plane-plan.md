@@ -19,12 +19,10 @@ UI). Consumer gateway seam unchanged in contract.
 
 ## Status
 
-**Decisions A–E approved by the owner on 2026-07-12** with the constraints folded into this
-plan. The workstream is **architecture-scoped** and **not started (no code/migration/dependency/
-egress)**. Its M0 decisions — physical index schema, RLS connection-context, and shared egress
-contract — are documented as accepted ADRs (the prerequisite for any migration/implementation);
-Phase 2 implementation kickoff is now approved; per-phase egress/dependency sign-off remains. The
-M0 outputs:
+**Decisions A–E approved by the owner on 2026-07-12. M0–M3 and M5 are implemented; M4 local
+parsers are implemented while external OCR and connectors remain gated.** Content storage,
+embedding/indexing, binding + effective consumer ACL retrieval, FORCE RLS stores, runtime wiring
+and the operator console are landed. Per-phase external-egress sign-off remains. The M0 outputs:
 
 1. pgvector multi-dimension storage → [ADR-0003](../../adr/0003-vector-storage-blue-green-per-index-version.md);
 2. RLS connection-context → [ADR-0004](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md);

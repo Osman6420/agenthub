@@ -482,3 +482,21 @@ def grant_document_set(
         request_id=request_id,
     )
     return grant
+
+
+@transaction.atomic
+def revoke_document_set_grant(grant: DocumentSetGrant, *, actor: str, request_id: str = "") -> None:
+    """Remove an ACL grant with fail-closed audit persistence."""
+    organization_id = grant.organization_id
+    resource_id = f"{grant.document_set.logical_id}:{grant.principal_type}:{grant.principal_ref}"
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="documents.grant.remove",
+        outcome="success",
+        organization_id=organization_id,
+        resource_type="document_set_grant",
+        resource_id=resource_id,
+        request_id=request_id,
+    )
+    grant.delete()

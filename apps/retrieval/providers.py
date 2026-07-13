@@ -25,6 +25,7 @@ class RetrievalProvider(Protocol):
         organization_id: int,
         index_versions: list[int],
         document_set_version_ids: list[int] | None = None,
+        consumer_id: int | None = None,
     ) -> list[RetrievedChunk]: ...
 
 
@@ -42,6 +43,7 @@ class StaticRetrievalProvider:
         organization_id: int,
         index_versions: list[int],
         document_set_version_ids: list[int] | None = None,
+        consumer_id: int | None = None,
     ) -> list[RetrievedChunk]:
         top_k = int(profile.get("top_k", len(self._chunks))) if profile else len(self._chunks)
         ranked = sorted(self._chunks, key=lambda c: c.score, reverse=True)
@@ -63,6 +65,7 @@ class DemoRetrievalProvider:
         organization_id: int,
         index_versions: list[int],
         document_set_version_ids: list[int] | None = None,
+        consumer_id: int | None = None,
     ) -> list[RetrievedChunk]:
         passage = "Iade sureci: urun tesliminden itibaren 14 gun icinde iade talebi olusturulur."
         return [
@@ -87,6 +90,7 @@ class PgvectorRetrievalProvider:
         organization_id: int,
         index_versions: list[int],
         document_set_version_ids: list[int] | None = None,
+        consumer_id: int | None = None,
     ) -> list[RetrievedChunk]:
         # P4 document-ACL path: when the release pins document-set versions, serve **only** from
         # their active per-IndexVersion stores (deny-by-default, tenant + RLS scoped). Otherwise
@@ -97,6 +101,7 @@ class PgvectorRetrievalProvider:
                 profile=profile,
                 organization_id=organization_id,
                 document_set_version_ids=document_set_version_ids,
+                consumer_id=consumer_id,
             )
         if not index_versions:
             return []
@@ -137,6 +142,7 @@ class PgvectorRetrievalProvider:
         profile: dict[str, Any],
         organization_id: int,
         document_set_version_ids: list[int],
+        consumer_id: int | None,
     ) -> list[RetrievedChunk]:
         """Deny-by-default retrieval from pinned doc-set versions' active per-IndexVersion stores.
 
@@ -146,18 +152,49 @@ class PgvectorRetrievalProvider:
         """
         from django.db import connection
 
-        if connection.vendor != "postgresql" or not document_set_version_ids:
+        if connection.vendor != "postgresql" or not document_set_version_ids or consumer_id is None:
             return []
-        from apps.documents.models import DocumentVersion
+        from apps.documents.models import (
+            DocumentSetGrant,
+            DocumentSetVersion,
+            DocumentVersion,
+            GrantPrincipalType,
+        )
+        from apps.identity.models import Consumer, ConsumerStatus
         from apps.ingestion import vector_store
         from apps.ingestion.embedding import get_embedding_provider
         from apps.ingestion.models import IndexStatus, IndexVersion
+
+        # The authenticated consumer id comes from the signed execution context (or the durable
+        # run's immutable consumer FK). A caller-provided subject is never trusted. Grants store
+        # the stable database id as an opaque string so a subject/name change cannot widen access.
+        if not Consumer.objects.filter(
+            id=consumer_id,
+            organization_id=organization_id,
+            status=ConsumerStatus.ACTIVE,
+        ).exists():
+            return []
+        authorized_set_ids = DocumentSetGrant.objects.filter(
+            organization_id=organization_id,
+            principal_type=GrantPrincipalType.CONSUMER,
+            principal_ref=str(consumer_id),
+            permission="retrieve",
+        ).values_list("document_set_id", flat=True)
+        authorized_version_ids = list(
+            DocumentSetVersion.objects.filter(
+                id__in=document_set_version_ids,
+                organization_id=organization_id,
+                document_set_id__in=authorized_set_ids,
+            ).values_list("id", flat=True)
+        )
+        if not authorized_version_ids:
+            return []
 
         top_k = min(max(int(profile.get("top_k", 5)), 1), 50) if profile else 5
         active_indexes = list(
             IndexVersion.objects.filter(
                 organization_id=organization_id,
-                document_set_version_id__in=document_set_version_ids,
+                document_set_version_id__in=authorized_version_ids,
                 status=IndexStatus.ACTIVE,
                 store_ready=True,
             ).select_related("embedding_profile")

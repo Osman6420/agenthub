@@ -49,7 +49,9 @@ def chunks_from_state(state: dict[str, Any]) -> list[RetrievedChunk]:
     return chunks
 
 
-def retrieve_for_release(*, release: Any, query: str) -> dict[str, Any]:
+def retrieve_for_release(
+    *, release: Any, query: str, consumer_id: int | None = None
+) -> dict[str, Any]:
     """Run governed, release-scoped retrieval and return a JSON-safe ``retrieval`` state block."""
     bundle = resolve_bundle(release)
     chunks = get_retrieval_provider().retrieve(
@@ -58,6 +60,7 @@ def retrieve_for_release(*, release: Any, query: str) -> dict[str, Any]:
         organization_id=bundle.organization_id,
         index_versions=bundle.index_versions,
         document_set_version_ids=bundle.document_set_version_ids,
+        consumer_id=consumer_id,
     )
     return {
         "chunks": [chunk_to_dict(chunk) for chunk in chunks],

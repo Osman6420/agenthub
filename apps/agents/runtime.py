@@ -187,7 +187,9 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
             from apps.orchestration.rag_steps import retrieve_for_release
 
             try:
-                state["retrieval"] = retrieve_for_release(release=run.release, query=objective)
+                state["retrieval"] = retrieve_for_release(
+                    release=run.release, query=objective, consumer_id=run.consumer_id
+                )
             except Exception as exc:
                 raise AgentRuntimeError("AGENT_RETRIEVAL_FAILED") from exc
             retrieved = True

@@ -70,6 +70,11 @@ def _result(output: dict[str, Any], usage: dict[str, int], fallback: bool) -> Ru
     return RunResult(status="completed", output=output, usage=usage, fallback_used=fallback)
 
 
+def _consumer_id(execution_context: dict[str, Any]) -> int | None:
+    value = execution_context.get("consumer_id")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
 def run_rag(
     *,
     execution_context: dict[str, Any],
@@ -102,6 +107,7 @@ def run_rag(
             organization_id=bundle.organization_id,
             index_versions=bundle.index_versions,
             document_set_version_ids=bundle.document_set_version_ids,
+            consumer_id=_consumer_id(execution_context),
         )
     except Exception as exc:  # provider-opaque failure
         raise RetrievalError(str(exc)) from exc

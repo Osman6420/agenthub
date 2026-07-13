@@ -329,7 +329,7 @@ decomposed into component plans.
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | **P2 + P3 + P4 implemented + verified** — content plane; `EmbeddingProfile` catalog + opt-in embedding client; ADR-0003 per-`IndexVersion` stores + `build_staged_index`; **P4 security core: deny-by-default binding→pin→ACL retrieval, FORCE RLS (ADR-0004), pointer-flip promotion — real ACL-scoped RAG is now servable**. M0 = ADR-0003/0004/0005. Next: **P5 wire real retrieve/generate into agent+workflow**; remaining: RLS on Django-managed tables + non-owner app role; per-phase egress sign-off |
+| 1 | Document plane | **P2–P6, P7.1–P7.2 and P8.1–P8.4 implemented + verified** — content, embeddings/indexing, effective consumer-grant + binding ACL retrieval, FORCE RLS stores, runtime wiring, local parsers and full console operation. Remaining: P7.3 OCR + P7.4 Confluence/REST (egress sign-off), broader Django-table RLS + non-owner app role. M0 = ADR-0003/0004/0005. |
 | 2 | UI modernization + Turkish | Discovery — not decomposed |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |

@@ -165,7 +165,7 @@ deterministic remains the default and no environment-specific live endpoint was 
   (P7.2+):** upload a PDF/DOCX/XLSX → parsed → embedded → retrievable, with image content OCR'd via
   the owner's endpoint.
 
-### P8 — Console UI · WS1 M5 — **P8.1 + P8.2 IMPLEMENTED; P8.3–P8.4 planned (no gate)**
+### P8 — Console UI · WS1 M5 — **P8.1–P8.4 IMPLEMENTED + VERIFIED**
 
 - Operator UI for per-scenario document sources, set membership, binding, upload, soft-delete,
   purge — role/tenant-scoped, non-authoritative (reuses console LDAP/session authz).
@@ -175,8 +175,11 @@ deterministic remains the default and no environment-specific live endpoint was 
   draft version → add member (pins the document's current version) → publish/freeze). All
   author-gated (`can_author_scenarios`, re-checked server-side) and audited via
   `apps.documents.services`. No dependency/egress/migration.
-- **P8.3 (scenario binding + ACL grants), P8.4 (elevated purge):** planned console UI over the
-  existing P2/P4 services; **no approval gate**.
+- **P8.3:** scenario binding plus effective consumer ACL grant/revoke UI. Review discovered the P4
+  retriever did not consult grants; the owner approved the correction and authenticated consumer id
+  is now enforced deny-by-default against explicit same-tenant grants.
+- **P8.4:** elevated physical purge UI: org/platform-admin only, tombstone + exact logical-id
+  confirmation required, pinned content still fails closed in the service.
 - **Demo:** the whole document plane is operable from the console (still GitOps-compatible).
 
 ## Sequencing rationale & alternatives

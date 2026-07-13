@@ -39,14 +39,16 @@ new SPA).
   promotable); an empty version fails gracefully (redirect + `SET_VERSION_EMPTY`, not a 500).
 - All author-gated (`can_author_scenarios`) and audited by the services.
 
-### P8.3 — Scenario ↔ document-set binding + ACL grants — **PLANNED**
+### P8.3 — Scenario ↔ document-set binding + ACL grants — **IMPLEMENTED**
 
 - Bind/unbind a scenario to a document set (`bind_scenario_document_set` /
   `unbind_scenario_document_set`) and manage consumer ACL grants (`grant_document_set`) — the
   deny-by-default retrieval unit made operable. Binding/grant changes are release-compile inputs, so
   the page notes a recompile is needed to take effect.
+- Owner-approved P4 correction: authenticated consumer id now reaches retrieval and an explicit
+  same-tenant `consumer/retrieve` grant is enforced deny-by-default.
 
-### P8.4 — Purge (elevated, destructive) — **PLANNED**
+### P8.4 — Purge (elevated, destructive) — **IMPLEMENTED**
 
 - A separate, confirmation-gated physical purge (`purge_document`), fail-closed on pinned content
   (`DOCUMENT_IN_USE`), audited as an elevated action.
@@ -63,5 +65,6 @@ new SPA).
 
 - **P8.1: Implemented + verified** (documents list/upload/soft-delete).
 - **P8.2: Implemented + verified** (document-set create/version/membership/publish).
-- **P8.3–P8.4: Planned.** No blockers (no dependency/egress gates) — console UI over existing,
-  tested services (`bind_scenario_document_set` / `grant_document_set` / `purge_document`).
+- **P8.3: Implemented + verified.** Binding plus effective consumer grant/revoke.
+- **P8.4: Implemented + verified.** Admin-only, tombstone- and exact-confirmation-
+  gated physical purge.

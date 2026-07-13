@@ -42,6 +42,16 @@ Effective retrieval scope is resolved **entirely server-side** and enforced in d
 
 ## Residual risks
 
+### P8.3 authorization correction (owner-approved 2026-07-13)
+
+Review found that the original P4 retriever enforced binding, pinned versions, tenant predicates
+and RLS but did not consult `DocumentSetGrant`. This is corrected before exposing grant management:
+the authenticated consumer database id now flows from the signed execution context (or durable run
+FK), must resolve to an active same-tenant consumer, and must have an explicit `consumer/retrieve`
+grant for the pinned document set. Missing, foreign, disabled and ungranted consumers retrieve no
+document-set chunks. Historical free-text consumer references do not authorize retrieval and must
+be recreated through the P8 UI. Gateway scenario authorization remains a separate cumulative gate.
+
 - **RLS scope in this increment is the served per-`IndexVersion` stores** (the retrieval surface the
   serving guardrail protects). Enabling `FORCE` RLS on the Django-managed tenant tables
   (`documents_*`, `ingestion_chunk`) plus provisioning a dedicated **non-owner, non-superuser app

@@ -15,7 +15,8 @@ from django.db import connection
 
 from apps.documents import services as doc_services
 from apps.documents import storage
-from apps.documents.models import Document, DocumentSetVersion
+from apps.documents.models import Document, DocumentSetVersion, GrantPrincipalType
+from apps.identity.models import Consumer, ConsumerProtocol
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
 from apps.ingestion.models import EmbeddingProfile
 from apps.ingestion.staged_build import build_staged_index, promote_staged_index
@@ -90,13 +91,34 @@ def _build_and_promote(
     promote_staged_index(index, actor="op")
 
 
-def _retrieve(org: Organization, dsv_ids: list[int], query: str = "alpha policy") -> list:
+def _consumer(org: Organization, subject: str = "client") -> Consumer:
+    return Consumer.objects.create(
+        organization=org, subject=subject, name=subject, protocol=ConsumerProtocol.REST
+    )
+
+
+def _grant(consumer: Consumer, dsv: DocumentSetVersion) -> None:
+    doc_services.grant_document_set(
+        document_set=dsv.document_set,
+        principal_type=GrantPrincipalType.CONSUMER,
+        principal_ref=str(consumer.id),
+        actor="op",
+    )
+
+
+def _retrieve(
+    org: Organization,
+    dsv_ids: list[int],
+    query: str = "alpha policy",
+    consumer: Consumer | None = None,
+) -> list:
     return PgvectorRetrievalProvider().retrieve(
         query=query,
         profile={"top_k": 5},
         organization_id=org.id,
         index_versions=[],
         document_set_version_ids=dsv_ids,
+        consumer_id=consumer.id if consumer else None,
     )
 
 
@@ -105,7 +127,9 @@ def test_end_to_end_returns_bound_documents() -> None:
     profile = _profile(org)
     dsv = _published_set(org, "kb", ["alpha policy text", "beta shipping text"])
     _build_and_promote(org, dsv, profile)
-    hits = _retrieve(org, [dsv.id], query="alpha policy text")
+    consumer = _consumer(org)
+    _grant(consumer, dsv)
+    hits = _retrieve(org, [dsv.id], query="alpha policy text", consumer=consumer)
     assert hits and any("alpha" in h.text for h in hits)
     assert all(h.source_id == f"docset-version:{dsv.id}" for h in hits)
 
@@ -114,16 +138,18 @@ def test_deny_by_default_when_not_promoted() -> None:
     org = Organization.objects.create(slug="a", name="A")
     profile = _profile(org)
     dsv = _published_set(org, "kb", ["alpha policy text"])
+    consumer = _consumer(org)
+    _grant(consumer, dsv)
     build_staged_index(
         document_set_version=dsv, embedding_profile=profile, actor="op"
     )  # staged only
     # A promotable (not active) index is never served — the serving guardrail.
-    assert _retrieve(org, [dsv.id]) == []
+    assert _retrieve(org, [dsv.id], consumer=consumer) == []
 
 
 def test_no_pinned_versions_retrieves_nothing() -> None:
     org = Organization.objects.create(slug="a", name="A")
-    assert _retrieve(org, []) == []
+    assert _retrieve(org, [], consumer=_consumer(org)) == []
 
 
 def test_cross_tenant_returns_nothing() -> None:
@@ -132,8 +158,9 @@ def test_cross_tenant_returns_nothing() -> None:
     profile = _profile(org_a)
     dsv = _published_set(org_a, "kb", ["alpha policy text"])
     _build_and_promote(org_a, dsv, profile)
+    consumer_b = _consumer(org_b)
     # Org B pins org A's document-set version: the tenant predicate yields no active index.
-    assert _retrieve(org_b, [dsv.id]) == []
+    assert _retrieve(org_b, [dsv.id], consumer=consumer_b) == []
 
 
 def test_cross_set_is_excluded() -> None:
@@ -143,7 +170,10 @@ def test_cross_set_is_excluded() -> None:
     dsv2 = _published_set(org, "kb2", ["beta shipping text"])
     _build_and_promote(org, dsv1, profile)
     _build_and_promote(org, dsv2, profile)
-    hits = _retrieve(org, [dsv1.id], query="alpha policy text")
+    consumer = _consumer(org)
+    _grant(consumer, dsv1)
+    _grant(consumer, dsv2)
+    hits = _retrieve(org, [dsv1.id], query="alpha policy text", consumer=consumer)
     assert hits and all(h.source_id == f"docset-version:{dsv1.id}" for h in hits)
 
 
@@ -152,7 +182,23 @@ def test_tombstoned_document_excluded() -> None:
     profile = _profile(org)
     dsv = _published_set(org, "kb", ["alpha policy text"])
     _build_and_promote(org, dsv, profile)
+    consumer = _consumer(org)
+    _grant(consumer, dsv)
     # Soft-delete the only document; it must immediately drop out of answers.
     doc = Document.objects.get(organization=org, logical_id="kb-doc-0")
     doc_services.soft_delete_document(doc, actor="op")
+    assert _retrieve(org, [dsv.id], consumer=consumer) == []
+
+
+def test_grant_is_required_and_is_consumer_specific() -> None:
+    org = Organization.objects.create(slug="a", name="A")
+    profile = _profile(org)
+    dsv = _published_set(org, "kb", ["alpha policy text"])
+    _build_and_promote(org, dsv, profile)
+    allowed = _consumer(org, "allowed")
+    denied = _consumer(org, "denied")
+    _grant(allowed, dsv)
+
+    assert _retrieve(org, [dsv.id], consumer=allowed)
+    assert _retrieve(org, [dsv.id], consumer=denied) == []
     assert _retrieve(org, [dsv.id]) == []

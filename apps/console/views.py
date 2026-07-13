@@ -21,7 +21,7 @@ from django.views.decorators.http import require_POST
 from apps.agents.models import AgentRun
 from apps.agents.services import AgentRequestError, operator_cancel_agent_run
 from apps.audit.services import record_event
-from apps.catalog.models import ScenarioAlias
+from apps.catalog.models import Scenario, ScenarioAlias
 from apps.console import scoping
 from apps.console.forms import (
     BindingForm,
@@ -38,12 +38,16 @@ from apps.documents.models import (
     Document,
     DocumentLifecycle,
     DocumentSet,
+    DocumentSetGrant,
     DocumentSetVersion,
     DocumentSetVersionStatus,
     DocumentVersion,
+    GrantPrincipalType,
+    ScenarioDocumentSetBinding,
 )
 from apps.documents.services import DocumentError
 from apps.evaluations.services import EvalError, run_eval
+from apps.identity.models import Consumer, ConsumerStatus
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.tenancy.services import (
@@ -540,6 +544,7 @@ def documents(request: HttpRequest) -> HttpResponse:
             "version": d.current_version,
             "tombstoned": d.is_tombstoned,
             "can_write": can_author_scenarios(user, d.organization_id),
+            "can_purge": can_admin_org(user, d.organization_id),
         }
         for d in scoping.scoped_documents(user).order_by("organization_id", "logical_id")
     ]
@@ -596,6 +601,26 @@ def document_soft_delete(request: HttpRequest, pk: int) -> HttpResponse:
         raise PermissionDenied
     document_services.soft_delete_document(document, actor=request.user.get_username())
     messages.success(request, f"Document {document.logical_id} tombstoned.")
+    return redirect("console:documents")
+
+
+@login_required
+@require_POST
+def document_purge(request: HttpRequest, pk: int) -> HttpResponse:
+    document = _scoped_document(request.user, pk)
+    if not can_admin_org(request.user, document.organization_id):
+        raise PermissionDenied
+    confirmation = request.POST.get("confirm_logical_id", "")
+    if not document.is_tombstoned:
+        messages.error(request, "Purge denied: document must be tombstoned first.")
+    elif confirmation != document.logical_id:
+        messages.error(request, "Purge denied: confirmation does not match the document ID.")
+    else:
+        try:
+            removed = document_services.purge_document(document, actor=request.user.get_username())
+            messages.success(request, f"Document purged ({removed} versions removed).")
+        except DocumentError as exc:
+            messages.error(request, f"Purge failed: {exc.code}")
     return redirect("console:documents")
 
 
@@ -661,6 +686,23 @@ def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
             current_version__gt=0,
         ).order_by("logical_id")
     ]
+    bindings = list(
+        document_set.scenario_bindings.select_related("scenario__project").order_by(
+            "scenario__project__slug", "scenario__slug"
+        )
+    )
+    grants = list(
+        document_set.grants.filter(principal_type=GrantPrincipalType.CONSUMER).order_by(
+            "principal_ref"
+        )
+    )
+    consumer_ids = [int(g.principal_ref) for g in grants if g.principal_ref.isdigit()]
+    consumers_by_id = {
+        c.id: c
+        for c in Consumer.objects.filter(
+            id__in=consumer_ids, organization_id=document_set.organization_id
+        )
+    }
     return render(
         request,
         "console/document_set_detail.html",
@@ -675,6 +717,24 @@ def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
             },
             "versions": versions,
             "candidate_docs": candidate_docs,
+            "bindings": bindings,
+            "candidate_scenarios": Scenario.objects.filter(
+                project__organization_id=document_set.organization_id
+            ).order_by("project__slug", "slug"),
+            "grants": [
+                {
+                    "id": grant.id,
+                    "principal_ref": grant.principal_ref,
+                    "consumer": consumers_by_id.get(int(grant.principal_ref))
+                    if grant.principal_ref.isdigit()
+                    else None,
+                }
+                for grant in grants
+            ],
+            "candidate_consumers": Consumer.objects.filter(
+                organization_id=document_set.organization_id,
+                status=ConsumerStatus.ACTIVE,
+            ).order_by("name", "subject"),
             "can_write": can_write,
         },
     )
@@ -756,6 +816,105 @@ def _scoped_set_version(user: UserLike, pk: int) -> DocumentSetVersion:
         return scoping.scoped_document_set_versions(user).get(pk=pk)
     except DocumentSetVersion.DoesNotExist as exc:
         raise Http404 from exc
+
+
+@login_required
+@require_POST
+def document_set_bind_scenario(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    if not can_author_scenarios(request.user, document_set.organization_id):
+        raise PermissionDenied
+    scenario_id = request.POST.get("scenario_id", "")
+    scenario = (
+        Scenario.objects.filter(
+            id=scenario_id, project__organization_id=document_set.organization_id
+        ).first()
+        if scenario_id.isdigit()
+        else None
+    )
+    if scenario is None:
+        messages.error(request, "Bind failed: invalid scenario.")
+    else:
+        try:
+            document_services.bind_scenario_document_set(
+                scenario=scenario, document_set=document_set, actor=request.user.get_username()
+            )
+            messages.success(request, "Scenario bound. Recompile its release to apply the change.")
+        except DocumentError as exc:
+            messages.error(request, f"Bind failed: {exc.code}")
+    return redirect("console:document_set_detail", pk=document_set.pk)
+
+
+@login_required
+@require_POST
+def document_set_unbind_scenario(request: HttpRequest, binding_pk: int) -> HttpResponse:
+    binding = (
+        ScenarioDocumentSetBinding.objects.select_related("document_set")
+        .filter(pk=binding_pk)
+        .first()
+    )
+    if (
+        binding is None
+        or not scoping.scoped_document_sets(request.user)
+        .filter(pk=binding.document_set_id)
+        .exists()
+    ):
+        raise Http404
+    if not can_author_scenarios(request.user, binding.organization_id):
+        raise PermissionDenied
+    document_set_id = binding.document_set_id
+    document_services.unbind_scenario_document_set(binding, actor=request.user.get_username())
+    messages.success(request, "Scenario unbound. Recompile its release to apply the change.")
+    return redirect("console:document_set_detail", pk=document_set_id)
+
+
+@login_required
+@require_POST
+def document_set_grant_consumer(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    if not can_author_scenarios(request.user, document_set.organization_id):
+        raise PermissionDenied
+    consumer_id = request.POST.get("consumer_id", "")
+    consumer = (
+        Consumer.objects.filter(
+            id=consumer_id,
+            organization_id=document_set.organization_id,
+            status=ConsumerStatus.ACTIVE,
+        ).first()
+        if consumer_id.isdigit()
+        else None
+    )
+    if consumer is None:
+        messages.error(request, "Grant failed: invalid consumer.")
+    else:
+        try:
+            document_services.grant_document_set(
+                document_set=document_set,
+                principal_type=GrantPrincipalType.CONSUMER,
+                principal_ref=str(consumer.id),
+                actor=request.user.get_username(),
+            )
+            messages.success(request, "Consumer retrieval granted.")
+        except DocumentError as exc:
+            messages.error(request, f"Grant failed: {exc.code}")
+    return redirect("console:document_set_detail", pk=document_set.pk)
+
+
+@login_required
+@require_POST
+def document_set_revoke_grant(request: HttpRequest, grant_pk: int) -> HttpResponse:
+    grant = DocumentSetGrant.objects.select_related("document_set").filter(pk=grant_pk).first()
+    if (
+        grant is None
+        or not scoping.scoped_document_sets(request.user).filter(pk=grant.document_set_id).exists()
+    ):
+        raise Http404
+    if not can_author_scenarios(request.user, grant.organization_id):
+        raise PermissionDenied
+    document_set_id = grant.document_set_id
+    document_services.revoke_document_set_grant(grant, actor=request.user.get_username())
+    messages.success(request, "Consumer retrieval grant revoked.")
+    return redirect("console:document_set_detail", pk=document_set_id)
 
 
 @login_required

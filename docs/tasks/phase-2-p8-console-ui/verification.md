@@ -2,9 +2,9 @@
 
 ## Status
 
-**P8.1 + P8.2 Verified 2026-07-13.** Automated evidence only; server-rendered console UI reusing the
-existing LDAP/session auth + role/tenant scoping. No new dependency, no egress, no migration. P8.3–P8.4
-(binding/grants, purge) are **not implemented** — planned follow-ups with no approval gate.
+**P8.1–P8.4 Verified 2026-07-13.** Server-rendered console UI reuses LDAP/session auth and
+role/tenant scoping. No new dependency, egress or migration. P8.3 also closes an owner-approved P4
+authorization gap: document-set retrieval now requires an effective same-tenant consumer grant.
 
 ## Acceptance criteria mapping (P8.1)
 
@@ -31,39 +31,56 @@ existing LDAP/session auth + role/tenant scoping. No new dependency, no egress, 
 - **Cross-tenant defense:** `test_cross_tenant_set_detail_is_not_found` — a set in another tenant is
   404 for the operator.
 
+## Acceptance criteria mapping (P8.3)
+
+- Binding and unbinding are author-gated, tenant-scoped and audited.
+- Consumer grants are selected from active same-tenant consumers; free-form principal input is not
+  accepted. Grant and revoke are audited.
+- Foreign principals are rejected; foreign binding/grant object ids return 404; auditors receive
+  403. Covered by `test_document_acl_console.py` (6 tests / 8 parameterized cases).
+- Real PostgreSQL/pgvector retrieval requires the authenticated consumer's explicit grant;
+  `test_grant_is_required_and_is_consumer_specific` covers grant, no grant and no principal.
+
+## Acceptance criteria mapping (P8.4)
+
+- Purge requires organization/platform admin, a tombstoned document and an exact logical-id
+  confirmation. Cross-tenant targets return 404.
+- The audited service retains its `DOCUMENT_IN_USE` refusal for pinned content.
+
 ## Checks and evidence
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Format | `ruff format --check .` | Pass — 305 files |
+| Format | `ruff format --check .` | Pass — 306 files |
 | Lint | `ruff check .` | Pass |
-| Type | `mypy apps config` | Pass — 304 files |
+| Type | `mypy apps config` | Pass — 305 files |
 | Django check | `manage.py check` | Pass — 0 issues |
 | Migration drift | `makemigrations --check --dry-run` | Pass — no changes (no migration) |
 | Targeted P8.1 | `pytest apps/console/tests/test_documents_console.py` | 5 passed |
 | Targeted P8.2 | `pytest apps/console/tests/test_document_sets_console.py` | 5 passed |
-| Final SQLite | `pytest -q` (`config.settings.test`) | 502 passed, 20 skipped (pgvector) |
-| Final PostgreSQL | `pytest -q --create-db` (`config.settings.local` + MCP/metrics flags) | 520 passed, 2 skipped (off-PG guards) |
+| Targeted P8.3 | `pytest test_document_acl_console.py test_document_sets_console.py test_bindings.py` | 18 passed |
+| Targeted P8.4 + P8.3 | `pytest test_documents_console.py test_document_acl_console.py` | 14 passed |
+| Final SQLite | `pytest -q --basetemp=.tmp/pytest` (`config.settings.test`) | 511 passed, 21 skipped (PostgreSQL-only) |
+| Final PostgreSQL | `pytest -q --create-db --basetemp=.tmp/pytest-pg` (`config.settings.local` + MCP/metrics flags) | 530 passed, 2 skipped (off-PG guards) |
 
 Baseline before P8 (P7.2): SQLite 492 passed / 20 skipped; PostgreSQL 510 passed / 2 skipped.
-Cumulative P8 delta: +10 console document-UI tests (P8.1 5 + P8.2 5).
+Cumulative P8 delta: +19 console tests plus one PostgreSQL ACL retrieval test.
 
 ## Checks not run
 
 - No headless-browser/live-server smoke of the console pages (verified by Django test client +
   server-rendered template render); manual UI smoke is recommended before demo but not required for
   the automated gate.
-- P8.3–P8.4 UI (scenario binding + ACL grants, elevated purge) is not implemented.
+- No headless-browser confirmation-dialog test; exact confirmation is covered at the Django view.
 
 ## Final reviews
 
-- Staff engineer: server-rendered views (documents + document-set lifecycle) + two forms + two
-  templates + a nav link, reusing the established console scoping/audit pattern; no model change, no
-  migration, no dependency. Set membership pins the chosen document's current `DocumentVersion`
-  through the immutability-preserving service.
+- Staff engineer: P8 is complete over server-rendered, non-authoritative views and audited services;
+  no model/migration/dependency/egress change. Retrieval-provider implementations now receive an
+  optional `consumer_id`; configured custom providers must accept the extended keyword.
 - Application security: read is tenant-membership-scoped; upload/soft-delete re-check
   `can_author_scenarios` server-side (the scoped form choices are UI convenience only); cross-tenant
   targets 404 via the scoped queryset; all state changes are audited by the services; uploads use the
   service's MIME allowlist + size cap.
-- SRE: no new surface beyond console routes; hermetic (in-memory object store in tests); trivially
-  reversible.
+- SRE: no external service or migration; tests are hermetic except the deliberate local PostgreSQL
+  gate. Revoking a grant affects subsequent retrieval immediately; binding changes require compile.

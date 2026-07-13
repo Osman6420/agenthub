@@ -268,7 +268,7 @@ Current cross-agent state:
   providers and per-node prompt/model binding is future work that Phase 2 (real providers +
   AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
 
-- **P8.1 + P8.2 COMPLETE — document-plane console UI (P8.3–P8.4 planned, no gate).** Implemented and
+- **P8.1–P8.4 COMPLETE + VERIFIED.** Implemented in
   verified in `docs/tasks/phase-2-p8-console-ui/`.
   - **P8.1:** a server-rendered `/console/documents/` page — tenant-scoped list of documents +
     document sets, an author-gated multipart **upload** (`DocumentUploadForm` scoped to
@@ -285,9 +285,14 @@ Current cross-agent state:
     `settings.DOCUMENTS_OBJECT_STORE_BACKEND="memory"` (config.settings.local defaults to "s3" →
     uploads need MinIO otherwise). Evidence: SQLite 502 passed / 20 skipped; PostgreSQL 520 passed /
     2 skipped.
-  - **P8.3 (scenario binding + ACL grants), P8.4 (elevated purge)** are planned console UI over the
-    existing P2/P4 services — **no approval gate**. Committed on `feat/foundation-sprint-0-1`; not
-    pushed. P7 provenance follows.
+  - **P8.3:** scenario binding and effective consumer grant/revoke UI. A review found that P4 did
+    not actually consult `DocumentSetGrant`; owner approved the authorization correction on
+    2026-07-13. Signed-context/durable-run consumer id now gates retrieval against an explicit
+    same-tenant grant; missing/foreign/disabled/ungranted consumers get no document-set chunks.
+  - **P8.4:** org/platform-admin physical purge, requiring prior tombstone and exact logical-id
+    confirmation; pinned content remains fail-closed. No migration/dependency/egress. Evidence:
+    SQLite 511 passed / 21 skipped; PostgreSQL 530 passed / 2 skipped. Landed in the P8 completion
+    commit on `feat/foundation-sprint-0-1`; not pushed. P7 provenance follows.
 - **P7.1 + P7.2 COMPLETE — P7.3/P7.4 deferred by owner.** P7 (parsers) is implemented and
   verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
   - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed

@@ -14,6 +14,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.audit.models import AuditEvent
 from apps.documents import storage
@@ -149,3 +150,85 @@ def test_cross_tenant_soft_delete_is_not_found(client: Client) -> None:
     assert response.status_code == 404
     version_b.document.refresh_from_db()
     assert version_b.document.lifecycle_state == DocumentLifecycle.ACTIVE  # untouched
+
+
+@pytest.mark.django_db
+def test_org_admin_can_confirm_and_purge_tombstoned_document(client: Client) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    version = upload_document(
+        organization=org,
+        logical_id="obsolete",
+        title="Old",
+        mime_type="text/plain",
+        data=b"old",
+        actor="seed",
+    )
+    document = version.document
+    document.lifecycle_state = DocumentLifecycle.TOMBSTONED
+    document.deleted_at = timezone.now()
+    document.save(update_fields=["lifecycle_state", "deleted_at"])
+    client.force_login(_member("admin", org, Role.ORGANIZATION_ADMIN))
+
+    response = client.post(
+        reverse("console:document_purge", args=[document.id]),
+        {"confirm_logical_id": "obsolete"},
+    )
+    assert response.status_code == 302
+    assert not Document.objects.filter(pk=document.id).exists()
+    assert AuditEvent.objects.filter(action="documents.document.purge").exists()
+
+
+@pytest.mark.django_db
+def test_purge_requires_admin_tombstone_and_exact_confirmation(client: Client) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    version = upload_document(
+        organization=org,
+        logical_id="keep",
+        title="Keep",
+        mime_type="text/plain",
+        data=b"keep",
+        actor="seed",
+    )
+    document = version.document
+    client.force_login(_member("editor", org, Role.SCENARIO_EDITOR))
+    response = client.post(
+        reverse("console:document_purge", args=[document.id]),
+        {"confirm_logical_id": "keep"},
+    )
+    assert response.status_code == 403
+
+    client.force_login(_member("admin", org, Role.ORGANIZATION_ADMIN))
+    client.post(
+        reverse("console:document_purge", args=[document.id]),
+        {"confirm_logical_id": "keep"},
+    )
+    assert Document.objects.filter(pk=document.id).exists()  # active -> denied
+    document.lifecycle_state = DocumentLifecycle.TOMBSTONED
+    document.deleted_at = timezone.now()
+    document.save(update_fields=["lifecycle_state", "deleted_at"])
+    client.post(
+        reverse("console:document_purge", args=[document.id]),
+        {"confirm_logical_id": "wrong"},
+    )
+    assert Document.objects.filter(pk=document.id).exists()
+
+
+@pytest.mark.django_db
+def test_cross_tenant_purge_is_not_found(client: Client) -> None:
+    org_a = Organization.objects.create(slug="org-a", name="A")
+    org_b = Organization.objects.create(slug="org-b", name="B")
+    version = upload_document(
+        organization=org_b,
+        logical_id="foreign",
+        title="Foreign",
+        mime_type="text/plain",
+        data=b"x",
+        actor="seed",
+    )
+    client.force_login(_member("admin-a", org_a, Role.ORGANIZATION_ADMIN))
+    response = client.post(
+        reverse("console:document_purge", args=[version.document_id]),
+        {"confirm_logical_id": "foreign"},
+    )
+    assert response.status_code == 404
+    assert Document.objects.filter(pk=version.document_id).exists()

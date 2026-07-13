@@ -35,6 +35,14 @@
           <form class="inline" method="post" action="{% url 'console:document_soft_delete' d.id %}">
             {% csrf_token %}<button class="link" type="submit">Soft-delete</button>
           </form>
+          {% elif d.tombstoned and d.can_purge %}
+          <form method="post" action="{% url 'console:document_purge' d.id %}">
+            {% csrf_token %}
+            <label>Type <strong>{{ d.logical_id }}</strong> to purge permanently:
+              <input name="confirm_logical_id" required autocomplete="off">
+            </label>
+            <button type="submit">Purge permanently</button>
+          </form>
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
       </tr>

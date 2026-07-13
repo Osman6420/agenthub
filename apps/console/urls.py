@@ -41,6 +41,7 @@ urlpatterns = [
         views.document_soft_delete,
         name="document_soft_delete",
     ),
+    path("documents/<int:pk>/purge/", views.document_purge, name="document_purge"),
     path("document-sets/new/", views.document_set_create, name="document_set_create"),
     path("document-sets/<int:pk>/", views.document_set_detail, name="document_set_detail"),
     path(
@@ -57,6 +58,26 @@ urlpatterns = [
         "document-set-versions/<int:version_pk>/publish/",
         views.document_set_version_publish,
         name="document_set_version_publish",
+    ),
+    path(
+        "document-sets/<int:pk>/bind-scenario/",
+        views.document_set_bind_scenario,
+        name="document_set_bind_scenario",
+    ),
+    path(
+        "document-set-bindings/<int:binding_pk>/remove/",
+        views.document_set_unbind_scenario,
+        name="document_set_unbind_scenario",
+    ),
+    path(
+        "document-sets/<int:pk>/grant-consumer/",
+        views.document_set_grant_consumer,
+        name="document_set_grant_consumer",
+    ),
+    path(
+        "document-set-grants/<int:grant_pk>/remove/",
+        views.document_set_revoke_grant,
+        name="document_set_revoke_grant",
     ),
     path("agent-runs/", views.agent_runs, name="agent_runs"),
     path("agent-runs/<str:public_id>/", views.agent_run_detail, name="agent_run_detail"),
