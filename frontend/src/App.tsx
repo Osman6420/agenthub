@@ -2,20 +2,33 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
 import { Editor } from "./Editor";
-import type { Draft, NodeSchema, OrgOption } from "./types";
+import type { BuilderInitial, Draft, NodeSchema, OrgOption } from "./types";
 
 // Top-level bootstrap: pick an organization (from the server-rendered scope), load its
 // node-schema and drafts, then open or create a draft and hand off to the Editor. All
 // data comes from the governed backend; the org list is the operator's server-side scope.
-export function App({ apiBase, orgs }: { apiBase: string; orgs: OrgOption[] }) {
+export function App({
+  apiBase,
+  orgs,
+  initial,
+}: {
+  apiBase: string;
+  orgs: OrgOption[];
+  initial?: BuilderInitial;
+}) {
   const [api] = useState(() => new BuilderApi(apiBase));
-  const [orgSlug, setOrgSlug] = useState<string>(orgs[0]?.slug ?? "");
+  const [orgSlug, setOrgSlug] = useState<string>(() =>
+    initial?.organization && orgs.some((org) => org.slug === initial.organization)
+      ? initial.organization
+      : (orgs[0]?.slug ?? ""),
+  );
   const [schema, setSchema] = useState<NodeSchema | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [active, setActive] = useState<Draft | null>(null);
   const [error, setError] = useState<string>("");
   const [newName, setNewName] = useState("");
   const [newId, setNewId] = useState("");
+  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
 
   const org = orgs.find((o) => o.slug === orgSlug);
   const canWrite = !!org?.can_write;
@@ -46,6 +59,16 @@ export function App({ apiBase, orgs }: { apiBase: string; orgs: OrgOption[] }) {
     },
     [api],
   );
+
+  useEffect(() => {
+    if (deepLinkHandled || !schema || !initial?.draft_id) return;
+    setDeepLinkHandled(true);
+    if (drafts.some((draft) => draft.id === initial.draft_id)) {
+      void open(initial.draft_id);
+    } else {
+      setError("not_found: draft is outside the selected organization");
+    }
+  }, [deepLinkHandled, drafts, initial?.draft_id, open, schema]);
 
   const create = useCallback(async () => {
     try {

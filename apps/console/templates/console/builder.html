@@ -3,6 +3,7 @@
 {% block title %}Workflow builder · AgentHub Console{% endblock %}
 {% block content %}
 {{ builder_orgs|json_script:"agenthub-builder-orgs" }}
+{{ builder_initial|json_script:"agenthub-builder-initial" }}
 <div class="card">
   <h2 style="margin-top:0">Workflow builder</h2>
   <p class="muted">
@@ -13,7 +14,8 @@
 </div>
 <div id="agenthub-builder-root"
      data-api-base="/console/api/builder/"
-     data-orgs-id="agenthub-builder-orgs">
+     data-orgs-id="agenthub-builder-orgs"
+     data-initial-id="agenthub-builder-initial">
   <noscript>
     <div class="msg error">The workflow builder requires JavaScript.</div>
   </noscript>

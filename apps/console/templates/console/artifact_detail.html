@@ -1,0 +1,37 @@
+{% extends "console/base.html" %}
+{% load static %}
+{% block title %}{{ artifact.ref }} · AgentHub{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'console:artifacts' %}">Artifact'ler</a><span>›</span><span>{{ artifact.ref }}</span></div>
+<div class="page-heading"><div><p class="eyebrow">{{ artifact.organization.name }} · {{ artifact.get_type_display }}</p><h1>{{ artifact.ref }}</h1><p class="muted mono">sha256 {{ artifact.checksum }}</p></div><span class="badge">immutable</span></div>
+
+<div class="summary-grid">
+  <div class="summary-card"><span>Oluşturan</span><strong class="text-value">{{ artifact.created_by }}</strong><small class="muted">{{ artifact.created_at }}</small></div>
+  <div class="summary-card"><span>Git revision</span><strong class="text-value mono">{{ artifact.source_git_revision|default:'—' }}</strong></div>
+  <div class="summary-card"><span>Release pini</span><strong>{{ pinned_by|length }}</strong><small class="muted">Exact rol/release kullanımı</small></div>
+</div>
+
+<section class="card form-card">
+  <div class="section-heading"><div><h2>Canonical DSL / JSON</h2><p class="muted">Bu içerik read-only'dir; değişiklik yeni immutable artifact version olarak publish edilmelidir.</p></div>{% if not body_too_large %}<button class="button secondary" type="button" data-copy-target="artifact-body">JSON'u kopyala</button>{% endif %}</div>
+  {% if body_too_large %}<div class="warning-box">Artifact gövdesi güvenli console görüntüleme sınırını aşıyor; içerik HTML'e basılmadı. Exact version'ı kontrollü GitOps/registry kanalından inceleyin.</div>{% else %}<textarea id="artifact-body" class="mono code-field" rows="24" readonly>{{ canonical_body }}</textarea>{% endif %}
+</section>
+
+{% if artifact.type == 'workflow_definition' %}
+<section class="card">
+  <div class="section-heading"><div><h2>Grafik preview draft'ları</h2><p class="muted">Draft proje çalışma durumudur; bu immutable artifact ile aynı logical ID'yi taşısa da release pini değildir.</p></div></div>
+  {% if matching_drafts_limited %}<div class="warning-box">Liste en güncel 50 eşleşen draft ile sınırlandı.</div>{% endif %}
+  {% for draft in matching_drafts %}<div class="access-row"><div><strong>{{ draft.name }}</strong><p class="muted">{% if draft.project %}{{ draft.project.name }}{% else %}Projesiz{% endif %} · son publish v{{ draft.last_published_version }}</p></div><a class="button secondary" href="{% url 'console:builder' %}?organization={{ draft.organization.slug }}&amp;draft={{ draft.id }}">Grafikte aç</a></div>{% empty %}<p class="muted">Bu logical ID için builder draft'ı yok; DSL yine yukarıda tam olarak görüntülenebilir.</p>{% endfor %}
+</section>
+<section class="card form-card">
+  <div class="section-heading"><div><h2>LLM için workflow DSL rehberi</h2><p class="muted">Yardımcı prompt metnidir; backend compiler her zaman nihai otoritedir.</p></div><button class="button secondary" type="button" data-copy-target="dsl-guide">Rehberi kopyala</button></div>
+  <textarea id="dsl-guide" class="mono code-field" rows="15" readonly>{{ dsl_guide }}</textarea>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Bu artifact'i pinleyen release'ler</h2>
+  {% if pin_scan_limited %}<div class="warning-box">Pin taraması son 500 release ile sınırlandı; daha eski pinler bu listede görünmeyebilir.</div>{% endif %}
+  {% for item in pinned_by %}<div class="access-row"><div><strong><a href="{% url 'console:scenario_detail' item.release.scenario.id %}">{{ item.release.scenario.name }}</a> · release #{{ item.release.id }}</strong><p class="muted">Roller: {{ item.roles|join:', ' }} · {{ item.release.status }}</p></div><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></div>{% empty %}<p class="muted">Bu exact version hiçbir release manifestinde pinli değil.</p>{% endfor %}
+</section>
+<script src="{% static 'console/copy_text.js' %}" defer></script>
+{% endblock %}

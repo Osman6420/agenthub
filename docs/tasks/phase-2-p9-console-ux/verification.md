@@ -27,6 +27,12 @@
 | P9.3 related SQLite | `pytest test_connector_workspace_console.py test_document_workspace_console.py test_rest_pull.py test_confluence.py -q` | Pass | 45 passed, 2 skipped | RLS cases are PostgreSQL-only |
 | P9.3 full SQLite | `pytest -q --basetemp=.pytest-tmp-p9-3-full` | Pass | 581 passed, 25 skipped | PostgreSQL-only tests skipped as declared |
 | P9.3 focused PostgreSQL | `pytest test_connector_workspace_console.py test_rest_pull.py test_confluence.py -q --create-db` | Pass | 40 passed | Includes existing REST/Confluence FORCE-RLS tests |
+| P9.4 repository format/lint | `ruff format --check .`; `ruff check .` | Pass | 345 files formatted; all checks passed | Final P9.4 code |
+| P9.4 type/Django/migration | `mypy apps config`; `manage.py check`; `makemigrations --check --dry-run` | Pass | 344 source files; 0 issues; no changes | No schema change |
+| P9.4 related SQLite | `pytest test_scenario_artifact_console.py test_scenario_relationship_console.py test_console.py -q` | Pass | 21 passed | Artifact scope/escaping, manifest bounds and builder deep links |
+| P9.4 full SQLite | `pytest -q --basetemp=.pytest-tmp-p9-4-full` | Pass | 585 passed, 25 skipped | PostgreSQL-only tests skipped as declared |
+| P9.4 focused PostgreSQL | `pytest test_scenario_artifact_console.py test_scenario_relationship_console.py -q --create-db` | Pass | 10 passed | Tenant scope and relationship compatibility on PostgreSQL |
+| P9.4 frontend | `npm --prefix frontend run typecheck`; `npm --prefix frontend test -- --run` | Pass | Typecheck; 12 tests passed | Includes initial organization/draft deep link |
 
 ## Acceptance criteria mapping
 
@@ -38,6 +44,8 @@
   publish/build/promotion and displays set/index lifecycle state.
 - The connector workspace exposes safe Confluence/REST source status, exact-grant creation,
   no-egress REST mapping preview, bounded schedules, run-now and role-gated automation.
+- The scenario/artifact workspace resolves exact immutable release pins inside the tenant, renders
+  bounded escaped canonical JSON, and opens only server-validated builder organization/draft links.
 
 ## Security requirement mapping
 
@@ -52,6 +60,8 @@ P9.2 additionally verifies author-only upload/build and release-manager-only ind
 SQLite and PostgreSQL.
 P9.3 verifies author source/run/stage controls, release-manager-only automatic promotion and auditor
 denial; exact-set profile grants and bound scenario targets are revalidated server-side.
+P9.4 is read-only; artifact IDs and builder query parameters are scoped server-side. Foreign
+artifact/draft/organization identifiers return 404 without widening the builder API list scope.
 
 ## Cross-tenant tests
 
@@ -64,6 +74,8 @@ scenario before the scenario screen can grant document retrieval.
 No new logs/metrics and no content-bearing log fields added. P9.3 response tests prove connector
 hosts, secret references, REST input values and synthetic content are absent from rendered HTML;
 task assertions prove queue payloads contain resource/tenant IDs only.
+P9.4 adds no mutation, audit event, logging or metric path; artifact bodies remain response-only,
+auto-escaped and omitted from HTML above the configured display bound.
 
 ## Audit event tests
 
@@ -91,7 +103,7 @@ the scenario list/base shell presentation. Public gateway/MCP contracts are unch
 
 ## Remaining risks
 
-Legacy pages remain partly English until P9.4–P9.5. Configured-vs-release-effective state still
+Legacy pages remain partly English until P9.5. Configured-vs-release-effective state still
 requires operator understanding despite the explanatory notice.
 Bulk storage is intentionally per-file, not transactionally atomic across object storage; a
 mid-batch storage failure preserves completed files and reports the partial count. Queue dispatch
@@ -99,7 +111,9 @@ is at-least-once and the worker's existing-index guard prevents ordinary duplica
 broker ambiguity can still require operator status review.
 The JSON mapping editor is intentionally schema-oriented rather than a drag-and-drop mapper;
 profile/grant creation remains platform-admin command/service work and live connector egress remains
-deployment-gated. Full PostgreSQL regression was not rerun; focused connector/RLS coverage passed.
+deployment-gated. Artifact pin discovery is intentionally bounded to the newest 500 scoped releases
+and scenario history/project drafts to 20/50 rows; the UI discloses the pin-scan bound. Full
+PostgreSQL regression was not rerun; focused connector/RLS and P9.4 tenant coverage passed.
 
 ## Human review required
 
@@ -108,4 +122,4 @@ and narrow-screen UX require browser review.
 
 ## Final status
 
-Verified for P9.1–P9.3; overall P9 remains In progress.
+Verified for P9.1–P9.4; overall P9 remains In progress pending P9.5.

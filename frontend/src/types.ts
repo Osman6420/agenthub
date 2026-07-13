@@ -7,6 +7,11 @@ export interface OrgOption {
   can_write: boolean;
 }
 
+export interface BuilderInitial {
+  organization?: string;
+  draft_id?: number;
+}
+
 export interface NodeFieldSchema {
   name: string;
   kind: "expression" | "identifier" | "enum" | "object";

@@ -48,6 +48,7 @@ urlpatterns = [
     path("consumers/new/", views.consumer_create, name="consumer_create"),
     path("bindings/new/", views.binding_create, name="binding_create"),
     path("artifacts/", views.artifacts, name="artifacts"),
+    path("artifacts/<int:pk>/", views.artifact_detail, name="artifact_detail"),
     path("releases/", views.releases, name="releases"),
     path("releases/<int:release_id>/eval/", views.release_run_eval, name="release_run_eval"),
     path("releases/<int:release_id>/promote/", views.release_promote, name="release_promote"),

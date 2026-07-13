@@ -27,7 +27,9 @@ from django.views.decorators.http import require_POST
 
 from apps.agents.models import AgentRun
 from apps.agents.services import AgentRequestError, operator_cancel_agent_run
+from apps.artifacts.models import ArtifactVersion
 from apps.audit.services import record_event
+from apps.builder.models import WorkflowDraft
 from apps.catalog.models import Scenario, ScenarioAlias
 from apps.console import scoping
 from apps.console.forms import (
@@ -110,6 +112,7 @@ from apps.tenancy.services import (
 from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_approval
 from apps.tools.authz import resolve_actor_roles
 from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
+from apps.workflows.compiler import BUILTIN_NODE_TYPES, MAX_EDGES, MAX_NODES
 
 _UPLOAD_MIME_BY_SUFFIX = {
     ".csv": "text/csv",
@@ -254,6 +257,101 @@ def _scoped_scenario(user: UserLike, pk: int) -> Scenario:
         raise Http404 from exc
 
 
+def _release_artifact_rows(release: ScenarioRelease) -> list[dict[str, object]]:
+    """Resolve untrusted manifest refs to exact artifacts inside the scenario tenant."""
+    manifest = release.manifest
+    if not isinstance(manifest, dict):
+        return []
+    raw_artifacts = manifest.get("artifacts", {})
+    if not isinstance(raw_artifacts, dict) or len(raw_artifacts) > 100:
+        return []
+    organization_id = release.scenario.project.organization_id
+    prepared: list[tuple[str, str, str, object, tuple[str, str, int] | None]] = []
+    exact_keys: set[tuple[str, str, int]] = set()
+    for role, raw_entry in sorted(raw_artifacts.items(), key=lambda item: str(item[0])):
+        if not isinstance(role, str) or len(role) > 128 or not isinstance(raw_entry, dict):
+            continue
+        artifact_type = raw_entry.get("type")
+        ref = raw_entry.get("ref")
+        manifest_checksum = raw_entry.get("checksum")
+        exact_key: tuple[str, str, int] | None = None
+        if (
+            isinstance(artifact_type, str)
+            and isinstance(ref, str)
+            and len(artifact_type) <= 32
+            and len(ref) <= 260
+            and ":v" in ref
+        ):
+            logical_id, _, version_text = ref.rpartition(":v")
+            if (
+                logical_id
+                and version_text.isdigit()
+                and len(version_text) <= 10
+                and 0 < int(version_text) <= 2_147_483_647
+            ):
+                exact_key = (artifact_type, logical_id, int(version_text))
+                exact_keys.add(exact_key)
+        prepared.append(
+            (
+                role,
+                artifact_type
+                if isinstance(artifact_type, str) and len(artifact_type) <= 32
+                else "geçersiz",
+                ref if isinstance(ref, str) and len(ref) <= 260 else "geçersiz",
+                manifest_checksum,
+                exact_key,
+            )
+        )
+    resolved = {
+        (artifact.type, artifact.logical_id, artifact.version): artifact
+        for artifact in ArtifactVersion.objects.filter(
+            organization_id=organization_id,
+            type__in={key[0] for key in exact_keys},
+            logical_id__in={key[1] for key in exact_keys},
+            version__in={key[2] for key in exact_keys},
+        )
+    }
+    rows: list[dict[str, object]] = []
+    for role, artifact_type, ref, manifest_checksum, exact_key in prepared:
+        artifact = resolved.get(exact_key) if exact_key is not None else None
+        rows.append(
+            {
+                "role": role,
+                "type": artifact_type,
+                "ref": ref,
+                "artifact": artifact,
+                "checksum_matches": (
+                    artifact is not None
+                    and isinstance(manifest_checksum, str)
+                    and artifact.checksum == manifest_checksum
+                ),
+            }
+        )
+    return rows
+
+
+def _workflow_dsl_guide() -> str:
+    node_types = ", ".join(sorted(BUILTIN_NODE_TYPES))
+    return (
+        "AgentHub workflow DSL kuralları\n\n"
+        "- Kök anahtarlar tam olarak: api_version, kind, metadata, spec.\n"
+        "- api_version='agenthub/v1', kind='Workflow'; metadata yalnız id içerir.\n"
+        "- spec tam olarak input_node, nodes ve edges içerir.\n"
+        f"- En fazla {MAX_NODES} node ve {MAX_EDGES} edge kullanılabilir.\n"
+        f"- İzinli built-in node türleri: {node_types}.\n"
+        "- Node ID'leri benzersizdir; input_node bir input node'a işaret eder.\n"
+        "- Grafik döngüsüz olmalı, tüm node'lar erişilebilir olmalı ve erişilebilir bir end "
+        "node içermelidir.\n"
+        "- end dışındaki her node'un çıkışı olmalı; end node'un çıkışı olamaz.\n"
+        "- condition edge'lerinde when boolean'dır; koşul ifadeleri bounded ve güvenli AST "
+        "altkümesiyle sınırlıdır.\n"
+        "- URL, endpoint, secret, code, python, package ve entrypoint gibi yetki/çalıştırma "
+        "alanları DSL config içinde kullanılamaz.\n"
+        "- Bu metin yardımcı rehberdir; tek otorite backend canonical validator/compiler'dır. "
+        "Üretilen aday her zaman validate edilmeden publish edilmemelidir."
+    )
+
+
 @login_required
 def scenario_detail(request: HttpRequest, pk: int) -> HttpResponse:
     scenario = _scoped_scenario(request.user, pk)
@@ -337,6 +435,29 @@ def scenario_detail(request: HttpRequest, pk: int) -> HttpResponse:
             }
         )
     bound_set_ids = {binding.document_set_id for binding in bindings}
+    project_drafts = list(
+        WorkflowDraft.objects.filter(
+            organization_id=organization_id, project=scenario.project
+        ).order_by("-updated_at")[:50]
+    )
+    drafts_by_logical_id = {draft.logical_id: draft for draft in project_drafts}
+    active_artifacts = _release_artifact_rows(active_release) if active_release else []
+    for row in active_artifacts:
+        artifact = row["artifact"]
+        row["workflow_draft"] = (
+            drafts_by_logical_id.get(artifact.logical_id)
+            if isinstance(artifact, ArtifactVersion) and artifact.type == "workflow_definition"
+            else None
+        )
+    release_rows = [
+        {
+            "release": release,
+            "artifacts": _release_artifact_rows(release),
+        }
+        for release in ScenarioRelease.objects.filter(scenario=scenario).order_by(
+            "-created_at", "-pk"
+        )[:20]
+    ]
     return render(
         request,
         "console/scenario_detail.html",
@@ -345,6 +466,10 @@ def scenario_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "scenario": scenario,
             "aliases": scenario.aliases.order_by("alias"),
             "active_release": active_release,
+            "active_artifacts": active_artifacts,
+            "release_rows": release_rows,
+            "project_drafts": project_drafts,
+            "dsl_guide": _workflow_dsl_guide(),
             "consumer_bindings": consumer_bindings,
             "relationship_rows": relationship_rows,
             "candidate_document_sets": scoping.scoped_document_sets(request.user)
@@ -507,17 +632,73 @@ def consumers(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def artifacts(request: HttpRequest) -> HttpResponse:
-    rows = [
-        {"cols": [a.organization.slug, a.type, a.logical_id, f"v{a.version}", a.checksum[:12]]}
-        for a in scoping.scoped_artifacts(request.user)
-    ]
+    rows = list(
+        scoping.scoped_artifacts(request.user).order_by(
+            "organization__slug", "type", "logical_id", "-version"
+        )
+    )
     return render(
         request,
-        "console/list.html",
+        "console/artifacts.html",
         {
-            "title": "Artifacts",
-            "headers": ["Organization", "Type", "Logical ID", "Version", "Checksum"],
+            "title": "Artifact'ler",
             "rows": rows,
+        },
+    )
+
+
+def _scoped_artifact(user: UserLike, pk: int) -> ArtifactVersion:
+    try:
+        return scoping.scoped_artifacts(user).get(pk=pk)
+    except ArtifactVersion.DoesNotExist as exc:
+        raise Http404 from exc
+
+
+@login_required
+def artifact_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    artifact = _scoped_artifact(request.user, pk)
+    pinned_by: list[dict[str, object]] = []
+    releases = scoping.scoped_releases(request.user).filter(
+        scenario__project__organization_id=artifact.organization_id
+    )
+    release_scan_limit = 500
+    pin_scan_limited = releases.count() > release_scan_limit
+    for release in releases.order_by("-created_at", "-pk")[:release_scan_limit]:
+        roles = [
+            row["role"]
+            for row in _release_artifact_rows(release)
+            if isinstance(row["artifact"], ArtifactVersion) and row["artifact"].pk == artifact.pk
+        ]
+        if roles:
+            pinned_by.append({"release": release, "roles": roles})
+    matching_draft_candidates = (
+        list(
+            WorkflowDraft.objects.filter(
+                organization_id=artifact.organization_id, logical_id=artifact.logical_id
+            )
+            .select_related("project")
+            .order_by("-updated_at")[:51]
+        )
+        if artifact.type == "workflow_definition"
+        else []
+    )
+    matching_drafts_limited = len(matching_draft_candidates) > 50
+    matching_drafts = matching_draft_candidates[:50]
+    canonical_body = json.dumps(artifact.body, ensure_ascii=False, indent=2, sort_keys=True)
+    display_limit = int(getattr(settings, "CONSOLE_MAX_ARTIFACT_DISPLAY_CHARS", 500_000))
+    body_too_large = len(canonical_body) > display_limit
+    return render(
+        request,
+        "console/artifact_detail.html",
+        {
+            "artifact": artifact,
+            "canonical_body": "" if body_too_large else canonical_body,
+            "body_too_large": body_too_large,
+            "pinned_by": pinned_by,
+            "pin_scan_limited": pin_scan_limited,
+            "matching_drafts": matching_drafts,
+            "matching_drafts_limited": matching_drafts_limited,
+            "dsl_guide": _workflow_dsl_guide(),
         },
     )
 
@@ -810,18 +991,39 @@ def builder(request: HttpRequest) -> HttpResponse:
     authoritative validation, authorization, and publishing happen in the builder API;
     ``@ensure_csrf_cookie`` guarantees the SPA can obtain a CSRF token for its writes.
     """
+    scoped_orgs = list(scoping.scoped_organizations(request.user).order_by("slug"))
     orgs = [
         {
             "slug": org.slug,
             "name": org.name,
             "can_write": can_author_scenarios(request.user, org.id),
         }
-        for org in scoping.scoped_organizations(request.user).order_by("slug")
+        for org in scoped_orgs
     ]
+    organizations_by_slug = {org.slug: org for org in scoped_orgs}
+    requested_org = request.GET.get("organization", "")
+    requested_draft = request.GET.get("draft", "")
+    initial: dict[str, object] = {}
+    if requested_draft:
+        if not requested_draft.isdigit() or len(requested_draft) > 19:
+            raise Http404
+        requested_draft_id = int(requested_draft)
+        if not 0 < requested_draft_id <= 9_223_372_036_854_775_807:
+            raise Http404
+        draft = WorkflowDraft.objects.filter(
+            pk=requested_draft_id, organization_id__in=[org.pk for org in scoped_orgs]
+        ).first()
+        if draft is None or (requested_org and requested_org != draft.organization.slug):
+            raise Http404
+        initial = {"organization": draft.organization.slug, "draft_id": draft.pk}
+    elif requested_org:
+        if requested_org not in organizations_by_slug:
+            raise Http404
+        initial = {"organization": requested_org}
     return render(
         request,
         "console/builder.html",
-        {"title": "Workflow builder", "builder_orgs": orgs},
+        {"title": "Workflow builder", "builder_orgs": orgs, "builder_initial": initial},
     )
 
 

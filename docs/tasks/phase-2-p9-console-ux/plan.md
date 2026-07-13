@@ -76,7 +76,15 @@ effective retrieval scope in one place. The owner accepted these product directi
   bound to the source document set.
 - [x] P9.3: run/schedule actions enqueue identifier-only payloads, reject cross-tenant/unauthorized
   IDs and keep profile destinations/secrets out of HTML, messages, logs and task payloads.
-- [ ] P9.4–P9.5 criteria are refined before each increment begins.
+- [x] P9.4: the scenario page shows its release history and resolves active-release artifact roles
+  to exact same-tenant immutable versions, clearly separating active pins from project-level drafts.
+- [x] P9.4: a scoped member can open an artifact detail page and inspect escaped canonical JSON,
+  checksum/provenance and the scenarios/releases that pin it; foreign artifact IDs return 404.
+- [x] P9.4: a workflow artifact links to a matching project draft when one exists, and the builder
+  accepts a server-validated organization/draft deep link without widening list/API scope.
+- [x] P9.4: operators can copy a bounded workflow DSL guide derived from compiler constants; the
+  guide and artifact display are read-only and create no alternate publish/validation path.
+- [ ] P9.5 criteria are refined before the increment begins.
 
 ## Affected components
 
@@ -92,7 +100,7 @@ effective retrieval scope in one place. The owner accepted these product directi
 
 ## Data impact
 
-P9.1–P9.3 add no schema. P9.2 writes ordinary document/version/set-membership and index-version
+P9.1–P9.4 add no schema. P9.2 writes ordinary document/version/set-membership and index-version
 rows. P9.3 writes existing immutable contract/source, schedule/target and sync-run rows through
 governed services.
 
@@ -117,11 +125,11 @@ synthetic content, credentials, input values and bearer tokens must not enter lo
 
 ## Migration impact
 
-None for P9.1–P9.3.
+None for P9.1–P9.4.
 
 ## Dependencies
 
-No new production dependency for P9.1–P9.3. Later visual work must reuse the existing frontend stack or
+No new production dependency for P9.1–P9.4. Later visual work must reuse the existing frontend stack or
 pass the repository dependency approval gate.
 
 ## Implementation steps
@@ -134,7 +142,9 @@ pass the repository dependency approval gate.
    state, queued staged build and separately role-gated manual promotion.
 6. Implement P9.3 as set-scoped connector source, closed REST mapping/preview, schedule/automation,
    run-now and safe-status controls over the existing audited backend.
-7. Refine and implement P9.4 and P9.5 sequentially.
+7. Implement P9.4 as scenario-centred release/artifact DSL visibility, safe artifact detail, a
+   copyable compiler-aligned DSL guide and scoped builder deep links.
+8. Refine and implement P9.5.
 
 ## Test plan
 
@@ -150,6 +160,8 @@ pass the repository dependency approval gate.
   state and promotion denial.
 - P9.3 safe read model/redaction, exact profile grant, contract/source validation, synthetic preview
   bounds/no-egress, schedule role split/target binding, run-now queue payload and cross-tenant denial.
+- P9.4 exact manifest resolution, malformed/foreign manifest entry handling, escaped DSL body,
+  cross-tenant artifact/deep-link denial and frontend initial-org/draft behavior.
 - Formatter, linter, type check, Django check, migration drift and focused/full tests.
 
 ## Rollout plan
@@ -180,7 +192,7 @@ the new screen are ordinary audited domain rows and remain manageable from legac
 
 ## Status
 
-In progress — P9.1–P9.3 verified; P9.4–P9.5 planned.
+In progress — P9.1–P9.4 implemented and verified; P9.5 planned.
 
 ## Completion criteria
 

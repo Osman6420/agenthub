@@ -66,6 +66,19 @@ the scenario, and it must separately have retrieval access to each document set.
 changes require a new release compile; consumer grant changes are enforced at retrieval time.
 | **Tool approvals** | Pending high-risk tool invocations awaiting an approver decision |
 
+### Senaryo release ve artifact görünürlüğü
+
+Senaryo detayında aktif release'in rol bazlı exact immutable artifact sürümleri ve son release
+geçmişi görünür. **DSL / detay** bağlantısı canonical JSON'u, checksum/provenance bilgisini ve o
+exact sürümü pinleyen release'leri read-only gösterir. Workflow artifact'leri için aynı proje ve
+logical ID ile eşleşen bir builder draft'ı varsa **Grafikte aç** bağlantısı kullanılır. Draft mutable
+çalışma durumudur; aktif release pini değildir. Builder deep-link'i hem organization hem draft'ı
+sunucu tarafında mevcut operator scope'una göre doğrular.
+
+Senaryo ve workflow artifact ekranlarındaki kopyalanabilir DSL rehberi compiler limitlerinden
+üretilir. Bu rehber bir artifact oluşturmaz ve doğrulama alternatifi değildir; LLM veya insan
+tarafından hazırlanan çıktı yine canonical backend validator/compiler üzerinden publish edilmelidir.
+
 ### Doküman seti çalışma alanı
 
 Yeni içerik için **Doküman setleri** ekranından önce seti açın. Set detayındaki toplu yükleme alanı

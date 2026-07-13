@@ -81,6 +81,10 @@ of the tenant read model; exact set grants and same-tenant contracts are revalid
 services. Synthetic REST preview is size/item bounded, performs no egress and returns metadata only.
 Schedule targets are restricted to scenarios already bound to the source set, with release-manager
 authorization for automatic promotion; queued sync tasks carry run and organization IDs only.
+P9.4 treats release manifest roles/refs and artifact JSON as untrusted stored data: exact refs are
+parsed with bounded syntax, resolved inside the scenario tenant, serialized canonically and escaped
+by the template. Builder organization/draft hints are validated against server-side membership
+scope before entering bootstrap data; they grant no new API capability. Copy behavior is local-only.
 
 ## Residual risks
 
@@ -96,3 +100,5 @@ P9.2 also requires bulk boundary/duplicate/MIME tests, draft replacement/baselin
 grant and cross-tenant denial, author-vs-release-manager checks, queue dispatch and promotion audit.
 P9.3 requires profile/secret redaction, invalid/cross-tenant source IDs, exact-grant denial, malicious
 contract/preview payloads, schedule interval/mode/target checks, queue failure and ID-only payloads.
+P9.4 requires malformed manifest refs, cross-tenant artifact/deep-link IDs, stored HTML/script in
+artifact JSON, missing drafts, read-only users and frontend bootstrap fallbacks.

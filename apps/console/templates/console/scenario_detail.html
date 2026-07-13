@@ -1,4 +1,5 @@
 {% extends "console/base.html" %}
+{% load static %}
 {% block title %}{{ scenario.name }} · AgentHub{% endblock %}
 {% block content %}
 <nav class="breadcrumbs" aria-label="İçerik yolu">
@@ -25,6 +26,27 @@
   <div class="summary-card"><span>Consumer bağı</span><strong>{{ consumer_bindings|length }}</strong></div>
   <div class="summary-card"><span>Aktif release</span><strong>{% if active_release %}#{{ active_release.id }}{% else %}Yok{% endif %}</strong></div>
 </div>
+
+<section class="card">
+  <div class="section-heading"><div><p class="eyebrow">Çalışan tanım</p><h2>Aktif release artifact'leri</h2><p class="muted">Aşağıdaki roller yalnız aktif release manifestindeki exact immutable version'lardır.</p></div>{% if active_release %}<span class="badge active">release #{{ active_release.id }}</span>{% endif %}</div>
+  {% if active_release %}
+    {% for row in active_artifacts %}<div class="access-row"><div><strong>{{ row.role }}</strong><p class="muted">{{ row.type }} · {{ row.ref }}</p></div>{% if row.artifact %}<a class="button secondary" href="{% url 'console:artifact_detail' row.artifact.id %}">DSL / detay</a>{% if row.checksum_matches %}<span class="access-ok">checksum doğru</span>{% else %}<span class="access-missing">checksum uyuşmuyor</span>{% endif %}{% if row.workflow_draft %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ row.workflow_draft.organization.slug }}&amp;draft={{ row.workflow_draft.id }}">Grafikte aç</a>{% endif %}{% else %}<span class="access-missing">Artifact çözümlenemedi</span>{% endif %}</div>{% empty %}<p class="muted">Aktif release artifact rolü içermiyor.</p>{% endfor %}
+  {% else %}<div class="empty">Aktif release yok; artifact seçimi henüz runtime'a çıkmamış.</div>{% endif %}
+</section>
+
+<section class="card">
+  <div class="section-heading"><div><p class="eyebrow">Sürüm geçmişi</p><h2>Release'ler</h2></div><a href="{% url 'console:releases' %}">Tüm release operasyonları →</a></div>
+  {% if release_rows %}<div class="table-scroll"><table><thead><tr><th>Release</th><th>Durum</th><th>Runtime</th><th>Artifact rolleri</th><th>Oluşturulma</th></tr></thead><tbody>{% for item in release_rows %}<tr><td>#{{ item.release.id }}</td><td><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></td><td>{{ item.release.runtime_version }}</td><td>{{ item.artifacts|length }}</td><td>{{ item.release.created_at }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">Bu senaryo için release yok.</p>{% endif %}
+</section>
+
+<section class="card">
+  <div class="section-heading"><div><p class="eyebrow">Proje çalışma alanı</p><h2>Workflow draft'ları</h2><p class="muted">Bunlar {{ scenario.project.name }} projesine ait mutable çalışma taslaklarıdır; senaryonun aktif release pini değildir.</p></div></div>
+  {% for draft in project_drafts %}<div class="access-row"><div><strong>{{ draft.name }}</strong><p class="muted mono">{{ draft.logical_id }} · son publish v{{ draft.last_published_version }}</p></div><a class="button secondary" href="{% url 'console:builder' %}?organization={{ draft.organization.slug }}&amp;draft={{ draft.id }}">Grafikte aç</a></div>{% empty %}<p class="muted">Bu proje için workflow draft'ı yok.</p>{% endfor %}
+</section>
+
+<details class="card form-card">
+  <summary><strong>LLM için workflow DSL kurallarını al</strong></summary><p class="muted">Bu yardımcı prompt metni artifact oluşturmaz; LLM çıktısı canonical backend compiler'dan geçmelidir.</p><button class="button secondary" type="button" data-copy-target="scenario-dsl-guide">Rehberi kopyala</button><textarea id="scenario-dsl-guide" class="mono code-field" rows="15" readonly>{{ dsl_guide }}</textarea>
+</details>
 
 <section class="card">
   <div class="section-heading">
@@ -83,4 +105,5 @@
     {% for binding in consumer_bindings %}<tr><td><strong>{{ binding.consumer.name }}</strong><br><span class="muted mono">{{ binding.consumer.subject }}</span></td><td>{{ binding.consumer.get_protocol_display }}</td><td>{% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</td><td><span class="badge {{ binding.status }}">{{ binding.get_status_display }}</span></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="muted">Bu senaryoyu çağırmaya yetkili consumer yok.</p>{% endif %}
 </section>
+<script src="{% static 'console/copy_text.js' %}" defer></script>
 {% endblock %}
