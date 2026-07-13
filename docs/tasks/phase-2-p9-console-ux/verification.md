@@ -12,6 +12,14 @@
 | Migration drift | `manage.py makemigrations --check --dry-run` | Pass | No changes detected | P9.1 has no schema change |
 | Full SQLite suite | `pytest -q --basetemp=.pytest-tmp-p9-20260713` | Pass | 567 passed, 25 skipped | PostgreSQL-only tests skipped as declared |
 | Focused PostgreSQL | `pytest test_scenario_relationship_console.py test_document_acl_console.py -q --create-db` | Pass | 12 passed | Local PostgreSQL |
+| P9.2 repository format | `ruff format --check .` | Pass | 343 files already formatted | Final P9.2 diff |
+| P9.2 repository lint | `ruff check .` | Pass | All checks passed | Final P9.2 diff |
+| P9.2 type check | `mypy apps config` | Pass | 342 source files, no issues | Final P9.2 diff |
+| P9.2 Django system check | `manage.py check` | Pass | 0 issues | Test settings |
+| P9.2 migration drift | `manage.py makemigrations --check --dry-run` | Pass | No changes detected | P9.2 has no schema change |
+| P9.2 focused SQLite | `pytest test_document_workspace_console.py test_document_sets_console.py test_scenario_relationship_console.py -q` | Pass | 18 passed | Bulk, draft, tenant/profile and promotion authorization |
+| P9.2 full SQLite | `pytest -q --basetemp=.pytest-tmp-p9-2-full-20260713` | Pass | 574 passed, 25 skipped | PostgreSQL-only tests skipped as declared |
+| P9.2 focused PostgreSQL | `pytest test_document_workspace_console.py test_document_sets_console.py test_scenario_relationship_console.py -q --create-db` | Pass | 18 passed | Local PostgreSQL |
 
 ## Acceptance criteria mapping
 
@@ -19,6 +27,8 @@
   index readiness, consumer scenario bindings and effective retrieval grants.
 - Author actions are exposed from the same screen; legacy document-set routes remain present.
 - Turkish-first responsive shell and scenario screens are implemented without a dependency.
+- The document-set workspace generates metadata, updates a preserved draft candidate, separates
+  publish/build/promotion and displays set/index lifecycle state.
 
 ## Security requirement mapping
 
@@ -29,6 +39,8 @@
 ## Authorization tests
 
 Author happy-path and auditor mutation denial pass on SQLite; focused suite passes on PostgreSQL.
+P9.2 additionally verifies author-only upload/build and release-manager-only index promotion on
+SQLite and PostgreSQL.
 
 ## Cross-tenant tests
 
@@ -44,6 +56,8 @@ token handling in P9.1.
 ## Audit event tests
 
 Binding create/remove and grant create/remove events asserted in the P9.1 test.
+P9.2 asserts per-document upload/upsert audit and staged-build authorization audit; existing index
+promotion service retains its audited pointer flip.
 
 ## Migration verification
 
@@ -63,8 +77,12 @@ the scenario list/base shell presentation. Public gateway/MCP contracts are unch
 
 ## Remaining risks
 
-Legacy pages remain partly English until P9.2–P9.5. Configured-vs-release-effective state still
+Legacy pages remain partly English until P9.3–P9.5. Configured-vs-release-effective state still
 requires operator understanding despite the explanatory notice.
+Bulk storage is intentionally per-file, not transactionally atomic across object storage; a
+mid-batch storage failure preserves completed files and reports the partial count. Queue dispatch
+is at-least-once and the worker's existing-index guard prevents ordinary duplicate builds, but a
+broker ambiguity can still require operator status review.
 
 ## Human review required
 
@@ -73,4 +91,4 @@ and narrow-screen UX require browser review.
 
 ## Final status
 
-Verified for P9.1; overall P9 task remains In progress for P9.2–P9.5.
+Verified for P9.1 and P9.2; overall P9 remains In progress.

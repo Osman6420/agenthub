@@ -1,88 +1,81 @@
 {% extends "console/base.html" %}
-{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block title %}{{ set.name }} · AgentHub{% endblock %}
 {% block content %}
 
-<div class="card">
-  <p class="muted"><a href="{% url 'console:documents' %}">← Documents</a></p>
-  <h2>{{ set.logical_id }} <span class="badge">{{ set.status }}</span></h2>
-  <p class="muted">{{ set.org }} · {{ set.name }}</p>
-  {% if can_write %}
-  <form class="inline" method="post" action="{% url 'console:document_set_version_create' set.id %}">
-    {% csrf_token %}<button class="link" type="submit">New draft version</button>
-  </form>
-  {% endif %}
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><span>{{ set.name }}</span></div>
+<div class="page-heading">
+  <div><p class="eyebrow">{{ set.org }} · Doküman seti</p><h1>{{ set.name }}</h1><p class="muted mono">{{ set.logical_id }}</p></div>
+  <span class="badge {{ set.status }}">{{ set.status }}</span>
 </div>
 
-{% for v in versions %}
-<div class="card">
-  <h3>Version v{{ v.version }} <span class="badge">{{ v.status }}</span></h3>
-  {% if v.members %}
-  <table>
-    <thead><tr><th>Ordinal</th><th>Document</th><th>Version</th></tr></thead>
-    <tbody>
-      {% for m in v.members %}
-      <tr><td>{{ m.ordinal }}</td><td>{{ m.logical_id }}</td><td>v{{ m.version }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted">No members.</p>
-  {% endif %}
+<div class="summary-grid">
+  <div class="summary-card"><span>Son set sürümü</span><strong>{% if latest_version %}v{{ latest_version.version }}{% else %}—{% endif %}</strong><small class="muted">{% if latest_version %}{{ latest_version.status }}{% else %}Henüz taslak yok{% endif %}</small></div>
+  <div class="summary-card"><span>Aktif indeks</span><strong>{% if active_index %}v{{ active_index.version }}{% else %}—{% endif %}</strong><small class="muted">{% if active_index %}Set v{{ active_index.document_set_version.version }} · {{ active_index.chunk_count }} parça{% else %}Henüz serve edilmiyor{% endif %}</small></div>
+  <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Release derlemesinde pinlenir</small></div>
+</div>
 
-  {% if can_write and v.is_draft %}
-  <div class="form-card" style="margin-top:12px;">
-    <form class="inline" method="post" action="{% url 'console:document_set_add_member' v.id %}">
-      {% csrf_token %}
-      <select name="document_id">
-        {% for d in candidate_docs %}
-        <option value="{{ d.id }}">{{ d.logical_id }} (v{{ d.version }})</option>
-        {% endfor %}
-      </select>
-      <button class="link" type="submit">Add member</button>
-    </form>
-    <form class="inline" method="post" action="{% url 'console:document_set_version_publish' v.id %}">
-      {% csrf_token %}<button class="link" type="submit">Publish version</button>
-    </form>
+{% if can_write %}
+<div class="card">
+  <div class="section-heading"><div><h2>Toplu doküman yükle</h2><p class="muted">Dosya adından başlık ve stabil ID üretilir; yükleme son taslağı günceller, yayına çıkmaz.</p></div></div>
+  <form class="form-card" method="post" action="{% url 'console:document_set_bulk_upload' set.id %}" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ bulk_upload_form.uploads }}
+    <p class="muted">Tek seferde en fazla {{ max_batch_files }} dosya. Desteklenen türler: PDF, DOCX, XLSX, TXT, Markdown, CSV, HTML ve JSON.</p>
+    <button type="submit">Dosyaları taslağa ekle</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="section-heading">
+    <div><h2>İçerik ve indeks yaşam döngüsü</h2><p class="muted">Yükleme → taslak → yayımlanmış set → staged indeks → aktif indeks.</p></div>
+    {% if can_write %}<form method="post" action="{% url 'console:document_set_version_create' set.id %}">{% csrf_token %}<button class="button secondary" type="submit">Boş taslak aç</button></form>{% endif %}
   </div>
-  {% endif %}
+
+  {% for v in versions %}
+  <div class="relationship-card">
+    <div class="relationship-head">
+      <div><h3>Set sürümü v{{ v.version }}</h3><p class="muted">{{ v.members|length }} doküman sürümü</p></div>
+      <div class="status-stack"><span class="badge {{ v.status }}">{{ v.status }}</span></div>
+    </div>
+    <div class="relationship-body">
+      <div>
+        <h4>Dokümanlar</h4>
+        {% for m in v.members %}<p><span class="mono">{{ m.logical_id }}</span> <span class="badge">v{{ m.version }}</span></p>{% empty %}<p class="muted">Bu sürüm boş.</p>{% endfor %}
+        {% if can_write and v.is_draft %}
+        <form class="compact-form" method="post" action="{% url 'console:document_set_add_member' v.id %}">
+          {% csrf_token %}<label for="document-{{ v.id }}">Mevcut dokümanı ekle</label><div class="field-row"><select id="document-{{ v.id }}" name="document_id" required>{% for d in candidate_docs %}<option value="{{ d.id }}">{{ d.logical_id }} (v{{ d.version }})</option>{% endfor %}</select><button class="button secondary" type="submit">Ekle</button></div>
+        </form>
+        <form method="post" action="{% url 'console:document_set_version_publish' v.id %}" style="margin-top:12px;">{% csrf_token %}<button class="button primary" type="submit">Taslağı yayımla</button></form>
+        {% endif %}
+      </div>
+      <div>
+        <h4>İndeksler</h4>
+        {% for index in v.indexes %}
+        <div class="access-row"><div><strong>{{ index.profile }}</strong><p class="muted">İndeks v{{ index.version }} · {{ index.documents }} doküman · {{ index.chunks }} parça{% if index.reused_documents %} · {{ index.reused_documents }} yeniden kullanıldı{% endif %}</p></div><span class="badge {{ index.status }}">{{ index.status }}</span>{% if index.can_promote %}<form method="post" action="{% url 'console:document_set_promote_index' index.id %}">{% csrf_token %}<button class="button primary" type="submit">Aktif et</button></form>{% endif %}</div>
+        {% empty %}<p class="muted">Bu set sürümü için indeks yok.</p>{% endfor %}
+
+        {% if can_write and v.can_build %}
+        <form class="compact-form" method="post" action="{% url 'console:document_set_build_index' v.id %}">
+          {% csrf_token %}<label>Embedding profili</label>{{ build_form.embedding_profile }}<label style="margin-top:8px;">OCR profili</label>{{ build_form.ocr_profile }}<button class="button secondary" type="submit" style="margin-top:10px;">Staged indeks oluştur</button>
+        </form>
+        {% elif v.is_draft %}<p class="notice">İndeks oluşturmak için önce taslağı yayımlayın.</p>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% empty %}<div class="empty">Henüz bir set sürümü yok. Toplu yükleme ilk taslağı otomatik açar.</div>{% endfor %}
 </div>
-{% empty %}
-<div class="card"><p class="muted">No versions yet.</p></div>
-{% endfor %}
 
 <div class="card">
-  <h3>Scenario bindings</h3>
-  <p class="muted">Binding changes take effect after the scenario release is recompiled.</p>
-  {% for binding in bindings %}
-  <p>{{ binding.scenario }}{% if can_write %}
-    <form class="inline" method="post" action="{% url 'console:document_set_unbind_scenario' binding.id %}">
-      {% csrf_token %}<button class="link" type="submit">Unbind</button>
-    </form>{% endif %}</p>
-  {% empty %}<p class="muted">No scenarios bound. Retrieval is denied by default.</p>{% endfor %}
-  {% if can_write %}
-  <form class="inline" method="post" action="{% url 'console:document_set_bind_scenario' set.id %}">
-    {% csrf_token %}<select name="scenario_id" required>
-      {% for scenario in candidate_scenarios %}<option value="{{ scenario.id }}">{{ scenario }}</option>{% endfor %}
-    </select><button class="link" type="submit">Bind scenario</button>
-  </form>
-  {% endif %}
+  <h2>Senaryo bağları</h2><p class="muted">Bağ değişiklikleri senaryo release’i yeniden derlendiğinde etkili olur.</p>
+  {% for binding in bindings %}<p>{{ binding.scenario }}{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_unbind_scenario' binding.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Bağı kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Bağlı senaryo yok; retrieval varsayılan olarak kapalıdır.</p>{% endfor %}
+  {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_bind_scenario' set.id %}">{% csrf_token %}<div class="field-row"><select name="scenario_id" required>{% for scenario in candidate_scenarios %}<option value="{{ scenario.id }}">{{ scenario }}</option>{% endfor %}</select><button class="button secondary" type="submit">Senaryoya bağla</button></div></form>{% endif %}
 </div>
 
 <div class="card">
-  <h3>Consumer retrieval grants</h3>
-  {% for grant in grants %}
-  <p>{% if grant.consumer %}{{ grant.consumer }}{% else %}Unknown consumer #{{ grant.principal_ref }}{% endif %}
-    {% if can_write %}<form class="inline" method="post" action="{% url 'console:document_set_revoke_grant' grant.id %}">
-      {% csrf_token %}<button class="link" type="submit">Revoke</button>
-    </form>{% endif %}</p>
-  {% empty %}<p class="muted">No consumer has retrieval access.</p>{% endfor %}
-  {% if can_write %}
-  <form class="inline" method="post" action="{% url 'console:document_set_grant_consumer' set.id %}">
-    {% csrf_token %}<select name="consumer_id" required>
-      {% for consumer in candidate_consumers %}<option value="{{ consumer.id }}">{{ consumer }}</option>{% endfor %}
-    </select><button class="link" type="submit">Grant retrieval</button>
-  </form>
-  {% endif %}
+  <h2>Consumer retrieval izinleri</h2>
+  {% for grant in grants %}<p>{% if grant.consumer %}{{ grant.consumer }}{% else %}Bilinmeyen consumer #{{ grant.principal_ref }}{% endif %}{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_revoke_grant' grant.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">İzni kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Retrieval izni olan consumer yok.</p>{% endfor %}
+  {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_grant_consumer' set.id %}">{% csrf_token %}<div class="field-row"><select name="consumer_id" required>{% for consumer in candidate_consumers %}<option value="{{ consumer.id }}">{{ consumer }}</option>{% endfor %}</select><button class="button secondary" type="submit">Retrieval izni ver</button></div></form>{% endif %}
 </div>
 
 {% endblock %}

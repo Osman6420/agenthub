@@ -367,7 +367,7 @@ decomposed into component plans.
 | WS | Scope | Status |
 | --- | --- | --- |
 | 1 | Document plane | **P2–P6, P7.1–P7.4b and P8.1–P8.4 implemented and verified** — content, embeddings/indexing, ACL retrieval, FORCE RLS stores, parsers/OCR, offline Confluence, governed REST periodic incremental sync and console operation. Remaining deployment gates: live Confluence/REST profiles and broader Django-table RLS + non-owner app role. Decisions = ADR-0003–0007. |
-| 2 | UI modernization + Turkish | **P9.1 implemented and verified; P9.2–P9.5 planned** — Turkish-first responsive shell and scenario-centred document-set/consumer relationship management delivered without a new dependency |
+| 2 | UI modernization + Turkish | **P9.1–P9.2 verified; P9.3–P9.5 planned** — Turkish-first responsive shell, scenario-centred relationship management and document-set-first bounded bulk upload/index lifecycle delivered without a new dependency |
 | 3 | AI-assisted authoring (+ builder preview) | Discovery — not decomposed |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
 | 5 | Live model runtime (real generation) | **P1 + P5 + P6 implemented + verified** — catalog/shared egress/chat provider (opt-in); P5 wired real retrieve/generate into the agent loop + workflow nodes + per-node prompt/model binding; **P6 added the authored, governed agent system prompt**. WS5 runtime is functionally complete for the current scope (real chat + ACL RAG in `/v1/query`, workflows, and agents) |

@@ -19,6 +19,7 @@ import hashlib
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Max
 from django.utils import timezone
 
 from apps.audit.services import record_event
@@ -278,8 +279,6 @@ def create_document_set(
 def create_document_set_version(
     *, document_set: DocumentSet, actor: str, request_id: str = ""
 ) -> DocumentSetVersion:
-    from django.db.models import Max
-
     locked = DocumentSet.objects.select_for_update().get(pk=document_set.pk)
     latest = locked.versions.aggregate(value=Max("version"))["value"] or 0
     version = DocumentSetVersion.objects.create(
@@ -299,6 +298,115 @@ def create_document_set_version(
         request_id=request_id,
     )
     return version
+
+
+@transaction.atomic
+def get_or_create_manual_draft(
+    *, document_set: DocumentSet, actor: str, request_id: str = ""
+) -> DocumentSetVersion:
+    """Return the newest author draft or create one from the latest published snapshot.
+
+    Connector-owned draft candidates are deliberately excluded: a manual upload must not mutate a
+    snapshot that an in-flight connector automation run may publish or index.
+    """
+    from apps.ingestion.models import ConfluenceSyncRun, RestSyncRun
+
+    locked_set = DocumentSet.objects.select_for_update().get(pk=document_set.pk)
+    connector_draft_ids = list(
+        ConfluenceSyncRun.objects.filter(
+            source__document_set=locked_set, candidate_set_version__isnull=False
+        ).values_list("candidate_set_version_id", flat=True)
+    ) + list(
+        RestSyncRun.objects.filter(
+            source__document_set=locked_set, candidate_set_version__isnull=False
+        ).values_list("candidate_set_version_id", flat=True)
+    )
+    draft = (
+        locked_set.versions.filter(status=DocumentSetVersionStatus.DRAFT)
+        .exclude(pk__in=connector_draft_ids)
+        .order_by("-version")
+        .first()
+    )
+    if draft is not None:
+        return draft
+
+    baseline = (
+        locked_set.versions.filter(
+            status__in=[
+                DocumentSetVersionStatus.PROMOTABLE,
+                DocumentSetVersionStatus.ACTIVE,
+                DocumentSetVersionStatus.SUPERSEDED,
+            ]
+        )
+        .order_by("-version")
+        .first()
+    )
+    draft = create_document_set_version(document_set=locked_set, actor=actor, request_id=request_id)
+    if baseline is not None:
+        for membership in baseline.memberships.order_by("ordinal", "id").select_related(
+            "document_version"
+        ):
+            add_document_to_set_version(
+                set_version=draft,
+                document_version=membership.document_version,
+                ordinal=membership.ordinal,
+                actor=actor,
+                request_id=request_id,
+            )
+    return draft
+
+
+@transaction.atomic
+def upsert_document_in_set_draft(
+    *,
+    set_version: DocumentSetVersion,
+    document_version: DocumentVersion,
+    actor: str,
+    request_id: str = "",
+) -> DocumentSetMembership:
+    """Pin the exact uploaded version, replacing the same logical document in a draft."""
+    locked = DocumentSetVersion.objects.select_for_update().get(pk=set_version.pk)
+    if locked.is_frozen:
+        raise DocumentError("SET_VERSION_FROZEN", "published set versions are immutable")
+    if document_version.organization_id != locked.organization_id:
+        raise DocumentError("DOCUMENT_TENANT_MISMATCH", "document must belong to the set tenant")
+
+    existing = list(
+        locked.memberships.select_for_update()
+        .filter(document_version__document_id=document_version.document_id)
+        .order_by("ordinal", "id")
+    )
+    for membership in existing:
+        if membership.document_version_id == document_version.pk and len(existing) == 1:
+            return membership
+    max_ordinal = locked.memberships.aggregate(value=Max("ordinal"))["value"]
+    ordinal = (
+        existing[0].ordinal if existing else (max_ordinal + 1 if max_ordinal is not None else 0)
+    )
+    before_ids = [item.document_version_id for item in existing]
+    if existing:
+        locked.memberships.filter(pk__in=[item.pk for item in existing]).delete()
+    membership = DocumentSetMembership(
+        organization_id=locked.organization_id,
+        document_set_version=locked,
+        document_version=document_version,
+        ordinal=ordinal,
+    )
+    membership.full_clean()
+    membership.save()
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="documents.set_version.upsert_member",
+        outcome="success",
+        organization_id=locked.organization_id,
+        resource_type="document_set_version",
+        resource_id=f"{locked.document_set.logical_id}:v{locked.version}",
+        request_id=request_id,
+        before={"document_version_ids": before_ids},
+        after={"document_version_id": document_version.pk},
+    )
+    return membership
 
 
 @transaction.atomic

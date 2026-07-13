@@ -7,14 +7,18 @@ screen comes from :mod:`apps.console.scoping`.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
@@ -27,6 +31,8 @@ from apps.console.forms import (
     BindingForm,
     CanaryForm,
     ConsumerForm,
+    DocumentSetBuildForm,
+    DocumentSetBulkUploadForm,
     DocumentSetForm,
     DocumentUploadForm,
     OrganizationForm,
@@ -46,8 +52,12 @@ from apps.documents.models import (
     ScenarioDocumentSetBinding,
 )
 from apps.documents.services import DocumentError
+from apps.documents.storage import StorageError
 from apps.evaluations.services import EvalError, run_eval
 from apps.identity.models import BindingStatus, Consumer, ConsumerBinding, ConsumerStatus
+from apps.ingestion.models import IndexStatus, IndexVersion
+from apps.ingestion.staged_build import StagedBuildError, promote_staged_index
+from apps.ingestion.tasks import build_document_set_index_task
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.tenancy.services import (
@@ -64,6 +74,33 @@ from apps.tenancy.services import (
 from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_approval
 from apps.tools.authz import resolve_actor_roles
 from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
+
+_UPLOAD_MIME_BY_SUFFIX = {
+    ".csv": "text/csv",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".html": "text/html",
+    ".json": "application/json",
+    ".md": "text/markdown",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+_TURKISH_SLUG_TRANSLATION = str.maketrans(
+    {
+        "ç": "c",
+        "Ç": "C",
+        "ğ": "g",
+        "Ğ": "G",
+        "ı": "i",
+        "İ": "I",
+        "ö": "o",
+        "Ö": "O",
+        "ş": "s",
+        "Ş": "S",
+        "ü": "u",
+        "Ü": "U",
+    }
+)
 
 
 def _audit_create(
@@ -876,12 +913,32 @@ def document_set_create(request: HttpRequest) -> HttpResponse:
 def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk)
     can_write = can_author_scenarios(request.user, document_set.organization_id)
+    can_promote_index = can_manage_releases(request.user, document_set.organization_id)
     versions = [
         {
             "id": v.id,
             "version": v.version,
             "status": v.status,
             "is_draft": v.status == DocumentSetVersionStatus.DRAFT,
+            "can_build": v.status
+            in [DocumentSetVersionStatus.PROMOTABLE, DocumentSetVersionStatus.ACTIVE],
+            "indexes": [
+                {
+                    "id": index.id,
+                    "version": index.version,
+                    "status": index.status,
+                    "profile": index.embedding_profile.logical_id
+                    if index.embedding_profile
+                    else "silinmiş profil",
+                    "documents": index.document_count,
+                    "chunks": index.chunk_count,
+                    "reused_documents": index.reused_document_count,
+                    "can_promote": can_promote_index and index.status == IndexStatus.PROMOTABLE,
+                }
+                for index in v.index_versions.select_related("embedding_profile").order_by(
+                    "-version"
+                )
+            ],
             "members": [
                 {
                     "logical_id": m.document_version.document.logical_id,
@@ -895,6 +952,18 @@ def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
         }
         for v in document_set.versions.order_by("-version")
     ]
+    active_index = (
+        IndexVersion.objects.filter(
+            document_set_version__document_set=document_set,
+            organization_id=document_set.organization_id,
+            status=IndexStatus.ACTIVE,
+            store_ready=True,
+        )
+        .select_related("document_set_version", "embedding_profile")
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+    latest_version = document_set.versions.order_by("-version").first()
     # Active, uploaded documents in this set's tenant, offered as members of a draft version.
     candidate_docs = [
         {"id": d.id, "logical_id": d.logical_id, "version": d.current_version}
@@ -934,6 +1003,13 @@ def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
                 "status": document_set.status,
             },
             "versions": versions,
+            "latest_version": latest_version,
+            "active_index": active_index,
+            "bulk_upload_form": DocumentSetBulkUploadForm(),
+            # The same choices render once per published set version; omit duplicate HTML ids.
+            "build_form": DocumentSetBuildForm(
+                organization_id=document_set.organization_id, auto_id=False
+            ),
             "candidate_docs": candidate_docs,
             "bindings": bindings,
             "candidate_scenarios": Scenario.objects.filter(
@@ -954,8 +1030,186 @@ def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
                 status=ConsumerStatus.ACTIVE,
             ).order_by("name", "subject"),
             "can_write": can_write,
+            "can_promote_index": can_promote_index,
+            "max_batch_files": int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20)),
         },
     )
+
+
+def _bulk_upload_metadata(files: list[object], document_set: DocumentSet) -> list[dict[str, str]]:
+    """Derive bounded, stable metadata without trusting browser MIME declarations."""
+    reserved: dict[str, str] = {
+        item.logical_id: item.title
+        for item in Document.objects.filter(organization_id=document_set.organization_id)
+    }
+    metadata: list[dict[str, str]] = []
+    for upload in files:
+        raw_name = Path(str(getattr(upload, "name", ""))).name
+        suffix = Path(raw_name).suffix.lower()
+        mime_type = _UPLOAD_MIME_BY_SUFFIX.get(suffix)
+        if mime_type is None:
+            raise DocumentError("FILE_EXTENSION_DENIED")
+        title = Path(raw_name).stem.strip()[:500] or "Doküman"
+        base = slugify(title.translate(_TURKISH_SLUG_TRANSLATION))[:128] or "dokuman"
+        logical_id = base
+        if logical_id in reserved and reserved[logical_id] != title:
+            digest = hashlib.sha256(raw_name.encode("utf-8")).hexdigest()[:10]
+            logical_id = f"{base[:117]}-{digest}"
+        if logical_id in reserved and reserved[logical_id] != title:
+            raise DocumentError("GENERATED_ID_CONFLICT")
+        if any(item["logical_id"] == logical_id for item in metadata):
+            raise DocumentError("DUPLICATE_BATCH_DOCUMENT")
+        reserved[logical_id] = title
+        metadata.append({"logical_id": logical_id, "title": title, "mime_type": mime_type})
+    return metadata
+
+
+@login_required
+@require_POST
+def document_set_bulk_upload(request: HttpRequest, pk: int) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk)
+    if not can_author_scenarios(request.user, document_set.organization_id):
+        raise PermissionDenied
+    form = DocumentSetBulkUploadForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, "Yükleme başarısız: en az bir dosya seçin.")
+        return redirect("console:document_set_detail", pk=document_set.pk)
+    files = list(form.cleaned_data["uploads"])
+    max_files = int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20))
+    max_file_bytes = int(getattr(settings, "DOCUMENTS_MAX_UPLOAD_BYTES", 25_000_000))
+    max_batch_bytes = int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_BYTES", 100_000_000))
+    sizes = [int(getattr(upload, "size", 0)) for upload in files]
+    if len(files) > max_files:
+        messages.error(request, f"Yükleme başarısız: en fazla {max_files} dosya seçilebilir.")
+        return redirect("console:document_set_detail", pk=document_set.pk)
+    if any(size <= 0 or size > max_file_bytes for size in sizes):
+        messages.error(
+            request, "Yükleme başarısız: boş veya dosya boyutu sınırını aşan içerik var."
+        )
+        return redirect("console:document_set_detail", pk=document_set.pk)
+    if sum(sizes) > max_batch_bytes:
+        messages.error(request, "Yükleme başarısız: toplam batch boyutu sınırı aşıldı.")
+        return redirect("console:document_set_detail", pk=document_set.pk)
+    uploaded = 0
+    try:
+        metadata = _bulk_upload_metadata(files, document_set)
+        draft = document_services.get_or_create_manual_draft(
+            document_set=document_set, actor=request.user.get_username()
+        )
+        for upload, item in zip(files, metadata, strict=True):
+            version = document_services.upload_document(
+                organization=document_set.organization,
+                logical_id=item["logical_id"],
+                title=item["title"],
+                mime_type=item["mime_type"],
+                data=upload.read(),
+                actor=request.user.get_username(),
+            )
+            uploaded += 1
+            document_services.upsert_document_in_set_draft(
+                set_version=draft,
+                document_version=version,
+                actor=request.user.get_username(),
+            )
+        messages.success(
+            request, f"{uploaded} doküman yüklendi ve taslak v{draft.version} güncellendi."
+        )
+    except (DocumentError, StorageError) as exc:
+        code = getattr(exc, "code", "OBJECT_STORE_UNAVAILABLE")
+        if uploaded:
+            messages.error(
+                request,
+                f"Toplu yükleme kısmen tamamlandı: {uploaded} dosya kaydedildi; "
+                f"işlem durdu ({code}).",
+            )
+        else:
+            messages.error(request, f"Yükleme başarısız: {code}")
+    return redirect("console:document_set_detail", pk=document_set.pk)
+
+
+@login_required
+@require_POST
+def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpResponse:
+    set_version = _scoped_set_version(request.user, version_pk)
+    if not can_author_scenarios(request.user, set_version.organization_id):
+        raise PermissionDenied
+    form = DocumentSetBuildForm(request.POST, organization_id=set_version.organization_id)
+    if not form.is_valid():
+        messages.error(request, "İndeks isteği reddedildi: tenant’a açık bir profil seçin.")
+        return redirect("console:document_set_detail", pk=set_version.document_set_id)
+    if set_version.status not in [
+        DocumentSetVersionStatus.PROMOTABLE,
+        DocumentSetVersionStatus.ACTIVE,
+    ]:
+        messages.error(request, "İndeks için önce taslak sürümü yayımlayın.")
+        return redirect("console:document_set_detail", pk=set_version.document_set_id)
+    profile = form.cleaned_data["embedding_profile"]
+    ocr_profile = form.cleaned_data["ocr_profile"]
+    if IndexVersion.objects.filter(
+        document_set_version=set_version,
+        embedding_profile=profile,
+        status__in=[IndexStatus.BUILDING, IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
+    ).exists():
+        messages.error(request, "Bu sürüm ve profil için kullanılabilir bir indeks zaten var.")
+        return redirect("console:document_set_detail", pk=set_version.document_set_id)
+    try:
+        record_event(
+            actor_type="user",
+            actor_id=request.user.get_username(),
+            action="ingestion.staged_index.request_authorized",
+            outcome="success",
+            organization_id=set_version.organization_id,
+            resource_type="document_set_version",
+            resource_id=f"{set_version.document_set.logical_id}:v{set_version.version}",
+            after={"embedding_profile_id": str(profile.public_id)},
+        )
+        build_document_set_index_task.apply_async(
+            args=[
+                set_version.pk,
+                profile.pk,
+                set_version.organization_id,
+                request.user.get_username(),
+                ocr_profile.pk if ocr_profile else None,
+            ],
+            queue="ingestion",
+        )
+        messages.success(request, "Staged indeks isteği ingestion kuyruğuna gönderildi.")
+    except Exception:
+        record_event(
+            actor_type="user",
+            actor_id=request.user.get_username(),
+            action="ingestion.staged_index.dispatch_failed",
+            outcome="failure",
+            organization_id=set_version.organization_id,
+            resource_type="document_set_version",
+            resource_id=f"{set_version.document_set.logical_id}:v{set_version.version}",
+            reason="queue_unavailable",
+        )
+        messages.error(request, "İndeks kuyruğuna erişilemedi; daha sonra yeniden deneyin.")
+    return redirect("console:document_set_detail", pk=set_version.document_set_id)
+
+
+@login_required
+@require_POST
+def document_set_promote_index(request: HttpRequest, index_pk: int) -> HttpResponse:
+    index = (
+        IndexVersion.objects.select_related("document_set_version__document_set")
+        .filter(
+            pk=index_pk,
+            document_set_version__in=scoping.scoped_document_set_versions(request.user),
+        )
+        .first()
+    )
+    if index is None or index.document_set_version is None:
+        raise Http404
+    if not can_manage_releases(request.user, index.organization_id):
+        raise PermissionDenied
+    try:
+        promote_staged_index(index, actor=request.user.get_username())
+        messages.success(request, "Staged indeks aktif hale getirildi.")
+    except StagedBuildError as exc:
+        messages.error(request, f"Promotion başarısız: {exc.code}")
+    return redirect("console:document_set_detail", pk=index.document_set_version.document_set_id)
 
 
 @login_required

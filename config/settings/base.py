@@ -221,6 +221,8 @@ CONFLUENCE_NETWORK_POLICIES = env.json("CONFLUENCE_NETWORK_POLICIES", default={}
 # Blob backend: "s3" (real object store, local/production) or "memory" (hermetic, tests).
 DOCUMENTS_OBJECT_STORE_BACKEND = env("DOCUMENTS_OBJECT_STORE_BACKEND", default="s3")
 DOCUMENTS_MAX_UPLOAD_BYTES = env.int("DOCUMENTS_MAX_UPLOAD_BYTES", default=25_000_000)
+DOCUMENTS_MAX_BATCH_UPLOAD_FILES = env.int("DOCUMENTS_MAX_BATCH_UPLOAD_FILES", default=20)
+DOCUMENTS_MAX_BATCH_UPLOAD_BYTES = env.int("DOCUMENTS_MAX_BATCH_UPLOAD_BYTES", default=100_000_000)
 # Declared upload content types accepted for storage (parsing arrives in P7). An empty list
 # would disable the allowlist; keep it bounded.
 DOCUMENTS_ALLOWED_MIME_TYPES = env.list(

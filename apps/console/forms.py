@@ -15,6 +15,12 @@ from django.db.models import QuerySet
 from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer, ConsumerBinding
+from apps.ingestion.models import (
+    EmbeddingProfile,
+    EmbeddingProfileStatus,
+    OcrProfile,
+    OcrProfileStatus,
+)
 from apps.tenancy.models import Organization, OrganizationMembership
 from apps.tenancy.services import admin_organization_ids, author_organization_ids
 
@@ -183,6 +189,50 @@ class DocumentSetForm(forms.Form):
         cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
             Organization.objects.all(), ids
         )
+
+
+class MultipleFileInput(forms.ClearableFileInput):
+    allow_multiple_selected = True
+
+
+class MultipleFileField(forms.FileField):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("widget", MultipleFileInput(attrs={"multiple": True}))
+        super().__init__(*args, **kwargs)
+
+    def clean(self, data: Any, initial: Any = None) -> list[Any]:
+        clean_one = super().clean
+        if isinstance(data, (list, tuple)):
+            return [clean_one(item, initial) for item in data]
+        return [clean_one(data, initial)]
+
+
+class DocumentSetBulkUploadForm(forms.Form):
+    uploads = MultipleFileField(label="Dosyalar")
+
+
+class DocumentSetBuildForm(forms.Form):
+    embedding_profile = forms.ModelChoiceField(
+        queryset=EmbeddingProfile.objects.none(), label="Embedding profili"
+    )
+    ocr_profile = forms.ModelChoiceField(
+        queryset=OcrProfile.objects.none(), required=False, label="OCR profili (isteğe bağlı)"
+    )
+
+    def __init__(self, *args: Any, organization_id: int, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        cast(
+            forms.ModelChoiceField, self.fields["embedding_profile"]
+        ).queryset = EmbeddingProfile.objects.filter(
+            status=EmbeddingProfileStatus.ACTIVE,
+            tenant_grants__organization_id=organization_id,
+        ).distinct()
+        cast(
+            forms.ModelChoiceField, self.fields["ocr_profile"]
+        ).queryset = OcrProfile.objects.filter(
+            status=OcrProfileStatus.ACTIVE,
+            tenant_grants__organization_id=organization_id,
+        ).distinct()
 
 
 class CanaryForm(forms.Form):

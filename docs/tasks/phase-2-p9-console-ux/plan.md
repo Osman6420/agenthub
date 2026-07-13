@@ -50,12 +50,25 @@ effective retrieval scope in one place. The owner accepted these product directi
 - [x] P9.1: cross-tenant IDs are rejected/not found and cannot create or remove relationships.
 - [x] P9.1: relationship mutations continue through audited domain services.
 - [x] P9.1: the shell and new surface are Turkish-first and responsive at defined breakpoints.
-- [ ] P9.2–P9.5 criteria are refined before each increment begins.
+- [x] P9.2 implemented: an author works from a document set, uploads at most 20 bounded files in one request,
+  and receives generated stable logical IDs and filename-derived titles without entering metadata
+  per file.
+- [x] P9.2 implemented: bulk uploads update one draft candidate, preserve the latest published membership when
+  opening a new draft, and replace an older draft membership when the same logical document is
+  uploaded again.
+- [x] P9.2 implemented: the workspace distinguishes uploaded content, draft/published set versions, staged
+  index build state and the active index; it exposes explicit publish, stage and manual promotion
+  actions with the existing role split.
+- [x] P9.2 implemented: staged builds accept only active platform profiles granted to the set tenant, run on the
+  ingestion queue with identifier-only resource references, and never promote automatically.
+- [x] P9.2 implemented: bulk/build/promotion paths deny cross-tenant IDs and unauthorized roles and retain
+  domain audit evidence.
+- [ ] P9.3–P9.5 criteria are refined before each increment begins.
 
 ## Affected components
 
 - `apps.console` views, URLs, templates and tests.
-- `apps.documents` and `apps.identity` read models/services (reuse only in P9.1).
+- `apps.documents` membership services and `apps.ingestion` staged-build task/read model in P9.2.
 - Phase/master/current-behavior documentation.
 
 ## Interfaces affected
@@ -65,8 +78,8 @@ effective retrieval scope in one place. The owner accepted these product directi
 
 ## Data impact
 
-P9.1 adds no schema. Existing `ScenarioDocumentSetBinding` and consumer `DocumentSetGrant` rows are
-read and mutated through current services.
+P9.1 and P9.2 add no schema. P9.2 writes ordinary document/version/set-membership and index-version
+rows through existing models and domain services.
 
 ## Security impact
 
@@ -87,7 +100,7 @@ high-cardinality metrics and must not log document contents, credentials or bear
 
 ## Migration impact
 
-None for P9.1.
+None for P9.1–P9.2.
 
 ## Dependencies
 
@@ -100,7 +113,9 @@ pass the repository dependency approval gate.
 2. Add Turkish-first navigation and relationship presentation without removing legacy routes.
 3. Add positive, read-only, cross-tenant, invalid-target, audit and compatibility tests.
 4. Verify P9.1 and update current-state docs/handoff.
-5. Refine and implement P9.2, then P9.3, P9.4 and P9.5 sequentially.
+5. Implement P9.2 as a document-set-first workspace: bounded bulk upload, draft upsert, lifecycle
+   state, queued staged build and separately role-gated manual promotion.
+6. Refine and implement P9.3, P9.4 and P9.5 sequentially.
 
 ## Test plan
 
@@ -110,6 +125,10 @@ pass the repository dependency approval gate.
 - Auditor read-only and mutation denial.
 - Cross-tenant and malformed target denial.
 - Existing document-set relationship routes remain compatible.
+- P9.2 filename/ID generation, duplicate batch IDs, file-count/individual/aggregate size bounds,
+  MIME denial, draft baseline preservation and same-document replacement.
+- P9.2 build-profile tenant scoping, author/release-manager separation, queue payload, failed build
+  state and promotion denial.
 - Formatter, linter, type check, Django check, migration drift and focused/full tests.
 
 ## Rollout plan
@@ -132,14 +151,15 @@ the new screen are ordinary audited domain rows and remain manageable from legac
 
 ## Open questions
 
-- Exact P9.2 default: automatically build a staged index immediately after bulk upload, with manual
-  promotion unless the operator explicitly enables safe automation.
+- P9.2 decision: uploads update a draft only. Publishing and staging are explicit operator actions;
+  promotion is always a separate release-manager action. Connector schedules keep their existing
+  selectable stage-only/promote-if-safe automation and are not changed by manual upload UX.
 - Exact `/v1/responses` compatibility contract is a separate public-API task.
 - Full localization framework/ownership is deferred until Turkish-first UX is coherent.
 
 ## Status
 
-In progress — P9.1 implemented and verified; P9.2–P9.5 planned.
+In progress — P9.1–P9.2 verified; P9.3–P9.5 planned.
 
 ## Completion criteria
 

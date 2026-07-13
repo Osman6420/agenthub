@@ -293,7 +293,7 @@ Current cross-agent state:
     confirmation; pinned content remains fail-closed. No migration/dependency/egress. Evidence:
     SQLite 511 passed / 21 skipped; PostgreSQL 530 passed / 2 skipped. Landed in the P8 completion
     commit on `feat/foundation-sprint-0-1`; not pushed. P7 provenance follows.
-- **P9 WS2 CONSOLE UX IN PROGRESS — P9.1 IMPLEMENTED + VERIFIED.** The owner accepted Turkish-first
+- **P9 WS2 CONSOLE UX IN PROGRESS — P9.1–P9.2 VERIFIED.** The owner accepted Turkish-first
   (full i18n later), organization → project → scenario navigation, document-set-first bulk upload
   with explicit index/promotion state, and a future additive `/v1/responses` facade while retaining
   native gateway routes. P9.1 adds a responsive Turkish console shell and scenario detail where an
@@ -301,8 +301,13 @@ Current cross-agent state:
   index readiness, and can bind/unbind/grant/revoke through existing audited services. Cross-tenant
   and non-author paths fail closed. Evidence: focused SQLite 23 passed; full SQLite 567 passed / 25
   skipped; focused PostgreSQL 12 passed; format/lint/type/Django/migration checks pass. No migration,
-  dependency, egress or public API change. P9.2–P9.5 remain. Browser visual/accessibility review is
-  still manual. Plan: `docs/tasks/phase-2-p9-console-ux/`.
+  dependency, egress or public API change. P9.2 replaces the standalone-upload journey with a
+  document-set workspace: bounded multi-file upload, filename-derived Turkish-safe IDs/titles,
+  latest-published membership preservation, draft same-document replacement, explicit lifecycle,
+  tenant-granted embedding/OCR build selection on the ingestion queue, and release-manager-only
+  manual index activation. P9.2 evidence: repository format/lint/type/Django/migration checks pass,
+  full SQLite 574 passed / 25 skipped, and focused PostgreSQL 18 passed. P9.3–P9.5 remain. Browser visual/
+  accessibility review is still manual. Plan: `docs/tasks/phase-2-p9-console-ux/`.
 - **WS4 PERSONAL IDENTITY REMAINS LAST AND UNDECIDED.** Owner-provided OIDC/group-claim/OBO/
   group-first proposals are recorded in `phase-2-plan.md` as non-final discussion notes only; do not
   implement or treat them as approved architecture until WS4 is explicitly reopened.

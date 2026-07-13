@@ -66,6 +66,20 @@ the scenario, and it must separately have retrieval access to each document set.
 changes require a new release compile; consumer grant changes are enforced at retrieval time.
 | **Tool approvals** | Pending high-risk tool invocations awaiting an approver decision |
 
+### Doküman seti çalışma alanı
+
+Yeni içerik için **Doküman setleri** ekranından önce seti açın. Set detayındaki toplu yükleme alanı
+bir istekte en fazla 20 dosya kabul eder; tekil ve toplam byte sınırları deployment ayarlarından
+uygulanır. Dosya adı başlık olur; Türkçe karakterler ASCII karşılıklarına dönüştürülerek güvenli ve
+stabil bir logical ID üretilir. Aynı dosya adı yeniden yüklendiğinde yeni bir `DocumentVersion` oluşur ve taslaktaki eski
+sürümün yerini alır. Yeni taslak, son yayımlanmış set üyeliğini korur.
+
+Yükleme doğrudan serve edilmez. Operatör taslağı açıkça yayımlar, tenant'a grant edilmiş embedding
+ve isteğe bağlı OCR profilini seçerek staged build'i ingestion kuyruğuna gönderir. İndeks hazır
+olduğunda yalnız `release_manager`/`organization_admin` rolü **Aktif et** işlemini yapabilir.
+Çalışma alanı taslak, yayımlanmış set, building/promotable indeks ve aktif indeks durumlarını ayrı
+gösterir. Manuel akış otomatik promotion yapmaz.
+
 ---
 
 ## 3. The end-to-end scenario lifecycle

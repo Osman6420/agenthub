@@ -22,7 +22,9 @@ audited document domain services; configured relationship → release-pinned run
 ## Data classifications
 
 Scenario/consumer names are internal metadata. Relationship topology is authorization-sensitive.
-Document content, credentials, tokens and connector secrets must not enter this UI's logs.
+Document content, filenames beyond the scoped operator response, credentials, tokens and connector
+secrets must not enter logs. Bulk uploads cross the browser/object-store boundary; staged builds
+cross the worker/profile-governed embedding and optional OCR egress boundaries.
 
 ## Authentication
 
@@ -41,7 +43,8 @@ without exposing foreign metadata. Platform-admin cross-tenant visibility remain
 
 ## External systems
 
-None in P9.1.
+P9.1 has none. P9.2 may invoke only platform-managed embedding/OCR profiles already granted to the
+tenant. Browser-supplied hosts, URLs, credentials and profile configuration are never accepted.
 
 ## Abuse cases
 
@@ -50,11 +53,16 @@ None in P9.1.
 - CSRF relationship mutation.
 - Stored XSS through scenario, set or consumer names.
 - Confusing configured bindings with active release/index scope.
+- Batch memory/size exhaustion, duplicate generated IDs, misleading partial success, MIME spoofing
+  and unsafe filenames.
+- Cross-tenant profile/build/index IDs, author-triggered promotion, forged worker tenant IDs and
+  replayed build requests.
 
 ## Failure cases
 
-Duplicate bindings/grants, deleted/disabled targets, stale pages, audit persistence failure, and a
-relationship changed after the page was loaded.
+Duplicate bindings/grants, deleted/disabled targets, stale pages, audit persistence failure, a
+relationship changed after the page was loaded, broker unavailability, failed parser/embedding/OCR
+calls and a staged build that is never promoted.
 
 ## Logging and audit risks
 
@@ -65,6 +73,9 @@ outcome audit events. State mutations remain fail-closed with domain-service aud
 
 Scoped querysets, POST-only mutations, CSRF, permission rechecks, same-tenant filters, Django
 auto-escaping, stable generic errors, domain services, and explicit configured-vs-effective labels.
+P9.2 additionally applies file-count/per-file/aggregate byte limits, server-generated slug IDs,
+the existing MIME allowlist, tenant-granted immutable profile selection, identifier-only task
+payloads, tenant context in the worker, and release-manager-only promotion.
 
 ## Residual risks
 
@@ -76,3 +87,5 @@ WS4 and must not be implied by this screen.
 
 Authentication redirect, membership-less/cross-tenant 404, cross-tenant mutation denial,
 non-author 403, CSRF behavior, audit creation/removal evidence, and escaped stored labels.
+P9.2 also requires bulk boundary/duplicate/MIME tests, draft replacement/baseline tests, profile
+grant and cross-tenant denial, author-vs-release-manager checks, queue dispatch and promotion audit.

@@ -66,6 +66,11 @@ urlpatterns = [
     path("document-sets/new/", views.document_set_create, name="document_set_create"),
     path("document-sets/<int:pk>/", views.document_set_detail, name="document_set_detail"),
     path(
+        "document-sets/<int:pk>/bulk-upload/",
+        views.document_set_bulk_upload,
+        name="document_set_bulk_upload",
+    ),
+    path(
         "document-sets/<int:pk>/versions/new/",
         views.document_set_version_create,
         name="document_set_version_create",
@@ -79,6 +84,16 @@ urlpatterns = [
         "document-set-versions/<int:version_pk>/publish/",
         views.document_set_version_publish,
         name="document_set_version_publish",
+    ),
+    path(
+        "document-set-versions/<int:version_pk>/build-index/",
+        views.document_set_build_index,
+        name="document_set_build_index",
+    ),
+    path(
+        "document-set-indexes/<int:index_pk>/promote/",
+        views.document_set_promote_index,
+        name="document_set_promote_index",
     ),
     path(
         "document-sets/<int:pk>/bind-scenario/",
