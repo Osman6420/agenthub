@@ -14,9 +14,11 @@ P6 (authored, governed agent system prompt), P7.1 (the deny-by-default `Document
 dependency-free stdlib parsers — text/markdown/csv/json/html — wired into the staged-build
 text-extraction seam), and P7.2 (local pdf/docx/xlsx parsers on the same interface via owner-approved
 pdfplumber + python-docx + openpyxl, no egress) are implemented and verified. Phase 2 implementation
-is in progress (next: P7.3 external OCR egress and P7.4 Confluence/generic-REST connectors, **deferred
-by the owner and blocked on their egress sign-off**); later live-egress/dependency milestones retain
-their explicit gates.
+and P8.1 (the document-plane operator console UI — tenant-scoped list, author-gated upload,
+cross-tenant-safe soft-delete) are implemented and verified. Phase 2 implementation is in progress
+(next: P7.3 external OCR egress and P7.4 Confluence/generic-REST connectors, **deferred by the owner
+and blocked on their egress sign-off**; and P8.2–P8.4 console UI for sets/binding/purge, no gate);
+later live-egress/dependency milestones retain their explicit gates.
 
 - Sprint 0: bootable Django modular-monolith skeleton — settings split, Celery role
   definitions, unauthenticated health probes, dependency manifest + lockfile, Docker
@@ -193,7 +195,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Tool registry + approval (Sprint 9) | Verified | Sprint 8 | [sprint-9-tool-registry-approval](../tasks/sprint-9-tool-registry-approval/plan.md) | [v3 target plan §17](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-9-tool-registry-approval/verification.md) |
 | Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
 | Visual workflow builder (Sprint 11) | Verified | Sprints 2, 8 | [sprint-11-workflow-builder](../tasks/sprint-11-workflow-builder/plan.md) | [v3 target plan §25](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-11-workflow-builder/verification.md) |
-| Document plane (Phase 2 · WS1) | **P2 + P3 + P4 + P5 + P6 + P7.1 + P7.2 (pdf/docx/xlsx parsers) Verified**; P7.3 OCR / P7.4 connectors deferred (egress-gated) | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) + [P7](../tasks/phase-2-p7-parsers-ocr-connectors/verification.md) |
+| Document plane (Phase 2 · WS1) | **P2–P6 + P7.1/P7.2 (parsers) + P8.1 (console UI) Verified**; P7.3 OCR / P7.4 connectors deferred (egress-gated); P8.2–P8.4 UI planned | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) + [P7](../tasks/phase-2-p7-parsers-ocr-connectors/verification.md) |
 | Live model runtime (Phase 2 · WS5) | **P1 + P5 + P6 Verified** (WS5 runtime scope complete) | Shared egress + `ModelProfile` catalog | [P1](../tasks/phase-2-p1-live-chat/plan.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/plan.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P1](../tasks/phase-2-p1-live-chat/verification.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/verification.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/verification.md) |
 
 ## Cross-cutting concerns

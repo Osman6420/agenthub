@@ -147,6 +147,29 @@ class BindingForm(forms.ModelForm):
         return instance
 
 
+class DocumentUploadForm(forms.Form):
+    """Upload a document into an author-scoped organization (P8.1).
+
+    The organization choices are limited to orgs the operator may author in; the view re-checks
+    ``can_author_scenarios`` server-side before storing (defense in depth). The MIME type is taken
+    from the uploaded file in the view and validated by the document service's allowlist.
+    """
+
+    organization = forms.ModelChoiceField(queryset=Organization.objects.none())
+    logical_id = forms.SlugField(
+        max_length=128, help_text="Stable per-tenant document id (new version on re-upload)."
+    )
+    title = forms.CharField(max_length=500, required=False)
+    file = forms.FileField()
+
+    def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        ids = author_organization_ids(user)
+        cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
+            Organization.objects.all(), ids
+        )
+
+
 class CanaryForm(forms.Form):
     """Start-canary form: pick a consumer in the release's org and a bounded lifetime."""
 

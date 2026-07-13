@@ -1,0 +1,73 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+
+{% if can_upload %}
+<div class="card form-card">
+  <h2>Upload document</h2>
+  <form method="post" action="{% url 'console:document_upload' %}" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Upload</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Documents</h2>
+  {% if documents %}
+  <table>
+    <thead>
+      <tr><th>Organization</th><th>ID</th><th>Title</th><th>Version</th><th>State</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for d in documents %}
+      <tr>
+        <td>{{ d.org }}</td>
+        <td>{{ d.logical_id }}</td>
+        <td>{{ d.title }}</td>
+        <td>v{{ d.version }}</td>
+        <td>
+          {% if d.tombstoned %}<span class="badge">tombstoned</span>{% else %}active{% endif %}
+        </td>
+        <td>
+          {% if d.can_write and not d.tombstoned %}
+          <form class="inline" method="post" action="{% url 'console:document_soft_delete' d.id %}">
+            {% csrf_token %}<button class="link" type="submit">Soft-delete</button>
+          </form>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No documents in your scope.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Document sets</h2>
+  {% if sets %}
+  <table>
+    <thead>
+      <tr><th>Organization</th><th>ID</th><th>Name</th><th>Status</th><th>Versions</th></tr>
+    </thead>
+    <tbody>
+      {% for s in sets %}
+      <tr>
+        <td>{{ s.org }}</td>
+        <td>{{ s.logical_id }}</td>
+        <td>{{ s.name }}</td>
+        <td><span class="badge">{{ s.status }}</span></td>
+        <td>{{ s.versions }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No document sets in your scope.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -27,10 +27,14 @@ from apps.console.forms import (
     BindingForm,
     CanaryForm,
     ConsumerForm,
+    DocumentUploadForm,
     OrganizationForm,
     ProjectForm,
     ScenarioForm,
 )
+from apps.documents import services as document_services
+from apps.documents.models import Document
+from apps.documents.services import DocumentError
 from apps.evaluations.services import EvalError, run_eval
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
@@ -497,6 +501,98 @@ def builder(request: HttpRequest) -> HttpResponse:
         "console/builder.html",
         {"title": "Workflow builder", "builder_orgs": orgs},
     )
+
+
+@login_required
+def documents(request: HttpRequest) -> HttpResponse:
+    """List the operator's document sets + documents and offer upload (P8.1).
+
+    Read scope is tenant membership (``allowed_organization_ids``); upload/soft-delete require
+    ``can_author_scenarios`` in the target org and are re-checked server-side. Non-authoritative:
+    all state changes go through the audited ``apps.documents.services``.
+    """
+    user = request.user
+    sets = [
+        {
+            "org": s.organization.slug,
+            "logical_id": s.logical_id,
+            "name": s.name,
+            "status": s.status,
+            "versions": s.versions.count(),
+        }
+        for s in scoping.scoped_document_sets(user).order_by("organization_id", "logical_id")
+    ]
+    docs = [
+        {
+            "id": d.id,
+            "org": d.organization.slug,
+            "logical_id": d.logical_id,
+            "title": d.title,
+            "version": d.current_version,
+            "tombstoned": d.is_tombstoned,
+            "can_write": can_author_scenarios(user, d.organization_id),
+        }
+        for d in scoping.scoped_documents(user).order_by("organization_id", "logical_id")
+    ]
+    upload_form = DocumentUploadForm(user=user)
+    # An operator can upload iff they may author in at least one org (None = platform admin).
+    can_upload = author_organization_ids(user) != set()
+    return render(
+        request,
+        "console/documents.html",
+        {
+            "title": "Documents",
+            "sets": sets,
+            "documents": docs,
+            "form": upload_form,
+            "can_upload": can_upload,
+        },
+    )
+
+
+@login_required
+@require_POST
+def document_upload(request: HttpRequest) -> HttpResponse:
+    form = DocumentUploadForm(request.POST, request.FILES, user=request.user)
+    if not form.is_valid():
+        messages.error(request, "Upload failed: check the form fields.")
+        return redirect("console:documents")
+    organization = form.cleaned_data["organization"]
+    # Server-side authorization re-check (the scoped choices are UI convenience only).
+    if not can_author_scenarios(request.user, organization.id):
+        raise PermissionDenied
+    upload = form.cleaned_data["file"]
+    try:
+        document_services.upload_document(
+            organization=organization,
+            logical_id=form.cleaned_data["logical_id"],
+            title=form.cleaned_data["title"],
+            mime_type=(upload.content_type or "application/octet-stream"),
+            data=upload.read(),
+            actor=request.user.get_username(),
+        )
+        messages.success(request, "Document uploaded.")
+    except DocumentError as exc:
+        messages.error(request, f"Upload failed: {exc.code}")
+    return redirect("console:documents")
+
+
+@login_required
+@require_POST
+def document_soft_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    document = _scoped_document(request.user, pk)
+    if not can_author_scenarios(request.user, document.organization_id):
+        raise PermissionDenied
+    document_services.soft_delete_document(document, actor=request.user.get_username())
+    messages.success(request, f"Document {document.logical_id} tombstoned.")
+    return redirect("console:documents")
+
+
+def _scoped_document(user: UserLike, pk: int) -> Document:
+    try:
+        return scoping.scoped_documents(user).get(pk=pk)
+    except Document.DoesNotExist as exc:
+        raise Http404 from exc
 
 
 @login_required

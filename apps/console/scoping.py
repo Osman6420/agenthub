@@ -11,6 +11,7 @@ from django.db.models import QuerySet
 from apps.agents.models import AgentRun
 from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import AIProject, Scenario
+from apps.documents.models import Document, DocumentSet
 from apps.identity.models import Consumer
 from apps.releases.models import ScenarioRelease
 from apps.tenancy.models import Organization
@@ -62,4 +63,16 @@ def scoped_agent_runs(user: UserLike) -> QuerySet[AgentRun]:
     qs = AgentRun.objects.select_related(
         "organization", "scenario", "scenario__project", "consumer"
     )
+    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+
+
+def scoped_documents(user: UserLike) -> QuerySet[Document]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = Document.objects.select_related("organization")
+    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+
+
+def scoped_document_sets(user: UserLike) -> QuerySet[DocumentSet]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = DocumentSet.objects.select_related("organization")
     return qs if allowed is None else qs.filter(organization_id__in=allowed)
