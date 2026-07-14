@@ -176,6 +176,15 @@ OTEL_TRACE_SAMPLE_RATIO = env.float("OTEL_TRACE_SAMPLE_RATIO", default=0.1)
 # built-in defaults (stub model, static retriever). The real OpenAI-compatible model
 # provider and pgvector retriever plug in here without code changes.
 RUNTIME_MODEL_PROVIDER = env("RUNTIME_MODEL_PROVIDER", default="")
+# Phase 2 P10.1 operator authoring is disabled unless a deployment selects one immutable
+# platform profile. Tenant input cannot choose this profile or any destination.
+AI_AUTHORING_MODEL_PROFILE_ID = env("AI_AUTHORING_MODEL_PROFILE_ID", default="")
+AI_AUTHORING_PROVIDER = env("AI_AUTHORING_PROVIDER", default="")
+AI_AUTHORING_MAX_DESCRIPTION_BYTES = env.int("AI_AUTHORING_MAX_DESCRIPTION_BYTES", default=8192)
+AI_AUTHORING_MAX_CANDIDATE_BYTES = env.int("AI_AUTHORING_MAX_CANDIDATE_BYTES", default=262144)
+AI_AUTHORING_MAX_JSON_DEPTH = env.int("AI_AUTHORING_MAX_JSON_DEPTH", default=20)
+AI_AUTHORING_RATE_LIMIT = env.int("AI_AUTHORING_RATE_LIMIT", default=5)
+AI_AUTHORING_RATE_WINDOW_SECONDS = env.int("AI_AUTHORING_RATE_WINDOW_SECONDS", default=600)
 RUNTIME_RETRIEVAL_PROVIDER = env(
     "RUNTIME_RETRIEVAL_PROVIDER",
     default="apps.retrieval.providers.PgvectorRetrievalProvider",

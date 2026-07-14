@@ -13,7 +13,8 @@ The remaining WS3 journey is free text → platform-selected LLM → candidate �
 explicit publish. ADR-0002/0005 already define the profile-ID-only stdlib model-egress boundary.
 The owner previously decided that chat/embedding destinations are platform allowlisted and that AI
 authoring and the visual builder coexist. Operator-triggered authoring egress and its cost controls
-still require an explicit change-boundary approval before implementation.
+were explicitly approved by the owner on 2026-07-14 with the limits recorded in this plan. Live
+endpoint, secret, CA and firewall rollout remain separately gated.
 
 ## Scope
 
@@ -43,19 +44,19 @@ still require an explicit change-boundary approval before implementation.
 
 ## Acceptance criteria
 
-- [ ] An authorized scenario author can submit a bounded description for an organization/project
+- [x] An authorized scenario author can submit a bounded description for an organization/project
   and receive a parsed candidate plus canonical compiler diagnostics.
-- [ ] The provider destination, credential and model are resolved only from the immutable platform
+- [x] The provider destination, credential and model are resolved only from the immutable platform
   profile configured by `AI_AUTHORING_MODEL_PROFILE_ID`; tenant input cannot influence them.
-- [ ] System DSL instructions and user description are separate chat roles; the description and
+- [x] System DSL instructions and user description are separate chat roles; the description and
   model response are treated as untrusted data and never as authorization.
-- [ ] Invalid JSON, oversized/deep output, inline secrets, forbidden DSL fields and invalid graph
+- [x] Invalid JSON, oversized/deep output, inline secrets, forbidden DSL fields and invalid graph
   shapes fail safely without artifact/release creation.
-- [ ] A successful candidate is copied to a project-scoped mutable draft and graph preview only after
+- [x] A successful candidate is copied to a project-scoped mutable draft and graph preview only after
   explicit operator action; publish remains the existing separate server-authorized operation.
-- [ ] Authentication, author denial, cross-tenant project/profile attempts, CSRF, rate limiting,
+- [x] Authentication, author denial, cross-tenant project/profile attempts, CSRF, rate limiting,
   audit outcomes, redaction and `outcome_unknown` no-retry behavior have negative tests.
-- [ ] CI/test defaults perform no network call and remain deterministic through an injected fake
+- [x] CI/test defaults perform no network call and remain deterministic through an injected fake
   authoring provider.
 
 ## Affected components
@@ -101,7 +102,8 @@ None planned for P10.1.
 ## Dependencies
 
 No new production dependency. Reuse the existing stdlib OpenAI-compatible/profile-managed egress.
-Implementation is gated on explicit approval for the new operator-triggered network/cost behavior.
+The disabled-by-default operator-triggered network/cost behavior was approved on 2026-07-14. Live
+profile activation and environment-specific network/secret rollout remain separately gated.
 
 ## Implementation steps
 
@@ -112,6 +114,11 @@ Implementation is gated on explicit approval for the new operator-triggered netw
 5. Add author-scoped CSRF operator API and frontend preview/accept flow.
 6. Add negative security, redaction, rate, provider and frontend tests.
 7. Run full SQLite, focused PostgreSQL, frontend and repository gates; update current-state docs.
+
+Implementation detail: generation returns a transient candidate envelope and canonical diagnostics;
+a separate acceptance request re-validates the same bounded candidate and creates or updates the
+selected project-scoped draft. The server stores no candidate token or raw model content between
+those actions. Rate-limit cache failure denies generation with a stable safe code.
 
 ## Test plan
 
@@ -143,16 +150,22 @@ drafts/artifacts remain ordinary governed records and require no data rollback.
 - Model produces syntactically valid but semantically poor workflows; human preview remains required.
 - Post-send uncertainty incurs cost without a usable candidate and must not be retried blindly.
 
+## Decisions
+
+- Initial limits approved on 2026-07-14: description 8 KiB, candidate 256 KiB, JSON depth 20, five
+  requests per actor+organization per ten minutes.
+- Profile selection is one deployment-selected UUID, not a tenant-visible model picker.
+- Approval covers implementing the disabled-by-default network/cost behavior only. It does not
+  approve a live endpoint, secret, CA, DNS, firewall rule or production activation.
+
 ## Open questions
 
-- Proposed initial limits: description 8 KiB, candidate 256 KiB, JSON depth 20, five requests per
-  actor+organization per ten minutes. Owner approval is required before these become behavior.
-- Profile selection is proposed as one deployment-selected UUID, not a tenant-visible model picker.
 - P10.2 may generalize the same candidate envelope to other artifact types after P10.1 evidence.
 
 ## Status
 
-Planned — design/threat model prepared; implementation blocked on explicit network/cost approval.
+Implemented and verified offline — live profile/network/privacy/cost activation remains a separate
+deployment gate, and owner browser acceptance remains manual.
 
 ## Completion criteria
 

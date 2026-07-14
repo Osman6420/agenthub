@@ -17,6 +17,7 @@ const schema: NodeSchema = {
   ],
   tool_binding_roles: [],
   custom_nodes: [],
+  projects: [],
 };
 
 function draftFixture(overrides: Partial<Draft> = {}): Draft {

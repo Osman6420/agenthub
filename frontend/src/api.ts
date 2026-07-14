@@ -2,7 +2,7 @@
 // CSRF token from the cookie; the browser's session cookie authenticates the operator.
 // There is no token/bearer path and no cross-origin request — the SPA is served by Django.
 
-import type { Draft, DiagnosticsResult, NodeSchema } from "./types";
+import type { AiCandidateResult, Draft, DiagnosticsResult, NodeSchema } from "./types";
 
 export class ApiError extends Error {
   code: string;
@@ -53,6 +53,25 @@ export class BuilderApi {
 
   listDrafts(): Promise<{ drafts: Draft[] }> {
     return request(this.url("/drafts/"));
+  }
+
+  generateCandidate(payload: {
+    organization: string; project_id: number; description: string;
+  }): Promise<AiCandidateResult> {
+    return request(this.url("/ai-candidates/"), {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  acceptCandidate(payload: {
+    organization: string; project_id: number; name: string; logical_id: string;
+    candidate: Record<string, unknown>;
+  }): Promise<Draft> {
+    return request(this.url("/ai-candidates/accept/"), {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   getDraft(id: number): Promise<Draft> {

@@ -359,8 +359,8 @@ and the shared SSRF-safe egress adapter ([ADR-0005](../adr/0005-shared-ssrf-safe
 implementing [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)). The
 Phase 2 kickoff is approved; remaining gates are **per-phase egress/dependency sign-off**.
 **Workstream 1 and Workstream 5 are implemented and verified for their current offline scope.**
-**Workstream 2 is implemented with owner browser acceptance outstanding. Workstream 3 is now
-decomposed as P10; its operator-triggered network/cost behavior awaits explicit approval.
+**Workstream 2 is implemented with owner browser acceptance outstanding. Workstream 3 P10.1 is
+implemented and offline-verified; live profile/network/privacy/cost activation remains gated.
 Workstream 4 remains last and in discovery.**
 
 ### Workstream status
@@ -369,7 +369,7 @@ Workstream 4 remains last and in discovery.**
 | --- | --- | --- |
 | 1 | Document plane | **P2–P6, P7.1–P7.4b and P8.1–P8.4 implemented and verified** — content, embeddings/indexing, ACL retrieval, FORCE RLS stores, parsers/OCR, offline Confluence, governed REST periodic incremental sync and console operation. Remaining deployment gates: live Confluence/REST profiles and broader Django-table RLS + non-owner app role. Decisions = ADR-0003–0007. |
 | 2 | UI modernization + Turkish | **P9.1–P9.5 implemented; automated verification complete, owner browser acceptance outstanding** — Turkish-first responsive shell/builder, scenario-centred relationship management, document-set/index lifecycle, governed connector controls, and scoped release/artifact/DSL visibility delivered without a new dependency |
-| 3 | AI-assisted authoring (+ builder preview) | **P10 planned; network/cost approval required before implementation** — bounded free text → platform-profile LLM → untrusted candidate → canonical diagnostics → explicit draft preview/publish path. See [`phase-2-p10-ai-assisted-authoring`](../tasks/phase-2-p10-ai-assisted-authoring/plan.md). |
+| 3 | AI-assisted authoring (+ builder preview) | **P10.1 implemented and offline-verified** — bounded free text → deployment-selected platform profile → untrusted candidate → canonical diagnostics → explicit draft transfer/preview; generation never publishes. Live profile/network/privacy/cost activation remains deployment-gated. See [`phase-2-p10-ai-assisted-authoring`](../tasks/phase-2-p10-ai-assisted-authoring/plan.md). |
 | 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
 | 5 | Live model runtime (real generation) | **P1 + P5 + P6 implemented + verified** — catalog/shared egress/chat provider (opt-in); P5 wired real retrieve/generate into the agent loop + workflow nodes + per-node prompt/model binding; **P6 added the authored, governed agent system prompt**. WS5 runtime is functionally complete for the current scope (real chat + ACL RAG in `/v1/query`, workflows, and agents) |
 

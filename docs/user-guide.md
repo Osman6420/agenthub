@@ -311,3 +311,13 @@ egress approval. Platform admins register an immutable profile with
 They never contain a URL, credential, secret selector, or TLS option. Credentials are injected at
 runtime through the corresponding `MODEL_SECRET_<NAME>` environment variable. Do not enable the
 provider until the approved endpoint/network policy and secret are present.
+
+# AI-assisted workflow authoring (Phase 2 P10.1)
+
+The builder can generate an untrusted workflow candidate from a bounded description. This feature
+is disabled unless operations sets `AI_AUTHORING_MODEL_PROFILE_ID` to an approved active immutable
+model profile. Authors select an exact project, generate and inspect canonical diagnostics, then use
+the separate transfer action to create the mutable draft. Generation does not publish an artifact,
+compile a release, run an evaluation, promote, or execute the workflow. Descriptions and raw model
+responses are transient and excluded from audit/log content. Live activation still requires the
+environment's endpoint, CA, secret, firewall, privacy and cost approval.

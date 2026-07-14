@@ -31,6 +31,17 @@ from apps.workflows.compiler import compile_workflow
 MAX_DRAFT_BODY_BYTES = 256 * 1024
 
 
+def ai_authoring_request_limit(*, accept: bool) -> int:
+    """Bound request bytes before JSON decoding; includes envelope overhead."""
+    from django.conf import settings
+
+    setting_name = (
+        "AI_AUTHORING_MAX_CANDIDATE_BYTES" if accept else "AI_AUTHORING_MAX_DESCRIPTION_BYTES"
+    )
+    default = MAX_DRAFT_BODY_BYTES if accept else 8192
+    return int(getattr(settings, setting_name, default)) + 16 * 1024
+
+
 class BuilderError(ValueError):
     """A safe, content-free builder error carrying a stable code."""
 

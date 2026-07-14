@@ -5,16 +5,27 @@ from __future__ import annotations
 import json
 
 import pytest
-from django.test import Client
+from django.core.cache import cache
+from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.artifacts.models import ArtifactVersion
 from apps.audit.models import AuditEvent
 from apps.builder.models import WorkflowDraft
 from apps.builder.tests.conftest import BuilderFixture, simple_workflow
+from apps.orchestration.authoring import AuthoringResponse
 from apps.tools.models import ToolBinding, ToolDefinition, ToolRisk, ToolStatus
 
 pytestmark = pytest.mark.django_db
+
+
+class FakeAuthoringProvider:
+    response = AuthoringResponse(json.dumps(simple_workflow()), 12, 8)
+    calls: list[dict] = []
+
+    def generate(self, *, profile_id: str, description: str) -> AuthoringResponse:
+        self.calls.append({"profile_id": profile_id, "description": description})
+        return self.response
 
 
 def _post(client: Client, url: str, payload: dict):
@@ -295,3 +306,230 @@ def test_mutations_require_csrf_token(bf: BuilderFixture) -> None:
     )
     assert response.status_code == 403
     assert not WorkflowDraft.objects.filter(logical_id="flow_csrf").exists()
+    response = _post(
+        csrf_client,
+        reverse("builder_api:ai_candidates"),
+        {"organization": bf.org.slug, "description": "workflow"},
+    )
+    assert response.status_code == 403
+
+
+# --- AI-assisted candidates -------------------------------------------------
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+)
+def test_ai_candidate_is_transient_then_explicitly_accepted(
+    client: Client, bf: BuilderFixture
+) -> None:
+    cache.clear()
+    FakeAuthoringProvider.calls.clear()
+    client.force_login(bf.author)
+    generated = _post(
+        client,
+        reverse("builder_api:ai_candidates"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "description": "Bir giriş ve bitiş akışı oluştur.",
+        },
+    )
+    assert generated.status_code == 200
+    assert generated.json()["diagnostics"]["ok"] is True
+    assert FakeAuthoringProvider.calls[0]["profile_id"].startswith("1111")
+    assert WorkflowDraft.objects.count() == 1
+    assert not ArtifactVersion.objects.exists()
+
+    accepted = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "name": "AI flow",
+            "logical_id": "ai_flow",
+            "candidate": generated.json()["candidate"],
+        },
+    )
+    assert accepted.status_code == 201
+    assert WorkflowDraft.objects.filter(logical_id="ai_flow", project=bf.project).exists()
+    assert not ArtifactVersion.objects.exists()
+
+
+def test_ai_candidate_disabled_and_role_denials(client: Client, bf: BuilderFixture) -> None:
+    cache.clear()
+    url = reverse("builder_api:ai_candidates")
+    client.force_login(bf.author)
+    assert (
+        _post(
+            client,
+            url,
+            {"organization": bf.org.slug, "project_id": bf.project.pk, "description": "x"},
+        ).json()["error"]["code"]
+        == "ai_authoring_disabled"
+    )
+    client.force_login(bf.viewer)
+    assert (
+        _post(
+            client,
+            url,
+            {"organization": bf.org.slug, "project_id": bf.project.pk, "description": "x"},
+        ).status_code
+        == 403
+    )
+    client.force_login(bf.outsider)
+    assert (
+        _post(
+            client,
+            url,
+            {"organization": bf.org.slug, "project_id": bf.project.pk, "description": "x"},
+        ).status_code
+        == 404
+    )
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+    AI_AUTHORING_RATE_LIMIT=1,
+)
+def test_ai_candidate_rate_limit_and_audit_redaction(client: Client, bf: BuilderFixture) -> None:
+    cache.clear()
+    client.force_login(bf.author)
+    secret_text = "özel-içerik-123"  # noqa: S105 -- redaction sentinel, not a credential
+    url = reverse("builder_api:ai_candidates")
+    assert (
+        _post(
+            client,
+            url,
+            {"organization": bf.org.slug, "project_id": bf.project.pk, "description": secret_text},
+        ).status_code
+        == 200
+    )
+    limited = _post(
+        client,
+        url,
+        {"organization": bf.org.slug, "project_id": bf.project.pk, "description": secret_text},
+    )
+    assert limited.status_code == 400
+    assert limited.json()["error"]["code"] == "rate_limited"
+    assert secret_text not in json.dumps(list(AuditEvent.objects.values()), default=str)
+
+
+def test_ai_accept_revalidates_and_never_publishes(client: Client, bf: BuilderFixture) -> None:
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "name": "bad",
+            "logical_id": "bad",
+            "candidate": {"kind": "Workflow"},
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "candidate_invalid_workflow"
+    assert not WorkflowDraft.objects.filter(logical_id="bad").exists()
+    assert not ArtifactVersion.objects.exists()
+
+
+def test_ai_accept_rejects_foreign_project(client: Client, bf: BuilderFixture) -> None:
+    foreign_project = type(bf.project).objects.create(
+        organization=bf.other_org, slug="foreign", name="Foreign"
+    )
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {
+            "organization": bf.org.slug,
+            "project_id": foreign_project.pk,
+            "name": "x",
+            "logical_id": "foreign",
+            "candidate": simple_workflow(),
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "project_not_found"
+    assert not WorkflowDraft.objects.filter(logical_id="foreign").exists()
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+    AI_AUTHORING_MAX_DESCRIPTION_BYTES=8,
+    AI_AUTHORING_MAX_CANDIDATE_BYTES=32,
+)
+def test_ai_request_body_limits_apply_before_json_decoding(
+    client: Client, bf: BuilderFixture
+) -> None:
+    cache.clear()
+    client.force_login(bf.author)
+    generated = _post(
+        client,
+        reverse("builder_api:ai_candidates"),
+        {"organization": bf.org.slug, "description": "x" * 20_000},
+    )
+    assert generated.status_code == 400
+    assert generated.json()["error"]["code"] == "request_too_large"
+    accepted = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "name": "x",
+            "logical_id": "large",
+            "candidate": {"padding": "x" * 20_000},
+        },
+    )
+    assert accepted.status_code == 400
+    assert accepted.json()["error"]["code"] == "request_too_large"
+    assert not WorkflowDraft.objects.filter(logical_id="large").exists()
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+)
+def test_ai_candidate_rejects_caller_destination_and_profile_fields(
+    client: Client, bf: BuilderFixture
+) -> None:
+    cache.clear()
+    FakeAuthoringProvider.calls.clear()
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:ai_candidates"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "description": "workflow",
+            "profile_id": "attacker",
+            "endpoint": "https://attacker.invalid/",
+            "headers": {"Authorization": "attacker"},
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unexpected_field"
+    assert FakeAuthoringProvider.calls == []
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+)
+def test_ai_candidate_requires_exact_project(client: Client, bf: BuilderFixture) -> None:
+    cache.clear()
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:ai_candidates"),
+        {"organization": bf.org.slug, "description": "workflow"},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "project_required"

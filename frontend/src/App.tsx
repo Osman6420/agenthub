@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
+import { AiAuthoringPanel } from "./AiAuthoringPanel";
 import { Editor } from "./Editor";
 import type { BuilderInitial, Draft, NodeSchema, OrgOption } from "./types";
 
@@ -144,6 +145,9 @@ export function App({
           </li>
         ))}
       </ul>
+
+      {canWrite && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
+        onAccepted={(draft) => { void reload(); setActive(draft); }} />}
 
       {canWrite && (
         <div className="ah-builder-create" style={{ marginTop: 20, borderTop: "1px solid #262b36", paddingTop: 16 }}>

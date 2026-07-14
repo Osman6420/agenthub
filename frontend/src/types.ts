@@ -44,6 +44,7 @@ export interface NodeSchema {
   node_types: NodeTypeSchema[];
   tool_binding_roles: ToolBindingRole[];
   custom_nodes: { node_ref: string }[];
+  projects: { id: number; slug: string; name: string }[];
 }
 
 export type NodeConfig = Record<string, unknown>;
@@ -88,6 +89,11 @@ export interface DiagnosticsResult {
   ok: boolean;
   errors: { code: string; message: string }[];
   compiled_checksum?: string;
+}
+
+export interface AiCandidateResult {
+  candidate: Record<string, unknown>;
+  diagnostics: DiagnosticsResult;
 }
 
 // Node data carried inside a React Flow node.

@@ -270,10 +270,13 @@ editor is not additionally guarded. Several originally-planned builder enhanceme
 preview view, CSP, a distinct `project_editor` permission) are **deferred to Phase 2** — the
 builder is being repurposed toward AI-assisted authoring. The single canonical Sprint 11
 record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan is archived
-under `docs/planning/archive/`. Phase 2 is a discussion draft at
+under `docs/planning/archive/`. Phase 2 is active at
 `docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
 personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and
-P1–P6, **P7.1–P7.3**, **P7.4a**, and **P8.1–P8.4** are implemented and verified. P7.4a provides
+P1–P6, P7.1–P7.4b, P8.1–P8.4, P9.1–P9.5, and P10.1 are implemented and verified for their
+offline scopes. P10.1 adds disabled-by-default, profile-only AI workflow candidates with bounded
+untrusted parsing, canonical diagnostics, exact-project explicit draft transfer, fail-closed rate
+limiting and redacted audit; it never auto-publishes or changes release/runtime state. P7.4a provides
 immutable Confluence profiles, exact tenant+document-set grants, bounded private-DNS Data Center
 reads, recoverable incremental snapshots, draft candidates, and FORCE-RLS lineage; it adds no
 dependency and makes no default/live egress. Its actual corporate endpoint, CIDRs/DNS, CA, firewall,

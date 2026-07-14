@@ -323,14 +323,14 @@ Current cross-agent state:
   passed / 25 skipped, focused PostgreSQL 19 passed, frontend 12 passed, and repository gates pass.
   Owner browser acceptance at 390/900/1440 px and keyboard-only review is still explicitly manual.
   Plan/evidence: `docs/tasks/phase-2-p9-console-ux/`.
-- **P10 WS3 AI-ASSISTED AUTHORING PLANNED; IMPLEMENTATION APPROVAL PENDING.** Proposed first
-  increment is workflow-only: bounded Turkish free text → one deployment-selected immutable
-  `ModelProfile` → untrusted JSON candidate → canonical compiler diagnostics → explicit transfer to
-  a project-scoped `WorkflowDraft`/graph preview. It never auto-publishes or changes release/runtime
+- **P10.1 WS3 AI-ASSISTED AUTHORING IMPLEMENTED + OFFLINE-VERIFIED.** Bounded Turkish free text
+  uses one deployment-selected immutable `ModelProfile`; the model response is untrusted bounded
+  JSON, receives canonical compiler diagnostics, and enters an exact-project `WorkflowDraft` only
+  after a separate explicit acceptance action. Generation never publishes or changes release/runtime
   state. Description/response content is transient and excluded from logs/audit; actor+organization
-  rate limiting and terminal `outcome_unknown` are required. No SDK/dependency is proposed. Because
-  this introduces new operator-triggered model egress and cost, do not implement until the owner
-  explicitly approves the network behavior and proposed limits. Plan/threat model:
+  rate limiting is fail-closed and `outcome_unknown` is terminal without retry. No dependency was
+  added; default/test configuration opens no socket. Live profile, endpoint, CA, secret, firewall,
+  privacy and cost activation remain deployment-gated. Plan/evidence:
   `docs/tasks/phase-2-p10-ai-assisted-authoring/`.
 - **WS4 PERSONAL IDENTITY REMAINS LAST AND UNDECIDED.** Owner-provided OIDC/group-claim/OBO/
   group-first proposals are recorded in `phase-2-plan.md` as non-final discussion notes only; do not

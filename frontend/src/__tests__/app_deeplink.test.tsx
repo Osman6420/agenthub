@@ -53,6 +53,7 @@ describe("builder deep link", () => {
             ],
             tool_binding_roles: [],
             custom_nodes: [],
+            projects: [{ id: 4, slug: "project", name: "Project" }],
           };
         } else if (value.endsWith("/drafts/")) {
           payload = { drafts: [draft] };

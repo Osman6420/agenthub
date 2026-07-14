@@ -24,7 +24,7 @@ from django.core.exceptions import PermissionDenied
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
 
-from apps.builder import services
+from apps.builder import authoring, services
 from apps.builder.models import WorkflowDraft
 from apps.builder.node_schema import build_node_schema
 from apps.catalog.models import AIProject
@@ -63,9 +63,62 @@ def _actor(request: HttpRequest) -> str:
     return request.user.get_username()
 
 
-def _json_body(request: HttpRequest) -> dict[str, Any]:
+def _actor_id(request: HttpRequest) -> int:
+    if request.user.pk is None:
+        raise PermissionDenied
+    return request.user.pk
+
+
+@operator_api
+@require_http_methods(["POST"])
+def ai_candidates(request: HttpRequest) -> HttpResponse:
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=False))
+    _reject_unknown_fields(payload, {"organization", "project_id", "description"})
+    org = _resolve_org_in_scope(request, payload.get("organization"))
+    _require_author(request, org.id)
+    if _resolve_project(org, payload.get("project_id")) is None:
+        raise services.BuilderError("project_required")
+    result = authoring.generate_candidate(
+        organization=org,
+        actor=_actor(request),
+        actor_id=_actor_id(request),
+        description=payload.get("description"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(result)
+
+
+@operator_api
+@require_http_methods(["POST"])
+def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(
+        payload,
+        {"organization", "project_id", "name", "logical_id", "candidate", "draft_id"},
+    )
+    org = _resolve_org_in_scope(request, payload.get("organization"))
+    _require_author(request, org.id)
+    project = _resolve_project(org, payload.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
+    draft = authoring.accept_candidate(
+        organization=org,
+        project=project,
+        actor=_actor(request),
+        name=payload.get("name", ""),
+        logical_id=payload.get("logical_id", ""),
+        candidate=payload.get("candidate"),
+        draft_id=payload.get("draft_id"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(_serialize(draft, can_write=True), status=201)
+
+
+def _json_body(request: HttpRequest, *, max_bytes: int | None = None) -> dict[str, Any]:
     if not request.body:
         return {}
+    if max_bytes is not None and len(request.body) > max_bytes:
+        raise services.BuilderError("request_too_large")
     try:
         parsed = json.loads(request.body)
     except (ValueError, UnicodeDecodeError) as exc:
@@ -73,6 +126,11 @@ def _json_body(request: HttpRequest) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise services.BuilderError("invalid_json", "request body must be a JSON object")
     return parsed
+
+
+def _reject_unknown_fields(payload: dict[str, Any], allowed: set[str]) -> None:
+    if set(payload) - allowed:
+        raise services.BuilderError("unexpected_field")
 
 
 def _resolve_org_in_scope(request: HttpRequest, ref: Any) -> Organization:
@@ -133,6 +191,10 @@ def node_schema(request: HttpRequest) -> HttpResponse:
     schema = build_node_schema(organization_id=org.id)
     schema["organization"] = org.slug
     schema["can_write"] = can_author_scenarios(request.user, org.id)
+    schema["projects"] = [
+        {"id": project.id, "slug": project.slug, "name": project.name}
+        for project in AIProject.objects.filter(organization=org).order_by("name", "id")
+    ]
     return JsonResponse(schema)
 
 

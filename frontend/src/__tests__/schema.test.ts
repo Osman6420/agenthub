@@ -32,6 +32,7 @@ const schema: NodeSchema = {
   ],
   tool_binding_roles: [{ role: "search_web", approval_required: true }],
   custom_nodes: [{ node_ref: "summarize" }],
+  projects: [],
 };
 
 describe("schema helpers", () => {
