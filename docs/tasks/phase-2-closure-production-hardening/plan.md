@@ -59,6 +59,29 @@ change record, rollback plan and explicit execution approval under `AGENTS.md`.
 6. Activate AI authoring last; run the governed candidate flow and immediately verify disable/rollback.
 7. Run full gates, record production-readiness evidence and close Phase 2 only after manual sign-off.
 
+## Increment P11.1: RLS deployment-readiness inventory
+
+Status: **implemented and offline-verified**.
+
+The first offline increment does not enable policies or change a deployed database role. It adds a
+deterministic inventory of Django tables with a direct tenant column and a PostgreSQL readiness
+check for the proposed application role. The check must fail when a table is missing `ENABLE` or
+`FORCE ROW LEVEL SECURITY`, when the canonical policy is absent, or when the proposed role is a
+superuser, has `BYPASSRLS`, owns a protected table, or lacks required read access. Table-specific
+write grants remain a separate least-privilege design; P11.1 never requires blanket write/delete.
+
+This sequencing is required because current operator views can intentionally aggregate several
+membership-authorized organizations in one request, while ADR-0004 carries one transaction-local
+tenant id. Policy activation remains a later increment: each web/worker path must first have an
+explicit trusted context/bootstrap design and PostgreSQL negative evidence. The readiness command
+is diagnostic only and must not create roles, grant privileges, alter tables or set tenant context.
+Operational usage and classification semantics are documented in
+[`phase-2-rls-readiness.md`](../../operations/phase-2-rls-readiness.md).
+
+P11.1 deliberately leaves policy activation, schema denormalization, request/worker context
+propagation and application-role provisioning open. Nine relationship-only tenant tables are
+reported as blockers rather than silently omitted. Evidence is recorded in `verification.md`.
+
 ## Migration and rollback
 
 RLS/ownership changes require a staged reversible migration or deployment SQL reviewed against the

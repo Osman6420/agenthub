@@ -345,6 +345,14 @@ Current cross-agent state:
   authoring with privacy/retention/cost + smoke/rollback evidence remain planned. Concrete secrets,
   hosts, CA/DNS/firewall and production mutations still require their execution approvals. Plan:
   `docs/tasks/phase-2-closure-production-hardening/`.
+  - **P11.1 RLS readiness inventory IMPLEMENTED + OFFLINE-VERIFIED.** The read-only
+    `check_tenant_rls --app-role <role>` command inventories direct/indirect/bootstrap/telemetry
+    tenant tables and fails closed for unsafe/missing roles, ownership, read grants, non-forced or
+    non-canonical policies, and nine relationship-only tenant tables. It performs no DDL or context
+    mutation. Evidence: SQLite 6 passed / 2 skipped; PostgreSQL 16 6 passed / 2 skipped; full SQLite
+    626 passed / 27 skipped; 355-file format/lint/type plus Django/migration gates pass. Policy
+    activation, direct tenant columns/equivalent policies for indirect tables, trusted web/worker
+    context propagation and real role provisioning remain open.
 - **PERSONAL MCP MOVED TO PHASE 3 DISCOVERY.** IdP, OBO and ERP/downstream trust remain undecided;
   do not implement or treat discovery inputs as approved architecture. See
   `docs/planning/phase-3-plan.md`.
