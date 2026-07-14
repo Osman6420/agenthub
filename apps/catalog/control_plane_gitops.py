@@ -99,7 +99,11 @@ def import_control_plane_document(doc: Any) -> tuple[models.Model, bool, int]:
             raise ControlPlaneGitOpsError("unknown project in organization")
         instance, created = _create_only(
             Scenario,
-            lookup={"project": project, "slug": _required(metadata, "slug")},
+            lookup={
+                "organization": organization,
+                "project": project,
+                "slug": _required(metadata, "slug"),
+            },
             values={
                 "name": _required(spec, "name"),
                 "type": _required(spec, "type"),
@@ -147,7 +151,11 @@ def import_control_plane_document(doc: Any) -> tuple[models.Model, bool, int]:
             raise ControlPlaneGitOpsError("capabilities must be a list")
         instance, created = _create_only(
             ConsumerBinding,
-            lookup={"consumer": consumer, "scenario": scenario},
+            lookup={
+                "organization": organization,
+                "consumer": consumer,
+                "scenario": scenario,
+            },
             values={"capabilities": capabilities, "status": spec.get("status", "active")},
         )
     else:

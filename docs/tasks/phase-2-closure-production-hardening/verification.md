@@ -35,6 +35,24 @@ its generated probe role.
 ## Checks not run
 
 All environment-specific and live checks are pending concrete inputs and execution approval.
-Application connection pooling/context propagation, a real dedicated app role, the nine indirect
-tenant-table schema/policy designs, bootstrap/telemetry access and actual policy activation remain
-unverified.
+Production connection pooling, production role/secret provisioning and production policy activation
+remain unverified and require deployment approval. P11 staging-equivalent evidence follows below.
+
+## P11.2–P11.4 evidence (2026-07-14)
+
+- Nine indirect models received direct, non-null tenant lineage through additive/backfill migrations;
+  fresh SQLite and PostgreSQL migration chains pass.
+- Full SQLite after implementation: `632 passed, 29 skipped`.
+- Broad PostgreSQL 16 tenancy/gateway/workflow/agent/ingestion: `253 passed, 5 skipped`; focused RLS
+  package after removing `PUBLIC EXECUTE`: `16 passed, 3 skipped`.
+- A temporary `agenthub_p11_verify` database and `agenthub_p11_verify_app` role exercised the real
+  migration and SQL templates. Readiness reported `47/47`; role flags were all least-privilege
+  (`NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`, `NOBYPASSRLS`); immutable artifact
+  update/delete were false while authorized draft delete was true.
+- The first rollback probe exposed default PostgreSQL `PUBLIC EXECUTE` on the scope helper. The
+  migration now revokes it. Rebuilt evidence showed `PUBLIC EXECUTE=false`; after rollback the role
+  was `NOLOGIN` with table and function privileges false.
+- `tenancy.0002` reverse then forward completed successfully. Temporary database and role were
+  deleted. The persistent local `agenthub` database was not migrated or role-mutated.
+- Final repository gates pass: Ruff format and lint over 358 files, mypy over 358 source files,
+  Django system check, migration drift check and `git diff --check`.

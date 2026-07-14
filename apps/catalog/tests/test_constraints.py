@@ -55,3 +55,19 @@ def test_project_slug_unique_within_org_but_free_across_orgs() -> None:
     with pytest.raises(IntegrityError):
         with transaction.atomic():
             _project(org_a, "dup")
+
+
+@pytest.mark.django_db
+def test_scenario_direct_tenant_lineage_rejects_mismatch() -> None:
+    org_a = Organization.objects.create(slug="lineage-a", name="A")
+    org_b = Organization.objects.create(slug="lineage-b", name="B")
+    project = _project(org_a, "p")
+
+    with pytest.raises(ValueError, match="scenario organization must match"):
+        Scenario.objects.create(
+            organization=org_b,
+            project=project,
+            slug="mismatch",
+            name="Mismatch",
+            type=ScenarioType.RAG,
+        )

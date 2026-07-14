@@ -310,7 +310,7 @@ class _GatewayView(APIView):
                 http_status_code=400,
             ) from exc
         if created:
-            transaction.on_commit(lambda: execute_workflow_run.delay(run.id))
+            transaction.on_commit(lambda: execute_workflow_run.delay(run.id, run.organization_id))
         body = {
             "request_id": request_id,
             "scenario_alias": alias,
@@ -400,7 +400,7 @@ class _GatewayView(APIView):
                 http_status_code=400,
             ) from exc
         if created:
-            transaction.on_commit(lambda: execute_agent_run.delay(run.id))
+            transaction.on_commit(lambda: execute_agent_run.delay(run.id, run.organization_id))
         body = {
             "request_id": request_id,
             "scenario_alias": alias,

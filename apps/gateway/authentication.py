@@ -13,6 +13,7 @@ from rest_framework import authentication, exceptions
 
 from apps.identity.models import Consumer
 from apps.identity.tokens import resolve_consumer
+from apps.tenancy.context import set_tenant_context
 
 
 class ConsumerPrincipal:
@@ -49,6 +50,7 @@ class ConsumerTokenAuthentication(authentication.BaseAuthentication):
         consumer = resolve_consumer(parts[1])
         if consumer is None:
             raise exceptions.AuthenticationFailed("Invalid token.")
+        set_tenant_context(consumer.organization_id)
         return ConsumerPrincipal(consumer), consumer
 
     def authenticate_header(self, request: Any) -> str:

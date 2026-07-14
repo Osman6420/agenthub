@@ -146,6 +146,7 @@ def start_canary(
             locked.save(update_fields=["status"])
             release = locked
         canary = ReleaseCanary(
+            organization_id=scenario.organization_id,
             scenario=scenario,
             consumer=consumer,
             release=release,

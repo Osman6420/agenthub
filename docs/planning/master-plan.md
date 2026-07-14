@@ -22,11 +22,12 @@ implemented and verified offline. P9.1–P9.5 and P10.1/P10.2 are also implement
 production-hardening/live-profile closure milestone remains Phase 2 work. Personal MCP identity/OBO
 moved to Phase 3 discovery. Concrete live changes retain their explicit gates.
 
-Phase 2 closure P11.1 now adds a read-only PostgreSQL RLS readiness inventory/check. It validates
-the proposed non-owner application role, exact forced policy and read-access invariants for every direct
-tenant-column table and explicitly blocks readiness for nine relationship-only tenant tables. It
-does not provision a role or activate a policy; web/worker context design and live rollout remain
-open. See [`phase-2-closure-production-hardening`](../tasks/phase-2-closure-production-hardening/plan.md).
+Phase 2 closure P11 is implemented and offline/staging-equivalent verified: all nine formerly
+indirect tables now carry direct tenant lineage; 47 direct-tenant tables use canonical FORCE RLS;
+operator, gateway and worker paths install bounded transaction-local tenant scope; and reviewed
+non-owner provisioning/rollback plus a table-specific grant matrix pass on PostgreSQL 16. No
+production role/secret/database was changed. See
+[`phase-2-closure-production-hardening`](../tasks/phase-2-closure-production-hardening/plan.md).
 
 - Sprint 0: bootable Django modular-monolith skeleton — settings split, Celery role
   definitions, unauthenticated health probes, dependency manifest + lockfile, Docker

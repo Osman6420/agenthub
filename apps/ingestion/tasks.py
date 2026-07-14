@@ -27,8 +27,8 @@ from apps.ingestion.vector_store import set_tenant_context
 
 
 @shared_task(bind=True, queue="ingestion", max_retries=2)
-def ingest_source(self: object, run_id: int) -> str:
-    status = execute_run(run_id)
+def ingest_source(self: object, run_id: int, organization_id: int) -> str:
+    status = execute_run(run_id, organization_id)
     if status == RunStatus.RETRY:
         raise self.retry(countdown=30)  # type: ignore[attr-defined]
     return status

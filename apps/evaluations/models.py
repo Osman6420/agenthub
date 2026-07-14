@@ -60,6 +60,9 @@ class EvalRun(TimeStampedModel):
 
 
 class EvalCaseResult(TimeStampedModel):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="eval_case_results"
+    )
     run = models.ForeignKey(EvalRun, on_delete=models.CASCADE, related_name="case_results")
     case_id = models.CharField(max_length=128)
     passed = models.BooleanField()
@@ -71,3 +74,11 @@ class EvalCaseResult(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(fields=["run", "case_id"], name="uniq_case_result_run_case")
         ]
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.run_id:
+            run_org_id = self.run.organization_id
+            if self.organization_id and self.organization_id != run_org_id:
+                raise ValueError("eval result organization must match run organization")
+            self.organization_id = run_org_id
+        super().save(*args, **kwargs)  # type: ignore[arg-type]

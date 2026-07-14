@@ -25,6 +25,7 @@ from apps.ingestion.models import (
     EmbeddingIndexType,
     IndexVersion,
 )
+from apps.tenancy.context import set_tenant_context
 
 # A store name is only ever ``chunk_iv_<int>``. Validated defensively before any interpolation.
 _STORE_NAME = re.compile(r"^chunk_iv_[0-9]+$")
@@ -56,20 +57,6 @@ class VectorHit:
 def _require_postgres() -> None:
     if connection.vendor != "postgresql":
         raise VectorStoreError("VECTOR_STORE_REQUIRES_POSTGRES")
-
-
-def set_tenant_context(organization_id: int) -> None:
-    """Set the transaction-local tenant id for RLS (ADR-0004); PostgreSQL-only, else no-op.
-
-    ``is_local=true`` scopes the setting to the current transaction so it never leaks to the next
-    operation on a pooled connection. Callers must run inside a transaction that also issues the
-    tenant-scoped query, or the setting is lost. A missing/invalid setting makes the RLS policy
-    return no rows (fail-closed).
-    """
-    if connection.vendor != "postgresql":
-        return
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT set_config('app.tenant_id', %s, true)", [str(int(organization_id))])
 
 
 def store_name(index_version: IndexVersion | int) -> str:
@@ -126,15 +113,14 @@ def provision_store(index_version: IndexVersion) -> str:
             f"USING hnsw (embedding {opclass}) WITH (m = 16, ef_construction = 64)"
         )
         # RLS backstop (ADR-0004): FORCE applies the policy even to the table owner, so a missing
-        # ``app.tenant_id`` (or a mismatched one) yields no rows regardless of the app predicate.
+        # transaction-local tenant scope yields no rows regardless of the app predicate.
         cursor.execute(f'ALTER TABLE "{name}" ENABLE ROW LEVEL SECURITY')
         cursor.execute(f'ALTER TABLE "{name}" FORCE ROW LEVEL SECURITY')
         cursor.execute(f'DROP POLICY IF EXISTS "{name}_tenant" ON "{name}"')
-        # NULLIF makes a missing OR empty ``app.tenant_id`` resolve to NULL -> the predicate is
-        # NULL -> no rows (fail-closed), and avoids an ``''::bigint`` cast error.
         cursor.execute(
             f'CREATE POLICY "{name}_tenant" ON "{name}" '
-            "USING (organization_id = NULLIF(current_setting('app.tenant_id', true), '')::bigint)"
+            "USING (agenthub_tenant_scope_contains(organization_id)) "
+            "WITH CHECK (agenthub_tenant_scope_contains(organization_id))"
         )
     return name
 

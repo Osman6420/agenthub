@@ -43,7 +43,7 @@ P4 added the document-ACL retrieval security core: `ScenarioDocumentSetBinding` 
 default from bindings, the resolver carries them, and `PgvectorRetrievalProvider._retrieve_acl`
 serves `/v1/query` only from the pinned versions' **active** per-`IndexVersion` stores (tenant +
 not-tombstoned scoped, no client filter); each store is provisioned with **`FORCE ROW LEVEL
-SECURITY`** + a transaction-local `app.tenant_id` tenant policy (ADR-0004, proven fail-closed under a
+SECURITY`** + a transaction-local `app.tenant_scope` tenant policy (ADR-0004, proven fail-closed under a
 non-superuser role); and `promote_staged_index`/`rollback_staged_index` do the metadata-only
 pointer-flip. Legacy source-scoped retrieval is unchanged; no dependency or live egress added.
 **Remaining P4 production hardening:** `FORCE` RLS on the Django-managed tenant tables + a dedicated

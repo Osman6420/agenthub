@@ -30,7 +30,8 @@ def resume_workflow_on_tool_decision(sender: Any, instance: ApprovalRequest, **k
 
     from apps.workflows.tasks import execute_workflow_run
 
-    transaction.on_commit(lambda: execute_workflow_run.delay(run_id))
+    organization_id = instance.organization_id
+    transaction.on_commit(lambda: execute_workflow_run.delay(run_id, organization_id))
 
 
 def _run_id_from_invocation_key(approval: ApprovalRequest) -> int | None:

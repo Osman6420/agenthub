@@ -24,6 +24,7 @@ from apps.agents.models import (
 from apps.agents.runtime import AgentPaused, AgentRuntimeError, execute_agent
 from apps.agents.services import _next_sequence
 from apps.artifacts.validation import compute_checksum
+from apps.tenancy.context import set_tenant_context
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +38,23 @@ _CLAIMABLE = frozenset(
 
 
 @shared_task(queue="runtime", acks_late=True)
-def execute_agent_run(run_id: int) -> str:
+def execute_agent_run(run_id: int, organization_id: int | None = None) -> str:
+    if organization_id is None:
+        organization_id = (
+            AgentRun.objects.filter(pk=run_id).values_list("organization_id", flat=True).first()
+        )
+        if organization_id is None:
+            logger.warning(
+                "agent task ignored because run does not exist", extra={"run_id": run_id}
+            )
+            return "missing"
     try:
         with transaction.atomic():
+            set_tenant_context(organization_id)
             run = (
                 AgentRun.objects.select_for_update()
                 .select_related("agent_version", "release")
-                .get(pk=run_id)
+                .get(pk=run_id, organization_id=organization_id)
             )
             if run.status in TERMINAL_RUN_STATUSES:
                 return str(run.status)
@@ -67,15 +78,19 @@ def execute_agent_run(run_id: int) -> str:
         return "missing"
 
     try:
-        result = execute_agent(run=run)
-    except AgentPaused:
-        # The run is suspended awaiting approval; state was persisted by the runtime.
-        return str(AgentRunStatus.WAITING_APPROVAL)
+        with transaction.atomic():
+            set_tenant_context(organization_id)
+            try:
+                result = execute_agent(run=run)
+            except AgentPaused:
+                # Commit the durable waiting checkpoint before acknowledging the task.
+                return str(AgentRunStatus.WAITING_APPROVAL)
     except AgentRuntimeError as exc:
-        return _finish_error(run_id, exc.code)
+        return _finish_error(run_id, organization_id, exc.code)
 
     with transaction.atomic():
-        run = AgentRun.objects.select_for_update().get(pk=run_id)
+        set_tenant_context(organization_id)
+        run = AgentRun.objects.select_for_update().get(pk=run_id, organization_id=organization_id)
         if run.status == AgentRunStatus.CANCELLED:
             return str(run.status)
         final_state = dict(result.state)
@@ -112,9 +127,10 @@ def execute_agent_run(run_id: int) -> str:
     return str(AgentRunStatus.COMPLETED)
 
 
-def _finish_error(run_id: int, code: str) -> str:
+def _finish_error(run_id: int, organization_id: int, code: str) -> str:
     with transaction.atomic():
-        run = AgentRun.objects.select_for_update().get(pk=run_id)
+        set_tenant_context(organization_id)
+        run = AgentRun.objects.select_for_update().get(pk=run_id, organization_id=organization_id)
         if run.status == AgentRunStatus.CANCELLED:
             return str(run.status)
         status = AgentRunStatus.TIMED_OUT if code == "AGENT_TIMED_OUT" else AgentRunStatus.FAILED

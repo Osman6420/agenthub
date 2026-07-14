@@ -32,6 +32,14 @@ not be treated as authorization to activate a production role or policy.
 The diagnostic requires read access only; write/delete grants must be separately minimized per
 table so immutable or append-only records do not gain blanket mutation privileges.
 
+P11.2 uses transaction-local `app.tenant_scope`, never a client-provided tenant selector. Console
+scope is derived from authenticated memberships; machine scope is set only after bearer-token
+resolution; worker scope comes from a required queue organization id and every first lookup also
+matches that id. Empty/malformed scope fails closed. Membership and token resolution remain explicit
+bootstrap exceptions because applying tenant RLS before identity resolution creates a circular
+dependency. An injected SQL statement could set a custom GUC, so RLS remains defense in depth and
+does not replace injection prevention, parameterization, or least-privilege grants.
+
 ## Residual risk
 
 Concrete provider retention, corporate network topology, scanner effectiveness and operational

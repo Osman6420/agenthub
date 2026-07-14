@@ -29,23 +29,39 @@ context carried **transaction-locally** so nothing leaks across a pooled connect
 
 ## Decision
 
+### Phase 2 closure clarification (2026-07-14)
+
+Operator sessions may be members of several organizations and existing console lists intentionally
+span that authorized set. The transaction-local context is therefore represented as a bounded,
+sorted `app.tenant_scope` of organization ids for operator requests and as a singleton scope for
+gateway/worker operations. The scope is always derived server-side from authenticated membership,
+authenticated consumer identity, or an identifier-only worker message whose first query also
+matches the organization id. Client request bodies and artifact data never set it. Policies call a
+platform-owned `app_tenant_scope_contains(organization_id)` helper; absent/empty scope returns false.
+
+Identity bootstrap tables needed before the tenant is known (`tenancy_organizationmembership`,
+`identity_consumer`, `identity_consumertoken`) are not protected by this tenant policy and instead
+retain narrow application queries and table-specific grants. Nullable cross-plane audit/usage
+tables also keep a separate append/admin design. These exceptions must remain explicit in readiness
+and deployment documentation.
+
 - **Enable + FORCE.** `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` on every tenant
   data-plane table. The application connects as a role that is **not the table owner**, is **not a
   superuser**, and lacks **`BYPASSRLS`**, so policies apply to it (owners/superusers/`BYPASSRLS`
   would otherwise bypass RLS).
-- **Policies.** Read/visibility `USING (tenant_id = current_setting('app.tenant_id', true)::bigint)`
-  and, for writes, a matching `WITH CHECK`. `current_setting(…, true)` returns `NULL` when the
-  setting is absent, so `tenant_id = NULL` yields **no rows** and inserts are rejected — **missing or
-  invalid context fails closed**.
+- **Policies.** Read/visibility and write checks call the platform-owned
+  `agenthub_tenant_scope_contains(organization_id)` helper. It parses only the bounded server-set
+  transaction-local scope; absent/empty scope yields **no rows** and rejects writes, while malformed
+  scope errors rather than widening access — **missing or invalid context fails closed**.
 - **Transaction-local context.** Each unit of work sets the context **after** opening its
-  transaction: `SELECT set_config('app.tenant_id', <tenant_id>, true)` (the `true`/`is_local` flag
+  transaction: `SELECT set_config('app.tenant_scope', <scope>, true)` (the `true`/`is_local` flag
   scopes it to the transaction). It is **never** set at session scope, so a pooled connection never
   carries a tenant between operations.
-  - **Web:** a middleware wraps the request in an atomic block (or `ATOMIC_REQUESTS`) and sets the
-    context from the gateway-signed `ExecutionContext` (runtime) or the operator session's tenant
-    scope (console).
-  - **Workers:** a Celery task base/wrapper opens an atomic block and sets the context from the
-    run's tenant before touching tenant tables.
+  - **Web:** middleware wraps the request in an atomic block and sets console scope from authenticated
+    memberships; gateway bearer authentication replaces the initially empty scope with the
+    authenticated consumer's singleton organization.
+  - **Workers:** task messages carry object id plus organization id; each database phase opens an
+    atomic block, sets singleton scope, and matches both identifiers on its first query.
 - **Trusted source only.** `tenant_id` comes from the signed context or the authenticated operator
   session — **never** from client input.
 - **Plane separation.** Global control-plane / worker-claim / catalog tables (e.g. release pointers,
@@ -71,8 +87,9 @@ context carried **transaction-locally** so nothing leaks across a pooled connect
 
 ## Negative-test matrix (required before the ACL milestone promotes)
 
-- Missing context → 0 rows; wrong-tenant context → 0 rows; write with mismatched tenant → rejected
-  by `WITH CHECK`; a pooled connection reused across tenants does not leak; the app role cannot
+- Missing context → 0 rows; wrong-tenant context → 0 rows; multi-membership scope reveals only that
+  exact set; write with mismatched tenant → rejected by `WITH CHECK`; a pooled connection reused
+  across tenants does not leak; the app role cannot
   `ALTER TABLE … DISABLE ROW LEVEL SECURITY` or otherwise bypass; cross-tenant admin only via the
   separate role.
 

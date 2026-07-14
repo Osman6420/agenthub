@@ -2,7 +2,7 @@
 
 Superusers bypass RLS, so this proves enforcement under a NOSUPERUSER role via ``SET ROLE`` (the
 production app role is likewise a non-owner, non-superuser role). It asserts that with the app
-predicate **omitted**, a missing/empty or wrong ``app.tenant_id`` returns no rows, and only the
+predicate **omitted**, a missing/empty or wrong ``app.tenant_scope`` returns no rows, and only the
 correct tenant context reveals them. PostgreSQL-only.
 """
 
@@ -43,23 +43,26 @@ def test_rls_is_fail_closed_under_non_superuser() -> None:
     with connection.cursor() as cursor:
         cursor.execute("CREATE ROLE rls_probe NOSUPERUSER NOLOGIN")
         cursor.execute(f'GRANT SELECT ON "{name}" TO rls_probe')
+        cursor.execute(
+            "GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) TO rls_probe"
+        )
 
         # No/empty tenant context: RLS returns no rows even with the app predicate omitted.
-        cursor.execute("SELECT set_config('app.tenant_id', '', true)")
+        cursor.execute("SELECT set_config('app.tenant_scope', '', true)")
         cursor.execute("SET ROLE rls_probe")
         cursor.execute(f'SELECT count(*) FROM "{name}"')  # noqa: S608 - int-derived name
         assert cursor.fetchone()[0] == 0
         cursor.execute("RESET ROLE")
 
         # Correct tenant context: rows are visible.
-        cursor.execute("SELECT set_config('app.tenant_id', %s, true)", [str(org.id)])
+        cursor.execute("SELECT set_config('app.tenant_scope', %s, true)", [str(org.id)])
         cursor.execute("SET ROLE rls_probe")
         cursor.execute(f'SELECT count(*) FROM "{name}"')  # noqa: S608
         assert cursor.fetchone()[0] == 1
         cursor.execute("RESET ROLE")
 
         # Wrong tenant context: cross-tenant read blocked at the RLS layer.
-        cursor.execute("SELECT set_config('app.tenant_id', %s, true)", [str(other_tenant)])
+        cursor.execute("SELECT set_config('app.tenant_scope', %s, true)", [str(other_tenant)])
         cursor.execute("SET ROLE rls_probe")
         cursor.execute(f'SELECT count(*) FROM "{name}"')  # noqa: S608
         assert cursor.fetchone()[0] == 0

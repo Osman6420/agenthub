@@ -23,7 +23,13 @@ class TenantTableClass(StrEnum):
     TELEMETRY = "telemetry"
 
 
-_BOOTSTRAP_MODELS = frozenset({"tenancy.organizationmembership"})
+_BOOTSTRAP_MODELS = frozenset(
+    {
+        "identity.consumer",
+        "identity.consumertoken",
+        "tenancy.organizationmembership",
+    }
+)
 _TELEMETRY_MODELS = frozenset({"audit.auditevent", "observability.usageevent"})
 _INDIRECT_TENANT_MODELS = frozenset(
     {
@@ -161,10 +167,7 @@ def _inspect_table(
     role_exists: bool,
     table: TenantTable,
 ) -> TableRlsState:
-    canonical_expression = (
-        f"({table.tenant_column} = "
-        "(NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::bigint)"
-    )
+    canonical_expression = f"agenthub_tenant_scope_contains({table.tenant_column})"
     with connection.cursor() as cursor:
         cursor.execute(
             """

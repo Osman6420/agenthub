@@ -19,6 +19,7 @@ from apps.identity.models import (
     ConsumerBinding,
     ConsumerProtocol,
     ConsumerStatus,
+    ConsumerToken,
 )
 from apps.identity.services import resolve_active_binding
 from apps.tenancy.models import Organization
@@ -64,6 +65,30 @@ def test_binding_rejects_cross_organization() -> None:
     consumer_a = _consumer(org_a)
     with pytest.raises(ValidationError):
         ConsumerBinding(consumer=consumer_a, scenario=scenario_b, capabilities=["query"]).save()
+
+
+@pytest.mark.django_db
+def test_direct_identity_lineage_rejects_explicit_mismatch() -> None:
+    org_a = Organization.objects.create(slug="lineage-a", name="A")
+    org_b = Organization.objects.create(slug="lineage-b", name="B")
+    scenario_a = _scenario(org_a)
+    consumer_a = _consumer(org_a)
+
+    with pytest.raises(ValidationError, match="binding organization must match"):
+        ConsumerBinding(
+            organization=org_b,
+            consumer=consumer_a,
+            scenario=scenario_a,
+            capabilities=["query"],
+        ).save()
+    with pytest.raises(ValueError, match="token organization must match"):
+        ConsumerToken(
+            organization=org_b,
+            consumer=consumer_a,
+            name="bad",
+            prefix="bad",
+            token_hash="f" * 64,
+        ).save()
 
 
 @pytest.mark.django_db

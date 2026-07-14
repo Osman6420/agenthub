@@ -70,6 +70,9 @@ class ConsumerToken(TimeStampedModel):
     default credential seam; OIDC/JWT/mTLS are added later without changing callers.
     """
 
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="consumer_tokens"
+    )
     consumer = models.ForeignKey(Consumer, on_delete=models.CASCADE, related_name="tokens")
     name = models.CharField(max_length=200)
     prefix = models.CharField(max_length=12, db_index=True)
@@ -86,6 +89,14 @@ class ConsumerToken(TimeStampedModel):
     def is_active(self) -> bool:
         return self.status == TokenStatus.ACTIVE
 
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.consumer_id:
+            consumer_org_id = self.consumer.organization_id
+            if self.organization_id and self.organization_id != consumer_org_id:
+                raise ValueError("token organization must match consumer organization")
+            self.organization_id = consumer_org_id
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
+
 
 class BindingStatus(models.TextChoices):
     ACTIVE = "active", "Active"
@@ -95,6 +106,9 @@ class BindingStatus(models.TextChoices):
 class ConsumerBinding(TimeStampedModel):
     """Grants a consumer access to a scenario with a capability set."""
 
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="consumer_bindings"
+    )
     consumer = models.ForeignKey(Consumer, on_delete=models.CASCADE, related_name="bindings")
     scenario = models.ForeignKey(
         "catalog.Scenario", on_delete=models.CASCADE, related_name="consumer_bindings"
@@ -125,6 +139,11 @@ class ConsumerBinding(TimeStampedModel):
                 raise ValidationError("consumer and scenario must belong to the same organization")
 
     def save(self, *args: object, **kwargs: object) -> None:
+        if self.consumer_id:
+            consumer_org_id = self.consumer.organization_id
+            if self.organization_id and self.organization_id != consumer_org_id:
+                raise ValidationError("binding organization must match consumer organization")
+            self.organization_id = consumer_org_id
         # Enforce invariants on every write (full_clean is not called automatically).
         self.full_clean()
         super().save(*args, **kwargs)  # type: ignore[arg-type]

@@ -32,7 +32,8 @@ def resume_agent_on_tool_decision(sender: Any, instance: ApprovalRequest, **kwar
 
     from apps.agents.tasks import execute_agent_run
 
-    transaction.on_commit(lambda: execute_agent_run.delay(run_id))
+    organization_id = instance.organization_id
+    transaction.on_commit(lambda: execute_agent_run.delay(run_id, organization_id))
 
 
 def _run_id_from_invocation_key(approval: ApprovalRequest) -> int | None:

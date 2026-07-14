@@ -75,6 +75,9 @@ class AIProject(TimeStampedModel):
 class Scenario(TimeStampedModel):
     """A callable, releasable single-purpose AI behavior within a project."""
 
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="scenarios"
+    )
     project = models.ForeignKey(AIProject, on_delete=models.CASCADE, related_name="scenarios")
     slug = models.SlugField(max_length=64)
     name = models.CharField(max_length=200)
@@ -98,9 +101,13 @@ class Scenario(TimeStampedModel):
     def __str__(self) -> str:
         return f"{self.project}/{self.slug}"
 
-    @property
-    def organization_id(self) -> int:
-        return self.project.organization_id
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.project_id:
+            project_org_id = self.project.organization_id
+            if self.organization_id and self.organization_id != project_org_id:
+                raise ValueError("scenario organization must match project organization")
+            self.organization_id = project_org_id
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
 
 
 class ScenarioAlias(TimeStampedModel):

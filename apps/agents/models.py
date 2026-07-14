@@ -145,6 +145,9 @@ class AgentRun(TimeStampedModel):
 
 
 class AgentRunEvent(models.Model):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="agent_run_events"
+    )
     run = models.ForeignKey(AgentRun, on_delete=models.CASCADE, related_name="events")
     sequence = models.PositiveIntegerField()
     event_type = models.CharField(max_length=64)
@@ -166,3 +169,11 @@ class AgentRunEvent(models.Model):
 
     def __str__(self) -> str:
         return f"agent-event:{self.run_id}:{self.sequence}:{self.event_type}"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.run_id:
+            run_org_id = self.run.organization_id
+            if self.organization_id and self.organization_id != run_org_id:
+                raise ValueError("agent event organization must match run organization")
+            self.organization_id = run_org_id
+        super().save(*args, **kwargs)  # type: ignore[arg-type]

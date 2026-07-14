@@ -717,16 +717,19 @@ def test_generic_rest_lineage_and_schedule_rls_are_forced_and_fail_closed(
     )
     with connection.cursor() as cursor:
         cursor.execute(f'CREATE ROLE "{role}" NOSUPERUSER NOLOGIN')  # noqa: S608
+        cursor.execute(  # noqa: S608
+            f'GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) TO "{role}"'
+        )
         for table in tables:
             cursor.execute(f'GRANT SELECT ON "{table}" TO "{role}"')  # noqa: S608
-        cursor.execute("SELECT set_config('app.tenant_id', '', true)")
+        cursor.execute("SELECT set_config('app.tenant_scope', '', true)")
         cursor.execute(f'SET ROLE "{role}"')  # noqa: S608
         for table in tables:
             cursor.execute(f'SELECT count(*) FROM "{table}"')  # noqa: S608
             assert cursor.fetchone()[0] == 0
         cursor.execute("RESET ROLE")
 
-        cursor.execute("SELECT set_config('app.tenant_id', %s, true)", [str(organization.id)])
+        cursor.execute("SELECT set_config('app.tenant_scope', %s, true)", [str(organization.id)])
         cursor.execute(f'SET ROLE "{role}"')  # noqa: S608
         for table in tables:
             cursor.execute(f'SELECT count(*) FROM "{table}"')  # noqa: S608

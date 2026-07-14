@@ -28,7 +28,8 @@ reach a live model.
 2. **UI modernization + Turkish** (i18n).
 3. **AI-assisted authoring** (text → artifact → validate → preview → publish), coexisting
    with the visual builder.
-4. **Phase 2 closure hardening** — broader RLS/non-owner role, upload scanning, concrete live
+4. **Phase 2 closure hardening** — P11 RLS/non-owner role implemented and staging-equivalent
+   verified; upload scanning and concrete live
    connector/embedding/OCR profiles and live AI-authoring activation.
 
 **Deferred to Phase 3:** Personal MCP end-user identity and on-behalf-of delegation. See
@@ -360,17 +361,18 @@ Phase 2 kickoff is approved; remaining gates are **per-phase egress/dependency s
 **Workstream 1 and Workstream 5 are implemented and verified for their current offline scope.**
 **Workstream 2 implementation and automated verification are complete; only Turkish terminology
 review remains prioritized, while responsive/accessibility manual acceptance is not required.
-Workstream 3 P10.1/P10.2 is offline-verified. Production hardening and live activation are required
-at Phase 2 closure. Personal MCP moved to Phase 3 discovery.**
+Workstream 3 P10.1/P10.2 is offline-verified. P11 RLS/non-owner hardening is implemented and
+staging-equivalent verified without production mutation; scanning, live profiles and live activation
+remain required at Phase 2 closure. Personal MCP moved to Phase 3 discovery.**
 
 ### Workstream status
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | **Offline scope verified; production hardening remains Phase 2 closure scope** — broader Django-table RLS/non-owner role, upload scanning and live Confluence/REST/embedding/OCR profiles. Decisions = ADR-0003–0007. |
+| 1 | Document plane | **Offline scope verified; P11 RLS/non-owner hardening implemented and staging-equivalent verified** — upload scanning and live Confluence/REST/embedding/OCR profiles remain closure work. Decisions = ADR-0003–0007. |
 | 2 | UI modernization + Turkish | **P9.1–P9.5 implemented and automated verification complete** — responsive/keyboard/screen-reader manual acceptance waived; Turkish terminology remains priority |
 | 3 | AI-assisted authoring (+ builder preview) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output candidates use immutable checksummed prompt contracts, canonical diagnostics and explicit workflow/contract-draft transfer. Live activation is a Phase 2 closure gate. |
-| Closure | Production readiness | **Required in Phase 2** — RLS/non-owner role, upload scanning, live profiles, privacy/retention/cost approval, smoke and rollback evidence |
+| Closure | Production readiness | **Partially complete** — P11 RLS/non-owner role is implemented/verified without production mutation; upload scanning, live profiles, privacy/retention/cost approval, live smoke and rollback evidence remain |
 | 5 | Live model runtime (real generation) | **P1 + P5 + P6 implemented + verified** — catalog/shared egress/chat provider (opt-in); P5 wired real retrieve/generate into the agent loop + workflow nodes + per-node prompt/model binding; **P6 added the authored, governed agent system prompt**. WS5 runtime is functionally complete for the current scope (real chat + ACL RAG in `/v1/query`, workflows, and agents) |
 
 ---

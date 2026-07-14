@@ -26,5 +26,5 @@ class Command(BaseCommand):
             run = create_run(source=source)
         except IngestionError as exc:
             raise CommandError(exc.code) from exc
-        ingest_source.delay(run.pk)
+        ingest_source.delay(run.pk, run.organization_id)
         self.stdout.write(self.style.SUCCESS(f"queued ingestion run {run.pk}"))

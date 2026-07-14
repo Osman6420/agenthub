@@ -198,9 +198,9 @@ resolved entirely server-side. Concretely:
   `FORCE ROW LEVEL SECURITY` applies policies to it (owners would otherwise bypass RLS).
 - Each request/worker data operation, **after opening its transaction**, establishes
   **transaction-local** tenant context from the trusted signed context:
-  `SELECT set_config('app.tenant_id', <tenant_id>, true)` (the `true`/`is_local` flag scopes it
+  `SELECT set_config('app.tenant_scope', <server-derived-scope>, true)` (the `true`/`is_local` flag scopes it
   to the transaction so it never leaks to the next operation on a pooled connection). Policies
-  are `USING (tenant_id = current_setting('app.tenant_id')::bigint)`; if the setting is missing
+  call `agenthub_tenant_scope_contains(organization_id)`; if the setting is missing
   or invalid the policy returns **no rows** (fail-closed). No session-level tenant state is left
   on the pool.
 - **Control-plane / global worker-claim tables are separated from tenant data-plane tables.** The
@@ -306,7 +306,7 @@ implementation. Phase 2 kickoff is approved; per-phase egress/dependency sign-of
   name-parameterized DAL implementation note.
 - **Spike 2 — RLS connection-context → [ADR-0004](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md).**
   `FORCE ROW LEVEL SECURITY`, a non-owner app role without `BYPASSRLS`, a **transaction-local**
-  `set_config('app.tenant_id', …, true)` hook for web + Celery, fail-closed missing/invalid context,
+  `set_config('app.tenant_scope', …, true)` hook for web + Celery, fail-closed missing/invalid context,
   control-plane/data-plane separation, pgbouncer session/transaction (not statement) pooling, and a
   negative-test matrix.
 - **Spike 3 — shared SSRF-safe egress adapter → [ADR-0005](../../adr/0005-shared-ssrf-safe-egress-adapter.md)**

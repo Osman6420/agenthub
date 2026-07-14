@@ -62,7 +62,7 @@ live egress), and ends with a **demoable capability**.
    immutable blue/green per-`IndexVersion` store, system-generated names, pointer-flip promotion,
    retention condition, `vector`≤2000 / `halfvec`≤4000, name-parameterized DAL.
 2. **Spike 2 — RLS connection-context → [ADR-0004](../../adr/0004-tenant-isolation-postgres-rls-connection-context.md):**
-   non-owner app role, `FORCE ROW LEVEL SECURITY`, transaction-local `set_config('app.tenant_id',…,
+   non-owner app role, `FORCE ROW LEVEL SECURITY`, transaction-local `set_config('app.tenant_scope',…,
    true)` for web + Celery, pooling safety, fail-closed policy, control-plane/data-plane split,
    negative-test matrix.
 3. **Spike 3 — shared SSRF-safe egress adapter → [ADR-0005](../../adr/0005-shared-ssrf-safe-egress-adapter.md)**

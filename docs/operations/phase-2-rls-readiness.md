@@ -16,8 +16,8 @@ lower-case PostgreSQL schema. Do not put a password or connection string in comm
 The inventory classifications are:
 
 - `protected`: a required direct `organization_id` column exists and ADR-0004 RLS checks apply;
-- `indirect`: tenant ownership is reachable only through another table and is a rollout blocker
-  until a reviewed direct discriminator or equally fail-closed policy exists;
+- `indirect`: tenant ownership is reachable only through another table and is a rollout blocker;
+  P11.2 removed all current indirect classifications by adding direct lineage;
 - `bootstrap`: organization membership resolves an operator's trusted scope and needs a separate
   bootstrap/access design;
 - `telemetry`: nullable cross-plane audit/usage data needs a separate append/admin access design.
@@ -28,7 +28,8 @@ canonical `tenant_isolation` policy. It also fails while any `indirect` model re
 result proves catalog configuration only: it does not prove web/worker tenant-context propagation,
 pool isolation, platform-admin access, migration ownership, or production rollout approval.
 
-Current P11.1 behavior is intentionally diagnostic. Do not use a failing result as a reason to
+The command remains diagnostic. It currently expects 47 protected direct-tenant tables plus the
+documented bootstrap/telemetry exceptions. Do not use a failing result as a reason to
 disable RLS, broaden a role, connect the application as the table owner, or grant `BYPASSRLS`.
 P11.1 does not require blanket insert/update/delete grants; define those per table in the later
 least-privilege role design, especially for immutable and append-only records.

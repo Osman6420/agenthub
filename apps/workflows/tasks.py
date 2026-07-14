@@ -9,6 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.artifacts.validation import compute_checksum
+from apps.tenancy.context import set_tenant_context
 from apps.workflows.models import WorkflowRun, WorkflowRunEvent, WorkflowRunStatus
 from apps.workflows.runtime import WorkflowPaused, WorkflowRuntimeError, execute_graph
 from apps.workflows.services import _next_sequence
@@ -17,13 +18,23 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(queue="runtime", acks_late=True)
-def execute_workflow_run(run_id: int) -> str:
+def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str:
+    if organization_id is None:
+        organization_id = (
+            WorkflowRun.objects.filter(pk=run_id).values_list("organization_id", flat=True).first()
+        )
+        if organization_id is None:
+            logger.warning(
+                "workflow task ignored because run does not exist", extra={"run_id": run_id}
+            )
+            return "missing"
     try:
         with transaction.atomic():
+            set_tenant_context(organization_id)
             run = (
                 WorkflowRun.objects.select_for_update()
                 .select_related("workflow_version", "release")
-                .get(pk=run_id)
+                .get(pk=run_id, organization_id=organization_id)
             )
             if run.status in {
                 WorkflowRunStatus.COMPLETED,
@@ -56,15 +67,21 @@ def execute_workflow_run(run_id: int) -> str:
         return "missing"
 
     try:
-        result = execute_graph(run=run)
-    except WorkflowPaused:
-        # The run is suspended awaiting approval; state was persisted by the runtime.
-        return str(WorkflowRunStatus.WAITING_APPROVAL)
+        with transaction.atomic():
+            set_tenant_context(organization_id)
+            try:
+                result = execute_graph(run=run)
+            except WorkflowPaused:
+                # Commit the durable waiting checkpoint before acknowledging the task.
+                return str(WorkflowRunStatus.WAITING_APPROVAL)
     except WorkflowRuntimeError as exc:
-        return _finish_error(run_id, exc.code)
+        return _finish_error(run_id, organization_id, exc.code)
 
     with transaction.atomic():
-        run = WorkflowRun.objects.select_for_update().get(pk=run_id)
+        set_tenant_context(organization_id)
+        run = WorkflowRun.objects.select_for_update().get(
+            pk=run_id, organization_id=organization_id
+        )
         if run.status == WorkflowRunStatus.CANCELLED:
             return str(run.status)
         run.redacted_state = result.state
@@ -93,9 +110,12 @@ def execute_workflow_run(run_id: int) -> str:
     return WorkflowRunStatus.COMPLETED
 
 
-def _finish_error(run_id: int, code: str) -> str:
+def _finish_error(run_id: int, organization_id: int, code: str) -> str:
     with transaction.atomic():
-        run = WorkflowRun.objects.select_for_update().get(pk=run_id)
+        set_tenant_context(organization_id)
+        run = WorkflowRun.objects.select_for_update().get(
+            pk=run_id, organization_id=organization_id
+        )
         if run.status == WorkflowRunStatus.CANCELLED:
             return str(run.status)
         status = (

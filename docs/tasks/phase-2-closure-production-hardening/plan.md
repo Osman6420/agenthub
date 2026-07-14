@@ -20,10 +20,11 @@ change record, rollback plan and explicit execution approval under `AGENTS.md`.
 
 ## Scope and acceptance criteria
 
-- [ ] Enumerate Django-managed tenant tables and apply deny-by-default PostgreSQL RLS policies with
+- [x] Enumerate Django-managed tenant tables and apply deny-by-default PostgreSQL RLS policies with
   transaction-local tenant context; prove missing/invalid/cross-tenant context denial.
-- [ ] Provision a dedicated non-owner, non-superuser application role without `BYPASSRLS`; verify
-  web and worker paths use it and table owners are not used by the application.
+- [x] Provide and staging-verify dedicated non-owner, non-superuser application-role provisioning
+  without `BYPASSRLS`; verify operator middleware and identifier-bound worker context under the
+  non-owner boundary. Production role/secret activation remains deployment-gated.
 - [ ] Select and approve an upload malware/type scanning boundary; quarantine or reject before
   content becomes indexable, with bounded files/timeouts and redacted audit.
 - [ ] Register and validate concrete live Confluence and generic REST profiles, credentials, CA/DNS
@@ -82,6 +83,26 @@ P11.1 deliberately leaves policy activation, schema denormalization, request/wor
 propagation and application-role provisioning open. Nine relationship-only tenant tables are
 reported as blockers rather than silently omitted. Evidence is recorded in `verification.md`.
 
+## Increment P11.2–P11.4: RLS activation and deployment role
+
+Status: **implemented and staging-equivalent verified; production activation pending**.
+
+- Add an immutable, non-null direct `organization_id` lineage column to the nine indirect tenant
+  tables, backfilled from their authoritative parent and checked on every application write.
+- Use a transaction-local, server-derived tenant scope: operator requests receive the exact active
+  membership set; gateway authentication narrows it to the authenticated consumer organization;
+  worker messages carry both object id and authoritative organization id and re-check both.
+- Keep membership and bearer-token lookup as explicit bootstrap tables because tenant identity is
+  not known before those lookups. Nullable audit/usage tables retain their separate append/admin
+  boundary. These exclusions are visible in readiness output and grant documentation.
+- Apply canonical FORCE RLS to protected direct-tenant tables through reversible PostgreSQL-only
+  migration DDL. Missing/empty/mismatched context denies rows and writes.
+- Provide reviewed provisioning and rollback SQL templates for a non-owner, non-superuser,
+  `NOBYPASSRLS` application role. Templates contain placeholders and are not executed against a
+  deployment automatically.
+- Define table-specific read/write grants; immutable and append-only tables do not receive blanket
+  update/delete privileges.
+
 ## Migration and rollback
 
 RLS/ownership changes require a staged reversible migration or deployment SQL reviewed against the
@@ -91,4 +112,6 @@ disable AI authoring without changing existing drafts.
 
 ## Status
 
-Planned for Phase 2 closure; concrete environment inputs and per-change execution approvals pending.
+P11 RLS/non-owner hardening is implemented and staging-equivalent verified. Phase 2 closure remains
+in progress: scanner selection, concrete live profiles, production privacy/cost/network inputs and
+per-change execution approvals are pending.

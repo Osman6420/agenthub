@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 from rest_framework.test import APIClient
 
-from apps.workflows.models import WorkflowRun, WorkflowRunEvent, WorkflowRunStatus
+from apps.workflows.models import (
+    WorkflowRun,
+    WorkflowRunEvent,
+    WorkflowRunStatus,
+    WorkflowVersion,
+)
 from apps.workflows.runtime import (
     WorkflowRuntimeError,
     _validate_output_policy,
@@ -132,3 +137,23 @@ def test_stale_broker_message_for_missing_run_is_safe_noop(
 ) -> None:
     assert execute_workflow_run(999_999) == "missing"
     assert "run does not exist" in caplog.text
+
+
+@pytest.mark.django_db
+def test_worker_message_with_wrong_organization_is_safe_noop(
+    workflow_fixture: WorkflowFixture,
+) -> None:
+    run = WorkflowRun.objects.create(
+        organization=workflow_fixture.organization,
+        scenario=workflow_fixture.scenario,
+        release=workflow_fixture.release,
+        workflow_version=WorkflowVersion.objects.get(scenario=workflow_fixture.scenario),
+        consumer=workflow_fixture.consumer,
+        idempotency_key="wrong-org",
+        input_checksum="0" * 64,
+        execution_context={},
+        deadline_at=workflow_fixture.release.created_at,
+    )
+    assert execute_workflow_run(run.pk, workflow_fixture.organization.id + 99_999) == "missing"
+    run.refresh_from_db()
+    assert run.status == WorkflowRunStatus.REQUESTED

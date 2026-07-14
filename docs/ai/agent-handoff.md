@@ -345,14 +345,16 @@ Current cross-agent state:
   authoring with privacy/retention/cost + smoke/rollback evidence remain planned. Concrete secrets,
   hosts, CA/DNS/firewall and production mutations still require their execution approvals. Plan:
   `docs/tasks/phase-2-closure-production-hardening/`.
-  - **P11.1 RLS readiness inventory IMPLEMENTED + OFFLINE-VERIFIED.** The read-only
-    `check_tenant_rls --app-role <role>` command inventories direct/indirect/bootstrap/telemetry
-    tenant tables and fails closed for unsafe/missing roles, ownership, read grants, non-forced or
-    non-canonical policies, and nine relationship-only tenant tables. It performs no DDL or context
-    mutation. Evidence: SQLite 6 passed / 2 skipped; PostgreSQL 16 6 passed / 2 skipped; full SQLite
-    626 passed / 27 skipped; 355-file format/lint/type plus Django/migration gates pass. Policy
-    activation, direct tenant columns/equivalent policies for indirect tables, trusted web/worker
-    context propagation and real role provisioning remain open.
+  - **P11 RLS/NON-OWNER HARDENING IMPLEMENTED + STAGING-EQUIVALENT VERIFIED.** Nine
+    formerly indirect models now have backfilled non-null direct lineage; 47 protected tables use
+    canonical FORCE RLS over bounded transaction-local `app.tenant_scope`; console membership,
+    gateway consumer and worker identifier flows set scope from trusted sources. Explicit bootstrap
+    identity and nullable telemetry exceptions remain visible. Provision/rollback SQL and a
+    least-privilege grant matrix passed against a temporary PostgreSQL 16 database/role, including
+    47/47 readiness, immutable mutation denial, NOLOGIN+grant rollback and migration reverse/forward.
+    Current evidence: full SQLite 632 passed / 29 skipped; broad PostgreSQL 253 passed / 5 skipped;
+    focused RLS 16 passed / 3 skipped; Ruff format/lint, mypy, Django, migration-drift and diff gates
+    pass over 358 source files. No production role, secret or database was changed.
 - **PERSONAL MCP MOVED TO PHASE 3 DISCOVERY.** IdP, OBO and ERP/downstream trust remain undecided;
   do not implement or treat discovery inputs as approved architecture. See
   `docs/planning/phase-3-plan.md`.

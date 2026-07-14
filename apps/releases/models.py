@@ -12,6 +12,7 @@ from django.db import models
 from django.db.models import Q
 
 from apps.catalog.models import Scenario
+from apps.tenancy.models import Organization
 
 
 class ReleaseStatus(models.TextChoices):
@@ -23,6 +24,9 @@ class ReleaseStatus(models.TextChoices):
 
 
 class ScenarioRelease(models.Model):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="scenario_releases"
+    )
     scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="releases")
     status = models.CharField(
         max_length=16, choices=ReleaseStatus.choices, default=ReleaseStatus.CANDIDATE
@@ -47,6 +51,14 @@ class ScenarioRelease(models.Model):
     def __str__(self) -> str:
         return f"release:{self.scenario_id}:{self.status}"
 
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.scenario_id:
+            scenario_org_id = self.scenario.organization_id
+            if self.organization_id and self.organization_id != scenario_org_id:
+                raise ValueError("release organization must match scenario organization")
+            self.organization_id = scenario_org_id
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
+
 
 class CanaryStatus(models.TextChoices):
     ACTIVE = "active", "Active"
@@ -62,6 +74,9 @@ class ReleaseCanary(models.Model):
     binding. Exactly one *active* canary may exist per (scenario, consumer).
     """
 
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="release_canaries"
+    )
     scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="canaries")
     consumer = models.ForeignKey(
         "identity.Consumer", on_delete=models.CASCADE, related_name="canaries"
@@ -86,6 +101,15 @@ class ReleaseCanary(models.Model):
 
     def __str__(self) -> str:
         return f"canary:{self.scenario_id}->{self.release_id}@{self.consumer_id}"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.scenario_id:
+            scenario_org_id = self.scenario.organization_id
+            if self.organization_id and self.organization_id != scenario_org_id:
+                raise ValidationError("canary organization must match scenario organization")
+            self.organization_id = scenario_org_id
+        self.full_clean()
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
 
     def clean(self) -> None:
         # Same-tenant, same-scenario invariants (defense in depth around the gate).

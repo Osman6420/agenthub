@@ -22,6 +22,7 @@ from apps.ingestion.models import (
     Source,
 )
 from apps.ingestion.pipeline import CHUNKERS, EMBEDDERS, PARSERS, PipelineError
+from apps.tenancy.context import set_tenant_context
 
 
 class IngestionError(RuntimeError):
@@ -43,9 +44,14 @@ def create_run(*, source: Source, max_attempts: int = 3) -> IngestionRun:
     return run
 
 
-def claim_run(run_id: int) -> IngestionRun | None:
+def claim_run(run_id: int, organization_id: int) -> IngestionRun | None:
     with transaction.atomic():
-        run = IngestionRun.objects.select_for_update().select_related("source").get(pk=run_id)
+        set_tenant_context(organization_id)
+        run = (
+            IngestionRun.objects.select_for_update()
+            .select_related("source")
+            .get(pk=run_id, organization_id=organization_id)
+        )
         if run.status not in {RunStatus.QUEUED, RunStatus.RETRY}:
             return None
         run.status = RunStatus.RUNNING
@@ -98,6 +104,7 @@ def _build_index(run: IngestionRun) -> IndexVersion:
         raise IngestionError("NO_DOCUMENTS")
 
     with transaction.atomic():
+        set_tenant_context(run.organization_id)
         latest = (
             IndexVersion.objects.select_for_update()
             .filter(source=source)
@@ -142,9 +149,12 @@ def _build_index(run: IngestionRun) -> IndexVersion:
         return index
 
 
-def _fail_run(run_id: int, code: str) -> str:
+def _fail_run(run_id: int, organization_id: int, code: str) -> str:
     with transaction.atomic():
-        run = IngestionRun.objects.select_for_update().get(pk=run_id)
+        set_tenant_context(organization_id)
+        run = IngestionRun.objects.select_for_update().get(
+            pk=run_id, organization_id=organization_id
+        )
         terminal = run.attempt >= run.max_attempts
         run.status = RunStatus.DEAD_LETTER if terminal else RunStatus.RETRY
         run.error_code = code
@@ -175,23 +185,26 @@ def _fail_run(run_id: int, code: str) -> str:
         return run.status
 
 
-def execute_run(run_id: int) -> str:
-    run = claim_run(run_id)
+def execute_run(run_id: int, organization_id: int) -> str:
+    run = claim_run(run_id, organization_id)
     if run is None:
         return "not_claimed"
     try:
         with source_lock(run.source_id) as acquired:
             if not acquired:
-                return _fail_run(run.pk, "SOURCE_BUSY")
+                return _fail_run(run.pk, organization_id, "SOURCE_BUSY")
             index = _build_index(run)
     except (ConnectorError, PipelineError, IngestionError) as exc:
         code = exc.code if isinstance(exc, IngestionError) else str(exc)
-        return _fail_run(run.pk, code)
+        return _fail_run(run.pk, organization_id, code)
     except Exception:
-        return _fail_run(run.pk, "INTERNAL_ERROR")
+        return _fail_run(run.pk, organization_id, "INTERNAL_ERROR")
 
     with transaction.atomic():
-        current = IngestionRun.objects.select_for_update().get(pk=run.pk)
+        set_tenant_context(organization_id)
+        current = IngestionRun.objects.select_for_update().get(
+            pk=run.pk, organization_id=organization_id
+        )
         current.status = RunStatus.SUCCEEDED
         current.index_version = index
         current.finished_at = timezone.now()

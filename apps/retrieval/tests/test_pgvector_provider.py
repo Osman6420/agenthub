@@ -41,7 +41,7 @@ def test_provider_filters_tenant_and_pinned_index(
         connector_config={"url": "https://docs.example"},
     )
     run = create_run(source=source)
-    execute_run(run.pk)
+    execute_run(run.pk, run.organization_id)
     run.refresh_from_db()
     assert run.index_version_id is not None
 

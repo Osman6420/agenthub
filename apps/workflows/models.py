@@ -149,6 +149,9 @@ class WorkflowRun(TimeStampedModel):
 
 
 class WorkflowRunEvent(models.Model):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="workflow_run_events"
+    )
     run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="events")
     sequence = models.PositiveIntegerField()
     event_type = models.CharField(max_length=64)
@@ -166,3 +169,11 @@ class WorkflowRunEvent(models.Model):
 
     def __str__(self) -> str:
         return f"workflow-event:{self.run_id}:{self.sequence}:{self.event_type}"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.run_id:
+            run_org_id = self.run.organization_id
+            if self.organization_id and self.organization_id != run_org_id:
+                raise ValueError("workflow event organization must match run organization")
+            self.organization_id = run_org_id
+        super().save(*args, **kwargs)  # type: ignore[arg-type]

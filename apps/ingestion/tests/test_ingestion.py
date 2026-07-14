@@ -41,8 +41,8 @@ def source(db: Any) -> Source:
 def test_run_claim_is_single_winner(source: Source) -> None:
     run = create_run(source=source)
 
-    assert claim_run(run.pk) is not None
-    assert claim_run(run.pk) is None
+    assert claim_run(run.pk, run.organization_id) is not None
+    assert claim_run(run.pk, run.organization_id) is None
 
 
 @pytest.mark.django_db
@@ -52,7 +52,7 @@ def test_success_creates_promotable_index_and_audit(
     monkeypatch.setitem(CONNECTORS, "https", FakeConnector)
     run = create_run(source=source)
 
-    assert execute_run(run.pk) == RunStatus.SUCCEEDED
+    assert execute_run(run.pk, run.organization_id) == RunStatus.SUCCEEDED
 
     run.refresh_from_db()
     assert run.index_version is not None
@@ -74,7 +74,7 @@ def test_terminal_failure_dead_letters_and_audits(source: Source) -> None:
     source.save(update_fields=["parser"])
     run = create_run(source=source, max_attempts=1)
 
-    assert execute_run(run.pk) == RunStatus.DEAD_LETTER
+    assert execute_run(run.pk, run.organization_id) == RunStatus.DEAD_LETTER
 
     run.refresh_from_db()
     assert run.error_code == "PIPELINE_UNSUPPORTED"

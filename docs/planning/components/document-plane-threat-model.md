@@ -64,8 +64,8 @@ system-generated (never application-supplied) name. The vector query always cons
 
 **PostgreSQL RLS** enforces a fail-closed backstop: `FORCE ROW LEVEL SECURITY` on tenant
 data-plane tables, an application DB role that is **not** the table owner and lacks `BYPASSRLS`,
-policies of the form `tenant_id = current_setting('app.tenant_id')::bigint`, and a
-**transaction-local** `set_config('app.tenant_id', <tenant_id>, true)` established from the
+policies through `agenthub_tenant_scope_contains(organization_id)`, and a
+**transaction-local** `set_config('app.tenant_scope', <server-derived-scope>, true)` established from the
 trusted context after each transaction begins (never session-level, so nothing leaks across a
 pooled connection). Missing/invalid context returns **no rows**. Control-plane / global
 worker-claim tables are separated from tenant data-plane tables; the worker gets no broad bypass
@@ -135,7 +135,7 @@ pinning and bounded timeouts/sizes/retries on the Sprint 9 stdlib egress; platfo
 embedding/OCR endpoints with no tenant/request `base_url` and no `openai` dependency; mandatory
 immutable `tenant_id`; layered retrieval predicate (org + pinned set + pinned index + `deleted_at`
 null) plus DB constraints plus **fail-closed FORCE RLS** with a transaction-local
-`set_config('app.tenant_id', …, true)`, a non-owner app role without `BYPASSRLS`, and
+`set_config('app.tenant_scope', …, true)`, a non-owner app role without `BYPASSRLS`, and
 control-plane/data-plane table separation; `secret:<name>`-only credentials with redaction;
 upload content/size/MIME validation independent of filename, decompression bounds, and
 per-document OCR call budget; **platform-managed, immutable, revisioned `EmbeddingProfile`

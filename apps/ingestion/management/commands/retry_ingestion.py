@@ -20,5 +20,5 @@ class Command(BaseCommand):
         if previous is None or previous.status != RunStatus.DEAD_LETTER:
             raise CommandError("run must exist and be dead-lettered")
         run = create_run(source=previous.source, max_attempts=previous.max_attempts)
-        ingest_source.delay(run.pk)
+        ingest_source.delay(run.pk, run.organization_id)
         self.stdout.write(self.style.SUCCESS(f"queued retry run {run.pk}"))
