@@ -1,9 +1,9 @@
 # AgentHub — Phase 2 Plan (IN PROGRESS)
 
 > **Status: IN PROGRESS.** The owner approved implementation kickoff on 2026-07-12. P1 is
-> implemented and verified; WS1's P2–P8 backend/console scope and WS5 are verified, while later
-> workstreams retain their milestone-specific dependency and live-egress
-> gates. This file captures the Phase 2 intent, the owner's decisions to date,
+> implemented and verified; WS1's P2–P8 backend/console scope, WS5, P9 and P10.1/P10.2 are verified.
+> Production hardening/live-profile activation remains required Phase 2 work. Personal
+> MCP moved to Phase 3 discovery. This file captures the Phase 2 intent and owner decisions,
 > and the open questions that remain for later workstreams and live rollout. Every new
 > production dependency and every new external egress named below is a change-boundary item
 > that requires explicit approval + a supply-chain/threat-model review first
@@ -15,7 +15,7 @@ Phase 1 (Sprints 0–11) delivered the verified governed platform: control plane
 releases, gateway + MCP, RAG runtime, ingestion + pgvector, eval/promotion, workflow, tool
 registry + approval, agent runtime, and the visual workflow builder. Phase 2 extends it
 with a **governed document plane**, a **modernized Turkish UI**, **AI-assisted scenario
-authoring** (alongside the visual builder), **personal (end-user) MCP with identity delegation**,
+authoring** (alongside the visual builder), production hardening/live-profile activation,
 and a **foundational live model runtime** — the real LLM provider (a platform-catalog
 `ModelProfile` → platform-resolved endpoint + credential → actual call) plus wiring the
 currently-stubbed generation/retrieval seams across RAG, workflow, and agent so scenarios truly
@@ -28,10 +28,14 @@ reach a live model.
 2. **UI modernization + Turkish** (i18n).
 3. **AI-assisted authoring** (text → artifact → validate → preview → publish), coexisting
    with the visual builder.
-4. **Personal MCP** (end-user identity + on-behalf-of delegation) — after everything else;
-   to be detailed in a separate discussion.
+4. **Phase 2 closure hardening** — broader RLS/non-owner role, upload scanning, concrete live
+   connector/embedding/OCR profiles and live AI-authoring activation.
+
+**Deferred to Phase 3:** Personal MCP end-user identity and on-behalf-of delegation. See
+[`phase-3-plan.md`](phase-3-plan.md); it is no longer a Phase 2 completion dependency.
 **Foundational track (not a 5th-in-line priority) — Live model runtime (WS5).** Without a real
-chat provider the product still returns stub answers, so WS5 is **not** sequenced after WS4; it is
+chat provider the product still returns stub answers, so WS5 is **not** sequenced after later phases;
+it is
 a foundational track run **in parallel/interleaved with WS1** (both build on the same SSRF-safe
 egress + managed provider catalog). Owner-set delivery order (2026-07-12):
 
@@ -140,40 +144,22 @@ The interleaved phase plan is in
   that in the DSL.
 - LLM egress reuses the same SSRF-safe / secret-ref governance as embeddings (test → cloud,
   prod → local OpenAI-compatible).
+- **Owner decision (2026-07-14) — P10.2 is part of Phase 2:** extend the candidate envelope beyond
+  workflow definitions through an explicit artifact-type allowlist. Each type keeps its canonical
+  validator, tenant/author authorization, diagnostics and separate explicit accept/publish action;
+  platform-managed destinations, credentials and authorization-bearing bindings are never inferred.
+- Version and govern the AI-authoring prompt/DSL contract: immutable prompt/rule revision and
+  checksum, artifact-type-specific schema/rules, compatibility/eval evidence, audit-safe metadata,
+  staged rollout and rollback. The canonical validator remains the final authority.
 
 ---
 
-## Workstream 4 — Personal MCP (end-user identity + delegation) [LAST]
+## Personal MCP moved to Phase 3
 
-- Personal MCP calls bound to an **end-user identity** (e.g. "grant my access", "get my
-  payroll").
-- Verify the person, then **forward / delegate on-behalf-of** to the next system (e.g. an
-  **ERP**), with impersonation-safe controls and full audit (authenticated + effective +
-  impersonating identity).
-- This is a **significant identity/authorization expansion** — today only machine/consumer
-  identity exists. **Owner decision: do this after all other workstreams; discuss in more
-  detail separately.**
-
-### WS4 discussion notes — non-final, revisit when WS4 starts
-
-The owner explicitly asked that these remain discussion inputs, **not final architecture
-decisions**:
-
-- Prefer an OIDC access token for application-to-application user identity; AD/LDAP may remain the
-  credential/directory source. First verify whether the institution currently uses direct LDAP
-  bind, SAML or an OIDC-backed identity provider.
-- Prefer normalized group claims for normal requests plus background AD/directory synchronization;
-  resolve nested/oversized/high-freshness membership through the directory/central authorization
-  source. A directory-derived authorization context is a possible transitional path if OIDC is not
-  available.
-- Prefer per-downstream short-lived scoped OBO/token-exchange, then trusted signed identity
-  propagation, then service account + platform-side ACL as the last option. Build a downstream
-  capability matrix before choosing.
-- Prefer group-first grants. User grants are exceptions (temporary/special/break-glass) and should
-  be time-bounded where possible.
-- For sources fetched by service account (for example Confluence without OBO), preserving upstream
-  ACLs and filtering by verified user/group at retrieval is a proposed requirement, not yet an
-  implemented capability.
+Personal/end-user identity, OBO token format and ERP/downstream trust are no longer part of Phase 2.
+The retained discovery inputs and undecided architecture are authoritative in
+[`phase-3-plan.md`](phase-3-plan.md). No Phase 3 authentication/authorization implementation is
+authorized by this move.
 
 ---
 
@@ -296,6 +282,18 @@ shared egress built once, a real-LLM answer shipped early) elaborates it in
 The Phase 2 kickoff and implemented increments are approved; environment-specific live egress,
 later workstreams and any new dependency still retain their explicit gates.
 
+## Phase 2 closure — production hardening and live activation
+
+Phase 2 does not close on offline evidence alone. The required closure milestone is defined in
+[`phase-2-closure-production-hardening`](../tasks/phase-2-closure-production-hardening/plan.md):
+broader Django-table FORCE RLS, a dedicated non-owner application role, governed upload malware/type
+scanning, live Confluence/REST/embedding/OCR profiles, and live AI-authoring activation with concrete
+privacy/retention, spend, CA/DNS/firewall/secret inputs and bounded smoke/rollback evidence.
+
+The owner has placed this work in Phase 2. Concrete production mutations remain separately gated:
+the plan does not itself supply secrets, approve a scanner dependency, authorize production-data
+access or authorize an unreviewed network/database change.
+
 ## Cross-cutting constraints
 
 - Every new production dependency and every new external egress needs **explicit owner
@@ -341,13 +339,14 @@ milestone/deployment decisions, not open architecture blockers: live Confluence 
 secret provisioning, the live generic REST endpoint/profile/credential, upload malware/type
 scanning, and concrete embedding/OCR deployment profiles.
 
-**Workstreams 2–4:**
+**Workstreams 2–3 and Phase 2 closure:**
 
-- WS2 is decomposed as P9.1–P9.5; detailed visual language and later localization ownership remain
-  open.
-- AI-authoring LLM prompt/DSL-rule contract and the exact scope of preview-time DSL edits (WS3).
-- Personal-MCP identity source (which IdP), the OBO token format, and the downstream (ERP)
-  trust/verification contract (WS4).
+- Responsive-width and keyboard/screen-reader manual acceptance are explicitly not required;
+  Turkish terminology remains the prioritized P9 human review.
+- P10.2 artifact-type allowlisting, immutable prompt-contract versioning and candidate diagnostics →
+  explicit workflow/contract-draft transfer are implemented and offline-verified.
+- Concrete production topology/profile/scanner inputs remain required for the closure milestone.
+- Personal-MCP IdP/OBO/downstream trust discovery moved to Phase 3.
 
 ## Status
 
@@ -359,18 +358,19 @@ and the shared SSRF-safe egress adapter ([ADR-0005](../adr/0005-shared-ssrf-safe
 implementing [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md)). The
 Phase 2 kickoff is approved; remaining gates are **per-phase egress/dependency sign-off**.
 **Workstream 1 and Workstream 5 are implemented and verified for their current offline scope.**
-**Workstream 2 is implemented with owner browser acceptance outstanding. Workstream 3 P10.1 is
-implemented and offline-verified; live profile/network/privacy/cost activation remains gated.
-Workstream 4 remains last and in discovery.**
+**Workstream 2 implementation and automated verification are complete; only Turkish terminology
+review remains prioritized, while responsive/accessibility manual acceptance is not required.
+Workstream 3 P10.1/P10.2 is offline-verified. Production hardening and live activation are required
+at Phase 2 closure. Personal MCP moved to Phase 3 discovery.**
 
 ### Workstream status
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | **P2–P6, P7.1–P7.4b and P8.1–P8.4 implemented and verified** — content, embeddings/indexing, ACL retrieval, FORCE RLS stores, parsers/OCR, offline Confluence, governed REST periodic incremental sync and console operation. Remaining deployment gates: live Confluence/REST profiles and broader Django-table RLS + non-owner app role. Decisions = ADR-0003–0007. |
-| 2 | UI modernization + Turkish | **P9.1–P9.5 implemented; automated verification complete, owner browser acceptance outstanding** — Turkish-first responsive shell/builder, scenario-centred relationship management, document-set/index lifecycle, governed connector controls, and scoped release/artifact/DSL visibility delivered without a new dependency |
-| 3 | AI-assisted authoring (+ builder preview) | **P10.1 implemented and offline-verified** — bounded free text → deployment-selected platform profile → untrusted candidate → canonical diagnostics → explicit draft transfer/preview; generation never publishes. Live profile/network/privacy/cost activation remains deployment-gated. See [`phase-2-p10-ai-assisted-authoring`](../tasks/phase-2-p10-ai-assisted-authoring/plan.md). |
-| 4 | Personal MCP (identity + delegation) | Discovery — to be detailed separately, last |
+| 1 | Document plane | **Offline scope verified; production hardening remains Phase 2 closure scope** — broader Django-table RLS/non-owner role, upload scanning and live Confluence/REST/embedding/OCR profiles. Decisions = ADR-0003–0007. |
+| 2 | UI modernization + Turkish | **P9.1–P9.5 implemented and automated verification complete** — responsive/keyboard/screen-reader manual acceptance waived; Turkish terminology remains priority |
+| 3 | AI-assisted authoring (+ builder preview) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output candidates use immutable checksummed prompt contracts, canonical diagnostics and explicit workflow/contract-draft transfer. Live activation is a Phase 2 closure gate. |
+| Closure | Production readiness | **Required in Phase 2** — RLS/non-owner role, upload scanning, live profiles, privacy/retention/cost approval, smoke and rollback evidence |
 | 5 | Live model runtime (real generation) | **P1 + P5 + P6 implemented + verified** — catalog/shared egress/chat provider (opt-in); P5 wired real retrieve/generate into the agent loop + workflow nodes + per-node prompt/model binding; **P6 added the authored, governed agent system prompt**. WS5 runtime is functionally complete for the current scope (real chat + ACL RAG in `/v1/query`, workflows, and agents) |
 
 ---

@@ -13,7 +13,7 @@ verified; environment-specific live egress and later workstreams retain their ga
 ## WS5 is a foundational track, not a 5th-in-line priority
 
 Without a real chat provider the product still returns stub answers, so WS5 is **interleaved with
-WS1 as a foundational track**, not sequenced after WS4. Both build on one foundation: the
+WS1 as a foundational track**, not sequenced after later phases. Both build on one foundation: the
 **SSRF-safe stdlib egress** (Sprint 9 `apps.tools.egress`) plus a **platform-managed profile
 catalog** (`ModelProfile` / `EmbeddingProfile`) referenced by ID only. Building that once, then
 lighting up capabilities in value order, avoids parallel egress implementations and delivers a

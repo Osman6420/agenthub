@@ -34,7 +34,7 @@ effective retrieval scope in one place. The owner accepted these product directi
 
 ## Non-goals
 
-- Personal end-user LDAP/OIDC/OBO authorization (WS4, last; must be discussed again).
+- Personal end-user LDAP/OIDC/OBO authorization (moved to Phase 3 discovery).
 - Making `user`/`group` document grants effective.
 - AI scenario generation (WS3).
 - Implementing `/v1/responses` in this task.
@@ -153,7 +153,9 @@ pass the repository dependency approval gate.
 7. Implement P9.4 as scenario-centred release/artifact DSL visibility, safe artifact detail, a
    copyable compiler-aligned DSL guide and scoped builder deep links.
 8. Implement P9.5 as a Turkish-first terminology, keyboard/focus, named-table and responsive
-   builder/console pass; retain owner browser acceptance as explicit manual review.
+   builder/console pass. Automated coverage remains evidence; owner decided on 2026-07-14 that
+   390/900/1440 px and keyboard/screen-reader manual acceptance are not required. Continue Turkish
+   terminology review as the UI priority.
 
 ## Test plan
 
@@ -201,8 +203,9 @@ the new screen are ordinary audited domain rows and remain manageable from legac
 
 ## Status
 
-Implementation complete — P9.1–P9.5 implemented and automated verification passed. Final owner
-browser/operator acceptance remains explicitly manual.
+Complete — P9.1–P9.5 implemented and automated verification passed. Responsive-width and
+keyboard/screen-reader manual acceptance are explicitly not required by owner decision; Turkish
+terminology remains the prioritized ongoing product review, not an open P9 implementation gate.
 
 ## Completion criteria
 

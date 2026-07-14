@@ -11,9 +11,13 @@ from django.urls import reverse
 
 from apps.artifacts.models import ArtifactVersion
 from apps.audit.models import AuditEvent
-from apps.builder.models import WorkflowDraft
+from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.tests.conftest import BuilderFixture, simple_workflow
-from apps.orchestration.authoring import AuthoringResponse
+from apps.orchestration.authoring import (
+    AuthoringContract,
+    AuthoringResponse,
+    get_authoring_contract,
+)
 from apps.tools.models import ToolBinding, ToolDefinition, ToolRisk, ToolStatus
 
 pytestmark = pytest.mark.django_db
@@ -23,8 +27,30 @@ class FakeAuthoringProvider:
     response = AuthoringResponse(json.dumps(simple_workflow()), 12, 8)
     calls: list[dict] = []
 
-    def generate(self, *, profile_id: str, description: str) -> AuthoringResponse:
-        self.calls.append({"profile_id": profile_id, "description": description})
+    def generate(
+        self, *, profile_id: str, description: str, contract: AuthoringContract
+    ) -> AuthoringResponse:
+        self.calls.append(
+            {
+                "profile_id": profile_id,
+                "description": description,
+                "artifact_type": contract.artifact_type,
+                "contract_checksum": contract.checksum,
+            }
+        )
+        if contract.artifact_type in {"input_contract", "output_contract"}:
+            return AuthoringResponse(
+                json.dumps(
+                    {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    }
+                ),
+                12,
+                8,
+            )
         return self.response
 
 
@@ -42,6 +68,7 @@ def _put(client: Client, url: str, payload: dict):
 def test_unauthenticated_calls_return_401_json(client: Client, bf: BuilderFixture) -> None:
     for url in [
         reverse("builder_api:drafts"),
+        reverse("builder_api:artifact_drafts"),
         reverse("builder_api:draft_detail", args=[bf.draft.pk]),
         reverse("builder_api:node_schema") + "?organization=b-org",
     ]:
@@ -312,6 +339,24 @@ def test_mutations_require_csrf_token(bf: BuilderFixture) -> None:
         {"organization": bf.org.slug, "description": "workflow"},
     )
     assert response.status_code == 403
+    artifact_draft = ArtifactDraft.objects.create(
+        organization=bf.org,
+        project=bf.project,
+        artifact_type="input_contract",
+        name="Girdi",
+        logical_id="csrf_input",
+        body={"type": "object"},
+        created_by="author",
+        updated_by="author",
+    )
+    response = _put(
+        csrf_client,
+        reverse("builder_api:artifact_draft_detail", args=[artifact_draft.pk]),
+        {"name": "CSRF bypass"},
+    )
+    assert response.status_code == 403
+    artifact_draft.refresh_from_db()
+    assert artifact_draft.name == "Girdi"
 
 
 # --- AI-assisted candidates -------------------------------------------------
@@ -533,3 +578,254 @@ def test_ai_candidate_requires_exact_project(client: Client, bf: BuilderFixture)
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "project_required"
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+)
+@pytest.mark.parametrize("artifact_type", ["input_contract", "output_contract"])
+def test_ai_contract_candidate_transfers_to_non_publishing_artifact_draft(
+    client: Client, bf: BuilderFixture, artifact_type: str
+) -> None:
+    cache.clear()
+    FakeAuthoringProvider.calls.clear()
+    client.force_login(bf.author)
+    generated = _post(
+        client,
+        reverse("builder_api:ai_candidates"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "artifact_type": artifact_type,
+            "description": "Metin sorgusu alan bir JSON sözleşmesi oluştur.",
+        },
+    )
+    assert generated.status_code == 200
+    result = generated.json()
+    assert result["artifact_type"] == artifact_type
+    assert result["diagnostics"]["ok"] is True
+    assert len(result["prompt_contract"]["checksum"]) == 64
+    assert FakeAuthoringProvider.calls == [
+        {
+            "profile_id": "11111111-1111-1111-1111-111111111111",
+            "description": "Metin sorgusu alan bir JSON sözleşmesi oluştur.",
+            "artifact_type": artifact_type,
+            "contract_checksum": result["prompt_contract"]["checksum"],
+        }
+    ]
+    assert not ArtifactDraft.objects.exists()
+
+    accepted = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "artifact_type": artifact_type,
+            "prompt_contract": result["prompt_contract"],
+            "name": "AI sözleşmesi",
+            "logical_id": f"ai_{artifact_type}",
+            "candidate": result["candidate"],
+        },
+    )
+    assert accepted.status_code == 201
+    assert accepted.json()["draft_kind"] == "artifact"
+    assert ArtifactDraft.objects.filter(
+        organization=bf.org,
+        project=bf.project,
+        artifact_type=artifact_type,
+        logical_id=f"ai_{artifact_type}",
+    ).exists()
+    assert not ArtifactVersion.objects.exists()
+    audit = AuditEvent.objects.get(action="console.builder.artifact_draft.create")
+    assert audit.after == {"prompt_contract": result["prompt_contract"]}
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+)
+@pytest.mark.parametrize(
+    "artifact_type",
+    [
+        "agent_definition",
+        "custom_node_definition",
+        "model_profile",
+        "source_definition",
+        "tool_binding",
+        "tool_definition",
+        "unknown",
+    ],
+)
+def test_ai_candidate_rejects_high_risk_or_unknown_type_before_egress(
+    client: Client, bf: BuilderFixture, artifact_type: str
+) -> None:
+    cache.clear()
+    FakeAuthoringProvider.calls.clear()
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:ai_candidates"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "artifact_type": artifact_type,
+            "description": "x",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_artifact_type"
+    assert FakeAuthoringProvider.calls == []
+
+
+def test_ai_contract_accept_revalidates_schema_and_contract_metadata(
+    client: Client, bf: BuilderFixture
+) -> None:
+    client.force_login(bf.author)
+    contract = get_authoring_contract("input_contract")
+    base = {
+        "organization": bf.org.slug,
+        "project_id": bf.project.pk,
+        "artifact_type": "input_contract",
+        "name": "bad",
+        "logical_id": "bad_contract",
+        "candidate": {"type": 42},
+        "prompt_contract": {
+            "id": contract.contract_id,
+            "revision": contract.revision,
+            "checksum": contract.checksum,
+        },
+    }
+    invalid = _post(client, reverse("builder_api:ai_candidate_accept"), base)
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "candidate_invalid_artifact"
+
+    missing_metadata = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {key: value for key, value in base.items() if key != "prompt_contract"},
+    )
+    assert missing_metadata.status_code == 400
+    assert missing_metadata.json()["error"]["code"] == "prompt_contract_required"
+
+    mismatch = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {
+            **base,
+            "candidate": {"type": "object"},
+            "prompt_contract": {"id": "attacker", "revision": 1, "checksum": "0" * 64},
+        },
+    )
+    assert mismatch.status_code == 400
+    assert mismatch.json()["error"]["code"] == "prompt_contract_mismatch"
+    inline_secret = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {
+            **base,
+            "logical_id": "secret_contract",
+            "candidate": {"type": "object", "api_key": "literal-secret-value"},
+        },
+    )
+    assert inline_secret.status_code == 400
+    assert inline_secret.json()["error"]["code"] == "candidate_invalid_artifact"
+    assert not ArtifactDraft.objects.exists()
+    assert not ArtifactVersion.objects.exists()
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+    AI_AUTHORING_CONTRACT_REVISION=999,
+)
+def test_ai_candidate_rejects_unavailable_contract_revision_before_egress(
+    client: Client, bf: BuilderFixture
+) -> None:
+    FakeAuthoringProvider.calls.clear()
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:ai_candidates"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "artifact_type": "input_contract",
+            "description": "x",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "authoring_contract_unavailable"
+    assert FakeAuthoringProvider.calls == []
+
+
+def test_artifact_draft_is_tenant_scoped_mutable_and_has_no_publish_action(
+    client: Client, bf: BuilderFixture
+) -> None:
+    draft = ArtifactDraft.objects.create(
+        organization=bf.org,
+        project=bf.project,
+        artifact_type="input_contract",
+        name="Girdi",
+        logical_id="input_v1",
+        body={"type": "object"},
+        created_by="author",
+        updated_by="author",
+    )
+    detail_url = reverse("builder_api:artifact_draft_detail", args=[draft.pk])
+    diagnostics_url = reverse("builder_api:artifact_draft_diagnostics", args=[draft.pk])
+
+    client.force_login(bf.viewer)
+    assert client.get(detail_url).json()["can_write"] is False
+    assert _put(client, detail_url, {"name": "No"}).status_code == 403
+
+    client.force_login(bf.outsider)
+    assert client.get(detail_url).status_code == 404
+    assert _post(client, diagnostics_url, {}).status_code == 404
+
+    client.force_login(bf.author)
+    listed = client.get(reverse("builder_api:artifact_drafts")).json()["drafts"]
+    assert [item["logical_id"] for item in listed] == ["input_v1"]
+    diagnostics = _post(client, diagnostics_url, {"body": {"type": 42}})
+    assert diagnostics.status_code == 200
+    assert diagnostics.json()["ok"] is False
+    updated = _put(
+        client,
+        detail_url,
+        {"name": "Girdi v2", "body": {"type": "object", "properties": {}}},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Girdi v2"
+    # POST is deliberately absent: generic drafts cannot publish in P10.2.
+    assert _post(client, detail_url, {}).status_code == 405
+    assert not ArtifactVersion.objects.exists()
+    assert client.delete(detail_url).status_code == 200
+    assert not ArtifactDraft.objects.exists()
+    assert AuditEvent.objects.filter(action="console.builder.artifact_draft.update").exists()
+    assert AuditEvent.objects.filter(action="console.builder.artifact_draft.delete").exists()
+
+
+def test_artifact_draft_update_revalidates_and_rejects_unknown_fields(
+    client: Client, bf: BuilderFixture
+) -> None:
+    draft = ArtifactDraft.objects.create(
+        organization=bf.org,
+        project=bf.project,
+        artifact_type="output_contract",
+        name="Çıktı",
+        logical_id="output_v1",
+        body={"type": "object"},
+        created_by="author",
+        updated_by="author",
+    )
+    client.force_login(bf.author)
+    url = reverse("builder_api:artifact_draft_detail", args=[draft.pk])
+    invalid = _put(client, url, {"body": {"type": 42}})
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "candidate_invalid_artifact"
+    unexpected = _put(client, url, {"artifact_type": "input_contract"})
+    assert unexpected.status_code == 400
+    assert unexpected.json()["error"]["code"] == "unexpected_field"
+    draft.refresh_from_db()
+    assert draft.artifact_type == "output_contract"

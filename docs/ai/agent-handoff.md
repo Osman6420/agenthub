@@ -198,7 +198,7 @@ Current cross-agent state:
   each `IndexVersion` is a physically isolated immutable store; no per-scenario physical index;
   `IndexVersion` re-scoped to (org, doc-set-version, embedding-profile). (B) enforce
   consumer+scenario-binding now, forward-ready `principal_type=consumer|service|user|group`
-  (user/group in WS4). (C) new content lineage `Source→Document→DocumentVersion→Blob` +
+  (user/group activation moved to Phase 3 identity/delegation). (C) new content lineage `Source→Document→DocumentVersion→Blob` +
   `DocumentSet/Version/Membership` + soft-delete tombstone vs auditable purge; **rename existing
   index-scoped `apps.ingestion.Document`→`IndexedDocument`** (`RenameModel`, preserve rows/PKs/
   FKs). (D) platform-managed immutable **`EmbeddingProfile`** catalog; embedding egress =
@@ -321,20 +321,33 @@ Current cross-agent state:
   persistent focus-visible/reduced-motion behavior, named horizontally scrollable tables and a
   stacked narrow-screen builder without changing API/authz behavior. Evidence: full SQLite 591
   passed / 25 skipped, focused PostgreSQL 19 passed, frontend 12 passed, and repository gates pass.
-  Owner browser acceptance at 390/900/1440 px and keyboard-only review is still explicitly manual.
-  Plan/evidence: `docs/tasks/phase-2-p9-console-ux/`.
-- **P10.1 WS3 AI-ASSISTED AUTHORING IMPLEMENTED + OFFLINE-VERIFIED.** Bounded Turkish free text
+  Owner decision (2026-07-14): 390/900/1440 px and keyboard/screen-reader manual acceptance are not
+  required. Turkish terminology remains the prioritized product review. Plan/evidence:
+  `docs/tasks/phase-2-p9-console-ux/`.
+- **P10.1/P10.2 WS3 AI-ASSISTED AUTHORING IMPLEMENTED + OFFLINE-VERIFIED.** Bounded Turkish free text
   uses one deployment-selected immutable `ModelProfile`; the model response is untrusted bounded
   JSON, receives canonical compiler diagnostics, and enters an exact-project `WorkflowDraft` only
   after a separate explicit acceptance action. Generation never publishes or changes release/runtime
   state. Description/response content is transient and excluded from logs/audit; actor+organization
   rate limiting is fail-closed and `outcome_unknown` is terminal without retry. No dependency was
-  added; default/test configuration opens no socket. Live profile, endpoint, CA, secret, firewall,
-  privacy and cost activation remain deployment-gated. Plan/evidence:
+  added; default/test configuration opens no socket. P10.2 allowlists `workflow_definition`,
+  `input_contract` and `output_contract`, uses server-owned immutable ID/revision/checksum prompt
+  contracts, and transfers JSON Schema candidates into tenant/project-scoped mutable
+  `ArtifactDraft` records with Turkish JSON diagnostics/editing. Generic artifact drafts deliberately
+  have no publish endpoint; high-risk types fail before egress. Additive migration `builder.0002`.
+  Evidence: full SQLite 620 passed / 25 skipped; focused PostgreSQL 56 passed; frontend 16 passed +
+  production build; 350 Python files pass format/lint/type checks.
+  Live profile, endpoint, CA, secret, firewall, privacy and cost activation are assigned to the Phase
+  2 closure milestone. Plan/evidence:
   `docs/tasks/phase-2-p10-ai-assisted-authoring/`.
-- **WS4 PERSONAL IDENTITY REMAINS LAST AND UNDECIDED.** Owner-provided OIDC/group-claim/OBO/
-  group-first proposals are recorded in `phase-2-plan.md` as non-final discussion notes only; do not
-  implement or treat them as approved architecture until WS4 is explicitly reopened.
+- **PHASE 2 CLOSURE HARDENING REQUIRED.** Broader Django-table FORCE RLS, a dedicated non-owner app
+  role, upload malware/type scanning, live Confluence/REST/embedding/OCR profiles and live AI
+  authoring with privacy/retention/cost + smoke/rollback evidence remain planned. Concrete secrets,
+  hosts, CA/DNS/firewall and production mutations still require their execution approvals. Plan:
+  `docs/tasks/phase-2-closure-production-hardening/`.
+- **PERSONAL MCP MOVED TO PHASE 3 DISCOVERY.** IdP, OBO and ERP/downstream trust remain undecided;
+  do not implement or treat discovery inputs as approved architecture. See
+  `docs/planning/phase-3-plan.md`.
 - **P7.1–P7.4b COMPLETE + VERIFIED OFFLINE.** P7 parsers/OCR and both connectors are
   verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
   - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed

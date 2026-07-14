@@ -93,7 +93,7 @@ HTML, and all stored labels continue through Django/React escaping.
 
 Organization membership currently grants organization-wide read visibility; scenario-level LDAP
 operator read ACL is not part of the current model. Personal user/group runtime ACL is deferred to
-WS4 and must not be implied by this screen.
+Phase 3 personal MCP and must not be implied by this screen.
 
 ## Required security tests
 

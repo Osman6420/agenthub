@@ -272,16 +272,23 @@ builder is being repurposed toward AI-assisted authoring. The single canonical S
 record is `docs/tasks/sprint-11-workflow-builder/`; the earlier duplicate plan is archived
 under `docs/planning/archive/`. Phase 2 is active at
 `docs/planning/phase-2-plan.md` (governed document plane, Turkish UI, AI-assisted authoring,
-personal end-user MCP, and the foundational live-model runtime). Phase 2 kickoff is approved and
-P1–P6, P7.1–P7.4b, P8.1–P8.4, P9.1–P9.5, and P10.1 are implemented and verified for their
+production closure hardening, and the foundational live-model runtime). Personal end-user MCP moved
+to Phase 3 discovery. Phase 2 kickoff is approved and
+P1–P6, P7.1–P7.4b, P8.1–P8.4, P9.1–P9.5, and P10.1/P10.2 are implemented and verified for their
 offline scopes. P10.1 adds disabled-by-default, profile-only AI workflow candidates with bounded
 untrusted parsing, canonical diagnostics, exact-project explicit draft transfer, fail-closed rate
-limiting and redacted audit; it never auto-publishes or changes release/runtime state. P7.4a provides
-immutable Confluence profiles, exact tenant+document-set grants, bounded private-DNS Data Center
+limiting and redacted audit; it never auto-publishes or changes release/runtime state.
+P10.2 adds allowlisted input/output JSON Schema candidates, immutable checksummed prompt contracts
+and tenant/project-scoped mutable `ArtifactDraft` editing without a generic publish route. Additive
+migration `builder.0002`. Phase 2 closure also requires broader Django-table RLS/non-owner role, upload scanning,
+live connector/embedding/OCR/AI profiles and concrete smoke/rollback evidence; these are not yet
+implemented. P7.4a provides immutable Confluence profiles, exact tenant+document-set grants,
+bounded private-DNS Data Center
 reads, recoverable incremental snapshots, draft candidates, and FORCE-RLS lineage; it adds no
 dependency and makes no default/live egress. Its actual corporate endpoint, CIDRs/DNS, CA, firewall,
 PAT and service-account permissions still require manual rollout review. **P7.4b generic REST is
-disabled and contract-gated**, so P7.4 as a whole remains open. M0 architecture decisions are
+implemented and offline-verified but live profiles remain disabled and deployment-gated.** M0
+architecture decisions are
 accepted as ADR-0002–0006, with environment-specific egress approvals still enforced. See
 `docs/ai/agent-handoff.md` for the start checklist and live-state revalidation steps.
 

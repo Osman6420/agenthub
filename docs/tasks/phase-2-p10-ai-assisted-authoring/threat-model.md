@@ -3,7 +3,7 @@
 ## Assets
 
 Tenant/project identity, operator descriptions, candidate DSL, model credentials/endpoints, model
-budget, mutable drafts, immutable artifacts and release/runtime state.
+budget, mutable drafts, immutable artifacts, prompt/DSL contract revisions and release/runtime state.
 
 ## Actors
 
@@ -19,7 +19,8 @@ immutable `ModelProfile`, secret resolver and outbound model transport.
 
 Browser → Django session/CSRF; organization/project IDs → tenant authorization; description → model
 user-message data; platform profile → egress transport; model text → bounded JSON parser → canonical
-workflow validator; candidate → explicit draft acceptance → separate publish path.
+artifact-type allowlist → type-specific canonical validator; candidate → explicit mutable preview/
+acceptance → separate publish path; prompt/DSL contract revision → staged rollout/rollback.
 
 ## Data classifications
 
@@ -56,6 +57,9 @@ Live DNS/CA/secret/firewall configuration remains a separate deployment approval
 - Cross-tenant project IDs or using read-only membership to incur cost/write drafts.
 - Oversized/deep JSON, decompression-like structures, HTML/script strings or parser ambiguity.
 - Auto-publishing a candidate or treating model output as an authorization decision.
+- Type confusion or mass assignment causing a low-risk candidate route to create a high-risk tool,
+  model/source profile, executable custom node or authorization-bearing binding.
+- Prompt/DSL contract drift silently changing output semantics without checksum/eval evidence.
 - Logging/tracing confidential description, prompt, response, DSL, endpoint or credential.
 
 ## Failure cases
@@ -76,7 +80,15 @@ Disabled-by-default profile ID, no caller destination fields, ADR-0005 DNS/IP/TL
 controls, separate system/user roles, strict description/response/JSON depth bounds, canonical
 validator/compiler, explicit draft acceptance and separate publish, server authorization rechecks,
 CSRF, actor+organization rate limit, content-free errors and audit, no prompt/response persistence,
-and deterministic injected providers in tests.
+deterministic injected providers in tests, a server-owned artifact-type allowlist, type-specific
+mutable preview targets and immutable checksummed prompt/DSL contract revisions with staged rollback.
+
+The initial non-workflow allowlist is limited to JSON Schema input/output contracts. Generic
+artifact drafts have no publish endpoint, and acceptance re-runs the requested type's canonical
+validator before the transaction writes author working state. The candidate envelope and accept
+request must carry the same allowlisted type; a workflow candidate cannot be accepted as a contract
+or vice versa. Contract selection is resolved from a server registry, never caller-provided prompt
+text, revision or checksum.
 
 ## Residual risks
 
@@ -90,4 +102,6 @@ and needs an explicit fail-closed policy during implementation.
 Authentication/CSRF/role/cross-tenant denial; caller profile/destination rejection; rate isolation
 and boundary; prompt/output redaction; malicious/oversized/deep/malformed responses; inline-secret and
 forbidden-field compiler denial; audit fail-closed behavior; no artifact/release before explicit
-publish; `outcome_unknown` no retry; live egress disabled in default/test settings.
+publish; unsupported/high-risk artifact type denied before egress; type-confusion and cross-type
+acceptance denial; prompt-contract checksum/compatibility/rollback; `outcome_unknown` no retry; live
+egress disabled in default/test settings.

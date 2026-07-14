@@ -11,17 +11,20 @@ GitOps path does not.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_slug
 from django.db import transaction
 from django.utils import timezone
 
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.artifacts.validation import ArtifactValidationError, validate_body
+from apps.artifacts.validation import ArtifactValidationError, compute_checksum, validate_body
 from apps.audit.services import record_event
-from apps.builder.models import WorkflowDraft
+from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.catalog.models import AIProject
 from apps.tenancy.models import Organization
 from apps.workflows.compiler import compile_workflow
@@ -141,6 +144,158 @@ def diagnose(body: Any) -> dict[str, Any]:
     except ArtifactValidationError as exc:
         return {"ok": False, "errors": [{"code": "invalid_workflow", "message": str(exc)}]}
     return {"ok": True, "errors": [], "compiled_checksum": compile_workflow(body).checksum}
+
+
+def diagnose_artifact(artifact_type: str, body: Any) -> dict[str, Any]:
+    """Run the canonical validator for an allowlisted AI candidate type."""
+    if artifact_type == ArtifactType.WORKFLOW_DEFINITION:
+        return diagnose(body)
+    if artifact_type not in {ArtifactType.INPUT_CONTRACT, ArtifactType.OUTPUT_CONTRACT}:
+        raise BuilderError("unsupported_artifact_type")
+    if not isinstance(body, dict):
+        return {
+            "ok": False,
+            "errors": [{"code": "invalid_body", "message": "body must be an object"}],
+        }
+    try:
+        validate_body(artifact_type, body)
+    except ArtifactValidationError as exc:
+        return {"ok": False, "errors": [{"code": "invalid_artifact", "message": str(exc)}]}
+    return {"ok": True, "errors": [], "compiled_checksum": compute_checksum(body)}
+
+
+@transaction.atomic
+def create_artifact_draft(
+    *,
+    organization: Organization,
+    project: AIProject,
+    artifact_type: str,
+    name: str,
+    logical_id: str,
+    body: dict[str, Any],
+    actor: str,
+    request_id: str = "",
+    prompt_contract: dict[str, Any] | None = None,
+) -> ArtifactDraft:
+    """Persist validated non-workflow author state without publishing an artifact."""
+    if artifact_type not in {ArtifactType.INPUT_CONTRACT, ArtifactType.OUTPUT_CONTRACT}:
+        raise BuilderError("unsupported_artifact_type")
+    if project.organization_id != organization.id:
+        raise BuilderError("project_mismatch")
+    name = (name or "").strip()
+    logical_id = (logical_id or "").strip()
+    if not name:
+        raise BuilderError("name_required")
+    if len(name) > 200:
+        raise BuilderError("name_too_large")
+    if not logical_id:
+        raise BuilderError("logical_id_required")
+    if len(logical_id) > 128:
+        raise BuilderError("logical_id_too_large")
+    try:
+        validate_slug(logical_id)
+    except ValidationError as exc:
+        raise BuilderError("logical_id_invalid") from exc
+    safe_prompt_contract = _safe_prompt_contract_metadata(prompt_contract)
+    diagnostics = diagnose_artifact(artifact_type, _validated_body(body))
+    if not diagnostics["ok"]:
+        raise BuilderError("candidate_invalid_artifact")
+    if ArtifactDraft.objects.filter(
+        organization=organization, artifact_type=artifact_type, logical_id=logical_id
+    ).exists():
+        raise BuilderError("duplicate_logical_id")
+    draft = ArtifactDraft.objects.create(
+        organization=organization,
+        project=project,
+        artifact_type=artifact_type,
+        name=name,
+        logical_id=logical_id,
+        body=body,
+        created_by=actor,
+        updated_by=actor,
+    )
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="console.builder.artifact_draft.create",
+        outcome="success",
+        organization_id=organization.id,
+        resource_type="artifact_draft",
+        resource_id=f"{artifact_type}:{logical_id}",
+        reason="ai_candidate_accepted",
+        request_id=request_id,
+        after={"prompt_contract": safe_prompt_contract} if safe_prompt_contract else None,
+    )
+    return draft
+
+
+def _safe_prompt_contract_metadata(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if set(value) != {"id", "revision", "checksum"}:
+        raise BuilderError("prompt_contract_invalid")
+    contract_id = value.get("id")
+    revision = value.get("revision")
+    checksum = value.get("checksum")
+    if (
+        not isinstance(contract_id, str)
+        or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,99}", contract_id)
+        or not isinstance(revision, int)
+        or isinstance(revision, bool)
+        or revision < 1
+        or not isinstance(checksum, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", checksum)
+    ):
+        raise BuilderError("prompt_contract_invalid")
+    return {"id": contract_id, "revision": revision, "checksum": checksum}
+
+
+@transaction.atomic
+def update_artifact_draft(
+    draft: ArtifactDraft,
+    *,
+    actor: str,
+    name: str | None = None,
+    body: dict[str, Any] | None = None,
+    request_id: str = "",
+) -> ArtifactDraft:
+    locked = ArtifactDraft.objects.select_for_update().get(pk=draft.pk)
+    if name is not None:
+        stripped = name.strip()
+        if not stripped:
+            raise BuilderError("name_required")
+        if len(stripped) > 200:
+            raise BuilderError("name_too_large")
+        locked.name = stripped
+    if body is not None:
+        candidate = _validated_body(body)
+        diagnostics = diagnose_artifact(locked.artifact_type, candidate)
+        if not diagnostics["ok"]:
+            raise BuilderError("candidate_invalid_artifact")
+        locked.body = candidate
+    locked.updated_by = actor
+    locked.save(update_fields=["name", "body", "updated_by", "updated_at"])
+    _audit_artifact_draft(actor, "update", locked, request_id=request_id)
+    return locked
+
+
+@transaction.atomic
+def delete_artifact_draft(draft: ArtifactDraft, *, actor: str, request_id: str = "") -> None:
+    _audit_artifact_draft(actor, "delete", draft, request_id=request_id)
+    draft.delete()
+
+
+def _audit_artifact_draft(actor: str, verb: str, draft: ArtifactDraft, *, request_id: str) -> None:
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action=f"console.builder.artifact_draft.{verb}",
+        outcome="success",
+        organization_id=draft.organization_id,
+        resource_type="artifact_draft",
+        resource_id=f"{draft.artifact_type}:{draft.logical_id}",
+        request_id=request_id,
+    )
 
 
 @transaction.atomic

@@ -2,9 +2,9 @@
 
 ## Task summary
 
-Implement Workstream 3 as a governed AI-assisted workflow-authoring path: bounded free text becomes
-an untrusted candidate workflow DSL, is validated by the existing canonical compiler, previewed as
-a mutable `WorkflowDraft`, and may be published only through the existing explicit builder path.
+Deliver Workstream 3 in two increments: P10.1 provides the verified governed workflow-candidate
+path; P10.2 extends the same untrusted-candidate pattern to an explicit allowlist of other artifact
+types and makes the server prompt/DSL rule contract immutable, versioned and evaluable.
 
 ## Background
 
@@ -31,6 +31,13 @@ endpoint, secret, CA and firewall rollout remain separately gated.
   request/success/failure using identifiers, counts and stable codes only.
 - Explicit user action transfers the generated candidate into a draft. Generation never publishes,
   compiles a release, runs eval, promotes, or changes runtime state.
+- P10.2: add artifact-type-specific candidate envelopes beyond `workflow_definition`, using the
+  existing canonical `ArtifactType` validators and explicit diagnostics/accept/publish separation.
+- P10.2: introduce an immutable version/checksum for each server-owned prompt + DSL/schema rule
+  contract, compatibility/evaluation evidence, audited rollout and rollback.
+- Candidate → diagnostics → explicit draft/preview transfer and Turkish operator terminology are
+  the prioritized human journeys; responsive-width and keyboard/screen-reader manual acceptance are
+  not P9/P10 completion requirements by owner decision on 2026-07-14.
 
 ## Non-goals
 
@@ -38,8 +45,9 @@ endpoint, secret, CA and firewall rollout remain separately gated.
 - Automatic retry after a request may have been sent; `outcome_unknown` is terminal.
 - Automatic artifact publish/release compile/eval/promotion.
 - General prompt/model/agent/MCP configuration inside the visual builder.
-- Non-workflow artifact generation in P10.1.
-- Personal identity/OIDC/OBO/LDAP changes (WS4 remains last).
+- Caller-defined arbitrary artifact types or a universal unvalidated JSON generator. P10.2 uses a
+  server allowlist and per-type validation/risk review.
+- Personal identity/OIDC/OBO/LDAP changes (moved to Phase 3 discovery).
 - A new SDK or production dependency.
 
 ## Acceptance criteria
@@ -58,10 +66,19 @@ endpoint, secret, CA and firewall rollout remain separately gated.
   audit outcomes, redaction and `outcome_unknown` no-retry behavior have negative tests.
 - [x] CI/test defaults perform no network call and remain deterministic through an injected fake
   authoring provider.
+- [x] P10.2 exposes only explicitly approved artifact types; unsupported/high-risk types fail closed
+  before model egress and every returned candidate receives the canonical type validator.
+- [x] P10.2 candidates remain transient until an explicit, re-authorized accept action; generation
+  cannot create an immutable artifact, release, eval, promotion, tool binding or runtime change.
+- [x] Prompt/DSL contracts have immutable IDs, revisions and checksums; the selected revision and
+  artifact type appear only as bounded safe audit metadata and support staged rollback.
+- [x] Artifact-type compatibility/regression evals cover valid, malformed, oversized/deep,
+  inline-secret, cross-tenant and authorization-denial cases.
 
 ## Affected components
 
-- `apps.builder`: authoring service, internal operator API, audit/rate limiting and tests.
+- `apps.builder`: authoring service, internal operator API, per-type diagnostics/acceptance,
+  audit/rate limiting and tests.
 - `apps.orchestration`: narrow authoring provider over the existing model egress transport.
 - `frontend`: free-text candidate form, diagnostics and explicit transfer to draft/preview.
 - Settings, current-behavior docs, handoff and verification evidence.
@@ -69,19 +86,27 @@ endpoint, secret, CA and firewall rollout remain separately gated.
 ## Interfaces affected
 
 - Additive authenticated same-origin operator route under `/console/api/builder/ai-candidates/`.
-- Additive frontend builder workflow. Public consumer gateway and MCP contracts are unchanged.
+- Additive membership/author-scoped non-workflow draft list/detail/diagnostics routes under
+  `/console/api/builder/artifact-drafts/`; deliberately no publish route.
+- Additive frontend candidate-type selection and type-appropriate preview/diagnostics. Public
+  consumer gateway and MCP contracts remain unchanged.
 
 ## Data impact
 
 The operator description and raw model response are transient and must not be persisted or logged.
-Only the parsed bounded DSL enters an existing `WorkflowDraft` after explicit acceptance. P10.1 is
-planned without a migration.
+Only parsed bounded candidate data enters type-appropriate mutable authoring state after explicit
+acceptance. P10.1 has no migration. P10.2 adds `ArtifactDraft` through additive `builder.0002`; the
+prompt-contract registry is immutable code rather than database state and does not overload artifact
+history.
 
 ## Security impact
 
 Adds cost-bearing model egress from an operator action. The LLM output crosses an untrusted-code/data
 boundary and must pass bounded parsing plus the canonical validator. Endpoint/profile/secret values
 remain platform-only. Prompt injection cannot grant tool, tenant, publish or runtime authority.
+Tool definitions/bindings, model profiles, source definitions and custom executable nodes are
+high-risk candidates and require an explicit per-type security decision; P10.2 does not enable them
+merely because they exist in `ArtifactType`.
 
 ## Authorization impact
 
@@ -97,7 +122,7 @@ prompts, candidate DSL, model response, endpoints, headers or secrets. Metrics u
 
 ## Migration impact
 
-None planned for P10.1.
+None for P10.1. P10.2 adds only `builder.0002_artifactdraft`; no existing rows or columns change.
 
 ## Dependencies
 
@@ -114,6 +139,11 @@ profile activation and environment-specific network/secret rollout remain separa
 5. Add author-scoped CSRF operator API and frontend preview/accept flow.
 6. Add negative security, redaction, rate, provider and frontend tests.
 7. Run full SQLite, focused PostgreSQL, frontend and repository gates; update current-state docs.
+8. Inventory artifact types and classify each as initial allowlist, later allowlist or prohibited;
+   record canonical validator, mutable preview target, authorization and side-effect risk.
+9. Design/version the prompt + DSL/schema contract and its compatibility/evaluation/rollback model.
+10. Implement P10.2 type-by-type with negative security tests and Turkish candidate diagnostics/
+    explicit transfer journey; keep live egress disabled until the Phase 2 closure milestone.
 
 Implementation detail: generation returns a transient candidate envelope and canonical diagnostics;
 a separate acceptance request re-validates the same bounded candidate and creates or updates the
@@ -133,7 +163,8 @@ those actions. Rate-limit cache failure denies generation with a stable safe cod
 
 ## Rollout plan
 
-Ship disabled by default. Platform operations registers/chooses an approved immutable profile and
+Ship P10.1/P10.2 disabled by default. Platform operations registers/chooses an approved immutable
+profile and
 sets `AI_AUTHORING_MODEL_PROFILE_ID` only after environment-specific endpoint, CA, secret, firewall,
 privacy and cost approval. Start with a conservative rate and monitor stable outcome/token metrics.
 
@@ -157,15 +188,39 @@ drafts/artifacts remain ordinary governed records and require no data rollback.
 - Profile selection is one deployment-selected UUID, not a tenant-visible model picker.
 - Approval covers implementing the disabled-by-default network/cost behavior only. It does not
   approve a live endpoint, secret, CA, DNS, firewall rule or production activation.
+- P10.2 is required in Phase 2 and is developed with the candidate journey, not deferred as an
+  optional future phase. Expansion is allowlisted per artifact type rather than universal.
+- Prompt/DSL contract governance is P10.2 scope. Canonical validators remain authoritative.
+- Live AI-authoring activation occurs in the Phase 2 closure hardening milestone.
+- Responsive-width and keyboard/screen-reader manual acceptance are not required; Turkish
+  terminology and candidate → diagnostics → explicit transfer remain priorities.
+- P10.2 initial allowlist is `workflow_definition`, `input_contract` and `output_contract`.
+  Input/output contracts are low-side-effect JSON Schema documents with an existing canonical
+  validator. `prompt_template`, `policy_profile`, `chunking_profile`, `retrieval_profile`,
+  `memory_policy` and `eval_suite` remain later candidates until their body contracts are stricter.
+  `model_profile`, `source_definition`, `custom_node_definition`, `tool_definition`,
+  `tool_binding` and `agent_definition` remain prohibited on this route because they can introduce
+  egress, credentials, executable behavior, tool authority or runtime decisions.
+- Non-workflow candidates transfer to a new tenant/project-scoped mutable `ArtifactDraft`; this is
+  author working state only and has no publish endpoint in this increment. Workflow candidates keep
+  using `WorkflowDraft` and the existing graph preview/publish separation.
+- Prompt/DSL contracts use a server-owned immutable code registry. Each entry has a stable ID,
+  positive revision, artifact type and SHA-256 checksum over its exact system instructions. The
+  deployment may select an existing revision through a bounded setting; adding/changing a revision
+  requires code review and regression evidence. No database persistence or migration is needed for
+  the contract registry.
 
-## Open questions
+## Open design decisions for P10.2
 
-- P10.2 may generalize the same candidate envelope to other artifact types after P10.1 evidence.
+- Whether later low-side-effect artifact types receive stricter canonical body schemas and become
+  eligible for the allowlist.
+- Whether generic artifact drafts gain a separate governed publish surface after product review.
 
 ## Status
 
-Implemented and verified offline — live profile/network/privacy/cost activation remains a separate
-deployment gate, and owner browser acceptance remains manual.
+P10.1 and P10.2 are implemented and verified offline. Live activation is reserved for the Phase 2
+closure hardening milestone; Turkish terminology and the candidate journey remain prioritized human
+review, without responsive/accessibility manual acceptance requirements.
 
 ## Completion criteria
 

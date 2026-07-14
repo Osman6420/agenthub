@@ -312,12 +312,21 @@ They never contain a URL, credential, secret selector, or TLS option. Credential
 runtime through the corresponding `MODEL_SECRET_<NAME>` environment variable. Do not enable the
 provider until the approved endpoint/network policy and secret are present.
 
-# AI-assisted workflow authoring (Phase 2 P10.1)
+# AI-assisted artifact authoring (Phase 2 P10.1/P10.2)
 
-The builder can generate an untrusted workflow candidate from a bounded description. This feature
-is disabled unless operations sets `AI_AUTHORING_MODEL_PROFILE_ID` to an approved active immutable
-model profile. Authors select an exact project, generate and inspect canonical diagnostics, then use
-the separate transfer action to create the mutable draft. Generation does not publish an artifact,
-compile a release, run an evaluation, promote, or execute the workflow. Descriptions and raw model
-responses are transient and excluded from audit/log content. Live activation still requires the
-environment's endpoint, CA, secret, firewall, privacy and cost approval.
+The builder can generate an untrusted workflow, input-contract or output-contract candidate from a
+bounded description. This feature is disabled unless operations sets
+`AI_AUTHORING_MODEL_PROFILE_ID` to an approved active immutable model profile. Authors select an
+exact project and type, generate the candidate, inspect canonical diagnostics, then use the separate
+transfer action. Workflow candidates enter `WorkflowDraft` and open in the graph editor. JSON Schema
+input/output candidates enter a tenant/project-scoped `ArtifactDraft` and open in the Turkish JSON
+editor, where they can be revalidated, updated or deleted.
+
+Each type uses a server-owned immutable prompt contract with a stable ID, revision and SHA-256
+checksum. `AI_AUTHORING_CONTRACT_REVISION` can select only a reviewed revision present in the code
+registry; callers cannot submit prompt text or select a revision. Tool, binding, model, source,
+custom-node and agent candidates are denied before model egress. Generic artifact drafts have no
+publish endpoint in P10.2. Generation and transfer do not create an immutable artifact, compile a
+release, run an evaluation, promote, or execute anything. Descriptions and raw model responses are
+transient and excluded from audit/log content. Live activation still requires the environment's
+endpoint, CA, secret, firewall, privacy and cost approval.

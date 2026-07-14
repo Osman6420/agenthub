@@ -6,7 +6,7 @@ Track project-level intent without treating target designs as implemented behavi
 
 ## Current state
 
-As of 2026-07-13, Sprints 0–11 and Phase 2 P1 (live chat), P2 (content plane & storage), P3 (real
+As of 2026-07-14, Sprints 0–11 and Phase 2 P1 (live chat), P2 (content plane & storage), P3 (real
 embeddings + staged blue/green indexing), P4 (document-ACL retrieval + FORCE RLS + pointer-flip
 promotion — the security core; real ACL-scoped tenant RAG is now servable), P5 (real
 retrieve/generate wired into the agent loop + workflow nodes, with per-node prompt/model binding), and
@@ -18,8 +18,9 @@ result-before-ACK lineage; no live endpoint configured/called), P7.4a (governed 
 Center ingestion over a connector-specific private-corporate policy, verified offline), and
 P7.4b (governed generic REST, periodic incremental refresh and compatible vector reuse), and
 P8.1–P8.4 (complete document console including effective consumer grants and elevated purge) are
-implemented and verified offline. Live Confluence/REST rollout remains deployment-gated. Later
-workstreams retain their explicit gates.
+implemented and verified offline. P9.1–P9.5 and P10.1/P10.2 are also implemented/verified. The
+production-hardening/live-profile closure milestone remains Phase 2 work. Personal MCP identity/OBO
+moved to Phase 3 discovery. Concrete live changes retain their explicit gates.
 
 - Sprint 0: bootable Django modular-monolith skeleton — settings split, Celery role
   definitions, unauthenticated health probes, dependency manifest + lockfile, Docker
@@ -196,10 +197,11 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Tool registry + approval (Sprint 9) | Verified | Sprint 8 | [sprint-9-tool-registry-approval](../tasks/sprint-9-tool-registry-approval/plan.md) | [v3 target plan §17](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-9-tool-registry-approval/verification.md) |
 | Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
 | Visual workflow builder (Sprint 11) | Verified | Sprints 2, 8 | [sprint-11-workflow-builder](../tasks/sprint-11-workflow-builder/plan.md) | [v3 target plan §25](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-11-workflow-builder/verification.md) |
-| Document plane (Phase 2 · WS1) | **P2–P6 + P7.1–P7.4b + P8.1–P8.4 Verified**; Confluence and generic REST are offline-verified and live rollout is deployment-gated | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [threat model](components/document-plane-threat-model.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) + [P7.4b](../tasks/phase-2-p7-4b-generic-rest-periodic-sync/verification.md) + [P8](../tasks/phase-2-p8-console-ui/verification.md) |
+| Document plane (Phase 2 · WS1) | **Offline scope verified; Phase 2 closure hardening pending** — broader Django-table RLS/non-owner role, upload scanning and live Confluence/REST/embedding/OCR profiles | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [closure hardening](../tasks/phase-2-closure-production-hardening/plan.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) + [P7.4b](../tasks/phase-2-p7-4b-generic-rest-periodic-sync/verification.md) + [P8](../tasks/phase-2-p8-console-ui/verification.md) |
 | Live model runtime (Phase 2 · WS5) | **P1 + P5 + P6 Verified** (WS5 runtime scope complete) | Shared egress + `ModelProfile` catalog | [P1](../tasks/phase-2-p1-live-chat/plan.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/plan.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P1](../tasks/phase-2-p1-live-chat/verification.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/verification.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/verification.md) |
-| Console UX modernization (Phase 2 · WS2) | **P9.1–P9.5 implemented; automated verification complete, owner browser acceptance outstanding** | Document plane console + existing React builder | [P9 console UX](../tasks/phase-2-p9-console-ux/plan.md) | [phase-2-plan](phase-2-plan.md) | [P9 verification](../tasks/phase-2-p9-console-ux/verification.md) |
-| AI-assisted authoring (Phase 2 · WS3) | **P10.1 implemented and offline-verified; live activation gated** | Existing ModelProfile/SSRF-safe egress + canonical builder/compiler | [P10 AI authoring](../tasks/phase-2-p10-ai-assisted-authoring/plan.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md), [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P10 verification](../tasks/phase-2-p10-ai-assisted-authoring/verification.md) |
+| Console UX modernization (Phase 2 · WS2) | **P9.1–P9.5 complete**; responsive/accessibility manual acceptance not required, Turkish terminology remains priority | Document plane console + existing React builder | [P9 console UX](../tasks/phase-2-p9-console-ux/plan.md) | [phase-2-plan](phase-2-plan.md) | [P9 verification](../tasks/phase-2-p9-console-ux/verification.md) |
+| AI-assisted authoring (Phase 2 · WS3) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output allowlist, immutable prompt contracts and non-publishing contract drafts; live activation at Phase 2 closure | Existing ModelProfile/SSRF-safe egress + canonical validators | [P10 AI authoring](../tasks/phase-2-p10-ai-assisted-authoring/plan.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md), [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P10 verification](../tasks/phase-2-p10-ai-assisted-authoring/verification.md) |
+| Personal MCP identity/delegation (Phase 3) | **Discovery only; moved out of Phase 2** | IdP/OBO/downstream trust decisions | [phase-3-plan](phase-3-plan.md) | ADRs pending | Verification pending |
 
 ## Cross-cutting concerns
 

@@ -2,7 +2,15 @@
 // CSRF token from the cookie; the browser's session cookie authenticates the operator.
 // There is no token/bearer path and no cross-origin request — the SPA is served by Django.
 
-import type { AiCandidateResult, Draft, DiagnosticsResult, NodeSchema } from "./types";
+import type {
+  AcceptedCandidateDraft,
+  AiCandidateResult,
+  AiCandidateType,
+  ArtifactDraft,
+  Draft,
+  DiagnosticsResult,
+  NodeSchema,
+} from "./types";
 
 export class ApiError extends Error {
   code: string;
@@ -56,7 +64,7 @@ export class BuilderApi {
   }
 
   generateCandidate(payload: {
-    organization: string; project_id: number; description: string;
+    organization: string; project_id: number; description: string; artifact_type: AiCandidateType;
   }): Promise<AiCandidateResult> {
     return request(this.url("/ai-candidates/"), {
       method: "POST",
@@ -66,11 +74,42 @@ export class BuilderApi {
 
   acceptCandidate(payload: {
     organization: string; project_id: number; name: string; logical_id: string;
-    candidate: Record<string, unknown>;
-  }): Promise<Draft> {
+    artifact_type: AiCandidateType; candidate: Record<string, unknown>;
+    prompt_contract: AiCandidateResult["prompt_contract"];
+  }): Promise<AcceptedCandidateDraft> {
     return request(this.url("/ai-candidates/accept/"), {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  }
+
+  listArtifactDrafts(): Promise<{ drafts: ArtifactDraft[] }> {
+    return request(this.url("/artifact-drafts/"));
+  }
+
+  getArtifactDraft(id: number): Promise<ArtifactDraft> {
+    return request(this.url(`/artifact-drafts/${id}/`));
+  }
+
+  updateArtifactDraft(
+    id: number, payload: { name?: string; body?: Record<string, unknown> },
+  ): Promise<ArtifactDraft> {
+    return request(this.url(`/artifact-drafts/${id}/`), {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deleteArtifactDraft(id: number): Promise<{ deleted: boolean }> {
+    return request(this.url(`/artifact-drafts/${id}/`), { method: "DELETE" });
+  }
+
+  artifactDraftDiagnostics(
+    id: number, body: Record<string, unknown>,
+  ): Promise<DiagnosticsResult> {
+    return request(this.url(`/artifact-drafts/${id}/diagnostics/`), {
+      method: "POST",
+      body: JSON.stringify({ body }),
     });
   }
 

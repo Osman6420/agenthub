@@ -6,7 +6,7 @@ import pytest
 
 from apps.artifacts.models import ArtifactVersion
 from apps.builder import services
-from apps.builder.models import WorkflowDraft
+from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.tests.conftest import BuilderFixture, simple_workflow
 
 pytestmark = pytest.mark.django_db
@@ -58,3 +58,46 @@ def test_publish_is_immutable_source_of_truth(bf: BuilderFixture) -> None:
 
     artifact = services.publish_draft(bf.draft, actor="author")
     assert artifact.checksum == compute_checksum(bf.draft.body)
+
+
+def test_artifact_draft_create_rolls_back_when_audit_fails(
+    bf: BuilderFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_audit(**_kwargs) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(services, "record_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        services.create_artifact_draft(
+            organization=bf.org,
+            project=bf.project,
+            artifact_type="input_contract",
+            name="Girdi",
+            logical_id="input_v1",
+            body={"type": "object"},
+            actor="author",
+            prompt_contract={"id": "safe", "revision": 1, "checksum": "a" * 64},
+        )
+    assert not ArtifactDraft.objects.exists()
+
+
+def test_artifact_draft_rejects_unbounded_prompt_metadata_before_write(
+    bf: BuilderFixture,
+) -> None:
+    with pytest.raises(services.BuilderError, match="prompt_contract_invalid"):
+        services.create_artifact_draft(
+            organization=bf.org,
+            project=bf.project,
+            artifact_type="input_contract",
+            name="Girdi",
+            logical_id="input_v1",
+            body={"type": "object"},
+            actor="author",
+            prompt_contract={
+                "id": "safe",
+                "revision": 1,
+                "checksum": "not-a-checksum",
+                "unexpected": "must-not-reach-audit",
+            },
+        )
+    assert not ArtifactDraft.objects.exists()

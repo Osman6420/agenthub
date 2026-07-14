@@ -1,4 +1,4 @@
-"""Mutable, tenant-scoped workflow drafts for the visual builder (Sprint 11).
+"""Mutable, tenant-scoped author working state for the visual builder.
 
 A ``WorkflowDraft`` is *author working state* — it is neither a runtime graph nor an
 immutable artifact. It holds a workflow DSL body that an operator edits in the console
@@ -7,12 +7,16 @@ builder. Publishing a draft routes the body through the same
 immutable ``workflow_definition`` ``ArtifactVersion``; the draft itself remains editable
 so a later publish creates the next artifact version. The draft body carries no tenant
 selector — every query is scoped by the authoritative ``organization`` column.
+
+P10.2 adds ``ArtifactDraft`` for allowlisted JSON Schema input/output contracts. It is
+mutable author state with no publish route; immutable artifact creation remains separate.
 """
 
 from __future__ import annotations
 
 from django.db import models
 
+from apps.artifacts.types import ArtifactType
 from apps.tenancy.models import Organization, TimeStampedModel
 
 
@@ -52,3 +56,52 @@ class WorkflowDraft(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"workflow-draft:{self.organization_id}:{self.logical_id}"
+
+
+class ArtifactDraft(TimeStampedModel):
+    """Mutable author working state for allowlisted non-workflow artifacts.
+
+    P10.2 intentionally exposes no publish route for this model. A later governed publish
+    surface must re-authorize and route through the canonical artifact service.
+    """
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="artifact_drafts"
+    )
+    project = models.ForeignKey(
+        "catalog.AIProject",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="artifact_drafts",
+    )
+    artifact_type = models.CharField(
+        max_length=32,
+        choices=[
+            (ArtifactType.INPUT_CONTRACT, "Input contract"),
+            (ArtifactType.OUTPUT_CONTRACT, "Output contract"),
+        ],
+    )
+    name = models.CharField(max_length=200)
+    logical_id = models.CharField(max_length=128)
+    body = models.JSONField(default=dict)
+    created_by = models.CharField(max_length=200)
+    updated_by = models.CharField(max_length=200)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "artifact_type", "logical_id"],
+                name="uniq_artifact_draft_org_type_logical",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "artifact_type", "-updated_at"],
+                name="builder_art_org_type_upd_idx",
+            )
+        ]
+        ordering = ["-updated_at"]
+
+    def __str__(self) -> str:
+        return f"artifact-draft:{self.organization_id}:{self.artifact_type}:{self.logical_id}"

@@ -25,7 +25,7 @@ from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
 
 from apps.builder import authoring, services
-from apps.builder.models import WorkflowDraft
+from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.node_schema import build_node_schema
 from apps.catalog.models import AIProject
 from apps.tenancy.models import Organization
@@ -73,7 +73,7 @@ def _actor_id(request: HttpRequest) -> int:
 @require_http_methods(["POST"])
 def ai_candidates(request: HttpRequest) -> HttpResponse:
     payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=False))
-    _reject_unknown_fields(payload, {"organization", "project_id", "description"})
+    _reject_unknown_fields(payload, {"organization", "project_id", "description", "artifact_type"})
     org = _resolve_org_in_scope(request, payload.get("organization"))
     _require_author(request, org.id)
     if _resolve_project(org, payload.get("project_id")) is None:
@@ -83,6 +83,7 @@ def ai_candidates(request: HttpRequest) -> HttpResponse:
         actor=_actor(request),
         actor_id=_actor_id(request),
         description=payload.get("description"),
+        artifact_type=payload.get("artifact_type", "workflow_definition"),
         request_id=_request_id(request),
     )
     return JsonResponse(result)
@@ -94,7 +95,16 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
     payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
     _reject_unknown_fields(
         payload,
-        {"organization", "project_id", "name", "logical_id", "candidate", "draft_id"},
+        {
+            "organization",
+            "project_id",
+            "name",
+            "logical_id",
+            "candidate",
+            "artifact_type",
+            "prompt_contract",
+            "draft_id",
+        },
     )
     org = _resolve_org_in_scope(request, payload.get("organization"))
     _require_author(request, org.id)
@@ -108,9 +118,13 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
         name=payload.get("name", ""),
         logical_id=payload.get("logical_id", ""),
         candidate=payload.get("candidate"),
+        artifact_type=payload.get("artifact_type", "workflow_definition"),
+        prompt_contract=payload.get("prompt_contract"),
         draft_id=payload.get("draft_id"),
         request_id=_request_id(request),
     )
+    if isinstance(draft, ArtifactDraft):
+        return JsonResponse(_serialize_artifact_draft(draft, can_write=True), status=201)
     return JsonResponse(_serialize(draft, can_write=True), status=201)
 
 
@@ -163,6 +177,17 @@ def _scoped_draft(request: HttpRequest, pk: int) -> WorkflowDraft:
     return draft
 
 
+def _scoped_artifact_draft(request: HttpRequest, pk: int) -> ArtifactDraft:
+    allowed = allowed_organization_ids(request.user)
+    qs = ArtifactDraft.objects.select_related("organization", "project")
+    if allowed is not None:
+        qs = qs.filter(organization_id__in=allowed)
+    draft = qs.filter(pk=pk).first()
+    if draft is None:
+        raise Http404
+    return draft
+
+
 def _serialize(draft: WorkflowDraft, *, can_write: bool) -> dict[str, Any]:
     return {
         "id": draft.pk,
@@ -180,6 +205,24 @@ def _serialize(draft: WorkflowDraft, *, can_write: bool) -> dict[str, Any]:
         "updated_by": draft.updated_by,
         "updated_at": draft.updated_at.isoformat(),
         # Drives the frontend read-only mode; the server still re-checks on every write.
+        "can_write": can_write,
+    }
+
+
+def _serialize_artifact_draft(draft: ArtifactDraft, *, can_write: bool) -> dict[str, Any]:
+    return {
+        "id": draft.pk,
+        "draft_kind": "artifact",
+        "artifact_type": draft.artifact_type,
+        "organization": draft.organization.slug,
+        "organization_id": draft.organization_id,
+        "project_id": draft.project_id,
+        "name": draft.name,
+        "logical_id": draft.logical_id,
+        "body": draft.body,
+        "created_by": draft.created_by,
+        "updated_by": draft.updated_by,
+        "updated_at": draft.updated_at.isoformat(),
         "can_write": can_write,
     }
 
@@ -286,6 +329,61 @@ def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
         },
         status=201,
     )
+
+
+@operator_api
+@require_http_methods(["GET"])
+def artifact_drafts(request: HttpRequest) -> HttpResponse:
+    allowed = allowed_organization_ids(request.user)
+    qs = ArtifactDraft.objects.select_related("organization", "project")
+    if allowed is not None:
+        qs = qs.filter(organization_id__in=allowed)
+    return JsonResponse(
+        {
+            "drafts": [
+                _serialize_artifact_draft(
+                    draft,
+                    can_write=can_author_scenarios(request.user, draft.organization_id),
+                )
+                for draft in qs
+            ]
+        }
+    )
+
+
+@operator_api
+@require_http_methods(["GET", "PUT", "DELETE"])
+def artifact_draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    draft = _scoped_artifact_draft(request, pk)
+    can_write = can_author_scenarios(request.user, draft.organization_id)
+    if request.method == "GET":
+        return JsonResponse(_serialize_artifact_draft(draft, can_write=can_write))
+    _require_author(request, draft.organization_id)
+    if request.method == "DELETE":
+        services.delete_artifact_draft(
+            draft, actor=_actor(request), request_id=_request_id(request)
+        )
+        return JsonResponse({"deleted": True})
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(payload, {"name", "body"})
+    updated = services.update_artifact_draft(
+        draft,
+        actor=_actor(request),
+        name=payload.get("name"),
+        body=payload.get("body"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(_serialize_artifact_draft(updated, can_write=True))
+
+
+@operator_api
+@require_http_methods(["POST"])
+def artifact_draft_diagnostics(request: HttpRequest, pk: int) -> HttpResponse:
+    draft = _scoped_artifact_draft(request, pk)
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(payload, {"body"})
+    body = payload["body"] if "body" in payload else draft.body
+    return JsonResponse(services.diagnose_artifact(draft.artifact_type, body))
 
 
 def _resolve_project(org: Organization, ref: Any) -> AIProject | None:

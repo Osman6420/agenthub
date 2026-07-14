@@ -127,18 +127,12 @@ PostgreSQL regression was not rerun; focused connector/RLS and P9.4 tenant cover
 
 ## Human review required
 
-Owner browser acceptance remains required on the served console:
-
-- 390 px: sidebar navigation scroll, tables scroll horizontally, actions wrap, and builder palette/
-  canvas/config stack without hiding controls.
-- 900 px and 1440 px: hierarchy, line lengths, table density and scenario configured-vs-effective
-  explanation remain legible.
-- Keyboard-only: the skip link reaches `main`, focus is always visible, forms/buttons/tables are
-  reachable in a logical order, and status/error messages are announced by the target screen reader.
-- Turkish/domain terminology: translations are understandable to operators while artifact,
-  release, consumer, workflow and protocol identifiers remain unambiguous.
+Owner decision on 2026-07-14: 390/900/1440 px and keyboard/screen-reader manual acceptance are not
+required. Turkish/domain terminology remains the prioritized product review: translations should be
+understandable to operators while artifact, release, consumer, workflow and protocol identifiers
+remain unambiguous.
 
 ## Final status
 
-P9.1–P9.5 implementation and automated verification complete. Final owner browser/operator
-acceptance remains open and is the only P9 closeout item.
+P9.1–P9.5 implementation and automated verification complete. No responsive/accessibility manual
+acceptance gate remains; Turkish terminology continues as a product priority.

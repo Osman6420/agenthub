@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
 import { AiAuthoringPanel } from "./AiAuthoringPanel";
+import { ArtifactDraftEditor } from "./ArtifactDraftEditor";
 import { Editor } from "./Editor";
-import type { BuilderInitial, Draft, NodeSchema, OrgOption } from "./types";
+import type { ArtifactDraft, BuilderInitial, Draft, NodeSchema, OrgOption } from "./types";
 
 // Top-level bootstrap: pick an organization (from the server-rendered scope), load its
 // node-schema and drafts, then open or create a draft and hand off to the Editor. All
@@ -25,7 +26,9 @@ export function App({
   );
   const [schema, setSchema] = useState<NodeSchema | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [artifactDrafts, setArtifactDrafts] = useState<ArtifactDraft[]>([]);
   const [active, setActive] = useState<Draft | null>(null);
+  const [activeArtifact, setActiveArtifact] = useState<ArtifactDraft | null>(null);
   const [error, setError] = useState<string>("");
   const [newName, setNewName] = useState("");
   const [newId, setNewId] = useState("");
@@ -38,9 +41,12 @@ export function App({
     if (!orgSlug) return;
     setError("");
     try {
-      const [s, list] = await Promise.all([api.nodeSchema(orgSlug), api.listDrafts()]);
+      const [s, list, artifactList] = await Promise.all([
+        api.nodeSchema(orgSlug), api.listDrafts(), api.listArtifactDrafts(),
+      ]);
       setSchema(s);
       setDrafts(list.drafts.filter((d) => d.organization === orgSlug));
+      setArtifactDrafts(artifactList.drafts.filter((d) => d.organization === orgSlug));
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
     }
@@ -60,6 +66,14 @@ export function App({
     },
     [api],
   );
+
+  const openArtifact = useCallback(async (id: number) => {
+    try {
+      setActiveArtifact(await api.getArtifactDraft(id));
+    } catch (err) {
+      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+    }
+  }, [api]);
 
   useEffect(() => {
     if (deepLinkHandled || !schema || !initial?.draft_id) return;
@@ -97,6 +111,12 @@ export function App({
         <Editor api={api} schema={schema} draft={active} />
       </div>
     );
+  }
+
+  if (activeArtifact) {
+    return <ArtifactDraftEditor api={api} draft={activeArtifact}
+      onChange={(draft) => { setActiveArtifact(draft); void reload(); }}
+      onClose={() => setActiveArtifact(null)} />;
   }
 
   return (
@@ -146,8 +166,26 @@ export function App({
         ))}
       </ul>
 
+      <h2 style={{ margin: "20px 0 8px" }}>Sözleşme taslakları</h2>
+      {artifactDrafts.length === 0 && <div style={{ color: "#8b95a7" }}>
+        Henüz sözleşme taslağı yok.
+      </div>}
+      <ul style={{ listStyle: "none", padding: 0 }}>
+        {artifactDrafts.map((draft) => <li key={draft.id} className="ah-builder-draft-row"
+          style={draftRow}>
+          <span><strong>{draft.name}</strong>{" "}<span style={{ color: "#8b95a7" }}>
+            ({draft.artifact_type === "input_contract" ? "girdi" : "çıktı"}; {draft.logical_id})
+          </span></span>
+          <button type="button" onClick={() => void openArtifact(draft.id)} style={openBtn}>Aç</button>
+        </li>)}
+      </ul>
+
       {canWrite && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
-        onAccepted={(draft) => { void reload(); setActive(draft); }} />}
+        onAccepted={(draft) => {
+          void reload();
+          if ("artifact_type" in draft) setActiveArtifact(draft);
+          else setActive(draft);
+        }} />}
 
       {canWrite && (
         <div className="ah-builder-create" style={{ marginTop: 20, borderTop: "1px solid #262b36", paddingTop: 16 }}>

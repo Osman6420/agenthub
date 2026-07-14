@@ -92,9 +92,29 @@ export interface DiagnosticsResult {
 }
 
 export interface AiCandidateResult {
+  artifact_type: AiCandidateType;
   candidate: Record<string, unknown>;
   diagnostics: DiagnosticsResult;
+  prompt_contract: { id: string; revision: number; checksum: string };
 }
+
+export type AiCandidateType = "workflow_definition" | "input_contract" | "output_contract";
+
+export interface ArtifactDraft {
+  id: number;
+  draft_kind: "artifact";
+  artifact_type: "input_contract" | "output_contract";
+  organization: string;
+  organization_id: number;
+  project_id: number | null;
+  name: string;
+  logical_id: string;
+  body: Record<string, unknown>;
+  updated_at: string;
+  can_write: boolean;
+}
+
+export type AcceptedCandidateDraft = Draft | ArtifactDraft;
 
 // Node data carried inside a React Flow node.
 export interface BuilderNodeData {

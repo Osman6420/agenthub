@@ -15,7 +15,7 @@ Authorized console operators (LDAP/session, role- and tenant-scoped), ingestion/
 runtime consumers acting through a signed `ExecutionContext`, and external systems: the
 owner-hosted OpenAI-compatible embedding endpoint, the owner-hosted OCR endpoint, Confluence, and
 generic REST sources. `user`/`group` principals exist in the schema but are **not enforced** in
-this workstream (Workstream 4).
+this workstream (deferred to Phase 3 personal MCP).
 
 ## Entry points
 
@@ -163,7 +163,7 @@ prompt injection remains governed by runtime policy, not ingestion trust. The RL
 connection-context design (transaction-local GUC, pooling safety, role model) must be settled in
 Spike 2 and proven by negative tests before it is relied upon. Person/group ACL is only
 schema-forward-ready here; its enforcement and the trusted propagation of end-user identity are
-Workstream 4 concerns and must not be assumed active. Real embedding/OCR relevance and the final
+Phase 3 identity/delegation concerns and must not be assumed active. Real embedding/OCR relevance and the final
 parser dependency are validated in M3/M4 before promotion.
 
 ## Required security tests
