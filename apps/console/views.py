@@ -19,6 +19,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
+from django.db.models import Q
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -87,9 +88,11 @@ from apps.ingestion.confluence_services import (
     mark_confluence_dispatch_failed,
 )
 from apps.ingestion.models import (
+    ConfluenceSyncRun,
     ConnectorType,
     IndexStatus,
     IndexVersion,
+    RestSyncRun,
     ScheduleAutomationMode,
     Source,
 )
@@ -2255,6 +2258,89 @@ def _scoped_connector_source(user: UserLike, source_pk: int) -> Source:
         raise Http404
     set_tenant_context(source.organization_id)
     return source
+
+
+@login_required
+@transaction.atomic
+def connector_source_detail(request: HttpRequest, source_pk: int) -> HttpResponse:
+    source = _scoped_connector_source(request.user, source_pk)
+    document_set = source.document_set
+    if document_set is None:
+        raise Http404
+    latest_run: ConfluenceSyncRun | RestSyncRun | None
+    if source.connector_type == ConnectorType.CONFLUENCE_DC:
+        latest_run = source.confluence_sync_runs.order_by("-created_at", "-pk").first()
+        confluence_profile = source.confluence_profile
+        profile_label = (
+            f"{confluence_profile.logical_id} · r{confluence_profile.revision}"
+            if confluence_profile
+            else "—"
+        )
+        contract_label = "Confluence sayfa ağacı"
+    else:
+        latest_run = source.rest_sync_runs.order_by("-created_at", "-pk").first()
+        rest_profile = source.rest_profile
+        contract = source.rest_contract
+        profile_label = (
+            f"{rest_profile.logical_id} · r{rest_profile.revision}" if rest_profile else "—"
+        )
+        contract_label = f"{contract.logical_id} · r{contract.revision}" if contract else "—"
+    versions = document_set.versions.order_by("-version", "-pk")
+    draft_version = versions.filter(status=DocumentSetVersionStatus.DRAFT).first()
+    published_version = versions.exclude(status=DocumentSetVersionStatus.DRAFT).first()
+    indexes = IndexVersion.objects.filter(
+        Q(source=source) | Q(document_set_version__document_set=document_set),
+        organization_id=source.organization_id,
+    ).order_by("-created_at", "-pk")
+    staged_index = indexes.filter(
+        status__in=[IndexStatus.BUILDING, IndexStatus.PROMOTABLE, IndexStatus.FAILED]
+    ).first()
+    active_index = indexes.filter(status=IndexStatus.ACTIVE).first()
+    lifecycle = [
+        {"label": "Kaynak bağlandı", "done": True, "detail": source.get_status_display()},
+        {
+            "label": "Senkron tamamlandı",
+            "done": bool(latest_run and latest_run.snapshot_complete),
+            "detail": latest_run.status if latest_run else "Henüz çalıştırılmadı",
+        },
+        {
+            "label": "Taslak adayı üretildi",
+            "done": draft_version is not None,
+            "detail": f"v{draft_version.version}" if draft_version else "Değişiklik bekleniyor",
+        },
+        {
+            "label": "Set sürümü yayımlandı",
+            "done": published_version is not None,
+            "detail": f"v{published_version.version}" if published_version else "Yayın bekleniyor",
+        },
+        {
+            "label": "Staged indeks hazırlandı",
+            "done": bool(staged_index and staged_index.status == IndexStatus.PROMOTABLE),
+            "detail": staged_index.status if staged_index else "Build bekleniyor",
+        },
+        {
+            "label": "Aktif indeks promote edildi",
+            "done": active_index is not None,
+            "detail": f"v{active_index.version}" if active_index else "Promotion bekleniyor",
+        },
+    ]
+    return render(
+        request,
+        "console/connector_source_detail.html",
+        {
+            "source": source,
+            "set": document_set,
+            "latest_run": latest_run,
+            "profile_label": profile_label,
+            "contract_label": contract_label,
+            "lifecycle": lifecycle,
+            "draft_version": draft_version,
+            "published_version": published_version,
+            "staged_index": staged_index,
+            "active_index": active_index,
+            "can_write": can_author_scenarios(request.user, source.organization_id),
+        },
+    )
 
 
 @login_required

@@ -371,3 +371,57 @@ def test_foreign_source_run_is_not_found(client: Client) -> None:
     source = _rest_source(other, foreign_set, foreign_author)
     client.force_login(_member("author", org, Role.SCENARIO_EDITOR))
     assert client.post(reverse("console:connector_source_run", args=[source.pk])).status_code == 404
+
+
+@pytest.mark.django_db
+def test_source_detail_projects_safe_lifecycle_without_authority_values(client: Client) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    author = _member("author", org, Role.SCENARIO_EDITOR)
+    source = _rest_source(org, document_set, author)
+    rest_profile = source.rest_profile
+    rest_contract = source.rest_contract
+    assert rest_profile is not None and rest_contract is not None
+    RestSyncRun.objects.create(
+        organization=org,
+        source=source,
+        rest_profile=rest_profile,
+        rest_contract=rest_contract,
+        status="dead_letter",
+        error_code="BROKER_UNAVAILABLE",
+        discovered_count=3,
+        changed_count=1,
+        unchanged_count=2,
+    )
+    client.force_login(author)
+    response = client.get(reverse("console:connector_source_detail", args=[source.pk]))
+    body = response.content.decode()
+    assert response.status_code == 200
+    assert "Kaynak → aktif indeks yolculuğu" in body
+    assert "BROKER_UNAVAILABLE" in body
+    assert "knowledge-api · r1" in body and "documents · r1" in body
+    for denied in (
+        "rest.private.example",
+        "secret:rest-reader",
+        "finance-private-input",
+    ):
+        assert denied not in body
+
+
+@pytest.mark.django_db
+def test_source_detail_is_read_only_for_auditor_and_cross_tenant_fails_closed(
+    client: Client,
+) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    other = Organization.objects.create(slug="org-b", name="B")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    author = _member("author", org, Role.SCENARIO_EDITOR)
+    source = _rest_source(org, document_set, author)
+    client.force_login(_member("auditor", org, Role.AUDITOR))
+    response = client.get(reverse("console:connector_source_detail", args=[source.pk]))
+    assert response.status_code == 200
+    assert "Şimdi çalıştır" not in response.content.decode()
+    client.force_login(_member("foreign", other, Role.SCENARIO_EDITOR))
+    assert (
+        client.get(reverse("console:connector_source_detail", args=[source.pk])).status_code == 404
+    )

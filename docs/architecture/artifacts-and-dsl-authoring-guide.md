@@ -143,6 +143,14 @@ Authoring yüzeylerinin rolleri:
   ilişkilerini tek yaşam döngüsünde gösterir. Published set sürümleri değişmez; replacement yeni
   `DocumentVersion` üretip yalnız manuel taslağın exact pinini günceller. Tombstone baytları veya
   tarihsel pinleri silmez.
+- Document-set kaynak workspace'i, upload/Confluence/REST seçimini ve REST için platform profili +
+  immutable mapping revizyonu + güvenli input binding ayrımını tek yönlendirmeli akışta sunar.
+  Platform profili endpoint, credential reference, network/CA ve response sınırlarının otoritesidir;
+  mapping sözleşmesi bounded response'u canonical document biçimine dönüştürür; source instance bu
+  iki exact revizyonu sete ve yenileme politikasına bağlar. Sentetik preview egress açmaz ve yalnız
+  güvenli türetilmiş metadata gösterir. Source detail; son sync, güvenli hata kodu, değişen/değişmeyen
+  sayaçları, draft/published set sürümü ve staged/active index ilerlemesini gösterir. Sync doğrudan
+  active index değiştirmez; publish, staged build/evaluation ve promotion ayrı governed kapılardır.
 - Tekil document envanteri primary navigation değildir. Yalnız organizasyon/platform yöneticilerinin
   açabildiği gelişmiş saklama alanı tombstone ve purge operasyonlarını sunar. Purge, typed confirmation,
   tombstone ve hiçbir set sürümünde pin bulunmaması koşullarını korur.

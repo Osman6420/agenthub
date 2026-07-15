@@ -214,6 +214,11 @@ urlpatterns = [
         name="rest_source_create",
     ),
     path(
+        "connector-sources/<int:source_pk>/",
+        views.connector_source_detail,
+        name="connector_source_detail",
+    ),
+    path(
         "connector-sources/<int:source_pk>/run/",
         views.connector_source_run,
         name="connector_source_run",

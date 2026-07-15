@@ -9,7 +9,7 @@
   <div class="section-heading"><div><h2>Bağlı kaynaklar</h2><p class="muted">Hedef adresi, kimlik bilgisi, REST input değerleri ve doküman içeriği bu ekranda gösterilmez.</p></div></div>
   {% for source in sources %}
   <div class="relationship-card">
-    <div class="relationship-head"><div><h3>{{ source.object.name }}</h3><p class="muted mono">{{ source.object.slug }} · {{ source.type_label }}</p></div><span class="badge {{ source.object.status }}">{{ source.object.status }}</span></div>
+    <div class="relationship-head"><div><h3><a href="{% url 'console:connector_source_detail' source.object.id %}">{{ source.object.name }}</a></h3><p class="muted mono">{{ source.object.slug }} · {{ source.type_label }}</p></div><span class="badge {{ source.object.status }}">{{ source.object.status }}</span></div>
     <div class="relationship-body">
       <div>
         <h4>Güvenli kaynak özeti</h4>
@@ -28,6 +28,7 @@
 </div>
 
 {% if can_write %}
+<div class="card"><h2>Kaynak sihirbazı</h2><ol><li>Kaynak türünü seçin.</li><li>Organizasyon için grant edilmiş platform profilini seçin; endpoint ve secret gizli kalır.</li><li>REST için immutable mapping revizyonunu seçin veya aşağıda oluşturun.</li><li>Sentetik örnekle bounded preview çalıştırın; bu adım ağ isteği açmaz.</li><li>Kaynağı bu sete bağlayıp güvenli yenileme politikasını seçin.</li><li>Senkronu çalıştırın; sonuç yalnız taslak aday üretir, aktif indeksi doğrudan değiştirmez.</li></ol></div>
 <div class="relationship-grid">
   <div class="card form-card">
     <h2>Confluence kaynağı ekle</h2><p class="muted">Yalnız platform yöneticisinin bu sete grant ettiği profil seçilebilir. Kök sayfa alt ağacı periyodik olarak değişiklik kontrolünden geçer.</p>

@@ -79,7 +79,7 @@
 <div class="card">
   <div class="section-heading"><div><h2>Kaynaklar</h2><p class="muted">Bu sete içerik sağlayan manuel yüklemeler ve yönetilen connector kaynakları.</p></div><a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynakları yönet</a></div>
   <p><span class="badge active">Manuel yükleme</span> Set çalışma alanındaki toplu yükleme ve replacement işlemleri</p>
-  {% for source in sources %}<p><strong>{{ source.name }}</strong> <span class="badge">{{ source.connector_type }}</span> <span class="badge {{ source.status }}">{{ source.status }}</span></p>{% empty %}<p class="muted">Bağlı connector kaynağı yok.</p>{% endfor %}
+  {% for source in sources %}<p><strong><a href="{% url 'console:connector_source_detail' source.id %}">{{ source.name }}</a></strong> <span class="badge">{{ source.connector_type }}</span> <span class="badge {{ source.status }}">{{ source.status }}</span></p>{% empty %}<p class="muted">Bağlı connector kaynağı yok.</p>{% endfor %}
 </div>
 
 <div class="card">

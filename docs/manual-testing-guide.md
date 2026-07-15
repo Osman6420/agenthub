@@ -97,6 +97,9 @@ Open `http://127.0.0.1:8000/console/`.
 | 1.10 | Remove a document from a draft, then inspect an already published version | Only the draft membership changes; published version lineage remains unchanged |
 | 1.11 | Tombstone a set document | New replacement is disabled; historical pins remain visible and the UI states bytes are retained |
 | 1.12 | As `admin`, open **Gelişmiş saklama yönetimi** | Admin-only inventory is available; purge requires tombstone, exact ID confirmation and no set-version pins |
+| 1.13 | As `editor`, open a document set's **Kaynakları yönet** page | Guided upload/Confluence/REST steps explain profile, immutable mapping, no-egress preview, binding and sync; endpoint/credential/input values remain hidden |
+| 1.14 | Open a connected source detail | Last sync time, safe failure code/counts and source → draft → published → staged → active progression appear; sync is not presented as direct activation |
+| 1.15 | Repeat source detail as `auditor`, then with a foreign-tenant account | Auditor sees no **Şimdi çalıştır** mutation; foreign source ID returns 404 |
 | 1.13 | As `editor` or `auditor`, request `/console/documents/advanced/` | HTTP 403; standalone storage inventory is not disclosed |
 
 Tip: `admin` is a superuser (sees everything); the others are role-scoped to `demo`.
