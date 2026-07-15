@@ -11,7 +11,10 @@
 | Secret/config review | `rg` and generated-file inspection | Pass | Versioned Serena files contain project metadata only | Local cache and overrides are ignored. |
 
 ## Acceptance criteria mapping
-All acceptance criteria are met. Python and TypeScript are explicitly enabled, indexing completed, and both clients load the Serena MCP registration.
+All installation and registration acceptance criteria are met. Python and TypeScript
+are explicitly enabled and indexing completed. On 2026-07-15 the Codex app's actual
+CLI binary again reported Serena as `enabled`; the already-running task did not expose
+Serena tools because its MCP capability set was fixed at task startup.
 ## Security requirement mapping
 Official installation/setup commands were used. MCP startup is scoped from the client's current working directory. No credentials or production endpoints were added.
 ## Authorization tests
@@ -31,6 +34,9 @@ Application formatter, linter, type checker, tests, database checks, and fronten
 ## Remaining risks
 Serena and its managed language servers are third-party local executables with repository access. First semantic calls may still download managed language-server assets. Indexes can become stale and should be regenerated after unusually large changes.
 ## Human review required
-Run **Developer: Reload Window** from the VS Code Command Palette (or close every VS Code window and reopen the repository), then create a new Claude Code/Codex chat. Review and approve Serena MCP actions under the clients' normal permission model. Optional Claude Code hooks were intentionally not installed.
+Restart Codex (or create a fresh task after reloading the app), then confirm the new
+task exposes Serena symbol tools before relying on them. Review and approve Serena MCP
+actions under the clients' normal permission model. Optional Claude Code hooks were
+intentionally not installed.
 ## Final status
 Verified.

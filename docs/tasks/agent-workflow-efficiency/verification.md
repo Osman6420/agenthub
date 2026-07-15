@@ -7,13 +7,14 @@
   verification records, ADRs, and current code.
 - `AGENTS.md` and `README.md` references were updated so they no longer describe
   the removed runtime snapshot or UI-smoke content.
-- `python -c "... tomllib.loads(...) ..."` parsed `.codex/config.toml` and
-  `.codex/agents/implementer.toml`: passed (`TOML OK`).
-- PowerShell validated the required Claude agent frontmatter fields in
-  `.claude/agents/implementer.md`: passed (`CLAUDE FRONTMATTER OK`).
+- The Part 2 pilot required substantial main-agent correction across integrity-error
+  handling, migration database aliases, Turkish normalization, route/template
+  conversion, model scope, and tests. The project-specific implementation workers
+  were therefore removed rather than retained as a default optimization.
+- `AGENTS.md` and `CLAUDE.md` now keep planning, implementation, review, and
+  verification in one main agent and prohibit repository delegation.
 - `git diff --check -- AGENTS.md CLAUDE.md README.md
-  docs/ai/agent-handoff.md .claude/agents/implementer.md
-  .codex/agents/implementer.toml .codex/config.toml
+  docs/ai/agent-handoff.md .codex/config.toml
   docs/tasks/agent-workflow-efficiency`: passed with no output.
 - A content guard confirmed the removed history/runtime headings are absent and
   the handoff remains compact at 69 lines.
@@ -31,9 +32,6 @@
 
 ## Manual follow-up
 
-- Start fresh Claude and Codex sessions and confirm each discovers Serena and the
-  project `implementer` agent.
+- Start fresh Claude and Codex sessions and confirm each discovers Serena.
 - Confirm Serena is exposed in the new Codex session. Its MCP configuration is
   present, but the current Codex session did not expose its tools for a live call.
-- Run one bounded Python and one bounded TypeScript task through
-  plan -> implementer -> main review, recording token use and defects found.

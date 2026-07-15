@@ -12,18 +12,18 @@ discipline.
   guidance in Claude's startup context.
 - Load the operational handoff only on a real Codex/Claude transition.
 - Prefer Serena for symbol-aware Python and TypeScript navigation and edits.
-- Add one lower-cost implementation worker per agent client while retaining plan,
-  review, and acceptance in the capable main model.
+- Keep planning, implementation, review, and acceptance in one capable main model.
+- Remove the project-specific Claude and Codex implementation workers after the
+  Part 2 pilot showed that cross-cutting correction cost outweighed draft savings.
 - Do not install CodeStruct or change application/runtime dependencies.
 
 ## Acceptance criteria
 
 - [x] Shared instructions define Serena-first semantic navigation with a safe
   text-tool fallback and mandatory diff/test verification.
-- [x] Shared instructions permit only one bounded code-writing subagent and retain
-  trust-boundary decisions and final verification in the main agent.
-- [x] Claude has a Sonnet implementation worker.
-- [x] Codex has a GPT-5.6 Terra implementation worker with bounded nesting.
+- [x] Shared instructions prohibit repository delegation and retain the complete
+  implementation context in the main agent.
+- [x] Project-specific Claude and Codex implementation-worker definitions are removed.
 - [x] Claude no longer imports the large handoff at every session start.
 - [x] The shared handoff is a compact, task-local transition record rather than
   a project-history and runtime-evidence archive.
@@ -43,5 +43,5 @@ discipline.
 
 ## Status
 
-Implemented and locally verified; fresh-client discovery and pilot token measurement
-remain manual follow-up items.
+Revised and locally verified after the Part 2 pilot. Serena discovery in a fresh
+Codex task remains a manual follow-up because MCP tools are fixed when a task starts.

@@ -50,17 +50,12 @@ or when Serena is unavailable or returns incomplete results. Do not use a semant
 tool blindly: inspect the resulting diff and run the same tests and static checks
 required for any other change.
 
-## Model-tiered delegation
+## Agent ownership
 
-For a bounded implementation unit with an accurate, approved plan, a capable main
-agent may delegate mechanical code writing to one project `implementer` subagent
-configured with a faster model. The main agent retains architecture, security,
-authorization, data, migration, and compatibility decisions; it must inspect the
-live diff, independently verify the implementation against the plan, and run or
-verify the required checks before accepting the work. Subagent claims are never
-evidence. Do not use multiple concurrent code-writing agents, and do not delegate
-scope discovery or new trust-boundary decisions to the implementer. If the plan is
-invalidated, stop delegation and update the plan before further edits.
+Use one main coding agent for planning, implementation, review, and verification.
+Do not delegate repository work to subagents. Keep task decomposition inside the
+main agent so architecture, security, authorization, migration, compatibility, and
+live-diff context remain coherent.
 
 ## Change boundaries
 
