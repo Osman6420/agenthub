@@ -13,8 +13,33 @@ assumes the demo tenant seeded by `manage.py seed_demo`. Pair it with the
 
 ## 0. Bring up the stack
 
-Prerequisites: Docker Compose PostgreSQL/pgvector + Redis running, the `.venv`, and the
-built builder bundle.
+The supported local topology is defined in
+[`deploy/compose/docker-compose.yml`](../deploy/compose/docker-compose.yml). Do not
+infer service state from an old handoff or PID: query Docker Compose and the health
+endpoint each time.
+
+Choose one mode and avoid starting duplicate web or worker processes:
+
+```powershell
+# Inspect current infrastructure/application state and health.
+docker compose -f deploy/compose/docker-compose.yml ps
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/v1/health/live
+
+# Mode A: run the complete stack in Docker.
+docker compose -f deploy/compose/docker-compose.yml up --build
+
+# Mode B: run only infrastructure in Docker; use the host commands below for web/worker.
+docker compose -f deploy/compose/docker-compose.yml up -d postgres redis minio
+docker compose -f deploy/compose/docker-compose.yml ps postgres redis minio
+```
+
+In the health request, connection failure means the web application is not running;
+it does not prove PostgreSQL or Redis are down. Compose reports their configured
+healthchecks separately. For startup failures, inspect bounded recent logs with
+`docker compose -f deploy/compose/docker-compose.yml logs --tail 100 <service>`.
+
+Host-mode prerequisites: healthy Docker Compose PostgreSQL/pgvector + Redis, the
+`.venv`, and the built builder bundle.
 
 ```powershell
 # One-time / after frontend changes: build the workflow-builder SPA

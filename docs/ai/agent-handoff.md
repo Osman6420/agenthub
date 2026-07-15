@@ -1,545 +1,69 @@
 # Coding Agent Handoff
 
-This is the shared operational handoff for Codex, Claude Code, and other coding
-agents working in this repository. It supplements task plans and verification
-records; it never replaces them as evidence.
+Use this file only when unfinished work moves between Codex, Claude Code, or
+another coding agent. It is a short transition record, not project history and
+not a substitute for task plans, code, tests, or verification evidence.
 
 ## Sources of truth
 
-- Intended/in-progress scope: `docs/tasks/<task-id>/plan.md`.
-- Security assumptions and residual threats: task `threat-model.md`.
-- Executed checks and remaining risks: task `verification.md`.
-- Current implementation: code, migrations, settings, and tests.
-- Cross-task project status: `docs/planning/master-plan.md`.
+- Intended and in-progress work: `docs/tasks/<task-id>/plan.md`.
+- Security boundaries and residual threats: the task `threat-model.md`.
+- Checks already run and remaining verification: the task `verification.md`.
+- Implemented behavior: the live code, configuration, migrations, and tests.
+- Cross-task status, only when needed: `docs/planning/master-plan.md`.
 
-At handoff, inspect these sources plus `git status`, `git diff`, recent commits,
-branches, stashes, and reflog. Do not infer the active task only from open IDE tabs.
+Link to these sources instead of copying their contents here.
 
-## Local runtime snapshot
+For local application startup, shutdown, service health, and logs, follow
+`docs/manual-testing-guide.md` section 0 and the authoritative service topology in
+`deploy/compose/docker-compose.yml`. Check live state with the commands there; do
+not store general startup instructions or assumed service status in this handoff.
 
-Last checked: 2026-07-13, Europe/Istanbul.
+## Active handoff
 
-**Live demo is up and manually smoke-tested (2026-07-12).** Current topology:
+No active agent transition is recorded. Before relying on this section, compare
+it with the live repository state.
 
-- Web: `manage.py runserver 127.0.0.1:8000 --noreload` under `config.settings.local`
-  (DEBUG serves the builder static bundle) with `MCP_ENABLED=true` and
-  `METRICS_BEARER_TOKEN` set so MCP/metrics are exercisable. **Not uvicorn** — runserver is
-  used because plain uvicorn/ASGI does not serve `/static/` (no WhiteNoise).
-- One Celery runtime worker: `celery -A config.celery worker --pool=solo -Q runtime,default`.
-  **The two stale Sprint-8 workers (PIDs 16732/672 from 2026-07-11) and the stale uvicorn
-  (PID 2064) were stopped** — they were running pre-Sprint-9 code and silently failed async
-  runs (`WORKFLOW_NODE_UNSUPPORTED` on the tool node). Only run ONE runtime worker.
-- Demo tenant seeded via `manage.py seed_demo` (org `demo`, operators one-per-role, RAG +
-  workflow-with-approval + agent scenarios with promoted releases, a consumer token).
-- Verified live end-to-end: RAG `POST /v1/query` → 200 completed; workflow `POST /v1/invoke`
-  → 202 → `waiting_approval` → `decide_tool_approval --approve` → auto-resume → completed
-  (redacted output); agent `POST /v1/invoke` → 202 → completed (UUID run id); console login +
-  builder bundle (`/static/builder/builder.js` 200); MCP 401 (auth-gated); metrics served.
-- Manual test recipe (credentials/token are printed by the seeder, not stored):
-  [`docs/manual-testing-guide.md`](../manual-testing-guide.md).
+When a transition is required, replace the sentence above with a compact record
+containing only:
 
-Record only genuinely time-varying facts here (is a server up, which ports, is MinIO
-running). Durable facts — what is implemented/verified, the canonical interpreter, and
-how to run the gates — belong in the `@`-imported verified-state of
-[`engineering-rules.md`](engineering-rules.md) so every session loads them
-automatically. This snapshot is not auto-loaded, so it must never be the only place
-such a fact is written.
+1. **Task and outcome:** task-plan link and the current acceptance criterion or
+   reviewable unit.
+2. **Approved scope:** what may change and any approval gates or excluded work.
+3. **Decisions and assumptions:** only choices the receiving agent must preserve
+   or verify; link durable decisions to their ADR or plan.
+4. **Working tree:** changed/untracked files relevant to the task, intentional
+   exclusions, and commit/branch reference when applicable.
+5. **Verification:** verification-record link, latest relevant results, and checks
+   still pending. Distinguish implementation, automated verification, and manual
+   verification.
+6. **Runtime:** only running services, required restarts/migrations, or other
+   ephemeral facts that affect the next action.
+7. **Risks and blockers:** unresolved security, authorization, data, operational,
+   or compatibility concerns.
+8. **Next action:** one concrete, bounded step for the receiving agent.
 
-- Application: `http://127.0.0.1:8000`.
-- Health: `GET /v1/health/live` returned `200 {"status":"ok"}`.
-- Web process: `.venv` Python 3.13 `manage.py runserver` (see the live-demo block above),
-  not the Compose `web` service. (Earlier sessions used host Python 3.14 + uvicorn.)
-- Infrastructure: Docker Compose PostgreSQL/pgvector, Redis and MinIO are healthy on their
-  published localhost ports. This was rechecked before the P7.4b PostgreSQL gate.
-- Runtime logs: `.runtime/web.stdout.log` and `.runtime/web.stderr.log` (gitignored).
-- Uvicorn is started without `--reload`; source changes require a web-process restart.
-- The stale-process hazard from earlier sprints is now **resolved** (see the live-demo
-  block above): PID 2064 (uvicorn) and PIDs 16732/672 (Sprint-8 workers) were stopped, and
-  the current web + single runtime worker run Sprint 11 code.
-- All migrations through Sprint 11 (`tools.0001/0002`, `workflows.0002`, `agents.0001`,
-  `artifacts.0003`, `builder.0001`) have now been applied to the standing local `agenthub`
-  database via `manage.py migrate`. Re-run `manage.py migrate` after pulling future
-  increments before serving them against the persistent local DB.
-- Sprint 10 added the approved production dependency `langgraph==1.2.9`. A `.venv` created
-  before Sprint 10 lacks it (and its transitive tree) and cannot import
-  `apps.agents.langgraph_planner`; re-run `pip install -e ".[dev]"` (or install from
-  `requirements.lock`) after pulling Sprint 10. The default `AGENT_PLANNER` is the
-  deterministic planner, so the core runtime and gates do not require langgraph to be
-  importable, but the LangGraph adapter test does.
-- PostgreSQL gate gotcha: the Sprint 7 MCP/metrics tests are hard-enabled only under
-  `config.settings.test`. When running `--create-db` under `config.settings.local`,
-  also export `MCP_ENABLED=true` and `METRICS_BEARER_TOKEN=<any-non-empty>` or 8
-  MCP/metrics tests fail spuriously (they 404 the disabled endpoints). Also verified in
-  the [`engineering-rules.md`](engineering-rules.md) verified-state.
-- Node toolchain (Sprint 11): Node v20.20.0 / npm 10.8.2 available locally. The workflow
-  builder frontend lives in `frontend/`; run its gates with
-  `npm --prefix frontend ci && npm --prefix frontend run typecheck && npm --prefix frontend test && npm --prefix frontend run build`.
-  The build writes the gitignored bundle to `apps/builder/static/builder/`.
-- Interpreter: `.venv` (Python 3.13) is canonical and, after Sprint 5, again has all
-  dependencies (`boto3`/`pgvector` installed from `requirements.lock`); gates pass in it
-  on SQLite and — with the Compose database — on PostgreSQL. `C:\Python314\python.exe`
-  (Python 3.14) is a working fallback that was used during Sprint 5 while `.venv` lacked
-  those deps. The durable interpreter/dependency contract lives in the verified-state of
-  [`engineering-rules.md`](engineering-rules.md), not in this snapshot.
+Do not add completed-sprint narratives, commit diaries, copied architecture,
+credentials, tokens, cookies, secrets, personal data, or stale runtime output.
 
-This is an ephemeral snapshot, not a guarantee. Re-check rather than trusting it:
+## Transition procedure
 
-```powershell
-Invoke-WebRequest -UseBasicParsing http://localhost:8000/v1/health/live
-netstat -ano | Select-String ':8000'
-docker compose -f deploy/compose/docker-compose.yml ps
-Get-Content .runtime\web.stderr.log -Tail 50
-```
+The yielding agent must:
 
-## Starting the local web application
+1. Update the task plan, threat model, and verification record first.
+2. Write the active handoff from those current sources.
+3. Inspect `git status` and the relevant diff; identify unrelated local changes
+   so the next agent does not overwrite them.
+4. State whether work is committed and whether services require restart or
+   migrations.
 
-With PostgreSQL and Redis available on localhost:
+The receiving agent must not trust the snapshot blindly. Before editing, it must:
 
-```powershell
-$env:DJANGO_SETTINGS_MODULE='config.settings.local'
-$env:DATABASE_URL='postgres://agenthub:agenthub@localhost:5432/agenthub'
-$env:REDIS_URL='redis://localhost:6379/0'
-$env:OBJECT_STORE_ENDPOINT='http://localhost:9000'
-.venv\Scripts\python.exe -m uvicorn config.asgi:application --host 127.0.0.1 --port 8000
-```
+1. Read the linked task records and repository instructions.
+2. Re-run `git status`, inspect the relevant diff, and verify the branch/commit.
+3. Re-check any runtime fact needed for the next action.
+4. Stop and update the plan if live state contradicts the handoff.
 
-Never record operator passwords, bearer tokens, cookies, LDAP credentials, or object
-store credentials in this document or runtime logs.
-
-## Manual UI smoke checklist
-
-Use `http://127.0.0.1:8000/console/` with an approved local test operator account.
-Record results in the affected task's `verification.md`; do not record credentials.
-
-1. Login redirects to the dashboard and logout works via POST.
-2. Lists show only organizations/projects/scenarios/consumers in the operator scope.
-3. Platform admin can open and submit `/console/organizations/new/`.
-4. Project create renders `owner` as a dropdown of organization members; an owner
-   outside the selected organization is rejected.
-5. Scenario create writes the scenario and optional alias atomically.
-6. Consumer and binding create reject cross-organization selections.
-7. Confirm the expected audit event after each successful create.
-
-Current UI evidence:
-
-- Automated SQLite full suite: 85 passed, with 2 PostgreSQL-only tests skipped.
-- Automated PostgreSQL console suite: 11 passed.
-- The organization-form constructor regression and scoped project-owner selection are
-  fixed and the web process was restarted afterward.
-- Manual browser re-check of those two corrected forms is pending user confirmation;
-  do not mark it manually verified until that confirmation is recorded.
-
-Current cross-agent state:
-
-- Claude completed and committed Sprint 6 as `b66843e`.
-- Codex implemented Sprint 7 without modifying Sprint 6 implementation files. Automated
-  evidence, including parity against the committed Sprint 6 canary routing contract, is
-  in the Sprint 7 verification record.
-- Codex implemented and automatically verified Sprint 8 on SQLite and PostgreSQL; see
-  its verification record. The web is current, but the user-started worker requires a
-  restart after the stale-message fix; manual async workflow smoke remains.
-- Claude committed Sprint 8 (`b38af35`) after independently re-verifying it, then
-  implemented and verified Sprint 9 (tool registry + governed egress + approval
-  lifecycle + workflow tool node) across six commits `bb4d675`, `84ffb76`, `47e7321`,
-  `39e67d8`, `e2bc174`, and `c68415d`. Automated evidence only (SQLite 275 passed
-  / 2 skipped; PostgreSQL 277 passed); no live-egress or live-server smoke was run —
-  `TOOL_ADAPTER` defaults to the no-egress deterministic adapter.
-- Claude then implemented and verified Sprint 10 (agent runtime — `apps.agents`):
-  the `agent_definition` artifact + compiler, durable `AgentRun` (opaque `public_id`
-  UUID) with a guarded decision loop on the Sprint 8/9 Celery/tool-proxy/approval
-  contracts, LangGraph integrated only as an `AgentPlanner` adapter behind
-  `AGENT_PLANNER` (default deterministic → no graph code in CI), gateway `202` agent
-  invoke + workflow/agent dual-dispatch `/v1/runs/{id}`, trajectory eval assertions, and
-  role-gated console/command operator surfaces. Automated evidence only (SQLite 337
-  passed / 2 skipped; PostgreSQL affected-app run 142 passed); no live-egress or
-  live-server smoke was run (default deterministic model provider + no-egress tool
-  adapter). One approved production dependency added: `langgraph==1.2.9` (exact pin,
-  `requirements.lock` regenerated, `pip check` clean, CI fails closed on lock drift).
-  Additive migrations `agents.0001`, `artifacts.0003`. Not delivered (operational
-  follow-ups): a global start/resume kill switch, the checkpoint retention/purge job, and
-  load/soak tests. Sprint 10 was committed as `9da4282`.
-- Claude then implemented and verified Sprint 11 (visual workflow builder): `apps.builder`
-  (mutable tenant-scoped `WorkflowDraft` + operator JSON API under `/console/api/builder/`
-  for draft CRUD + diagnostics + node-schema + publish, reusing console LDAP/session +
-  role/tenant authz, CSRF, audited; additive migration `builder.0001`) and a **React Flow
-  SPA** in `frontend/` served same-origin as Django static assets. Committed:
-  `36626f3` (backend), `456bd17` (frontend SPA), `cb6874c` (user-guide + security-overview
-  docs), and `ddb442c` (the `seed_demo` command + manual-testing guide). Automated evidence
-  (SQLite 364 passed / 2 skipped; PostgreSQL `apps/builder`+`apps/console` 46 passed;
-  frontend 11 vitest tests + `vite build`) **plus a live end-to-end smoke on 2026-07-12**
-  (RAG query, workflow approval pause/resume, agent run, builder bundle, MCP, metrics — see
-  the live-demo snapshot above). **New: a Node/npm build toolchain**
-  — five approved production frontend deps (Node/npm, Vite, React, React DOM,
-  `@xyflow/react`), pinned in `frontend/package-lock.json`, with a Node CI job. The built
-  bundle (`apps/builder/static/builder/`) is **gitignored**: run
-  `npm --prefix frontend ci && npm --prefix frontend run build` before serving the
-  `/console/builder/` page or running `collectstatic`. The Python runtime/gates do not
-  depend on the bundle existing. The `builder.0001` migration was exercised via
-  `pytest --create-db` but not necessarily applied to the standing local `agenthub` DB — run
-  `manage.py migrate` before serving Sprint 11 against the persistent local DB.
-
-- Sprint 11 documentation was consolidated (2026-07-12): the duplicate
-  `docs/tasks/sprint-11-builder-expansion/` plan was archived to
-  `docs/planning/archive/sprint-11-builder-expansion/` (approved-decision provenance), and
-  `docs/tasks/sprint-11-workflow-builder/` is now the single canonical Sprint 11 record with
-  a delivered-vs-deferred reconciliation. Deferred builder enhancements moved to the new
-  **Phase 2 plan** `docs/planning/phase-2-plan.md` (governed document plane →
-  Turkish UI → AI-assisted authoring → personal end-user MCP, in that owner-set priority).
-  Phase 2 implementation kickoff is approved; new dependencies/live egress still need their
-  milestone-specific explicit sign-off.
-
-- **Phase 2 · Workstream 1 (document plane) — authoritative design landed (2026-07-12), NOT
-  approved for implementation.** The owner gave detailed decisions A–E and asked for a component
-  plan + threat model before any code. Written and cross-referenced:
-  [`docs/planning/components/document-plane-plan.md`](../planning/components/document-plane-plan.md)
-  and `document-plane-threat-model.md`. Design in brief: (A) **hybrid isolation** — tenant is the
-  physical boundary (app predicate **+ PostgreSQL FORCE RLS**, fail-closed, transaction-local
-  `set_config('app.tenant_id',…,true)`), `DocumentSet` version is the logical ACL/retrieval unit,
-  each `IndexVersion` is a physically isolated immutable store; no per-scenario physical index;
-  `IndexVersion` re-scoped to (org, doc-set-version, embedding-profile). (B) enforce
-  consumer+scenario-binding now, forward-ready `principal_type=consumer|service|user|group`
-  (user/group activation moved to Phase 3 identity/delegation). (C) new content lineage `Source→Document→DocumentVersion→Blob` +
-  `DocumentSet/Version/Membership` + soft-delete tombstone vs auditable purge; **rename existing
-  index-scoped `apps.ingestion.Document`→`IndexedDocument`** (`RenameModel`, preserve rows/PKs/
-  FKs). (D) platform-managed immutable **`EmbeddingProfile`** catalog; embedding egress =
-  `OpenAICompatibleEmbeddingClient` over the **Sprint 9 SSRF-safe stdlib transport, NO `openai`
-  dependency**, platform-allowlisted endpoint only (no tenant/request `base_url`); **blue/green
-  per-`IndexVersion` stores, promotion = single-transaction pointer-flip of the active
-  `index_version_id`** (no rename/copy/rebuild), retention/purge only when unreferenced;
-  dimension validated up front (`vector`≤2000 / `halfvec`≤4000, no silent truncation). (E) parser
-  behind a `DocumentParser` interface, comparison-table before any dependency (format-specific
-  pypdf/pdfplumber+python-docx+openpyxl preferred), **OCR NOT in-app** — image PDFs + embedded
-  images go to the owner's external OCR endpoint over SSRF-safe egress. **M0 design spikes are now
-  DONE, documented as ADRs (2026-07-12):** Spike 1 pgvector multi-dimension storage →
-  [ADR-0003], Spike 2 RLS connection-context → [ADR-0004], Spike 3 shared SSRF-safe egress adapter →
-  [ADR-0005] (implements [ADR-0002]). Phase 2 kickoff is approved and P1 is complete; continue with
-  P2 while preserving per-phase egress/dependency gates. No document-plane code/migration/
-  dependency/egress yet.
-
-- **WS5 (live model runtime) P1 verified (2026-07-12).** Owner: "give the app a
-  base_url + token and actually reach the LLM — that must exist." Verified today's runtime ships
-  an opt-in real `ModelProvider` now exists behind the deterministic default; agent `retrieve` and
-  workflow `generate`/`retrieve` remain placeholders; agents carry no system prompt; multi-prompt workflows drawable but
-  not runnable). **WS5 is a foundational track interleaved with WS1, not a 5th-in-line priority.**
-  Owner delivery order: M0 spikes → shared egress/provider infra → chat provider → embedding/
-  indexing → document-ACL retrieval → UI. The interleaved phase plan (P0–P8, with a **serving
-  guardrail**: real tenant corpora are not served to consumers until deny-by-default binding + RLS
-  are in place) is `docs/planning/components/runtime-and-document-plane-sequence.md`. **Egress
-  architecture is now [ADR-0002]** (`docs/adr/0002-...`): chat + embedding via a **platform-managed
-  immutable revisioned profile catalog referenced by ID only** — no tenant/artifact/prompt/request
-  `base_url`/host/scheme/credential/TLS choice (supersedes inline endpoint/api_key in the
-  `model_profile` artifact); a **stdlib OpenAI-compatible adapter, no `openai` dependency** (deferred
-  not banned); **no blind retry** (a post-send model/embedding failure is an unknown outcome, not a
-  retry); and a **technical prompt-injection boundary** (system instructions server-side + separate
-  from doc/user text, tool calls never authorized by model output, citation/policy applied after the
-  model). WS1 status is **"architecture scoped; M0 decisions documented; implementation not
-  approved"** — the physical index schema, RLS connection-context, and shared egress contract are
-  fixed by ADR-0003/0004/0005; changing them requires a superseding ADR.
-
-- **Planning-doc consistency pass (2026-07-12):** a review found `phase-2-plan.md` and
-  `master-plan.md` still carried pre-decision statements (stale `openai`-may-be-used note,
-  "open questions" already resolved in the component plan, "split into component plans" next-step,
-  and a current-state header that only counted Sprints 0–1). Fixed: the phase-2 summary now defers
-  to the authoritative component plan, marks WS1 architecture-scoped/implementation-gated-by-M0 with
-  a per-workstream status table, and `master-plan.md` reads "Sprints 0–11 implemented and
-  verified" with a Document-plane row in the Components table. **These planning/handoff doc edits
-  are documentation-only (no code) and are committed on `feat/foundation-sprint-0-1`; nothing was
-  pushed.** No runtime/topology change since the Sprint 11 live-demo snapshot above.
-
-- **Authoring-capability ground truth (verified by code inspection 2026-07-12, for the next
-  session):** a scenario = catalog `Scenario` + immutable **artifacts** referenced by role,
-  compiled into a `ScenarioRelease` and promoted (fail-closed via eval). Authoring is **GitOps/
-  CLI**, not the UI: write artifact YAML (`api_version: agenthub/v1`) and `manage.py import_gitops`
-  / `compile_release` / `promote_release` (see the real example under `gitops/mcm/`). Release-bundle
-  roles the runtime resolves: `prompt` (`spec.template` → `bundle.prompt_text`), `model_profile`
-  (provider/endpoint/model/`secret:<name>`), `policy`, `retrieval_profile`, `input_contract`,
-  `output_contract`, plus manifest-pinned `index_versions`; agents/workflows/tools have their own
-  artifacts. **The system prompt is the `prompt` artifact + `model_profile` — there is no console
-  field for it (the Sprint 11 builder was deliberately trimmed to exclude system-prompt entry /
-  model selection).** Important honest caveats for anyone asked "can we serve MCP+RAG+agent-loop
-  today": the plumbing exists and is served end-to-end, but by default (i) `RUNTIME_MODEL_PROVIDER`
-  is a deterministic stub (no real LLM), (ii) the **agent loop's retrieve step and the workflow
-  `generate`/`retrieve` nodes are deterministic stubs** — real pgvector RAG is wired only in the
-  standalone `run_rag` (`/v1/query`) path, not inside the agent/workflow, (iii) real tool egress
-  incl. the `McpToolAdapter` is opt-in behind `TOOL_ADAPTER` (default no-egress), and (iv) an
-  `agent_definition` carries **no prompt text** (the loop uses the user objective as the prompt).
-  So "several different LLM prompts per step against a real model" is expressible in the workflow
-  DAG (multiple `generate` nodes) but **not yet functional** — wiring generate/retrieve/model
-  providers and per-node prompt/model binding is future work that Phase 2 (real providers +
-  AI-assisted authoring + artifacts-visible-in-UI) is meant to unlock.
-
-- **P8.1–P8.4 COMPLETE + VERIFIED.** Implemented in
-  verified in `docs/tasks/phase-2-p8-console-ui/`.
-  - **P8.1:** a server-rendered `/console/documents/` page — tenant-scoped list of documents +
-    document sets, an author-gated multipart **upload** (`DocumentUploadForm` scoped to
-    `author_organization_ids`; the view re-checks `can_author_scenarios` server-side and calls
-    `upload_document`), and a cross-tenant-safe **soft-delete** (scoped queryset → 404). Committed
-    `f1f1eb4`.
-  - **P8.2:** a `/console/document-sets/<pk>/` detail page + create form — create set
-    (`create_document_set`), open a draft version (`create_document_set_version`), add a member (pins
-    the chosen document's current `DocumentVersion` via `add_document_to_set_version`), and publish/
-    freeze (`publish_document_set_version` → promotable; empty version → graceful `SET_VERSION_EMPTY`).
-    All author-gated + tenant-scoped (cross-tenant → 404).
-  - Nav link added; all writes audited by `apps.documents.services`. **Non-authoritative, no
-    dependency/egress/migration.** **Test gotcha:** the autouse fixture must force
-    `settings.DOCUMENTS_OBJECT_STORE_BACKEND="memory"` (config.settings.local defaults to "s3" →
-    uploads need MinIO otherwise). Evidence: SQLite 502 passed / 20 skipped; PostgreSQL 520 passed /
-    2 skipped.
-  - **P8.3:** scenario binding and effective consumer grant/revoke UI. A review found that P4 did
-    not actually consult `DocumentSetGrant`; owner approved the authorization correction on
-    2026-07-13. Signed-context/durable-run consumer id now gates retrieval against an explicit
-    same-tenant grant; missing/foreign/disabled/ungranted consumers get no document-set chunks.
-  - **P8.4:** org/platform-admin physical purge, requiring prior tombstone and exact logical-id
-    confirmation; pinned content remains fail-closed. No migration/dependency/egress. Evidence:
-    SQLite 511 passed / 21 skipped; PostgreSQL 530 passed / 2 skipped. Landed in the P8 completion
-    commit on `feat/foundation-sprint-0-1`; not pushed. P7 provenance follows.
-- **P9 WS2 CONSOLE UX IMPLEMENTED — P9.1–P9.5 AUTOMATED VERIFICATION COMPLETE.** The owner accepted Turkish-first
-  (full i18n later), organization → project → scenario navigation, document-set-first bulk upload
-  with explicit index/promotion state, and a future additive `/v1/responses` facade while retaining
-  native gateway routes. P9.1 adds a responsive Turkish console shell and scenario detail where an
-  operator sees scenario consumer bindings separately from per-document-set retrieval grants, set/
-  index readiness, and can bind/unbind/grant/revoke through existing audited services. Cross-tenant
-  and non-author paths fail closed. Evidence: focused SQLite 23 passed; full SQLite 567 passed / 25
-  skipped; focused PostgreSQL 12 passed; format/lint/type/Django/migration checks pass. No migration,
-  dependency, egress or public API change. P9.2 replaces the standalone-upload journey with a
-  document-set workspace: bounded multi-file upload, filename-derived Turkish-safe IDs/titles,
-  latest-published membership preservation, draft same-document replacement, explicit lifecycle,
-  tenant-granted embedding/OCR build selection on the ingestion queue, and release-manager-only
-  manual index activation. P9.2 evidence: repository format/lint/type/Django/migration checks pass,
-  full SQLite 574 passed / 25 skipped, and focused PostgreSQL 18 passed. P9.3 adds a set-scoped
-  Confluence/generic-REST workspace over existing governed services: safe source/run status,
-  exact-grant source creation, immutable JSON mapping plus bounded no-egress synthetic preview,
-  run-now, periodic schedule and selectable role-gated automation. Host/secret/input/content fields
-  are excluded; connector tables are read under transaction-local tenant context; broker failure
-  closes manual runs as audited dead letters. Evidence: full SQLite 581 passed / 25 skipped and
-  focused PostgreSQL connector/RLS 40 passed; repository gates pass. P9.4 adds scenario-centred
-  release history, exact same-tenant artifact resolution, escaped/bounded immutable artifact detail,
-  compiler-derived copyable DSL guidance and server-scoped builder organization/draft deep links.
-  It adds no mutation path: canonical validation/publish remains the existing builder/artifact path.
-  Evidence: full SQLite 585 passed / 25 skipped, focused PostgreSQL 10 passed, frontend 12 passed,
-  and repository gates pass. P9.5 adds Turkish-first legacy operation/builder text, skip-to-content,
-  persistent focus-visible/reduced-motion behavior, named horizontally scrollable tables and a
-  stacked narrow-screen builder without changing API/authz behavior. Evidence: full SQLite 591
-  passed / 25 skipped, focused PostgreSQL 19 passed, frontend 12 passed, and repository gates pass.
-  Owner decision (2026-07-14): 390/900/1440 px and keyboard/screen-reader manual acceptance are not
-  required. Turkish terminology remains the prioritized product review. Plan/evidence:
-  `docs/tasks/phase-2-p9-console-ux/`.
-- **P10.1/P10.2 WS3 AI-ASSISTED AUTHORING IMPLEMENTED + OFFLINE-VERIFIED.** Bounded Turkish free text
-  uses one deployment-selected immutable `ModelProfile`; the model response is untrusted bounded
-  JSON, receives canonical compiler diagnostics, and enters an exact-project `WorkflowDraft` only
-  after a separate explicit acceptance action. Generation never publishes or changes release/runtime
-  state. Description/response content is transient and excluded from logs/audit; actor+organization
-  rate limiting is fail-closed and `outcome_unknown` is terminal without retry. No dependency was
-  added; default/test configuration opens no socket. P10.2 allowlists `workflow_definition`,
-  `input_contract` and `output_contract`, uses server-owned immutable ID/revision/checksum prompt
-  contracts, and transfers JSON Schema candidates into tenant/project-scoped mutable
-  `ArtifactDraft` records with Turkish JSON diagnostics/editing. Generic artifact drafts deliberately
-  have no publish endpoint; high-risk types fail before egress. Additive migration `builder.0002`.
-  Evidence: full SQLite 620 passed / 25 skipped; focused PostgreSQL 56 passed; frontend 16 passed +
-  production build; 350 Python files pass format/lint/type checks.
-  Live profile, endpoint, CA, secret, firewall, privacy and cost activation are assigned to the Phase
-  2 closure milestone. Plan/evidence:
-  `docs/tasks/phase-2-p10-ai-assisted-authoring/`.
-- **PHASE 2.5 PRODUCT COHERENCE IS IN PROGRESS BEFORE PHASE 2 LIVE CLOSURE.** Owner decisions are in
-  `docs/planning/phase-2-5-plan.md`: dashboard organization inventory, one organization-overview URL,
-  preserved canonical domain URLs and cross-linked detail pages,
-  system-generated console IDs, detailed artifact/DSL documentation, document-set/source UX,
-  scenario studio, a closed composable transform DSL and additive `/v1/responses` plus
-  `/v1/chat/completions` adapters with client-supplied bounded history. Persistent server-side
-  conversation history moved to Phase 3. Delivery is split into nine reviewable parts. Part 1
-  (dashboard/organization overview + secure navigation graph + guide reconciliation) is implemented
-  and offline-verified in `docs/tasks/phase-2-5-part-1-workspace-navigation/`. The owner approved its
-  singleton tenant-scope narrowing on 2026-07-14. Focused console/tenancy checks, static gates and
-  migration drift pass; PostgreSQL non-owner execution and the Turkish manual browser journey remain
-  pending, so Part 1 is not yet marked fully verified or closed. Changes are uncommitted.
-- **PHASE 2 LIVE ACTIVATION REMAINS THE FINAL CLOSURE GATE.** Broader Django-table FORCE RLS and the
-  dedicated non-owner app role are implemented/staging-equivalent verified. After Phase 2.5, live
-  Confluence/REST/embedding/OCR profiles and live AI authoring with
-  privacy/retention/cost + smoke/rollback evidence remain. Concrete secrets,
-  hosts, CA/DNS/firewall and production mutations still require their execution approvals. Plan:
-  `docs/tasks/phase-2-closure-production-hardening/`.
-  Governed upload malware/type scanning, including quarantine/pre-index rejection, fail-closed
-  behavior, limits, redacted audit, tests and runbook, moved to Phase 3 by owner decision on
-  2026-07-14.
-  - **P11 RLS/NON-OWNER HARDENING IMPLEMENTED + STAGING-EQUIVALENT VERIFIED.** Nine
-    formerly indirect models now have backfilled non-null direct lineage; 47 protected tables use
-    canonical FORCE RLS over bounded transaction-local `app.tenant_scope`; console membership,
-    gateway consumer and worker identifier flows set scope from trusted sources. Explicit bootstrap
-    identity and nullable telemetry exceptions remain visible. Provision/rollback SQL and a
-    least-privilege grant matrix passed against a temporary PostgreSQL 16 database/role, including
-    47/47 readiness, immutable mutation denial, NOLOGIN+grant rollback and migration reverse/forward.
-    Current evidence: full SQLite 632 passed / 29 skipped; broad PostgreSQL 253 passed / 5 skipped;
-    focused RLS 16 passed / 3 skipped; Ruff format/lint, mypy, Django, migration-drift and diff gates
-    pass over 358 source files. No production role, secret or database was changed.
-- **PERSONAL MCP MOVED TO PHASE 3 DISCOVERY.** IdP, OBO and ERP/downstream trust remain undecided;
-  do not implement or treat discovery inputs as approved architecture. See
-  `docs/planning/phase-3-plan.md`.
-- **P7.1–P7.4b COMPLETE + VERIFIED OFFLINE.** P7 parsers/OCR and both connectors are
-  verified in `docs/tasks/phase-2-p7-parsers-ocr-connectors/`.
-  - **P7.1 (stdlib parsers):** new `apps/ingestion/parsers.py` — a deny-by-default, MIME-keyed
-    `DocumentParser` registry (`ParsedContent`/`ParserError`/`get_parser`/`parse_document`) with
-    **stdlib-only, deterministic** parsers (text/plain, text/markdown, text/csv, application/json,
-    text/html), wired into `staged_build._embed_into_store` (replacing the hardcoded UTF-8-only path).
-    Governance: bounded output (`MAX_PARSED_CHARS`/`MAX_ELEMENTS`), counts-only telemetry, content-free
-    stable-code errors, HTML drops `<script>`/`<style>` and fetches nothing. `text/html` added to the
-    `DOCUMENTS_ALLOWED_MIME_TYPES` upload default. Commit `485748b`.
-  - **P7.2 (local binary parsers):** `PdfParser`/`DocxParser`/`XlsxParser` on the same interface,
-    registering pdf/docx/xlsx MIME types. The owner **approved the dependencies (2026-07-13)** —
-    **pdfplumber + python-docx + openpyxl** (baseline + pdfplumber for PDF tables; pypdf omitted as
-    redundant). Pins in `pyproject.toml`; `requirements.lock` regenerated (`pip check` clean; langgraph
-    trio unchanged). Heavy imports are **deferred** so importing `parsers.py` needs only the stdlib;
-    parsing is **local/in-process — no network egress**. An image-only PDF fails closed
-    (`EMPTY_DOCUMENT`; its OCR is P7.3). **No migration.** A `.venv` created before P7.2 must re-run
-    `pip install -e ".[dev]"` to run the pdf/docx/xlsx tests.
-  - **P7.3 (external OCR):** owner supplied/approved the async `/api/v1` contract on 2026-07-13.
-    Added immutable platform `OcrProfile` + tenant grant, `OCR_SECRET_*` resolution, shared
-    pinned-IP/TLS multipart+GET+empty-POST transport, bounded polling, Markdown validation, and a
-    recoverable `DocumentOcrJob`. Job id is persisted immediately; Markdown is written to tenant
-    object storage + checksumed before idempotent ACK. Mixed/image-only PDFs fail closed without a
-    profile; service-returned URLs are ignored. Purge removes derived OCR blobs. Migration
-    `ingestion.0006`. No live host/secret configured or called. The later detailed contract and
-    OpenAPI source are retained in `docs/ocr_api/`; compatibility review corrected ACK handling so
-    only `204` is success and `410 RESULT_GONE` is terminal (targeted OCR/transport: 21 passed).
-  - **Evidence (P7 cumulative):** SQLite 519 passed / 22 skipped; PostgreSQL `--create-db` 539 passed /
-    2 skipped; lint/type/migration gates pass. Landed in the P7.3 completion commit on
-    `feat/foundation-sprint-0-1`; not pushed.
-  - **P7.4a (Confluence Data Center):** ADR-0006 accepts a connector-only private-corporate egress
-    policy without weakening the existing public-only validator. Immutable platform profiles,
-    exact tenant+document-set grants, governed sources, bounded fixed-path traversal, recoverable
-    incremental snapshots, draft candidates, management commands and FORCE-RLS lineage are
-    implemented in `ingestion.0007`; no new dependency. Evidence: targeted SQLite 41 passed / 2
-    skipped, targeted PostgreSQL 42 passed, full SQLite 541 passed / 23 skipped, full PostgreSQL 562
-    passed / 2 skipped; lint/type/migration gates pass. No live endpoint, secret, CA, DNS, firewall
-    or service-account permission was configured/called.
-  - **P7.4b (generic REST + periodic incremental refresh):** ADR-0007 records the closed
-    tenant-authored mapping/platform-profile split. Public-only GET/profile-approved read-only POST,
-    exact grants, revision+checksum no-op sync, merged candidates, bounded schedules, compatible
-    vector reuse and selectable `draft_only`/`stage_only`/release-manager+eval-gated
-    `promote_if_safe` are implemented with additive migrations `ingestion.0008/0009/0010`. No
-    dependency or live profile/secret was added. Evidence: full SQLite 561 passed / 25 skipped; full
-    PostgreSQL 584 passed / 2 skipped; format/lint/type/migration/Django checks pass. The visual
-    contract editor remains WS2 scope; live endpoint/credential/schedule approval remains a rollout
-    gate. See the P7.4b verification record.
-  P6 provenance follows.
-- **P6 COMPLETE.** P6 (authored, governed agent **system prompt**) is implemented
-  and verified in `docs/tasks/phase-2-p6-agent-system-prompt/`: `agent_definition` accepts an optional
-  bounded (≤8000 chars, no control chars), redaction-safe `spec.system_prompt` (data, not code); the
-  agent compiler pins it into the checksummed config; `agents/runtime._respond` uses it as the model
-  prompt (objective fallback). It is input, never authorization — the tool proxy/approval/retrieval/
-  output-contract gates are unchanged. **No migration** (compiled-config + validation change only), no
-  new dependency, no live egress; deterministic default keeps CI hermetic. Evidence: SQLite 474 passed
-  / 18 skipped; PostgreSQL `--create-db` 490 passed / 2 skipped. Next: **P7** — `DocumentParser`
-  interface + selected parsers (pdf/docx/xlsx→markdown), external OCR egress for image-only pages, and
-  upload/Confluence/generic-REST connectors. **P7 gates:** document-parser dependency approval (post
-  comparison table — format-specific pypdf/pdfplumber + python-docx + openpyxl is the preferred
-  baseline; OCR is NOT in-app) + OCR endpoint + connector-endpoint egress sign-off. P5 provenance follows.
-- **P5 COMPLETE.** P5 (real retrieve/generate wired into the agent loop + workflow
-  nodes) is implemented and verified in `docs/tasks/phase-2-p5-agent-workflow-rag/`: a shared
-  `apps/orchestration/rag_steps.py` (`retrieve_for_release` → P4 ACL retrieval; `generate_for_release`
-  → P1 chat, over the release bundle) now backs the workflow `retrieve`/`generate` nodes and the
-  agent retrieve step + `_respond` (previously stubs). The workflow `generate` node gained optional
-  per-node `prompt_ref`/`model_profile_ref` binding (compiler-validated) → multi-prompt/multi-model
-  workflows. **Behavioral wiring only — no migration, no new dependency, deterministic default keeps
-  CI hermetic.** Evidence: SQLite 464 passed / 18 skipped; PostgreSQL `--create-db` 480 passed / 2
-  skipped. The agent still uses the user objective as its prompt — an **authored agent system-prompt
-  artifact is P6** (extend `agent_definition` to reference a governed, validated, release-pinned
-  system-prompt/instruction artifact; tool/decision re-validation unchanged). P4 provenance follows.
-- **P4 COMPLETE.** P4 (document-ACL retrieval + RLS + pointer-flip promotion — the
-  security core) is implemented and verified in `docs/tasks/phase-2-p4-acl-rls/` across four
-  increments: P4.1 binding + ACL grant foundation (`80d140f`); P4.2 the release compiler pins
-  `document_set_versions` deny-by-default from `ScenarioDocumentSetBinding`s, the resolver/runtime
-  carry them, and `PgvectorRetrievalProvider._retrieve_acl` serves `/v1/query` only from the pinned
-  versions' **active** per-`IndexVersion` stores (tenant + not-tombstoned, no client filter); P4.3
-  each store is provisioned with `FORCE ROW LEVEL SECURITY` + a transaction-local `app.tenant_id`
-  policy (ADR-0004, `apps/ingestion/vector_store.set_tenant_context`), proven fail-closed under a
-  NOSUPERUSER role; P4.4 `promote_staged_index`/`rollback_staged_index` do the metadata-only
-  pointer-flip (+ `promote_staged_index [--rollback]` command). Additive migrations `documents.0002`,
-  `ingestion.0005` (`IndexStatus.superseded`). Evidence: SQLite 454 passed / 18 skipped (pgvector);
-  PostgreSQL `--create-db` 470 passed / 2 skipped (off-PG guards). **The serving guardrail is now
-  satisfiable** — a bound + promoted scenario serves real ACL-scoped RAG. **Remaining P4 hardening
-  (follow-up):** `FORCE` RLS on the Django-managed tenant tables + a dedicated non-owner app role
-  (CI/local run as the superuser owner which bypasses RLS; the mechanism is proven on the served
-  stores under `SET ROLE`). Next: **P5** — replace the agent `retrieve` stub and the workflow
-  `retrieve`/`generate` stubs with the governed real providers, and add per-node prompt/model binding
-  to the workflow `generate` node (multi-prompt/multi-model workflows).
-- **PHASE 2 provenance — P1 + P2 + P3 COMPLETE (P4 complete, see above).** **P3 (real embeddings + staged
-  blue/green indexing) is implemented and verified** in `docs/tasks/phase-2-p3-embeddings/`, in two
-  increments: P3.1 — a platform `EmbeddingProfile` catalog + per-tenant grants + opt-in
-  `OpenAICompatibleEmbeddingClient` over the shared SSRF-safe transport (profile-id-only,
-  deterministic default, no `openai` dep, no live endpoint); P3.2 — the ADR-0003 per-`IndexVersion`
-  blue/green vector-store DAL (`apps/ingestion/vector_store.py`, system-generated `chunk_iv_<pk>`
-  names, `vector(D)`/`halfvec(D)`, **PostgreSQL-only**) + a re-scoped `IndexVersion` (migration
-  `ingestion.0003` catalog, `0004` re-scope) + `build_staged_index` over managed documents that
-  leaves a **`promotable` (never served)** index. New settings knob `RUNTIME_EMBEDDING_PROVIDER`
-  (default deterministic). New management commands: `register_embedding_profile`,
-  `grant_embedding_profile`, `build_staged_index`. Evidence: SQLite 440 passed / 10 skipped
-  (pgvector); PostgreSQL `--create-db` 448 passed / 2 skipped (off-PG guards). **The served
-  `/v1/query` retriever and the legacy `Chunk` table are untouched** — pointer-flip promotion,
-  document-ACL retrieval, RLS, and the legacy-chunk data-migration cutover are **P4** (they cross the
-  serving guardrail). Continue at **P4** honoring the guardrail. Older P1/P2 provenance follows.
-- **P1 + P2 provenance.** P1 is implemented and verified in
-  `docs/tasks/phase-2-p1-live-chat/` (platform `ModelProfile` catalog, profile-ID-only shared
-  SSRF-safe egress, opt-in real chat provider; deterministic default; no live endpoint opened).
-  **P2 (content plane & storage) is implemented and verified** in
-  `docs/tasks/phase-2-p2-content-plane/`: new `apps/documents`
-  (`Document→DocumentVersion` + `DocumentSet/Version/Membership`), an object-store abstraction
-  (real S3 + hermetic in-memory backend), upload/soft-delete/auditable-purge services, a
-  role/tenant-scoped operator JSON API under `/console/api/documents/`, and the data-preserving
-  `ingestion.Document → IndexedDocument` `RenameModel`. Migrations `ingestion.0002` (rename) and
-  `documents.0001` (additive) apply on SQLite and PostgreSQL. Evidence: SQLite 410 passed / 2
-  skipped; PostgreSQL `--create-db` 412 passed. No new dependency, no live egress, no retrieval
-  behavior change; scenario binding + retrieval ACL + RLS remain P4, real embeddings remain P3.
-  **Run `manage.py migrate` before serving P2 against the standing local `agenthub` DB** (the two
-  new migrations were exercised via `pytest --create-db` but not necessarily applied to the
-  persistent DB), and export `DOCUMENTS_OBJECT_STORE_BACKEND`/an object store if exercising
-  uploads locally (MinIO was not running at last check). The next planned increment is **P3 real
-  embeddings + indexing (staged)** — a new external egress (embedding endpoint) approval gate. The
-  original P1 kickoff checklist is retained below as completed provenance.
-- **STARTING PHASE 2 — completed P1 kickoff provenance.**
-  - **Entry point:** M0 (design spikes) is **done** — [ADR-0003] vector storage, [ADR-0004] RLS,
-    [ADR-0005] shared egress (implements [ADR-0002]). Begin at **P1 — shared SSRF-safe egress
-    adapter + real chat `ModelProvider`** and follow the phase order in
-    [`../planning/components/runtime-and-document-plane-sequence.md`](../planning/components/runtime-and-document-plane-sequence.md)
-    (P1 chat → P2 content plane → P3 embeddings/indexing staged → P4 ACL+RLS serve → P5 wire
-    agent/workflow → P6 agent prompt → P7 parsers/OCR/connectors → P8 console UI). Do **not** jump
-    ahead; honor the **serving guardrail** (no real tenant corpus served to consumers until P4).
-  - **What "start Phase 2" does and does not authorize:** it authorizes beginning *implementation*;
-    it does **not** waive the remaining gates. Before opening any **live egress** (chat P1,
-    embedding P3, OCR + Confluence/REST P7) get the owner's **environment-specific endpoint/profile
-    + secret** sign-off; before adding the **document-parser dependency** (P7) get supply-chain
-    approval. **No `openai` dependency** — stdlib adapter only (ADR-0002/0005). The planning docs
-    still read "not approved for implementation"; treat the owner's kickoff as the approval to begin
-    at P1 and update those status lines in the same change that lands P1.
-  - **Non-negotiable design constraints (change only via a new ADR):** egress is **profile-ID-only**
-    — an artifact carries only a `ModelProfile`/`EmbeddingProfile` id; `base_url`/host/scheme/secret/
-    TLS are **not** in the artifact (ADR-0002). **Migrate the existing `gitops/mcm/artifacts/
-    model_profile_default_chat.yaml`** (which still inlines `endpoint`/`api_key`) to a profile-ID
-    reference as part of P1. Reuse `apps/tools/egress`; **no blind retry** (post-send failure =
-    `outcome_unknown`; HTTP 429/503 retries require a documented idempotency guarantee); keep the
-    **deterministic providers as the default** so CI/gates run no live
-    egress. `run_rag` (`/v1/query`) already calls the model seam, so P1 lights it up once the
-    provider + catalog exist. Blue/green per-`IndexVersion` stores + pointer-flip promotion
-    (ADR-0003); `FORCE` RLS + transaction-local tenant context (ADR-0004).
-  - **First actions:** create `docs/tasks/phase-2-p1-live-chat/plan.md` + `threat-model.md` +
-    `verification.md`; re-establish a green gate baseline (`ruff format --check`, `ruff check`,
-    `mypy`, `makemigrations --check`, `manage.py check`, `pytest` on SQLite, and PostgreSQL with
-    `MCP_ENABLED=true` + `METRICS_BEARER_TOKEN`) **before** changing code; verify `.venv` deps.
-    Additive migrations only; never weaken an existing control. Ignore the untracked `.serena/` and
-    `docs/tasks/serena-agent-setup/` — unrelated tooling, not Phase 2 work.
-
-## Agent transition checklist
-
-Before yielding work to another agent:
-
-1. Update the active task plan status and assumptions.
-2. Update threat-model mitigations/residual risks when boundaries changed.
-3. Record exact commands/results and manual UI evidence in `verification.md`.
-4. State whether localhost services are running and whether a restart is required.
-5. Report uncommitted and intentionally excluded files (for example local agent
-   settings); never overwrite them without authorization.
-6. Distinguish implementation complete, automated verification complete, and manual
-   UI verification complete.
-7. If work is committed, record the commit id; otherwise explicitly say uncommitted.
-
-At the next agent's start, verify this snapshot against live state before acting and
-update it when the local runtime topology or common handoff procedure changes.
+After the transition is accepted or the task is complete, replace the active
+handoff with the "No active agent transition" sentence. Durable outcomes belong
+in the task verification record, architecture documentation, or an ADR.

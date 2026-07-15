@@ -22,10 +22,45 @@ For every non-trivial task:
 8. Report evidence, checks not run, assumptions, and residual risks.
 
 For Codex/Claude transitions, follow the shared
-[`agent-handoff.md`](docs/ai/agent-handoff.md) checklist and verify its ephemeral
-runtime snapshot against live state before relying on it.
+[`agent-handoff.md`](docs/ai/agent-handoff.md) checklist and verify its active
+handoff against live repository and runtime state before relying on it.
+
+Keep the handoff limited to facts the next agent needs for the current, incomplete
+unit: active task, approved scope, decisions, changed files, verification evidence,
+runtime/restart state, risks, and the next action. Do not copy project history or
+durable behavior into the handoff; link the task record, architecture documentation,
+verification evidence, ADR, or commit that owns it.
+
+Before starting, stopping, or diagnosing the local application, follow section 0 of
+[`docs/manual-testing-guide.md`](docs/manual-testing-guide.md), inspect the canonical
+[`docker-compose.yml`](deploy/compose/docker-compose.yml), and query live Compose and
+health state. Never infer that PostgreSQL, Redis, MinIO, web, or workers are running
+from a stale handoff.
 
 If reality invalidates the plan, update it before continuing. Do not patch without an accurate plan.
+
+## Code intelligence and editing
+
+When Serena MCP symbol tools are available, prefer them for code exploration and
+symbol-level changes: use symbol overviews and symbol lookup before reading whole
+files, reference lookup before changing a public or shared symbol, and semantic
+rename or symbol-body editing when it is safer than text replacement. Use `rg` and
+ordinary file tools for exact text, documentation, configuration, generated files,
+or when Serena is unavailable or returns incomplete results. Do not use a semantic
+tool blindly: inspect the resulting diff and run the same tests and static checks
+required for any other change.
+
+## Model-tiered delegation
+
+For a bounded implementation unit with an accurate, approved plan, a capable main
+agent may delegate mechanical code writing to one project `implementer` subagent
+configured with a faster model. The main agent retains architecture, security,
+authorization, data, migration, and compatibility decisions; it must inspect the
+live diff, independently verify the implementation against the plan, and run or
+verify the required checks before accepting the work. Subagent claims are never
+evidence. Do not use multiple concurrent code-writing agents, and do not delegate
+scope discovery or new trust-boundary decisions to the implementer. If the plan is
+invalidated, stop delegation and update the plan before further edits.
 
 ## Change boundaries
 
