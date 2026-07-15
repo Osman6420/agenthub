@@ -185,6 +185,16 @@ Boş string, whitespace, slash, bracket veya shell karakterleri kullanılmaz. Co
 identifier’ların kullanıcıdan istenmemesi ve sistem tarafından üretilmesi Phase 2.5 kararıdır;
 GitOps gibi declarative yüzeyler idempotency için explicit logical ID kullanmaya devam edebilir.
 
+Phase 2.5 Part 2 ile console organizasyon, proje, senaryo, doküman ve doküman-seti
+oluşturma akışları slug/logical ID/API alias istemez. Bu değerler server-side domain
+servislerinde bir kez üretilir ve görünen ad değişince değişmez. Senaryonun ilk active
+alias'ı normalize proje-senaryo prefix'i ile dört karakterlik kriptografik base32
+suffix'ten oluşur. Proje, senaryo, doküman, doküman seti ve istemci uygulama console
+linkleri tenant-scoped immutable UUID `public_id` kullanır. Eski integer console
+route'ları geçiş uyumluluğu için aynı authorization handler'larına bağlı kalır; UUID,
+slug veya route bilgisi hiçbir zaman yetki vermez. Artifact/release locator'ları ve
+consumer subject/token sözleşmesi bu partta değişmemiştir.
+
 ### 3.4 Artifact ref biçimi
 
 Exact artifact ref:

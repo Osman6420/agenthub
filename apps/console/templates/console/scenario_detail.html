@@ -4,7 +4,7 @@
 {% block content %}
 <nav class="breadcrumbs" aria-label="İçerik yolu">
   <a href="{% url 'console:organization_detail' scenario.project.organization.slug %}">{{ scenario.project.organization.name }}</a><span>›</span>
-  <a href="{% url 'console:project_detail' scenario.project.id %}">{{ scenario.project.name }}</a><span>›</span>
+  <a href="{% url 'console:project_detail_public' scenario.project.public_id %}">{{ scenario.project.name }}</a><span>›</span>
   <span aria-current="page">{{ scenario.name }}</span>
 </nav>
 
@@ -52,7 +52,7 @@
   <div class="section-heading">
     <div><p class="eyebrow">Erişim haritası</p><h2>Doküman setleri ve istemci erişimi</h2></div>
     {% if can_write and candidate_document_sets %}
-    <form class="compact-form" method="post" action="{% url 'console:scenario_bind_document_set' scenario.id %}">
+    <form class="compact-form" method="post" action="{% url 'console:scenario_bind_document_set_public' scenario.public_id %}">
       {% csrf_token %}
       <label for="document-set">Doküman seti ekle</label>
       <div class="field-row"><select id="document-set" name="document_set_id" required>
@@ -67,7 +67,7 @@
   <article class="relationship-card">
     <div class="relationship-head">
       <div>
-        <h3><a href="{% url 'console:document_set_detail' row.document_set.id %}">{{ row.document_set.name }}</a></h3>
+        <h3><a href="{% url 'console:document_set_detail_public' row.document_set.public_id %}">{{ row.document_set.name }}</a></h3>
         <p class="muted mono">{{ row.document_set.logical_id }}</p>
       </div>
       <div class="status-stack">
@@ -81,19 +81,19 @@
         <h4>Bu senaryoya bağlı istemciler</h4>
         {% for item in row.consumer_rows %}
         <div class="access-row">
-          <div><strong><a href="{% url 'console:consumer_detail' item.binding.consumer.id %}">{{ item.binding.consumer.name }}</a></strong><br><span class="muted mono">{{ item.binding.consumer.subject }}</span></div>
+          <div><strong><a href="{% url 'console:consumer_detail_public' item.binding.consumer.public_id %}">{{ item.binding.consumer.name }}</a></strong><br><span class="muted mono">{{ item.binding.consumer.subject }}</span></div>
           {% if item.grant %}
             <span class="access-ok">Doküman erişimi var</span>
-            {% if can_write %}<form method="post" action="{% url 'console:scenario_revoke_consumer' scenario.id item.grant.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Erişimi kaldır</button></form>{% endif %}
+            {% if can_write %}<form method="post" action="{% url 'console:scenario_revoke_consumer_public' scenario.public_id item.grant.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Erişimi kaldır</button></form>{% endif %}
           {% else %}
             <span class="access-missing">Doküman erişimi yok</span>
-            {% if can_write %}<form method="post" action="{% url 'console:scenario_grant_consumer' scenario.id row.document_set.id %}">{% csrf_token %}<input type="hidden" name="consumer_id" value="{{ item.binding.consumer.id }}"><button class="button secondary" type="submit">Erişim ver</button></form>{% endif %}
+            {% if can_write %}<form method="post" action="{% url 'console:scenario_grant_consumer_public' scenario.public_id row.document_set.id %}">{% csrf_token %}<input type="hidden" name="consumer_id" value="{{ item.binding.consumer.id }}"><button class="button secondary" type="submit">Erişim ver</button></form>{% endif %}
           {% endif %}
         </div>
         {% empty %}<p class="muted">Bu senaryoya bağlı aktif istemci yok. Önce istemci–senaryo bağı oluşturulmalı.</p>{% endfor %}
         {% if row.other_grants %}<div class="warning-box">Bu sete senaryoya bağlı olmayan veya pasif istemci izinleri de verilmiş. Doküman seti detayından inceleyin.</div>{% endif %}
       </div>
-      <div>{% if row.scenario_count > 1 %}<div class="warning-box">Bu doküman seti {{ row.scenario_count }} senaryoya bağlıdır. İstemci izni değişikliği seti kullanan diğer senaryoları da etkileyebilir.</div>{% endif %}{% if can_write %}<form method="post" action="{% url 'console:scenario_unbind_document_set' scenario.id row.binding.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Set bağını kaldır</button></form>{% endif %}</div>
+      <div>{% if row.scenario_count > 1 %}<div class="warning-box">Bu doküman seti {{ row.scenario_count }} senaryoya bağlıdır. İstemci izni değişikliği seti kullanan diğer senaryoları da etkileyebilir.</div>{% endif %}{% if can_write %}<form method="post" action="{% url 'console:scenario_unbind_document_set_public' scenario.public_id row.binding.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Set bağını kaldır</button></form>{% endif %}</div>
     </div>
   </article>
   {% empty %}<div class="empty"><h3>Doküman seti bağlı değil</h3><p>Retrieval varsayılan olarak kapalıdır. Bu senaryonun kullanacağı ilk doküman setini bağlayın.</p></div>{% endfor %}
@@ -102,7 +102,7 @@
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Çağıran sistemler</p><h2>İstemci–senaryo bağları</h2></div><a href="{% url 'console:consumers' %}">İstemci yönetimi →</a></div>
   {% if consumer_bindings %}<div class="table-scroll"><table><caption class="sr-only">Senaryoya bağlı istemciler</caption><thead><tr><th>İstemci</th><th>Protokol</th><th>Yetkiler</th><th>Durum</th></tr></thead><tbody>
-    {% for binding in consumer_bindings %}<tr><td><strong><a href="{% url 'console:consumer_detail' binding.consumer.id %}">{{ binding.consumer.name }}</a></strong><br><span class="muted mono">{{ binding.consumer.subject }}</span></td><td>{{ binding.consumer.get_protocol_display }}</td><td>{% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</td><td><span class="badge {{ binding.status }}">{{ binding.get_status_display }}</span></td></tr>{% endfor %}
+    {% for binding in consumer_bindings %}<tr><td><strong><a href="{% url 'console:consumer_detail_public' binding.consumer.public_id %}">{{ binding.consumer.name }}</a></strong><br><span class="muted mono">{{ binding.consumer.subject }}</span></td><td>{{ binding.consumer.get_protocol_display }}</td><td>{% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</td><td><span class="badge {{ binding.status }}">{{ binding.get_status_display }}</span></td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="muted">Bu senaryoyu çağırmaya yetkili istemci yok.</p>{% endif %}
 </section>
 <script src="{% static 'console/copy_text.js' %}" defer></script>

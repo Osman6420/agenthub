@@ -51,7 +51,8 @@ def test_author_can_create_document_set(client: Client) -> None:
         {"organization": org.id, "logical_id": "kb", "name": "Knowledge base"},
     )
     assert response.status_code == 302
-    assert DocumentSet.objects.filter(organization=org, logical_id="kb").exists()
+    document_set = DocumentSet.objects.get(organization=org)
+    assert document_set.logical_id.startswith("knowledge-base-")
 
 
 @pytest.mark.django_db

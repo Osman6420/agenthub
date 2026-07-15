@@ -15,6 +15,34 @@ from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 
+
+def create_console_organization(*, name: str, status: str) -> Organization:
+    """Create an organization with an immutable server-owned slug."""
+    from django.db import IntegrityError, transaction
+
+    from apps.tenancy.identifiers import (
+        MAX_ALLOCATION_ATTEMPTS,
+        IdentifierAllocationError,
+        allocate_identifier,
+    )
+
+    for _attempt in range(MAX_ALLOCATION_ATTEMPTS):
+        slug = allocate_identifier(
+            name,
+            fallback="organization",
+            max_length=64,
+            exists=lambda value: Organization.objects.filter(slug=value).exists(),
+        )
+        try:
+            with transaction.atomic():
+                return Organization.objects.create(slug=slug, name=name, status=status)
+        except IntegrityError:
+            if Organization.objects.filter(slug=slug).exists():
+                continue
+            raise
+    raise IdentifierAllocationError
+
+
 UserLike = AbstractBaseUser | AnonymousUser
 
 

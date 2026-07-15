@@ -12,6 +12,7 @@ import json
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
 from django.conf import settings
 from django.contrib import messages
@@ -30,7 +31,8 @@ from apps.agents.services import AgentRequestError, operator_cancel_agent_run
 from apps.artifacts.models import ArtifactVersion
 from apps.audit.services import record_event
 from apps.builder.models import WorkflowDraft
-from apps.catalog.models import AIProject, Scenario, ScenarioAlias
+from apps.catalog.models import AIProject, Scenario
+from apps.catalog.services import create_console_project, create_console_scenario
 from apps.console import scoping
 from apps.console.forms import (
     BindingForm,
@@ -98,6 +100,7 @@ from apps.ingestion.tasks import (
 from apps.ingestion.vector_store import set_tenant_context
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
+from apps.tenancy.identifiers import IdentifierAllocationError
 from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 from apps.tenancy.services import (
     UserLike,
@@ -108,6 +111,7 @@ from apps.tenancy.services import (
     can_author_scenarios,
     can_create_organization,
     can_manage_releases,
+    create_console_organization,
     is_platform_admin,
 )
 from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_approval
@@ -294,7 +298,7 @@ def projects(request: HttpRequest) -> HttpResponse:
             "cols": [
                 p.organization.slug,
                 p.slug,
-                {"text": p.name, "url": "console:project_detail", "arg": p.pk},
+                {"text": p.name, "url": "console:project_detail_public", "arg": p.public_id},
                 p.risk_level,
                 p.status,
             ]
@@ -317,9 +321,11 @@ def projects(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _scoped_project(user: UserLike, pk: int) -> AIProject:
+def _scoped_project(user: UserLike, pk: int | None = None, public_id: object = None) -> AIProject:
     try:
-        project = scoping.scoped_projects(user).get(pk=pk)
+        project = scoping.scoped_projects(user).get(
+            **({"public_id": public_id} if public_id is not None else {"pk": pk})
+        )
     except AIProject.DoesNotExist as exc:
         raise Http404 from exc
     set_tenant_context(project.organization_id)
@@ -327,8 +333,10 @@ def _scoped_project(user: UserLike, pk: int) -> AIProject:
 
 
 @login_required
-def project_detail(request: HttpRequest, pk: int) -> HttpResponse:
-    project = _scoped_project(request.user, pk)
+def project_detail(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    project = _scoped_project(request.user, pk, public_id)
     scenarios_qs = Scenario.objects.filter(project=project).order_by("name", "slug")
     scenario_candidates = list(scenarios_qs[:201])
     return render(
@@ -359,9 +367,11 @@ def scenarios(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _scoped_scenario(user: UserLike, pk: int) -> Scenario:
+def _scoped_scenario(user: UserLike, pk: int | None = None, public_id: object = None) -> Scenario:
     try:
-        scenario = scoping.scoped_scenarios(user).get(pk=pk)
+        scenario = scoping.scoped_scenarios(user).get(
+            **({"public_id": public_id} if public_id is not None else {"pk": pk})
+        )
     except Scenario.DoesNotExist as exc:
         raise Http404 from exc
     set_tenant_context(scenario.organization_id)
@@ -464,8 +474,10 @@ def _workflow_dsl_guide() -> str:
 
 
 @login_required
-def scenario_detail(request: HttpRequest, pk: int) -> HttpResponse:
-    scenario = _scoped_scenario(request.user, pk)
+def scenario_detail(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk, public_id)
     organization_id = scenario.project.organization_id
     active_release = ScenarioRelease.objects.filter(
         scenario=scenario, status=ReleaseStatus.ACTIVE
@@ -594,8 +606,10 @@ def scenario_detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 @login_required
 @require_POST
-def scenario_bind_document_set(request: HttpRequest, pk: int) -> HttpResponse:
-    scenario = _scoped_scenario(request.user, pk)
+def scenario_bind_document_set(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk, public_id)
     organization_id = scenario.project.organization_id
     if not can_author_scenarios(request.user, organization_id):
         raise PermissionDenied
@@ -622,13 +636,18 @@ def scenario_bind_document_set(request: HttpRequest, pk: int) -> HttpResponse:
             )
         except DocumentError as exc:
             messages.error(request, f"Bağ kurulamadı: {exc.code}")
-    return redirect("console:scenario_detail", pk=scenario.pk)
+    return redirect("console:scenario_detail_public", public_id=scenario.public_id)
 
 
 @login_required
 @require_POST
-def scenario_unbind_document_set(request: HttpRequest, pk: int, binding_pk: int) -> HttpResponse:
-    scenario = _scoped_scenario(request.user, pk)
+def scenario_unbind_document_set(
+    request: HttpRequest,
+    binding_pk: int,
+    pk: int | None = None,
+    public_id: object = None,
+) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk, public_id)
     organization_id = scenario.project.organization_id
     if not can_author_scenarios(request.user, organization_id):
         raise PermissionDenied
@@ -643,13 +662,18 @@ def scenario_unbind_document_set(request: HttpRequest, pk: int, binding_pk: int)
     messages.success(
         request, "Doküman seti bağı kaldırıldı. Aktif release yeniden derlenene kadar değişmez."
     )
-    return redirect("console:scenario_detail", pk=scenario.pk)
+    return redirect("console:scenario_detail_public", public_id=scenario.public_id)
 
 
 @login_required
 @require_POST
-def scenario_grant_consumer(request: HttpRequest, pk: int, document_set_pk: int) -> HttpResponse:
-    scenario = _scoped_scenario(request.user, pk)
+def scenario_grant_consumer(
+    request: HttpRequest,
+    document_set_pk: int,
+    pk: int | None = None,
+    public_id: object = None,
+) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk, public_id)
     organization_id = scenario.project.organization_id
     if not can_author_scenarios(request.user, organization_id):
         raise PermissionDenied
@@ -689,13 +713,18 @@ def scenario_grant_consumer(request: HttpRequest, pk: int, document_set_pk: int)
             messages.success(request, "İstemci için doküman erişimi verildi.")
         except DocumentError as exc:
             messages.error(request, f"Erişim verilemedi: {exc.code}")
-    return redirect("console:scenario_detail", pk=scenario.pk)
+    return redirect("console:scenario_detail_public", public_id=scenario.public_id)
 
 
 @login_required
 @require_POST
-def scenario_revoke_consumer(request: HttpRequest, pk: int, grant_pk: int) -> HttpResponse:
-    scenario = _scoped_scenario(request.user, pk)
+def scenario_revoke_consumer(
+    request: HttpRequest,
+    grant_pk: int,
+    pk: int | None = None,
+    public_id: object = None,
+) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, pk, public_id)
     organization_id = scenario.project.organization_id
     if not can_author_scenarios(request.user, organization_id):
         raise PermissionDenied
@@ -713,7 +742,7 @@ def scenario_revoke_consumer(request: HttpRequest, pk: int, grant_pk: int) -> Ht
         raise Http404
     document_services.revoke_document_set_grant(grant, actor=request.user.get_username())
     messages.success(request, "İstemci doküman erişimi kaldırıldı.")
-    return redirect("console:scenario_detail", pk=scenario.pk)
+    return redirect("console:scenario_detail_public", public_id=scenario.public_id)
 
 
 @login_required
@@ -722,7 +751,7 @@ def consumers(request: HttpRequest) -> HttpResponse:
         {
             "cols": [
                 c.organization.slug,
-                {"text": c.name, "url": "console:consumer_detail", "arg": c.pk},
+                {"text": c.name, "url": "console:consumer_detail_public", "arg": c.public_id},
                 c.subject,
                 c.protocol,
                 c.status,
@@ -749,9 +778,11 @@ def consumers(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _scoped_consumer(user: UserLike, pk: int) -> Consumer:
+def _scoped_consumer(user: UserLike, pk: int | None = None, public_id: object = None) -> Consumer:
     try:
-        consumer = scoping.scoped_consumers(user).get(pk=pk)
+        consumer = scoping.scoped_consumers(user).get(
+            **({"public_id": public_id} if public_id is not None else {"pk": pk})
+        )
     except Consumer.DoesNotExist as exc:
         raise Http404 from exc
     set_tenant_context(consumer.organization_id)
@@ -759,8 +790,10 @@ def _scoped_consumer(user: UserLike, pk: int) -> Consumer:
 
 
 @login_required
-def consumer_detail(request: HttpRequest, pk: int) -> HttpResponse:
-    consumer = _scoped_consumer(request.user, pk)
+def consumer_detail(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    consumer = _scoped_consumer(request.user, pk, public_id)
     binding_candidates = list(
         consumer.bindings.select_related("scenario", "scenario__project").order_by(
             "scenario__project__name", "scenario__name"
@@ -898,6 +931,7 @@ def releases(request: HttpRequest) -> HttpResponse:
             {
                 "id": r.pk,
                 "scenario_id": r.scenario_id,
+                "scenario_public_id": r.scenario.public_id,
                 "org_slug": r.scenario.project.organization.slug,
                 "org": r.scenario.project.organization.slug,
                 "scenario": r.scenario.slug,
@@ -1258,6 +1292,7 @@ def documents(request: HttpRequest) -> HttpResponse:
     sets = [
         {
             "id": s.id,
+            "public_id": s.public_id,
             "org": s.organization.slug,
             "logical_id": s.logical_id,
             "name": s.name,
@@ -1269,6 +1304,7 @@ def documents(request: HttpRequest) -> HttpResponse:
     docs = [
         {
             "id": d.id,
+            "public_id": d.public_id,
             "org": d.organization.slug,
             "logical_id": d.logical_id,
             "title": d.title,
@@ -1310,24 +1346,26 @@ def document_upload(request: HttpRequest) -> HttpResponse:
         raise PermissionDenied
     upload = form.cleaned_data["file"]
     try:
-        document_services.upload_document(
+        document_services.upload_console_document(
             organization=organization,
-            logical_id=form.cleaned_data["logical_id"],
             title=form.cleaned_data["title"],
             mime_type=(upload.content_type or "application/octet-stream"),
             data=upload.read(),
             actor=request.user.get_username(),
         )
         messages.success(request, "Document uploaded.")
-    except DocumentError as exc:
-        messages.error(request, f"Upload failed: {exc.code}")
+    except (DocumentError, IdentifierAllocationError) as exc:
+        code = getattr(exc, "code", IdentifierAllocationError.code)
+        messages.error(request, f"Upload failed: {code}")
     return redirect("console:documents")
 
 
 @login_required
 @require_POST
-def document_soft_delete(request: HttpRequest, pk: int) -> HttpResponse:
-    document = _scoped_document(request.user, pk)
+def document_soft_delete(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document = _scoped_document(request.user, pk, public_id)
     if not can_author_scenarios(request.user, document.organization_id):
         raise PermissionDenied
     document_services.soft_delete_document(document, actor=request.user.get_username())
@@ -1337,8 +1375,10 @@ def document_soft_delete(request: HttpRequest, pk: int) -> HttpResponse:
 
 @login_required
 @require_POST
-def document_purge(request: HttpRequest, pk: int) -> HttpResponse:
-    document = _scoped_document(request.user, pk)
+def document_purge(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document = _scoped_document(request.user, pk, public_id)
     if not can_admin_org(request.user, document.organization_id):
         raise PermissionDenied
     confirmation = request.POST.get("confirm_logical_id", "")
@@ -1355,9 +1395,11 @@ def document_purge(request: HttpRequest, pk: int) -> HttpResponse:
     return redirect("console:documents")
 
 
-def _scoped_document(user: UserLike, pk: int) -> Document:
+def _scoped_document(user: UserLike, pk: int | None = None, public_id: object = None) -> Document:
     try:
-        document = scoping.scoped_documents(user).get(pk=pk)
+        document = scoping.scoped_documents(user).get(
+            **({"public_id": public_id} if public_id is not None else {"pk": pk})
+        )
     except Document.DoesNotExist as exc:
         raise Http404 from exc
     set_tenant_context(document.organization_id)
@@ -1375,21 +1417,24 @@ def document_set_create(request: HttpRequest) -> HttpResponse:
     if not can_author_scenarios(request.user, organization.id):
         raise PermissionDenied
     try:
-        document_services.create_document_set(
+        document_set = document_services.create_console_document_set(
             organization=organization,
-            logical_id=form.cleaned_data["logical_id"],
             name=form.cleaned_data["name"],
             actor=request.user.get_username(),
         )
         messages.success(request, "Document set created.")
-    except DocumentError as exc:
-        messages.error(request, f"Create failed: {exc.code}")
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
+    except (DocumentError, IdentifierAllocationError) as exc:
+        code = getattr(exc, "code", IdentifierAllocationError.code)
+        messages.error(request, f"Create failed: {code}")
     return redirect("console:documents")
 
 
 @login_required
-def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def document_set_detail(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     can_write = can_author_scenarios(request.user, document_set.organization_id)
     can_promote_index = can_manage_releases(request.user, document_set.organization_id)
     versions = [
@@ -1476,6 +1521,7 @@ def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "organization": document_set.organization,
             "set": {
                 "id": document_set.id,
+                "public_id": document_set.public_id,
                 "org": document_set.organization.slug,
                 "logical_id": document_set.logical_id,
                 "name": document_set.name,
@@ -1617,8 +1663,10 @@ def _connector_context(
 
 @login_required
 @transaction.atomic
-def document_set_connectors(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def document_set_connectors(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
     return render(
         request,
@@ -1657,8 +1705,10 @@ def _clear_synthetic_response(form: RestContractForm) -> None:
 @login_required
 @transaction.atomic
 @require_POST
-def rest_contract_preview(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def rest_contract_preview(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
     if not can_author_scenarios(request.user, document_set.organization_id):
         raise PermissionDenied
@@ -1687,8 +1737,10 @@ def rest_contract_preview(request: HttpRequest, pk: int) -> HttpResponse:
 @login_required
 @transaction.atomic
 @require_POST
-def rest_contract_create(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def rest_contract_create(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
     if not can_author_scenarios(request.user, document_set.organization_id):
         raise PermissionDenied
@@ -1707,7 +1759,9 @@ def rest_contract_create(request: HttpRequest, pk: int) -> HttpResponse:
                 request,
                 f"REST sözleşmesi {contract.logical_id} r{contract.revision} oluşturuldu.",
             )
-            return redirect("console:document_set_connectors", pk=document_set.pk)
+            return redirect(
+                "console:document_set_connectors_public", public_id=document_set.public_id
+            )
         except (RestAuthorizationError, RestServiceError, RestContractError, RestPullError) as exc:
             code = getattr(exc, "code", str(exc))
             form.add_error(None, f"Sözleşme oluşturulamadı: {code}")
@@ -1722,8 +1776,10 @@ def rest_contract_create(request: HttpRequest, pk: int) -> HttpResponse:
 @login_required
 @transaction.atomic
 @require_POST
-def confluence_source_create(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def confluence_source_create(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
     if not can_author_scenarios(request.user, document_set.organization_id):
         raise PermissionDenied
@@ -1748,14 +1804,16 @@ def confluence_source_create(request: HttpRequest, pk: int) -> HttpResponse:
             messages.error(request, f"Confluence kaynağı oluşturulamadı: {exc}")
     else:
         messages.error(request, "Confluence kaynağı formunu kontrol edin.")
-    return redirect("console:document_set_connectors", pk=document_set.pk)
+    return redirect("console:document_set_connectors_public", public_id=document_set.public_id)
 
 
 @login_required
 @transaction.atomic
 @require_POST
-def rest_source_create(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def rest_source_create(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
     if not can_author_scenarios(request.user, document_set.organization_id):
         raise PermissionDenied
@@ -1777,7 +1835,7 @@ def rest_source_create(request: HttpRequest, pk: int) -> HttpResponse:
             messages.error(request, f"REST kaynağı oluşturulamadı: {exc}")
     else:
         messages.error(request, "REST kaynağı formunu kontrol edin.")
-    return redirect("console:document_set_connectors", pk=document_set.pk)
+    return redirect("console:document_set_connectors_public", public_id=document_set.public_id)
 
 
 def _scoped_connector_source(user: UserLike, source_pk: int) -> Source:
@@ -1792,6 +1850,9 @@ def _scoped_connector_source(user: UserLike, source_pk: int) -> Source:
 @require_POST
 def connector_source_run(request: HttpRequest, source_pk: int) -> HttpResponse:
     source = _scoped_connector_source(request.user, source_pk)
+    document_set = source.document_set
+    if document_set is None:
+        raise Http404
     if not can_author_scenarios(request.user, source.organization_id):
         raise PermissionDenied
     try:
@@ -1825,7 +1886,7 @@ def connector_source_run(request: HttpRequest, source_pk: int) -> HttpResponse:
         messages.error(request, f"Senkron başlatılamadı: {exc}")
     except Exception:
         messages.error(request, "Senkron kuyruğuna erişilemedi; run başarısız kapatıldı.")
-    return redirect("console:document_set_connectors", pk=source.document_set_id)
+    return redirect("console:document_set_connectors_public", public_id=document_set.public_id)
 
 
 @login_required
@@ -1871,7 +1932,7 @@ def connector_schedule_configure(request: HttpRequest, source_pk: int) -> HttpRe
             messages.error(request, f"Plan güncellenemedi: {exc}")
     else:
         messages.error(request, "Plan formunu ve rolünüze açık seçenekleri kontrol edin.")
-    return redirect("console:document_set_connectors", pk=document_set.pk)
+    return redirect("console:document_set_connectors_public", public_id=document_set.public_id)
 
 
 def _bulk_upload_metadata(files: list[object], document_set: DocumentSet) -> list[dict[str, str]]:
@@ -1904,14 +1965,16 @@ def _bulk_upload_metadata(files: list[object], document_set: DocumentSet) -> lis
 
 @login_required
 @require_POST
-def document_set_bulk_upload(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def document_set_bulk_upload(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     if not can_author_scenarios(request.user, document_set.organization_id):
         raise PermissionDenied
     form = DocumentSetBulkUploadForm(request.POST, request.FILES)
     if not form.is_valid():
         messages.error(request, "Yükleme başarısız: en az bir dosya seçin.")
-        return redirect("console:document_set_detail", pk=document_set.pk)
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
     files = list(form.cleaned_data["uploads"])
     max_files = int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20))
     max_file_bytes = int(getattr(settings, "DOCUMENTS_MAX_UPLOAD_BYTES", 25_000_000))
@@ -1919,15 +1982,15 @@ def document_set_bulk_upload(request: HttpRequest, pk: int) -> HttpResponse:
     sizes = [int(getattr(upload, "size", 0)) for upload in files]
     if len(files) > max_files:
         messages.error(request, f"Yükleme başarısız: en fazla {max_files} dosya seçilebilir.")
-        return redirect("console:document_set_detail", pk=document_set.pk)
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
     if any(size <= 0 or size > max_file_bytes for size in sizes):
         messages.error(
             request, "Yükleme başarısız: boş veya dosya boyutu sınırını aşan içerik var."
         )
-        return redirect("console:document_set_detail", pk=document_set.pk)
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
     if sum(sizes) > max_batch_bytes:
         messages.error(request, "Yükleme başarısız: toplam batch boyutu sınırı aşıldı.")
-        return redirect("console:document_set_detail", pk=document_set.pk)
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
     uploaded = 0
     try:
         metadata = _bulk_upload_metadata(files, document_set)
@@ -1962,7 +2025,7 @@ def document_set_bulk_upload(request: HttpRequest, pk: int) -> HttpResponse:
             )
         else:
             messages.error(request, f"Yükleme başarısız: {code}")
-    return redirect("console:document_set_detail", pk=document_set.pk)
+    return redirect("console:document_set_detail_public", public_id=document_set.public_id)
 
 
 @login_required
@@ -1974,13 +2037,17 @@ def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpRespo
     form = DocumentSetBuildForm(request.POST, organization_id=set_version.organization_id)
     if not form.is_valid():
         messages.error(request, "İndeks isteği reddedildi: tenant’a açık bir profil seçin.")
-        return redirect("console:document_set_detail", pk=set_version.document_set_id)
+        return redirect(
+            "console:document_set_detail_public", public_id=set_version.document_set.public_id
+        )
     if set_version.status not in [
         DocumentSetVersionStatus.PROMOTABLE,
         DocumentSetVersionStatus.ACTIVE,
     ]:
         messages.error(request, "İndeks için önce taslak sürümü yayımlayın.")
-        return redirect("console:document_set_detail", pk=set_version.document_set_id)
+        return redirect(
+            "console:document_set_detail_public", public_id=set_version.document_set.public_id
+        )
     profile = form.cleaned_data["embedding_profile"]
     ocr_profile = form.cleaned_data["ocr_profile"]
     if IndexVersion.objects.filter(
@@ -1989,7 +2056,9 @@ def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpRespo
         status__in=[IndexStatus.BUILDING, IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
     ).exists():
         messages.error(request, "Bu sürüm ve profil için kullanılabilir bir indeks zaten var.")
-        return redirect("console:document_set_detail", pk=set_version.document_set_id)
+        return redirect(
+            "console:document_set_detail_public", public_id=set_version.document_set.public_id
+        )
     try:
         record_event(
             actor_type="user",
@@ -2024,7 +2093,9 @@ def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpRespo
             reason="queue_unavailable",
         )
         messages.error(request, "İndeks kuyruğuna erişilemedi; daha sonra yeniden deneyin.")
-    return redirect("console:document_set_detail", pk=set_version.document_set_id)
+    return redirect(
+        "console:document_set_detail_public", public_id=set_version.document_set.public_id
+    )
 
 
 @login_required
@@ -2048,20 +2119,25 @@ def document_set_promote_index(request: HttpRequest, index_pk: int) -> HttpRespo
         messages.success(request, "Staged indeks aktif hale getirildi.")
     except StagedBuildError as exc:
         messages.error(request, f"Promotion başarısız: {exc.code}")
-    return redirect("console:document_set_detail", pk=index.document_set_version.document_set_id)
+    return redirect(
+        "console:document_set_detail_public",
+        public_id=index.document_set_version.document_set.public_id,
+    )
 
 
 @login_required
 @require_POST
-def document_set_version_create(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def document_set_version_create(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     if not can_author_scenarios(request.user, document_set.organization_id):
         raise PermissionDenied
     document_services.create_document_set_version(
         document_set=document_set, actor=request.user.get_username()
     )
     messages.success(request, "Draft version created.")
-    return redirect("console:document_set_detail", pk=document_set.pk)
+    return redirect("console:document_set_detail_public", public_id=document_set.public_id)
 
 
 @login_required
@@ -2088,7 +2164,9 @@ def document_set_add_member(request: HttpRequest, version_pk: int) -> HttpRespon
     )
     if version is None:
         messages.error(request, "Add member failed: invalid document.")
-        return redirect("console:document_set_detail", pk=set_version.document_set_id)
+        return redirect(
+            "console:document_set_detail_public", public_id=set_version.document_set.public_id
+        )
     try:
         document_services.add_document_to_set_version(
             set_version=set_version, document_version=version, actor=request.user.get_username()
@@ -2096,7 +2174,9 @@ def document_set_add_member(request: HttpRequest, version_pk: int) -> HttpRespon
         messages.success(request, "Member added.")
     except DocumentError as exc:
         messages.error(request, f"Add member failed: {exc.code}")
-    return redirect("console:document_set_detail", pk=set_version.document_set_id)
+    return redirect(
+        "console:document_set_detail_public", public_id=set_version.document_set.public_id
+    )
 
 
 @login_required
@@ -2112,12 +2192,18 @@ def document_set_version_publish(request: HttpRequest, version_pk: int) -> HttpR
         messages.success(request, "Version published.")
     except DocumentError as exc:
         messages.error(request, f"Publish failed: {exc.code}")
-    return redirect("console:document_set_detail", pk=set_version.document_set_id)
+    return redirect(
+        "console:document_set_detail_public", public_id=set_version.document_set.public_id
+    )
 
 
-def _scoped_document_set(user: UserLike, pk: int) -> DocumentSet:
+def _scoped_document_set(
+    user: UserLike, pk: int | None = None, public_id: object = None
+) -> DocumentSet:
     try:
-        document_set = scoping.scoped_document_sets(user).get(pk=pk)
+        document_set = scoping.scoped_document_sets(user).get(
+            **({"public_id": public_id} if public_id is not None else {"pk": pk})
+        )
     except DocumentSet.DoesNotExist as exc:
         raise Http404 from exc
     set_tenant_context(document_set.organization_id)
@@ -2135,8 +2221,10 @@ def _scoped_set_version(user: UserLike, pk: int) -> DocumentSetVersion:
 
 @login_required
 @require_POST
-def document_set_bind_scenario(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def document_set_bind_scenario(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     if not can_author_scenarios(request.user, document_set.organization_id):
         raise PermissionDenied
     scenario_id = request.POST.get("scenario_id", "")
@@ -2157,7 +2245,7 @@ def document_set_bind_scenario(request: HttpRequest, pk: int) -> HttpResponse:
             messages.success(request, "Scenario bound. Recompile its release to apply the change.")
         except DocumentError as exc:
             messages.error(request, f"Bind failed: {exc.code}")
-    return redirect("console:document_set_detail", pk=document_set.pk)
+    return redirect("console:document_set_detail_public", public_id=document_set.public_id)
 
 
 @login_required
@@ -2178,16 +2266,18 @@ def document_set_unbind_scenario(request: HttpRequest, binding_pk: int) -> HttpR
     set_tenant_context(binding.organization_id)
     if not can_author_scenarios(request.user, binding.organization_id):
         raise PermissionDenied
-    document_set_id = binding.document_set_id
+    document_set_public_id = binding.document_set.public_id
     document_services.unbind_scenario_document_set(binding, actor=request.user.get_username())
     messages.success(request, "Scenario unbound. Recompile its release to apply the change.")
-    return redirect("console:document_set_detail", pk=document_set_id)
+    return redirect("console:document_set_detail_public", public_id=document_set_public_id)
 
 
 @login_required
 @require_POST
-def document_set_grant_consumer(request: HttpRequest, pk: int) -> HttpResponse:
-    document_set = _scoped_document_set(request.user, pk)
+def document_set_grant_consumer(
+    request: HttpRequest, pk: int | None = None, public_id: object = None
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, pk, public_id)
     if not can_author_scenarios(request.user, document_set.organization_id):
         raise PermissionDenied
     consumer_id = request.POST.get("consumer_id", "")
@@ -2213,7 +2303,7 @@ def document_set_grant_consumer(request: HttpRequest, pk: int) -> HttpResponse:
             messages.success(request, "İstemci retrieval izni verildi.")
         except DocumentError as exc:
             messages.error(request, f"Grant failed: {exc.code}")
-    return redirect("console:document_set_detail", pk=document_set.pk)
+    return redirect("console:document_set_detail_public", public_id=document_set.public_id)
 
 
 @login_required
@@ -2228,10 +2318,10 @@ def document_set_revoke_grant(request: HttpRequest, grant_pk: int) -> HttpRespon
     set_tenant_context(grant.organization_id)
     if not can_author_scenarios(request.user, grant.organization_id):
         raise PermissionDenied
-    document_set_id = grant.document_set_id
+    document_set_public_id = grant.document_set.public_id
     document_services.revoke_document_set_grant(grant, actor=request.user.get_username())
     messages.success(request, "İstemci retrieval izni kaldırıldı.")
-    return redirect("console:document_set_detail", pk=document_set_id)
+    return redirect("console:document_set_detail_public", public_id=document_set_public_id)
 
 
 @login_required
@@ -2297,30 +2387,61 @@ def _create(
 ) -> HttpResponse:
     form = form_class(request.POST or None, user=request.user)
     if request.method == "POST" and form.is_valid():
-        instance = form.save(commit=False)
-        organization_id = getattr(instance, "organization_id", None)
-        if resource_type == "project":
-            organization_id = instance.organization_id
-        elif resource_type == "scenario":
-            organization_id = instance.project.organization_id
-        elif resource_type == "binding":
-            organization_id = instance.consumer.organization_id
+        instance = None
+        organization_id = None
+        if resource_type == "organization":
+            organization_id = None
+        elif resource_type in {"project", "scenario"}:
+            parent = form.cleaned_data["organization" if resource_type == "project" else "project"]
+            organization_id = parent.pk if resource_type == "project" else parent.organization_id
+        else:
+            instance = form.save(commit=False)
+            organization_id = getattr(instance, "organization_id", None)
+            if resource_type == "binding":
+                organization_id = instance.consumer.organization_id
         if not permission(organization_id):
             raise PermissionDenied
-        with transaction.atomic():
-            instance = form.save()
+        try:
+            with transaction.atomic():
+                if resource_type == "organization":
+                    instance = create_console_organization(
+                        name=form.cleaned_data["name"], status=form.cleaned_data["status"]
+                    )
+                    organization_id = instance.pk
+                elif resource_type == "project":
+                    instance = create_console_project(
+                        organization=form.cleaned_data["organization"],
+                        name=form.cleaned_data["name"],
+                        owner=form.cleaned_data["owner"],
+                        risk_level=form.cleaned_data["risk_level"],
+                        status=form.cleaned_data["status"],
+                    )
+                elif resource_type == "scenario":
+                    instance = create_console_scenario(
+                        project=form.cleaned_data["project"],
+                        name=form.cleaned_data["name"],
+                        type=form.cleaned_data["type"],
+                        visibility=form.cleaned_data["visibility"],
+                        risk_level=form.cleaned_data["risk_level"],
+                        status=form.cleaned_data["status"],
+                    )
+                else:
+                    instance = form.save()
+                if organization_id is None or instance is None:
+                    raise PermissionDenied
+                _audit_create(request, resource_type, str(instance.pk), organization_id)
+        except IdentifierAllocationError:
+            form.add_error(None, IdentifierAllocationError.code)
+        else:
             if resource_type == "organization":
-                organization_id = instance.pk
-            if organization_id is None:
-                raise PermissionDenied
-            if resource_type == "scenario" and form.cleaned_data["alias"]:
-                ScenarioAlias.objects.create(
-                    organization_id=organization_id,
-                    scenario=instance,
-                    alias=form.cleaned_data["alias"],
-                )
-            _audit_create(request, resource_type, str(instance.pk), organization_id)
-        return redirect(success_url)
+                return redirect("console:organization_detail", slug=instance.slug)
+            if resource_type == "project":
+                project = cast(AIProject, instance)
+                return redirect("console:project_detail_public", public_id=project.public_id)
+            if resource_type == "scenario":
+                scenario = cast(Scenario, instance)
+                return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+            return redirect(success_url)
     return render(request, "console/form.html", {"title": title, "form": form})
 
 

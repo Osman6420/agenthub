@@ -31,7 +31,7 @@
 <section class="card">
   <h2>Bu artifact'i pinleyen release'ler</h2>
   {% if pin_scan_limited %}<div class="warning-box">Pin taraması son 500 release ile sınırlandı; daha eski pinler bu listede görünmeyebilir.</div>{% endif %}
-  {% for item in pinned_by %}<div class="access-row"><div><strong><a href="{% url 'console:scenario_detail' item.release.scenario.id %}">{{ item.release.scenario.name }}</a> · <a href="{% url 'console:release_detail' item.release.id %}">release #{{ item.release.id }}</a></strong><p class="muted">Roller: {{ item.roles|join:', ' }} · {{ item.release.status }}</p></div><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></div>{% empty %}<p class="muted">Bu exact version hiçbir release manifestinde pinli değil.</p>{% endfor %}
+  {% for item in pinned_by %}<div class="access-row"><div><strong><a href="{% url 'console:scenario_detail_public' item.release.scenario.public_id %}">{{ item.release.scenario.name }}</a> · <a href="{% url 'console:release_detail' item.release.id %}">release #{{ item.release.id }}</a></strong><p class="muted">Roller: {{ item.roles|join:', ' }} · {{ item.release.status }}</p></div><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></div>{% empty %}<p class="muted">Bu exact version hiçbir release manifestinde pinli değil.</p>{% endfor %}
 </section>
 <script src="{% static 'console/copy_text.js' %}" defer></script>
 {% endblock %}

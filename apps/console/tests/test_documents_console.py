@@ -88,7 +88,8 @@ def test_author_can_upload_document(client: Client) -> None:
         },
     )
     assert response.status_code == 302
-    document = Document.objects.get(organization=org, logical_id="policy")
+    document = Document.objects.get(organization=org)
+    assert document.logical_id.startswith("return-policy-")
     assert document.current_version == 1
     assert document.versions.get(version=1).mime_type == "text/plain"
     assert AuditEvent.objects.filter(action="documents.document.upload").exists()

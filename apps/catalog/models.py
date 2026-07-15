@@ -8,9 +8,11 @@ within an organization.
 
 from __future__ import annotations
 
+import uuid
+
 from django.db import models
 
-from apps.tenancy.models import Organization, TimeStampedModel
+from apps.tenancy.models import Organization, TimeStampedModel, ensure_immutable_public_id
 
 
 class RiskLevel(models.TextChoices):
@@ -47,6 +49,7 @@ class AliasStatus(models.TextChoices):
 class AIProject(TimeStampedModel):
     """A product/business-unit container that owns scenarios."""
 
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="projects"
     )
@@ -71,10 +74,15 @@ class AIProject(TimeStampedModel):
     def __str__(self) -> str:
         return f"{self.organization_id}/{self.slug}"
 
+    def save(self, *args: object, **kwargs: object) -> None:
+        ensure_immutable_public_id(self)
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
+
 
 class Scenario(TimeStampedModel):
     """A callable, releasable single-purpose AI behavior within a project."""
 
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="scenarios"
     )
@@ -102,6 +110,7 @@ class Scenario(TimeStampedModel):
         return f"{self.project}/{self.slug}"
 
     def save(self, *args: object, **kwargs: object) -> None:
+        ensure_immutable_public_id(self)
         if self.project_id:
             project_org_id = self.project.organization_id
             if self.organization_id and self.organization_id != project_org_id:

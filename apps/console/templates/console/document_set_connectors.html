@@ -2,7 +2,7 @@
 {% block title %}{{ set.name }} kaynakları · AgentHub{% endblock %}
 {% block content %}
 
-<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><a href="{% url 'console:document_set_detail' set.id %}">{{ set.name }}</a><span>›</span><span>Kaynaklar</span></div>
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><a href="{% url 'console:document_set_detail_public' set.public_id %}">{{ set.name }}</a><span>›</span><span>Kaynaklar</span></div>
 <div class="page-heading"><div><p class="eyebrow">{{ set.organization.name }} · {{ set.logical_id }}</p><h1>Kaynaklar ve yenileme</h1><p class="muted">Kaynak değişiklikleri yeni bir taslak aday üretir; aktif indeks yalnız seçilen otomasyon ve mevcut promotion kapılarından sonra değişir.</p></div></div>
 
 <div class="card">
@@ -31,18 +31,18 @@
 <div class="relationship-grid">
   <div class="card form-card">
     <h2>Confluence kaynağı ekle</h2><p class="muted">Yalnız platform yöneticisinin bu sete grant ettiği profil seçilebilir. Kök sayfa alt ağacı periyodik olarak değişiklik kontrolünden geçer.</p>
-    <form method="post" action="{% url 'console:confluence_source_create' set.id %}">{% csrf_token %}{{ confluence_form.as_p }}<button type="submit">Confluence kaynağı oluştur</button></form>
+    <form method="post" action="{% url 'console:confluence_source_create_public' set.public_id %}">{% csrf_token %}{{ confluence_form.as_p }}<button type="submit">Confluence kaynağı oluştur</button></form>
   </div>
   <div class="card form-card">
     <h2>Generic REST kaynağı ekle</h2><p class="muted">Önce aşağıda immutable mapping sözleşmesini oluşturun. Hedef ve credential platform profilinden gelir; input JSON URL/header/secret taşıyamaz.</p>
-    <form method="post" action="{% url 'console:rest_source_create' set.id %}">{% csrf_token %}{{ rest_source_form.as_p }}<button type="submit">REST kaynağı oluştur</button></form>
+    <form method="post" action="{% url 'console:rest_source_create_public' set.public_id %}">{% csrf_token %}{{ rest_source_form.as_p }}<button type="submit">REST kaynağı oluştur</button></form>
   </div>
 </div>
 
 <div class="card form-card">
   <div class="section-heading"><div><h2>REST mapping sözleşmesi</h2><p class="muted">RFC 6901 pointer ve kapalı placeholder kuralları kullanılır. Sentetik response preview ağ isteği yapmaz ve içerik alanını göstermez.</p></div></div>
   <form method="post">{% csrf_token %}{{ contract_form.as_p }}
-    <div class="button-row"><button class="button secondary" type="submit" formaction="{% url 'console:rest_contract_preview' set.id %}">Sözleşmeyi / preview'ı doğrula</button><button type="submit" formaction="{% url 'console:rest_contract_create' set.id %}">Immutable revizyonu oluştur</button></div>
+    <div class="button-row"><button class="button secondary" type="submit" formaction="{% url 'console:rest_contract_preview_public' set.public_id %}">Sözleşmeyi / preview'ı doğrula</button><button type="submit" formaction="{% url 'console:rest_contract_create_public' set.public_id %}">Immutable revizyonu oluştur</button></div>
   </form>
   {% if preview_valid %}<div class="notice success"><strong>Mapping doğrulandı; ağ isteği yapılmadı.</strong>{% for item in preview_items %}<p><span class="mono">{{ item.external_id }}</span> · {{ item.title }} · rev {{ item.revision }}{% if item.deleted %} · silinmiş{% endif %}</p>{% empty %}<p class="muted">Sentetik response verilmedi veya item listesi boş.</p>{% endfor %}</div>{% endif %}
 </div>

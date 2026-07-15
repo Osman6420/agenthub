@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import pytest
 from django.conf import settings
 from django.test import Client
 
 from apps.observability.middleware import _route_dimensions, _status_class
 from apps.observability.tracing import _is_endpoint_allowed, extract_context
+
+pytestmark = pytest.mark.django_db
 
 
 def test_metrics_endpoint_has_bounded_labels_and_no_sensitive_dimensions() -> None:

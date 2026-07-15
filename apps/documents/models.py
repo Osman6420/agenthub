@@ -18,10 +18,12 @@ written; ``DocumentSetVersion`` membership is frozen at publish.
 
 from __future__ import annotations
 
+import uuid
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from apps.tenancy.models import Organization, TimeStampedModel
+from apps.tenancy.models import Organization, TimeStampedModel, ensure_immutable_public_id
 
 
 class DocumentLifecycle(models.TextChoices):
@@ -32,6 +34,7 @@ class DocumentLifecycle(models.TextChoices):
 class Document(TimeStampedModel):
     """A tenant's canonical, managed content object (its versions hold the bytes)."""
 
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="content_documents"
     )
@@ -75,6 +78,10 @@ class Document(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"document:{self.organization_id}:{self.logical_id}"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        ensure_immutable_public_id(self)
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
 
 
 class ParseStatus(models.TextChoices):
@@ -128,6 +135,7 @@ class DocumentSetStatus(models.TextChoices):
 class DocumentSet(TimeStampedModel):
     """The logical ACL/retrieval unit (bound to scenarios and served in P4)."""
 
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="document_sets"
     )
@@ -147,6 +155,10 @@ class DocumentSet(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"document-set:{self.organization_id}:{self.logical_id}"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        ensure_immutable_public_id(self)
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
 
 
 class DocumentSetVersionStatus(models.TextChoices):

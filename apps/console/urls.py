@@ -23,9 +23,31 @@ urlpatterns = [
     path("projects/", views.projects, name="projects"),
     path("projects/new/", views.project_create, name="project_create"),
     path("projects/<int:pk>/", views.project_detail, name="project_detail"),
+    path("projects/id/<uuid:public_id>/", views.project_detail, name="project_detail_public"),
     path("scenarios/", views.scenarios, name="scenarios"),
     path("scenarios/new/", views.scenario_create, name="scenario_create"),
     path("scenarios/<int:pk>/", views.scenario_detail, name="scenario_detail"),
+    path("scenarios/id/<uuid:public_id>/", views.scenario_detail, name="scenario_detail_public"),
+    path(
+        "scenarios/id/<uuid:public_id>/document-sets/bind/",
+        views.scenario_bind_document_set,
+        name="scenario_bind_document_set_public",
+    ),
+    path(
+        "scenarios/id/<uuid:public_id>/document-set-bindings/<int:binding_pk>/remove/",
+        views.scenario_unbind_document_set,
+        name="scenario_unbind_document_set_public",
+    ),
+    path(
+        "scenarios/id/<uuid:public_id>/document-sets/<int:document_set_pk>/grant-consumer/",
+        views.scenario_grant_consumer,
+        name="scenario_grant_consumer_public",
+    ),
+    path(
+        "scenarios/id/<uuid:public_id>/document-set-grants/<int:grant_pk>/remove/",
+        views.scenario_revoke_consumer,
+        name="scenario_revoke_consumer_public",
+    ),
     path(
         "scenarios/<int:pk>/document-sets/bind/",
         views.scenario_bind_document_set,
@@ -49,6 +71,7 @@ urlpatterns = [
     path("consumers/", views.consumers, name="consumers"),
     path("consumers/new/", views.consumer_create, name="consumer_create"),
     path("consumers/<int:pk>/", views.consumer_detail, name="consumer_detail"),
+    path("consumers/id/<uuid:public_id>/", views.consumer_detail, name="consumer_detail_public"),
     path("bindings/new/", views.binding_create, name="binding_create"),
     path("artifacts/", views.artifacts, name="artifacts"),
     path("artifacts/<int:pk>/", views.artifact_detail, name="artifact_detail"),
@@ -68,8 +91,68 @@ urlpatterns = [
         name="document_soft_delete",
     ),
     path("documents/<int:pk>/purge/", views.document_purge, name="document_purge"),
+    path(
+        "documents/id/<uuid:public_id>/soft-delete/",
+        views.document_soft_delete,
+        name="document_soft_delete_public",
+    ),
+    path(
+        "documents/id/<uuid:public_id>/purge/",
+        views.document_purge,
+        name="document_purge_public",
+    ),
     path("document-sets/new/", views.document_set_create, name="document_set_create"),
     path("document-sets/<int:pk>/", views.document_set_detail, name="document_set_detail"),
+    path(
+        "document-sets/id/<uuid:public_id>/",
+        views.document_set_detail,
+        name="document_set_detail_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/connectors/",
+        views.document_set_connectors,
+        name="document_set_connectors_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/connectors/confluence/new/",
+        views.confluence_source_create,
+        name="confluence_source_create_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/connectors/rest-contract/preview/",
+        views.rest_contract_preview,
+        name="rest_contract_preview_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/connectors/rest-contract/new/",
+        views.rest_contract_create,
+        name="rest_contract_create_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/connectors/rest/new/",
+        views.rest_source_create,
+        name="rest_source_create_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/bulk-upload/",
+        views.document_set_bulk_upload,
+        name="document_set_bulk_upload_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/versions/new/",
+        views.document_set_version_create,
+        name="document_set_version_create_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/bind-scenario/",
+        views.document_set_bind_scenario,
+        name="document_set_bind_scenario_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/grant-consumer/",
+        views.document_set_grant_consumer,
+        name="document_set_grant_consumer_public",
+    ),
     path(
         "document-sets/<int:pk>/connectors/",
         views.document_set_connectors,

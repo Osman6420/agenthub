@@ -8,6 +8,8 @@ other access is scoped to the user's memberships.
 
 from __future__ import annotations
 
+from typing import Any
+
 from django.conf import settings
 from django.db import models
 
@@ -22,6 +24,17 @@ class TimeStampedModel(models.Model):
 
     class Meta:
         abstract = True
+
+
+def ensure_immutable_public_id(instance: Any) -> None:
+    """Reject mutation of a persisted public locator for Part 2 models."""
+    if instance.pk is None:
+        return
+    persisted = (
+        type(instance).objects.filter(pk=instance.pk).values_list("public_id", flat=True).first()
+    )
+    if persisted is not None and persisted != instance.public_id:
+        raise ValueError("public_id is immutable")
 
 
 class OrganizationStatus(models.TextChoices):

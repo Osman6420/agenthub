@@ -16,13 +16,13 @@
 
 <div class="card action-card">
   <div><h2>Bağlı kaynaklar ve periyodik yenileme</h2><p class="muted">Confluence veya generic REST kaynaklarını, mapping sözleşmelerini ve değişiklik sonrası otomasyonu bu set için yönetin.</p></div>
-  <a class="button secondary" href="{% url 'console:document_set_connectors' set.id %}">Kaynakları yönet</a>
+  <a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynakları yönet</a>
 </div>
 
 {% if can_write %}
 <div class="card">
   <div class="section-heading"><div><h2>Toplu doküman yükle</h2><p class="muted">Dosya adından başlık ve stabil ID üretilir; yükleme son taslağı günceller, yayına çıkmaz.</p></div></div>
-  <form class="form-card" method="post" action="{% url 'console:document_set_bulk_upload' set.id %}" enctype="multipart/form-data">
+  <form class="form-card" method="post" action="{% url 'console:document_set_bulk_upload_public' set.public_id %}" enctype="multipart/form-data">
     {% csrf_token %}
     {{ bulk_upload_form.uploads }}
     <p class="muted">Tek seferde en fazla {{ max_batch_files }} dosya. Desteklenen türler: PDF, DOCX, XLSX, TXT, Markdown, CSV, HTML ve JSON.</p>
@@ -34,7 +34,7 @@
 <div class="card">
   <div class="section-heading">
     <div><h2>İçerik ve indeks yaşam döngüsü</h2><p class="muted">Yükleme → taslak → yayımlanmış set → staged indeks → aktif indeks.</p></div>
-    {% if can_write %}<form method="post" action="{% url 'console:document_set_version_create' set.id %}">{% csrf_token %}<button class="button secondary" type="submit">Boş taslak aç</button></form>{% endif %}
+    {% if can_write %}<form method="post" action="{% url 'console:document_set_version_create_public' set.public_id %}">{% csrf_token %}<button class="button secondary" type="submit">Boş taslak aç</button></form>{% endif %}
   </div>
 
   {% for v in versions %}
@@ -73,14 +73,14 @@
 
 <div class="card">
   <h2>Senaryo bağları</h2><p class="muted">Bağ değişiklikleri senaryo release’i yeniden derlendiğinde etkili olur.</p>
-  {% for binding in bindings %}<p><a href="{% url 'console:scenario_detail' binding.scenario.id %}">{{ binding.scenario.name }}</a>{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_unbind_scenario' binding.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Bağı kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Bağlı senaryo yok; retrieval varsayılan olarak kapalıdır.</p>{% endfor %}
-  {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_bind_scenario' set.id %}">{% csrf_token %}<div class="field-row"><select name="scenario_id" required>{% for scenario in candidate_scenarios %}<option value="{{ scenario.id }}">{{ scenario }}</option>{% endfor %}</select><button class="button secondary" type="submit">Senaryoya bağla</button></div></form>{% endif %}
+  {% for binding in bindings %}<p><a href="{% url 'console:scenario_detail_public' binding.scenario.public_id %}">{{ binding.scenario.name }}</a>{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_unbind_scenario' binding.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Bağı kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Bağlı senaryo yok; retrieval varsayılan olarak kapalıdır.</p>{% endfor %}
+  {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_bind_scenario_public' set.public_id %}">{% csrf_token %}<div class="field-row"><select name="scenario_id" required>{% for scenario in candidate_scenarios %}<option value="{{ scenario.id }}">{{ scenario }}</option>{% endfor %}</select><button class="button secondary" type="submit">Senaryoya bağla</button></div></form>{% endif %}
 </div>
 
 <div class="card">
   <h2>İstemci retrieval izinleri</h2>
-  {% for grant in grants %}<p>{% if grant.consumer %}<a href="{% url 'console:consumer_detail' grant.consumer.id %}">{{ grant.consumer.name }}</a>{% else %}Bilinmeyen istemci #{{ grant.principal_ref }}{% endif %}{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_revoke_grant' grant.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">İzni kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Retrieval izni olan istemci yok.</p>{% endfor %}
-  {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_grant_consumer' set.id %}">{% csrf_token %}<div class="field-row"><select name="consumer_id" required>{% for consumer in candidate_consumers %}<option value="{{ consumer.id }}">{{ consumer }}</option>{% endfor %}</select><button class="button secondary" type="submit">Retrieval izni ver</button></div></form>{% endif %}
+  {% for grant in grants %}<p>{% if grant.consumer %}<a href="{% url 'console:consumer_detail_public' grant.consumer.public_id %}">{{ grant.consumer.name }}</a>{% else %}Bilinmeyen istemci #{{ grant.principal_ref }}{% endif %}{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_revoke_grant' grant.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">İzni kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Retrieval izni olan istemci yok.</p>{% endfor %}
+  {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_grant_consumer_public' set.public_id %}">{% csrf_token %}<div class="field-row"><select name="consumer_id" required>{% for consumer in candidate_consumers %}<option value="{{ consumer.id }}">{{ consumer }}</option>{% endfor %}</select><button class="button secondary" type="submit">Retrieval izni ver</button></div></form>{% endif %}
 </div>
 
 {% endblock %}

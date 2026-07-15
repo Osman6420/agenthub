@@ -3,7 +3,8 @@
 > **Status: IN PROGRESS.** Owner decisions recorded on 2026-07-14. The owner declared Part 1
 > finished and authorized progression on 2026-07-15; its PostgreSQL non-owner evidence remains an
 > explicit technical closure carryover rather than being silently treated as verified. Part 2 is
-> planned and awaits implementation approval. Phase 2.5 runs after the verified Phase 2 application increments and before Phase 2
+> completed, owner-accepted, and verified with a green full PostgreSQL suite. Phase 2.5
+> runs after the verified Phase 2 application increments and before Phase 2
 > live-environment closure acceptance. Planning does not authorize authentication/authorization,
 > tenant-isolation, public-API, dependency, secret, IAM, network or production mutations; each
 > applicable implementation increment retains the explicit approval gates in `AGENTS.md`.
@@ -54,7 +55,7 @@ assuming a later part is complete.
 | Part | Outcome | Phase 2.5 mapping | Main gate |
 | --- | --- | --- | --- |
 | Part 1 | **Owner-accepted for progression; implemented/offline-verified, PostgreSQL non-owner evidence carried to closure.** Dashboard, organization overview and secure navigable domain graph | P2.5.1 navigation subset + P2.5.2 documentation baseline | Tenant-scope implementation approved 2026-07-14; progression accepted 2026-07-15 |
-| Part 2 | **Planned; implementation approval pending.** System-generated identifiers and coherent creation forms | P2.5.1 identifier subset | Additive migration and compatibility review |
+| Part 2 | **Completed, owner-accepted, and verified.** System-generated identifiers and coherent creation forms | P2.5.1 identifier subset | Full SQLite/PostgreSQL, migration, authorization and compatibility evidence recorded 2026-07-15 |
 | Part 3 | Durable project ownership and consumer credential lifecycle | P2.5.1 ownership/consumer subset | Authentication, authorization and secrets approval |
 | Part 4 | Document-set-first content lifecycle | P2.5.3 | Storage/purge compatibility and authorization review |
 | Part 5 | Unified source, mapping and index journey | P2.5.4 | Egress-profile boundary and operational-failure review |
@@ -74,7 +75,7 @@ Detailed Part 1 plan:
 [`phase-2-5-part-1-workspace-navigation`](../tasks/phase-2-5-part-1-workspace-navigation/plan.md).
 
 Detailed Part 2 plan:
-[`phase-2-5-part-2-system-identifiers`](../tasks/phase-2-5-part-2-system-identifiers/plan.md).
+[`phase-2-5-part-2-system-identifiers`](archive/phase-2-5-part-2-system-identifiers-2026-07-15/plan.md).
 
 ## P2.5.1 — Organization overview and navigable domain graph
 

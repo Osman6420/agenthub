@@ -17,7 +17,7 @@
       <tr>
         <td><a href="{% url 'console:release_detail' r.id %}">{{ r.id }}</a></td>
         <td><a href="{% url 'console:organization_detail' r.org_slug %}">{{ r.org }}</a></td>
-        <td><a href="{% url 'console:scenario_detail' r.scenario_id %}">{{ r.scenario }}</a></td>
+        <td><a href="{% url 'console:scenario_detail_public' r.scenario_public_id %}">{{ r.scenario }}</a></td>
         <td><span class="badge">{{ r.status }}</span></td>
         <td>{{ r.runtime }}</td>
         <td>{{ r.manifest }}</td>

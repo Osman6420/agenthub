@@ -285,6 +285,14 @@ staging-equivalent verified. Phase 2 closure requires live connector/embedding/O
 concrete smoke/rollback evidence. The owner-added Phase 2.5 product-coherence milestone must first
 deliver the active organization workspace, navigable domain graph, system-generated console IDs,
 document/source UX, scenario studio, governed transform DSL and OpenAI-compatible adapters.
+Phase 2.5 Part 2 is completed, owner-accepted, and verified: console
+creation generates immutable slugs/logical IDs and atomic initial scenario aliases
+server-side; project/scenario/document/document-set/consumer console navigation uses
+tenant-scoped UUID public locators while legacy integer routes remain compatible.
+The additive expand/backfill/constrain migrations passed SQLite and affected PostgreSQL
+coverage. The repository-wide PostgreSQL run passed after observability tests declared
+the database access required by transaction-opening tenant middleware (670 passed,
+5 skipped). The owner accepted closure without requiring a separate browser recording.
 Governed upload malware/type scanning and persistent server-side conversation history moved to
 Phase 3. P7.4a provides
 immutable Confluence profiles, exact tenant+document-set grants,

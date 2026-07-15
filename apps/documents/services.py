@@ -40,6 +40,11 @@ from apps.documents.models import (
 )
 from apps.documents.storage import StorageError, build_object_key, get_object_store
 from apps.ingestion.models import Source
+from apps.tenancy.identifiers import (
+    MAX_ALLOCATION_ATTEMPTS,
+    IdentifierAllocationError,
+    allocate_identifier,
+)
 from apps.tenancy.models import Organization
 
 
@@ -169,6 +174,41 @@ def upload_document(
         raise
 
 
+def upload_console_document(
+    *,
+    organization: Organization,
+    title: str,
+    mime_type: str,
+    data: bytes,
+    actor: str,
+    request_id: str = "",
+) -> DocumentVersion:
+    """Upload a new standalone console document with a server-owned logical ID."""
+    for _attempt in range(MAX_ALLOCATION_ATTEMPTS):
+        logical_id = allocate_identifier(
+            title,
+            fallback="document",
+            max_length=128,
+            exists=lambda value: Document.objects.filter(
+                organization=organization, logical_id=value
+            ).exists(),
+        )
+        try:
+            return upload_document(
+                organization=organization,
+                logical_id=logical_id,
+                title=title,
+                mime_type=mime_type,
+                data=data,
+                actor=actor,
+                request_id=request_id,
+            )
+        except DocumentError as exc:
+            if exc.code != "UPLOAD_CONFLICT":
+                raise
+    raise IdentifierAllocationError
+
+
 def _best_effort_delete(object_key: str) -> None:
     try:
         get_object_store().delete(object_key)
@@ -273,6 +313,41 @@ def create_document_set(
         request_id=request_id,
     )
     return document_set
+
+
+def create_console_document_set(
+    *, organization: Organization, name: str, actor: str, request_id: str = ""
+) -> DocumentSet:
+    """Create a console document set with a server-owned logical ID."""
+    for _attempt in range(MAX_ALLOCATION_ATTEMPTS):
+        logical_id = allocate_identifier(
+            name,
+            fallback="document-set",
+            max_length=128,
+            exists=lambda value: DocumentSet.objects.filter(
+                organization=organization, logical_id=value
+            ).exists(),
+        )
+        try:
+            with transaction.atomic():
+                return create_document_set(
+                    organization=organization,
+                    logical_id=logical_id,
+                    name=name,
+                    actor=actor,
+                    request_id=request_id,
+                )
+        except DocumentError as exc:
+            if exc.code == "duplicate_logical_id":
+                continue
+            raise
+        except IntegrityError:
+            if DocumentSet.objects.filter(
+                organization=organization, logical_id=logical_id
+            ).exists():
+                continue
+            raise
+    raise IdentifierAllocationError
 
 
 @transaction.atomic

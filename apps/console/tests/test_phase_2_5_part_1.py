@@ -117,10 +117,10 @@ def test_organization_overview_is_tenant_scoped_and_cross_links_inventory(client
         artifact.ref,
     ]:
         assert name in body
-    assert reverse("console:project_detail", args=[scenario.project_id]) in body
-    assert reverse("console:scenario_detail", args=[scenario.id]) in body
-    assert reverse("console:document_set_detail", args=[document_set.id]) in body
-    assert reverse("console:consumer_detail", args=[consumer.id]) in body
+    assert reverse("console:project_detail_public", args=[scenario.project.public_id]) in body
+    assert reverse("console:scenario_detail_public", args=[scenario.public_id]) in body
+    assert reverse("console:document_set_detail_public", args=[document_set.public_id]) in body
+    assert reverse("console:consumer_detail_public", args=[consumer.public_id]) in body
     assert reverse("console:artifact_detail", args=[artifact.id]) in body
     assert reverse("console:release_detail", args=[release.id]) in body
     assert "auditor" in body
@@ -287,7 +287,10 @@ def test_scenario_document_set_consumer_and_release_names_cross_link(client: Cli
     ).content.decode()
     release_body = client.get(reverse("console:release_detail", args=[release.id])).content.decode()
 
-    assert reverse("console:consumer_detail", args=[consumer.id]) in scenario_body
-    assert reverse("console:scenario_detail", args=[scenario.id]) in consumer_body
-    assert reverse("console:document_set_detail", args=[document_set.id]) in consumer_body
-    assert reverse("console:scenario_detail", args=[scenario.id]) in release_body
+    assert reverse("console:consumer_detail_public", args=[consumer.public_id]) in scenario_body
+    assert reverse("console:scenario_detail_public", args=[scenario.public_id]) in consumer_body
+    assert (
+        reverse("console:document_set_detail_public", args=[document_set.public_id])
+        in consumer_body
+    )
+    assert reverse("console:scenario_detail_public", args=[scenario.public_id]) in release_body

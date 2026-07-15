@@ -13,7 +13,7 @@ from typing import Any, cast
 from django import forms
 from django.db.models import QuerySet
 
-from apps.catalog.models import AIProject, Scenario, ScenarioAlias
+from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet, ScenarioDocumentSetBinding
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer, ConsumerBinding
@@ -43,7 +43,9 @@ def _scope(qs: QuerySet, ids: set[int] | None, field: str = "id") -> QuerySet:
 class OrganizationForm(forms.ModelForm):
     class Meta:
         model = Organization
-        fields = ["slug", "name", "status"]
+        fields = ["name", "status"]
+        labels = {"name": "Organizasyon adı", "status": "Yaşam döngüsü durumu"}
+        help_texts = {"name": "Kalıcı teknik kimlik otomatik oluşturulur."}
 
     def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -54,7 +56,9 @@ class ProjectForm(forms.ModelForm):
 
     class Meta:
         model = AIProject
-        fields = ["organization", "slug", "name", "owner", "risk_level", "status"]
+        fields = ["organization", "name", "owner", "risk_level", "status"]
+        labels = {"name": "Proje adı"}
+        help_texts = {"name": "Kalıcı proje kimliği otomatik oluşturulur."}
 
     def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -95,13 +99,11 @@ class ProjectForm(forms.ModelForm):
 
 
 class ScenarioForm(forms.ModelForm):
-    alias = forms.SlugField(
-        required=False, max_length=128, help_text="Optional stable external alias."
-    )
-
     class Meta:
         model = Scenario
-        fields = ["project", "slug", "name", "type", "visibility", "risk_level", "status"]
+        fields = ["project", "name", "type", "visibility", "risk_level", "status"]
+        labels = {"name": "Senaryo adı"}
+        help_texts = {"name": "Kalıcı kimlik ve ilk API alias'ı otomatik oluşturulur."}
 
     def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -113,19 +115,6 @@ class ScenarioForm(forms.ModelForm):
             ids,
             "organization_id",
         )
-
-    def clean_alias(self) -> str:
-        alias = self.cleaned_data["alias"]
-        project = self.cleaned_data.get("project")
-        if (
-            alias
-            and project
-            and ScenarioAlias.objects.filter(
-                organization_id=project.organization_id, alias=alias
-            ).exists()
-        ):
-            raise forms.ValidationError("This alias already exists in the organization.")
-        return alias
 
 
 class ConsumerForm(forms.ModelForm):
@@ -185,11 +174,8 @@ class DocumentUploadForm(forms.Form):
     """
 
     organization = forms.ModelChoiceField(queryset=Organization.objects.none())
-    logical_id = forms.SlugField(
-        max_length=128, help_text="Stable per-tenant document id (new version on re-upload)."
-    )
-    title = forms.CharField(max_length=500, required=False)
-    file = forms.FileField()
+    title = forms.CharField(max_length=500, required=False, label="Başlık")
+    file = forms.FileField(label="Dosya", help_text="Kalıcı doküman kimliği otomatik oluşturulur.")
 
     def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -203,8 +189,11 @@ class DocumentSetForm(forms.Form):
     """Create a document set in an author-scoped organization (P8.2)."""
 
     organization = forms.ModelChoiceField(queryset=Organization.objects.none())
-    logical_id = forms.SlugField(max_length=128)
-    name = forms.CharField(max_length=200)
+    name = forms.CharField(
+        max_length=200,
+        label="Doküman seti adı",
+        help_text="Kalıcı doküman seti kimliği otomatik oluşturulur.",
+    )
 
     def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

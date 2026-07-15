@@ -34,7 +34,7 @@ old or new identifier.
 - Scenario creation accepts project, display name, type, visibility, risk and status;
   generate both its internal slug and its first active API alias server-side.
 - Generate the alias in the required `project-scenario-xxxx` shape, using normalized
-  generated slugs, four cryptographically random lowercase base32 characters, and an
+  project/scenario display-name prefixes, four cryptographically random lowercase base32 characters, and an
   organization-scoped collision check.
 - Standalone document upload accepts organization, optional title and file; generate
   the document logical ID without embedding the original filename or content.
@@ -298,14 +298,17 @@ No new package or production dependency. Use Python `uuid`, `secrets`, Django
 
 - Confirm the compatibility-retention period before any future removal of legacy
   integer routes; removal is not authorized by this plan.
-- Set the exact normalized suffix length/alphabet for non-alias identifiers during
-  implementation review; it must meet field limits and measured collision risk.
 
 ## Status
 
-Planned. The owner declared Part 1 finished and requested this plan on 2026-07-15.
-Implementation has not started. The additive migration and console-route compatibility
-design require explicit approval before code changes.
+Completed, owner-accepted, and verified on 2026-07-15. The allocator
+uses normalized bounded prefixes with cryptographically random lowercase base32
+suffixes; scenario aliases use four suffix characters and other generated identifiers
+use the bounded allocator defaults. The owner explicitly closed Part 2 without
+requesting a separate browser recording. The full PostgreSQL suite passed after its
+observability tests were correctly marked for the transaction-opening tenant
+middleware. No production deployment, destructive migration,
+authentication/credential change, or legacy-route removal is authorized.
 
 ## Completion criteria
 

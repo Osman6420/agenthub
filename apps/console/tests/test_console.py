@@ -97,7 +97,7 @@ def test_platform_admin_can_open_organization_create_form(client: Client) -> Non
     response = client.get(reverse("console:organization_create"))
 
     assert response.status_code == 200
-    assert 'name="slug"' in response.content.decode()
+    assert 'name="slug"' not in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -162,7 +162,9 @@ def test_project_owner_is_selected_from_members_in_admin_scope(client: Client) -
         },
     )
     assert response.status_code == 302
-    assert AIProject.objects.get(organization=org_a, slug="alpha").owner == "owner-a"
+    project = AIProject.objects.get(organization=org_a)
+    assert project.slug.startswith("alpha-")
+    assert project.owner == "owner-a"
 
 
 @pytest.mark.django_db
@@ -218,8 +220,9 @@ def test_scenario_author_create_is_atomic_and_audited(client: Client) -> None:
     )
 
     assert response.status_code == 302
-    scenario = Scenario.objects.get(project=project, slug="faq")
-    assert ScenarioAlias.objects.filter(scenario=scenario, alias="customer-faq").exists()
+    scenario = Scenario.objects.get(project=project)
+    assert scenario.slug.startswith("faq-")
+    assert ScenarioAlias.objects.filter(scenario=scenario, alias__startswith="alpha-faq-").exists()
     assert AuditEvent.objects.filter(
         action="console.scenario.create",
         organization_id=org.pk,

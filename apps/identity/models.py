@@ -8,11 +8,13 @@ organization, and only a known capability allowlist (v3 plan §9, §10.2).
 
 from __future__ import annotations
 
+import uuid
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
 from apps.identity.capabilities import validate_capabilities
-from apps.tenancy.models import Organization, TimeStampedModel
+from apps.tenancy.models import Organization, TimeStampedModel, ensure_immutable_public_id
 
 
 class ConsumerProtocol(models.TextChoices):
@@ -28,6 +30,7 @@ class ConsumerStatus(models.TextChoices):
 class Consumer(TimeStampedModel):
     """A system that can call the gateway on behalf of an organization."""
 
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="consumers"
     )
@@ -52,6 +55,10 @@ class Consumer(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.subject})"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        ensure_immutable_public_id(self)
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
 
     @property
     def is_active(self) -> bool:

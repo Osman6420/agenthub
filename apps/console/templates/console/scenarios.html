@@ -22,7 +22,7 @@
         <td><strong>{{ scenario.name }}</strong><br><span class="muted mono">{{ scenario.slug }}</span></td>
         <td>{{ scenario.get_type_display }}</td>
         <td><span class="badge {{ scenario.status }}">{{ scenario.get_status_display }}</span></td>
-        <td class="row-action"><a href="{% url 'console:scenario_detail' scenario.id %}">Aç →</a></td>
+        <td class="row-action"><a href="{% url 'console:scenario_detail_public' scenario.public_id %}">Aç →</a></td>
       </tr>
       {% endfor %}
     </tbody>
