@@ -2,7 +2,7 @@
 {% block title %}{{ set.name }} · AgentHub{% endblock %}
 {% block content %}
 
-<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><span>{{ set.name }}</span></div>
+<div class="breadcrumbs"><a href="{% url 'console:organization_detail' organization.slug %}">{{ organization.name }}</a><span>›</span><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><span>{{ set.name }}</span></div>
 <div class="page-heading">
   <div><p class="eyebrow">{{ set.org }} · Doküman seti</p><h1>{{ set.name }}</h1><p class="muted mono">{{ set.logical_id }}</p></div>
   <span class="badge {{ set.status }}">{{ set.status }}</span>
@@ -73,13 +73,13 @@
 
 <div class="card">
   <h2>Senaryo bağları</h2><p class="muted">Bağ değişiklikleri senaryo release’i yeniden derlendiğinde etkili olur.</p>
-  {% for binding in bindings %}<p>{{ binding.scenario }}{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_unbind_scenario' binding.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Bağı kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Bağlı senaryo yok; retrieval varsayılan olarak kapalıdır.</p>{% endfor %}
+  {% for binding in bindings %}<p><a href="{% url 'console:scenario_detail' binding.scenario.id %}">{{ binding.scenario.name }}</a>{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_unbind_scenario' binding.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Bağı kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Bağlı senaryo yok; retrieval varsayılan olarak kapalıdır.</p>{% endfor %}
   {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_bind_scenario' set.id %}">{% csrf_token %}<div class="field-row"><select name="scenario_id" required>{% for scenario in candidate_scenarios %}<option value="{{ scenario.id }}">{{ scenario }}</option>{% endfor %}</select><button class="button secondary" type="submit">Senaryoya bağla</button></div></form>{% endif %}
 </div>
 
 <div class="card">
-  <h2>Consumer retrieval izinleri</h2>
-  {% for grant in grants %}<p>{% if grant.consumer %}{{ grant.consumer }}{% else %}Bilinmeyen consumer #{{ grant.principal_ref }}{% endif %}{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_revoke_grant' grant.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">İzni kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Retrieval izni olan consumer yok.</p>{% endfor %}
+  <h2>İstemci retrieval izinleri</h2>
+  {% for grant in grants %}<p>{% if grant.consumer %}<a href="{% url 'console:consumer_detail' grant.consumer.id %}">{{ grant.consumer.name }}</a>{% else %}Bilinmeyen istemci #{{ grant.principal_ref }}{% endif %}{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_revoke_grant' grant.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">İzni kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Retrieval izni olan istemci yok.</p>{% endfor %}
   {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_grant_consumer' set.id %}">{% csrf_token %}<div class="field-row"><select name="consumer_id" required>{% for consumer in candidate_consumers %}<option value="{{ consumer.id }}">{{ consumer }}</option>{% endfor %}</select><button class="button secondary" type="submit">Retrieval izni ver</button></div></form>{% endif %}
 </div>
 

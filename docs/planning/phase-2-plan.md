@@ -3,7 +3,8 @@
 > **Status: IN PROGRESS.** The owner approved implementation kickoff on 2026-07-12. P1 is
 > implemented and verified; WS1's P2–P8 backend/console scope, WS5, P9 and P10.1/P10.2 are verified.
 > Production hardening/live-profile activation remains required Phase 2 work. Personal
-> MCP moved to Phase 3 discovery. This file captures the Phase 2 intent and owner decisions,
+> MCP and governed upload scanning moved to Phase 3. This file captures the Phase 2 intent and
+> owner decisions,
 > and the open questions that remain for later workstreams and live rollout. Every new
 > production dependency and every new external egress named below is a change-boundary item
 > that requires explicit approval + a supply-chain/threat-model review first
@@ -28,12 +29,21 @@ reach a live model.
 2. **UI modernization + Turkish** (i18n).
 3. **AI-assisted authoring** (text → artifact → validate → preview → publish), coexisting
    with the visual builder.
-4. **Phase 2 closure hardening** — P11 RLS/non-owner role implemented and staging-equivalent
-   verified; upload scanning and concrete live
-   connector/embedding/OCR profiles and live AI-authoring activation.
+4. **Phase 2 closure hardening** —
+   [P11 RLS/non-owner role](../tasks/phase-2-p11-production-hardening/plan.md) implemented and
+   staging-equivalent verified; concrete live connector/embedding/OCR profiles and live
+   AI-authoring activation.
 
-**Deferred to Phase 3:** Personal MCP end-user identity and on-behalf-of delegation. See
+**Deferred to Phase 3:** Personal MCP end-user identity/on-behalf-of delegation and the complete
+governed upload malware/type scanning package. See
 [`phase-3-plan.md`](phase-3-plan.md); it is no longer a Phase 2 completion dependency.
+
+**Required before live closure:** the owner added the
+[Phase 2.5 product-coherence milestone](phase-2-5-plan.md) on 2026-07-14. It consolidates the active
+organization workspace, navigable domain relationships, system-generated console identifiers,
+document-set/source UX, scenario studio, governed transform DSL and OpenAI-compatible adapters.
+Phase 2.5 is implemented before the live environment tests below; it does not itself activate
+production profiles or close Phase 2.
 **Foundational track (not a 5th-in-line priority) — Live model runtime (WS5).** Without a real
 chat provider the product still returns stub answers, so WS5 is **not** sequenced after later phases;
 it is
@@ -287,12 +297,21 @@ later workstreams and any new dependency still retain their explicit gates.
 
 Phase 2 does not close on offline evidence alone. The required closure milestone is defined in
 [`phase-2-closure-production-hardening`](../tasks/phase-2-closure-production-hardening/plan.md):
-broader Django-table FORCE RLS, a dedicated non-owner application role, governed upload malware/type
-scanning, live Confluence/REST/embedding/OCR profiles, and live AI-authoring activation with concrete
+broader Django-table FORCE RLS, a dedicated non-owner application role, live
+Confluence/REST/embedding/OCR profiles, and live AI-authoring activation with concrete
 privacy/retention, spend, CA/DNS/firewall/secret inputs and bounded smoke/rollback evidence.
 
+Owner decision (2026-07-14): governed upload malware/type scanning and the inseparable quarantine or
+pre-index rejection, fail-closed behavior, size/timeout limits, redacted audit, tests and operations
+runbook moved to Phase 3. It is no longer a Phase 2 closure criterion.
+
+Owner decision (2026-07-14): Phase 2.5 must complete before this closure milestone. Live environment
+acceptance remains the final Phase 2 gate and includes production-role/RLS pool validation; bounded
+synthetic smoke tests for Confluence, REST, embedding, OCR and AI authoring; privacy/retention/cost
+approval; monitoring/audit evidence; disable/rollback drills; and manual sign-off.
+
 The owner has placed this work in Phase 2. Concrete production mutations remain separately gated:
-the plan does not itself supply secrets, approve a scanner dependency, authorize production-data
+the plan does not itself supply secrets, authorize production-data
 access or authorize an unreviewed network/database change.
 
 ## Cross-cutting constraints
@@ -337,8 +356,8 @@ dimension/reindex (platform-managed `EmbeddingProfile` + immutable blue/green re
 metadata-atomic pointer-flip promotion), and the parser approach (format-specific stack behind
 a `DocumentParser` interface; approved libraries implemented at M4). Remaining WS1 items are
 milestone/deployment decisions, not open architecture blockers: live Confluence profile/network/CA/
-secret provisioning, the live generic REST endpoint/profile/credential, upload malware/type
-scanning, and concrete embedding/OCR deployment profiles.
+secret provisioning, the live generic REST endpoint/profile/credential, and concrete embedding/OCR
+deployment profiles. Upload malware/type scanning moved to Phase 3.
 
 **Workstreams 2–3 and Phase 2 closure:**
 
@@ -346,7 +365,7 @@ scanning, and concrete embedding/OCR deployment profiles.
   Turkish terminology remains the prioritized P9 human review.
 - P10.2 artifact-type allowlisting, immutable prompt-contract versioning and candidate diagnostics →
   explicit workflow/contract-draft transfer are implemented and offline-verified.
-- Concrete production topology/profile/scanner inputs remain required for the closure milestone.
+- Concrete production topology/profile inputs remain required for the closure milestone.
 - Personal-MCP IdP/OBO/downstream trust discovery moved to Phase 3.
 
 ## Status
@@ -362,17 +381,19 @@ Phase 2 kickoff is approved; remaining gates are **per-phase egress/dependency s
 **Workstream 2 implementation and automated verification are complete; only Turkish terminology
 review remains prioritized, while responsive/accessibility manual acceptance is not required.
 Workstream 3 P10.1/P10.2 is offline-verified. P11 RLS/non-owner hardening is implemented and
-staging-equivalent verified without production mutation; scanning, live profiles and live activation
-remain required at Phase 2 closure. Personal MCP moved to Phase 3 discovery.**
+staging-equivalent verified without production mutation; live profiles and live activation remain
+required at Phase 2 closure. Personal MCP, upload scanning and persistent server-side conversation
+history moved to Phase 3. Phase 2.5 product-coherence development is planned before live closure.**
 
 ### Workstream status
 
 | WS | Scope | Status |
 | --- | --- | --- |
-| 1 | Document plane | **Offline scope verified; P11 RLS/non-owner hardening implemented and staging-equivalent verified** — upload scanning and live Confluence/REST/embedding/OCR profiles remain closure work. Decisions = ADR-0003–0007. |
+| 1 | Document plane | **Offline scope verified; P11 RLS/non-owner hardening implemented and staging-equivalent verified** — live Confluence/REST/embedding/OCR profiles remain closure work; upload scanning moved to Phase 3. Decisions = ADR-0003–0007. |
 | 2 | UI modernization + Turkish | **P9.1–P9.5 implemented and automated verification complete** — responsive/keyboard/screen-reader manual acceptance waived; Turkish terminology remains priority |
 | 3 | AI-assisted authoring (+ builder preview) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output candidates use immutable checksummed prompt contracts, canonical diagnostics and explicit workflow/contract-draft transfer. Live activation is a Phase 2 closure gate. |
-| Closure | Production readiness | **Partially complete** — P11 RLS/non-owner role is implemented/verified without production mutation; upload scanning, live profiles, privacy/retention/cost approval, live smoke and rollback evidence remain |
+| 2.5 | Product coherence | **Planned before live closure** — organization workspace, cross-linked details, system IDs, architecture/DSL guide, document/source UX, scenario studio, transform DSL and OpenAI-compatible adapters |
+| Closure | Production readiness | **Partially complete** — begins after Phase 2.5; P11 RLS/non-owner role is implemented/verified without production mutation; production activation, live profiles, privacy/retention/cost approval, live smoke and rollback evidence remain |
 | 5 | Live model runtime (real generation) | **P1 + P5 + P6 implemented + verified** — catalog/shared egress/chat provider (opt-in); P5 wired real retrieve/generate into the agent loop + workflow nodes + per-node prompt/model binding; **P6 added the authored, governed agent system prompt**. WS5 runtime is functionally complete for the current scope (real chat + ACL RAG in `/v1/query`, workflows, and agents) |
 
 ---

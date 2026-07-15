@@ -4,17 +4,21 @@
 
 Close Phase 2 with the production controls and live-profile evidence that remain intentionally
 outside the offline-verified implementation: broader Django-table RLS with a dedicated non-owner
-application role, governed upload malware/type scanning, live Confluence/REST/embedding/OCR
-profiles, and live AI-authoring activation and smoke evidence.
+application role, live Confluence/REST/embedding/OCR profiles, and live AI-authoring activation and
+smoke evidence.
 
 ## Owner decisions (2026-07-14)
 
 - This work is part of Phase 2 and is required before Phase 2 closes.
 - AI authoring live activation is performed at the Phase 2 closure milestone, not earlier.
 - Personal MCP identity/delegation is not a Phase 2 dependency; it moves to Phase 3.
+- Governed upload malware/type scanning, including quarantine/rejection, fail-closed behavior,
+  limits, redacted audit, tests and runbook, moves to Phase 3.
+- Phase 2.5 product-coherence implementation and verification must complete before live activation
+  and final Phase 2 closure acceptance begin.
 
 These decisions authorize planning and sequencing. They do not invent or approve concrete secrets,
-hosts, certificates, firewall rules, production data access, scanner products/dependencies, or
+hosts, certificates, firewall rules, production data access, or
 irreversible database operations. Each concrete environment change still requires its named input,
 change record, rollback plan and explicit execution approval under `AGENTS.md`.
 
@@ -25,8 +29,6 @@ change record, rollback plan and explicit execution approval under `AGENTS.md`.
 - [x] Provide and staging-verify dedicated non-owner, non-superuser application-role provisioning
   without `BYPASSRLS`; verify operator middleware and identifier-bound worker context under the
   non-owner boundary. Production role/secret activation remains deployment-gated.
-- [ ] Select and approve an upload malware/type scanning boundary; quarantine or reject before
-  content becomes indexable, with bounded files/timeouts and redacted audit.
 - [ ] Register and validate concrete live Confluence and generic REST profiles, credentials, CA/DNS
   and firewall policy; run bounded non-production-data smoke tests before any production corpus.
 - [ ] Register and validate concrete embedding and OCR profiles with privacy/retention, token/cost,
@@ -40,8 +42,6 @@ change record, rollback plan and explicit execution approval under `AGENTS.md`.
 
 - Incorrect RLS rollout can deny all traffic or expose cross-tenant rows; use staged policy rollout,
   non-owner negative tests and connection-pool context-leak tests.
-- Scanner failure policy must be explicit and fail closed for indexing; scanner content, signatures
-  and file samples must not enter application logs.
 - Live profiles introduce confidential-data egress, provider retention and denial-of-wallet risks.
 - A post-send model/embedding/OCR uncertainty is terminal and is never blindly retried.
 - Production smoke tests must use approved synthetic/non-production data unless production-data
@@ -49,12 +49,11 @@ change record, rollback plan and explicit execution approval under `AGENTS.md`.
 
 ## Implementation sequence
 
-1. Inventory tables, roles, connection paths and current RLS ownership; produce reversible SQL and
+1. Complete and verify the authoritative
+   [Phase 2.5 product-coherence plan](../../planning/phase-2-5-plan.md).
+2. Inventory tables, roles, connection paths and current RLS ownership; produce reversible SQL and
    deployment-role design consistent with ADR-0004.
-2. Threat-model and select the upload scanner/dependency or external service; obtain dependency and
-   egress approval before implementation.
-3. Implement and verify RLS/role and scanning changes in local PostgreSQL and a staging-equivalent
-   environment.
+3. Implement and verify RLS/role changes in local PostgreSQL and a staging-equivalent environment.
 4. Collect concrete profile, secret, CA, DNS/firewall, privacy/retention and cost inputs.
 5. Activate connector/embedding/OCR profiles with bounded synthetic smoke tests and rollback proof.
 6. Activate AI authoring last; run the governed candidate flow and immediately verify disable/rollback.
@@ -106,12 +105,12 @@ Status: **implemented and staging-equivalent verified; production activation pen
 ## Migration and rollback
 
 RLS/ownership changes require a staged reversible migration or deployment SQL reviewed against the
-exact PostgreSQL role topology. Upload scanning must be feature-gated with quarantine preserved.
-Every live profile is disabled by status/config rollback; unset `AI_AUTHORING_MODEL_PROFILE_ID` to
-disable AI authoring without changing existing drafts.
+exact PostgreSQL role topology. Every live profile is disabled by status/config rollback; unset
+`AI_AUTHORING_MODEL_PROFILE_ID` to disable AI authoring without changing existing drafts.
 
 ## Status
 
 P11 RLS/non-owner hardening is implemented and staging-equivalent verified. Phase 2 closure remains
-in progress: scanner selection, concrete live profiles, production privacy/cost/network inputs and
-per-change execution approvals are pending.
+in progress: concrete live profiles, production privacy/cost/network inputs and per-change execution
+approvals are pending. Phase 2.5 product-coherence development now precedes live closure. Upload
+scanning and persistent server-side conversation history are tracked in the Phase 3 plan.

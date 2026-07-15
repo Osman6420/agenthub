@@ -11,9 +11,15 @@
     <div class="tile"><div class="n">{{ counts.scenarios }}</div><div class="l">Senaryo</div></div>
     <div class="tile"><div class="n">{{ counts.artifacts }}</div><div class="l">Artifact</div></div>
     <div class="tile"><div class="n">{{ counts.releases }}</div><div class="l">Release</div></div>
-    <div class="tile"><div class="n">{{ counts.consumers }}</div><div class="l">Consumer</div></div>
+    <div class="tile"><div class="n">{{ counts.consumers }}</div><div class="l">İstemci</div></div>
   </div>
 </div>
+<section class="card">
+  <div class="section-heading"><div><p class="eyebrow">Çalışma alanları</p><h2>Organizasyonlar</h2><p class="muted">Bir organizasyonun adına tıklayarak bilgilerini ve bağlı nesneleri açın.</p></div></div>
+  {% if organizations %}<div class="table-scroll"><table><caption class="sr-only">Erişebildiğiniz organizasyonlar</caption><thead><tr><th>Organizasyon</th><th>Durum</th></tr></thead><tbody>
+    {% for organization in organizations %}<tr><td><strong><a href="{% url 'console:organization_detail' organization.slug %}">{{ organization.name }}</a></strong><div class="muted mono">{{ organization.slug }}</div></td><td><span class="badge {{ organization.status }}">{% if organization.status == 'active' %}Aktif{% else %}Pasif{% endif %}</span></td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="muted">Erişebildiğiniz organizasyon yok.</p>{% endif %}
+</section>
 <div class="notice">
   Bu konsol tenant kapsamını ve sunucu tarafındaki rol kontrollerini uygular. Görünmeyen bir kaynak
   için UI durumuna güvenilmez; tüm işlemler backend tarafından yeniden yetkilendirilir.

@@ -280,9 +280,14 @@ untrusted parsing, canonical diagnostics, exact-project explicit draft transfer,
 limiting and redacted audit; it never auto-publishes or changes release/runtime state.
 P10.2 adds allowlisted input/output JSON Schema candidates, immutable checksummed prompt contracts
 and tenant/project-scoped mutable `ArtifactDraft` editing without a generic publish route. Additive
-migration `builder.0002`. Phase 2 closure also requires broader Django-table RLS/non-owner role, upload scanning,
-live connector/embedding/OCR/AI profiles and concrete smoke/rollback evidence; these are not yet
-implemented. P7.4a provides immutable Confluence profiles, exact tenant+document-set grants,
+migration `builder.0002`. P11 broader Django-table RLS/non-owner hardening is implemented and
+staging-equivalent verified. Phase 2 closure requires live connector/embedding/OCR/AI profiles and
+concrete smoke/rollback evidence. The owner-added Phase 2.5 product-coherence milestone must first
+deliver the active organization workspace, navigable domain graph, system-generated console IDs,
+document/source UX, scenario studio, governed transform DSL and OpenAI-compatible adapters.
+Governed upload malware/type scanning and persistent server-side conversation history moved to
+Phase 3. P7.4a provides
+immutable Confluence profiles, exact tenant+document-set grants,
 bounded private-DNS Data Center
 reads, recoverable incremental snapshots, draft candidates, and FORCE-RLS lineage; it adds no
 dependency and makes no default/live egress. Its actual corporate endpoint, CIDRs/DNS, CA, firewall,

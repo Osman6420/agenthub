@@ -19,14 +19,20 @@ Center ingestion over a connector-specific private-corporate policy, verified of
 P7.4b (governed generic REST, periodic incremental refresh and compatible vector reuse), and
 P8.1–P8.4 (complete document console including effective consumer grants and elevated purge) are
 implemented and verified offline. P9.1–P9.5 and P10.1/P10.2 are also implemented/verified. The
-production-hardening/live-profile closure milestone remains Phase 2 work. Personal MCP identity/OBO
-moved to Phase 3 discovery. Concrete live changes retain their explicit gates.
+production-hardening/live-profile closure milestone remains Phase 2 work. Personal MCP identity/OBO,
+governed upload scanning and persistent server-side conversation history moved to Phase 3. Concrete
+live changes retain their explicit gates.
+The owner added Phase 2.5 product-coherence work before Phase 2 live closure; see
+[`phase-2-5-plan`](phase-2-5-plan.md). Part 1 dashboard/organization navigation is implemented and
+offline-verified; PostgreSQL non-owner verification and the Turkish manual browser journey remain
+open before Part 1 can be closed.
 
 Phase 2 closure P11 is implemented and offline/staging-equivalent verified: all nine formerly
 indirect tables now carry direct tenant lineage; 47 direct-tenant tables use canonical FORCE RLS;
 operator, gateway and worker paths install bounded transaction-local tenant scope; and reviewed
 non-owner provisioning/rollback plus a table-specific grant matrix pass on PostgreSQL 16. No
 production role/secret/database was changed. See
+the [P11 index](../tasks/phase-2-p11-production-hardening/plan.md) and the broader
 [`phase-2-closure-production-hardening`](../tasks/phase-2-closure-production-hardening/plan.md).
 
 - Sprint 0: bootable Django modular-monolith skeleton — settings split, Celery role
@@ -204,11 +210,12 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Tool registry + approval (Sprint 9) | Verified | Sprint 8 | [sprint-9-tool-registry-approval](../tasks/sprint-9-tool-registry-approval/plan.md) | [v3 target plan §17](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-9-tool-registry-approval/verification.md) |
 | Agent runtime (Sprint 10) | Verified | Sprints 8–9 | [sprint-10-agent-runtime](../tasks/sprint-10-agent-runtime/plan.md) | [v3 target plan §18](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-10-agent-runtime/verification.md) |
 | Visual workflow builder (Sprint 11) | Verified | Sprints 2, 8 | [sprint-11-workflow-builder](../tasks/sprint-11-workflow-builder/plan.md) | [v3 target plan §25](../../agenthub-v3-django-plan.md) | [verification.md](../tasks/sprint-11-workflow-builder/verification.md) |
-| Document plane (Phase 2 · WS1) | **Offline scope verified; Phase 2 closure hardening pending** — broader Django-table RLS/non-owner role, upload scanning and live Confluence/REST/embedding/OCR profiles | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [closure hardening](../tasks/phase-2-closure-production-hardening/plan.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) + [P7.4b](../tasks/phase-2-p7-4b-generic-rest-periodic-sync/verification.md) + [P8](../tasks/phase-2-p8-console-ui/verification.md) |
+| Document plane (Phase 2 · WS1) | **Offline scope verified; Phase 2 live activation pending** — broader Django-table RLS/non-owner role is implemented and staging-equivalent verified; live Confluence/REST/embedding/OCR profiles remain | Sprints 5–6, P1 shared egress | [document-plane-plan](components/document-plane-plan.md) + [closure hardening](../tasks/phase-2-closure-production-hardening/plan.md) | [phase-2-plan](phase-2-plan.md) | [P2](../tasks/phase-2-p2-content-plane/verification.md) + [P3](../tasks/phase-2-p3-embeddings/verification.md) + [P4](../tasks/phase-2-p4-acl-rls/verification.md) + [P7.4b](../tasks/phase-2-p7-4b-generic-rest-periodic-sync/verification.md) + [P8](../tasks/phase-2-p8-console-ui/verification.md) |
 | Live model runtime (Phase 2 · WS5) | **P1 + P5 + P6 Verified** (WS5 runtime scope complete) | Shared egress + `ModelProfile` catalog | [P1](../tasks/phase-2-p1-live-chat/plan.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/plan.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/plan.md) + [sequence](components/runtime-and-document-plane-sequence.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md) + [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P1](../tasks/phase-2-p1-live-chat/verification.md) + [P5](../tasks/phase-2-p5-agent-workflow-rag/verification.md) + [P6](../tasks/phase-2-p6-agent-system-prompt/verification.md) |
 | Console UX modernization (Phase 2 · WS2) | **P9.1–P9.5 complete**; responsive/accessibility manual acceptance not required, Turkish terminology remains priority | Document plane console + existing React builder | [P9 console UX](../tasks/phase-2-p9-console-ux/plan.md) | [phase-2-plan](phase-2-plan.md) | [P9 verification](../tasks/phase-2-p9-console-ux/verification.md) |
 | AI-assisted authoring (Phase 2 · WS3) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output allowlist, immutable prompt contracts and non-publishing contract drafts; live activation at Phase 2 closure | Existing ModelProfile/SSRF-safe egress + canonical validators | [P10 AI authoring](../tasks/phase-2-p10-ai-assisted-authoring/plan.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md), [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P10 verification](../tasks/phase-2-p10-ai-assisted-authoring/verification.md) |
-| Personal MCP identity/delegation (Phase 3) | **Discovery only; moved out of Phase 2** | IdP/OBO/downstream trust decisions | [phase-3-plan](phase-3-plan.md) | ADRs pending | Verification pending |
+| Product coherence (Phase 2.5) | **Nine parts planned; required before Phase 2 live closure** — Part 1 dashboard/organization-overview/navigation is implemented and offline-verified while PostgreSQL non-owner and Turkish manual browser acceptance remain open; existing canonical domain URLs are preserved. Later parts cover system IDs, credentials, document/source UX, scenario studio + reusable artifact selection, transform DSL, OpenAI adapters and integrated hardening | Verified Phase 2 application scope | [phase-2-5-plan](phase-2-5-plan.md) + [Part 1](../tasks/phase-2-5-part-1-workspace-navigation/plan.md) | Part 1 threat model complete; later task plans/ADRs pending at their gates | [Part 1 verification](../tasks/phase-2-5-part-1-workspace-navigation/verification.md) |
+| Phase 3 deferred security/identity/data | **Discovery/planned; moved out of Phase 2/2.5** — Personal MCP identity/OBO, governed upload malware/type scanning and persistent server-side conversation history | IdP/OBO/downstream trust, scanner-boundary and conversation-lifecycle decisions | [phase-3-plan](phase-3-plan.md) | ADRs pending | Verification pending |
 
 ## Cross-cutting concerns
 

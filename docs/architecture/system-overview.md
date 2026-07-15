@@ -30,6 +30,18 @@ uncertain-outcome handling) gates high-risk side-effecting calls; and a workflow
 node pauses for approval and resumes. Real HTTPS/MCP egress is opt-in; the default
 adapter opens no socket. Approvals are operator actions (console + management commands).
 
+The exact current artifact schemas, workflow/agent DSL, release roles and authoring limits are
+documented in the
+[Artifact ve DSL Yazım Kılavuzu](artifacts-and-dsl-authoring-guide.md).
+
+Phase 2.5 Part 1 implements an authorized organization inventory on `/console/`, an organization
+overview on `/console/o/<slug>/`, and tenant-scoped project, client-application and release detail
+navigation while preserving the existing canonical domain URLs. Authorized disabled organizations
+are readable but operationally immutable. Offline application checks pass; PostgreSQL non-owner
+execution and the Turkish manual browser journey remain open verification items, so the
+[Part 1 verification record](../tasks/phase-2-5-part-1-workspace-navigation/verification.md) is the
+status authority.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full

@@ -14,7 +14,7 @@
     <thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in rows %}
-      <tr>{% for c in row.cols %}<td>{{ c }}</td>{% endfor %}</tr>
+      <tr>{% for c in row.cols %}<td>{% if c.url %}<a href="{% url c.url c.arg %}">{{ c.text }}</a>{% else %}{{ c }}{% endif %}</td>{% endfor %}</tr>
       {% endfor %}
     </tbody>
   </table></div>

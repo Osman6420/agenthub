@@ -26,11 +26,14 @@ its generated probe role.
 
 ## Evidence required before closure
 
+- Completed Phase 2.5 verification and Turkish operator-journey sign-off.
 - PostgreSQL non-owner role, FORCE RLS and pooled-context negative-test evidence.
-- Upload scanner selection/approval, quarantine/failure/redaction tests and operational runbook.
 - Live-profile approval records and bounded synthetic smoke results for Confluence, REST,
   embedding, OCR and AI authoring.
 - Privacy/retention, cost ceilings, audit/monitoring, disable and rollback evidence.
+
+Governed upload malware/type scanning and its quarantine/failure/redaction/runbook evidence moved
+to Phase 3 by owner decision on 2026-07-14; it is not a Phase 2 closure criterion.
 
 ## Checks not run
 

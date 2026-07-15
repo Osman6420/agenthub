@@ -2,7 +2,7 @@
 {% load static %}
 {% block title %}{{ artifact.ref }} · AgentHub{% endblock %}
 {% block content %}
-<div class="breadcrumbs"><a href="{% url 'console:artifacts' %}">Artifact'ler</a><span>›</span><span>{{ artifact.ref }}</span></div>
+<div class="breadcrumbs"><a href="{% url 'console:organization_detail' artifact.organization.slug %}">{{ artifact.organization.name }}</a><span>›</span><a href="{% url 'console:artifacts' %}">Artifact'ler</a><span>›</span><span>{{ artifact.ref }}</span></div>
 <div class="page-heading"><div><p class="eyebrow">{{ artifact.organization.name }} · {{ artifact.get_type_display }}</p><h1>{{ artifact.ref }}</h1><p class="muted mono">sha256 {{ artifact.checksum }}</p></div><span class="badge">immutable</span></div>
 
 <div class="summary-grid">
@@ -31,7 +31,7 @@
 <section class="card">
   <h2>Bu artifact'i pinleyen release'ler</h2>
   {% if pin_scan_limited %}<div class="warning-box">Pin taraması son 500 release ile sınırlandı; daha eski pinler bu listede görünmeyebilir.</div>{% endif %}
-  {% for item in pinned_by %}<div class="access-row"><div><strong><a href="{% url 'console:scenario_detail' item.release.scenario.id %}">{{ item.release.scenario.name }}</a> · release #{{ item.release.id }}</strong><p class="muted">Roller: {{ item.roles|join:', ' }} · {{ item.release.status }}</p></div><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></div>{% empty %}<p class="muted">Bu exact version hiçbir release manifestinde pinli değil.</p>{% endfor %}
+  {% for item in pinned_by %}<div class="access-row"><div><strong><a href="{% url 'console:scenario_detail' item.release.scenario.id %}">{{ item.release.scenario.name }}</a> · <a href="{% url 'console:release_detail' item.release.id %}">release #{{ item.release.id }}</a></strong><p class="muted">Roller: {{ item.roles|join:', ' }} · {{ item.release.status }}</p></div><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></div>{% empty %}<p class="muted">Bu exact version hiçbir release manifestinde pinli değil.</p>{% endfor %}
 </section>
 <script src="{% static 'console/copy_text.js' %}" defer></script>
 {% endblock %}

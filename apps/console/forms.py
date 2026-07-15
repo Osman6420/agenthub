@@ -32,7 +32,7 @@ from apps.ingestion.models import (
     TenantConfluenceProfileGrant,
     TenantRestPullProfileGrant,
 )
-from apps.tenancy.models import Organization, OrganizationMembership
+from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 from apps.tenancy.services import admin_organization_ids, author_organization_ids
 
 
@@ -60,7 +60,7 @@ class ProjectForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         ids = admin_organization_ids(user)
         cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
-            Organization.objects.all(), ids
+            Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
         )
         memberships = OrganizationMembership.objects.select_related("organization", "user")
         if ids is not None:
@@ -107,7 +107,11 @@ class ScenarioForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         ids = author_organization_ids(user)
         cast(forms.ModelChoiceField, self.fields["project"]).queryset = _scope(
-            AIProject.objects.select_related("organization"), ids, "organization_id"
+            AIProject.objects.select_related("organization").filter(
+                organization__status=OrganizationStatus.ACTIVE
+            ),
+            ids,
+            "organization_id",
         )
 
     def clean_alias(self) -> str:
@@ -133,7 +137,7 @@ class ConsumerForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         ids = admin_organization_ids(user)
         cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
-            Organization.objects.all(), ids
+            Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
         )
 
 
@@ -150,10 +154,18 @@ class BindingForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         ids = admin_organization_ids(user)
         cast(forms.ModelChoiceField, self.fields["consumer"]).queryset = _scope(
-            Consumer.objects.select_related("organization"), ids, "organization_id"
+            Consumer.objects.select_related("organization").filter(
+                organization__status=OrganizationStatus.ACTIVE
+            ),
+            ids,
+            "organization_id",
         )
         cast(forms.ModelChoiceField, self.fields["scenario"]).queryset = _scope(
-            Scenario.objects.select_related("project"), ids, "project__organization_id"
+            Scenario.objects.select_related("project").filter(
+                project__organization__status=OrganizationStatus.ACTIVE
+            ),
+            ids,
+            "project__organization_id",
         )
 
     def save(self, commit: bool = True) -> ConsumerBinding:
@@ -183,7 +195,7 @@ class DocumentUploadForm(forms.Form):
         super().__init__(*args, **kwargs)
         ids = author_organization_ids(user)
         cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
-            Organization.objects.all(), ids
+            Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
         )
 
 
@@ -198,7 +210,7 @@ class DocumentSetForm(forms.Form):
         super().__init__(*args, **kwargs)
         ids = author_organization_ids(user)
         cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
-            Organization.objects.all(), ids
+            Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
         )
 
 

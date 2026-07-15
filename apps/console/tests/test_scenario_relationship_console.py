@@ -214,4 +214,4 @@ def test_grant_requires_active_consumer_binding_to_scenario(client: Client) -> N
 
     assert response.status_code == 200
     assert not DocumentSetGrant.objects.exists()
-    assert "consumer bu senaryoya bağlı değil" in response.content.decode().lower()
+    assert "istemci bu senaryoya bağlı değil" in response.content.decode().lower()

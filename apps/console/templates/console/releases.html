@@ -15,9 +15,9 @@
     <tbody>
       {% for r in rows %}
       <tr>
-        <td>{{ r.id }}</td>
-        <td>{{ r.org }}</td>
-        <td>{{ r.scenario }}</td>
+        <td><a href="{% url 'console:release_detail' r.id %}">{{ r.id }}</a></td>
+        <td><a href="{% url 'console:organization_detail' r.org_slug %}">{{ r.org }}</a></td>
+        <td><a href="{% url 'console:scenario_detail' r.scenario_id %}">{{ r.scenario }}</a></td>
         <td><span class="badge">{{ r.status }}</span></td>
         <td>{{ r.runtime }}</td>
         <td>{{ r.manifest }}</td>
@@ -54,7 +54,7 @@
   <div class="table-scroll"><table>
     <caption class="sr-only">Aktif canary yönlendirmeleri</caption>
     <thead>
-      <tr><th>ID</th><th>Senaryo</th><th>Consumer</th><th>Release</th><th>Sona erme</th><th>İşlem</th></tr>
+      <tr><th>ID</th><th>Senaryo</th><th>İstemci</th><th>Release</th><th>Sona erme</th><th>İşlem</th></tr>
     </thead>
     <tbody>
       {% for c in canaries %}

@@ -30,7 +30,7 @@ from apps.agents.services import AgentRequestError, operator_cancel_agent_run
 from apps.artifacts.models import ArtifactVersion
 from apps.audit.services import record_event
 from apps.builder.models import WorkflowDraft
-from apps.catalog.models import Scenario, ScenarioAlias
+from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.console import scoping
 from apps.console.forms import (
     BindingForm,
@@ -98,6 +98,7 @@ from apps.ingestion.tasks import (
 from apps.ingestion.vector_store import set_tenant_context
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
+from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 from apps.tenancy.services import (
     UserLike,
     admin_organization_ids,
@@ -178,10 +179,12 @@ def _audit_create(
 @login_required
 def dashboard(request: HttpRequest) -> HttpResponse:
     user = request.user
+    organizations_qs = scoping.scoped_organizations(user).order_by("name", "slug")
     context = {
         "is_platform_admin": is_platform_admin(user),
+        "organizations": organizations_qs,
         "counts": {
-            "organizations": scoping.scoped_organizations(user).count(),
+            "organizations": organizations_qs.count(),
             "projects": scoping.scoped_projects(user).count(),
             "scenarios": scoping.scoped_scenarios(user).count(),
             "consumers": scoping.scoped_consumers(user).count(),
@@ -192,10 +195,81 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     return render(request, "console/dashboard.html", context)
 
 
+def _scoped_organization(user: UserLike, slug: str) -> Organization:
+    try:
+        organization = scoping.scoped_organizations(user).get(slug=slug)
+    except Organization.DoesNotExist as exc:
+        raise Http404 from exc
+    set_tenant_context(organization.pk)
+    return organization
+
+
+@login_required
+def organization_detail(request: HttpRequest, slug: str) -> HttpResponse:
+    organization = _scoped_organization(request.user, slug)
+    projects_qs = AIProject.objects.filter(organization=organization).order_by("name", "slug")
+    scenarios_qs = Scenario.objects.filter(organization=organization).select_related("project")
+    document_sets_qs = DocumentSet.objects.filter(organization=organization).order_by(
+        "name", "logical_id"
+    )
+    consumers_qs = Consumer.objects.filter(organization=organization).order_by("name", "subject")
+    artifacts_qs = ArtifactVersion.objects.filter(organization=organization).order_by(
+        "type", "logical_id", "-version"
+    )
+    releases_qs = ScenarioRelease.objects.filter(organization=organization).select_related(
+        "scenario", "scenario__project"
+    )
+    memberships_qs = OrganizationMembership.objects.filter(
+        organization=organization
+    ).select_related("user")
+    runs_qs = AgentRun.objects.filter(organization=organization).select_related(
+        "scenario", "consumer"
+    )
+    list_limit = 100
+    inventories = {
+        "projects": list(projects_qs[:list_limit]),
+        "scenarios": list(scenarios_qs.order_by("project__name", "name")[:list_limit]),
+        "document_sets": list(document_sets_qs[:list_limit]),
+        "consumers": list(consumers_qs[:list_limit]),
+        "artifacts": list(artifacts_qs[:list_limit]),
+        "releases": list(releases_qs.order_by("-created_at", "-pk")[:list_limit]),
+        "memberships": list(memberships_qs.order_by("user__username")[:list_limit]),
+        "runs": list(runs_qs.order_by("-created_at")[:50]),
+    }
+    counts = {
+        "projects": projects_qs.count(),
+        "scenarios": scenarios_qs.count(),
+        "document_sets": document_sets_qs.count(),
+        "consumers": consumers_qs.count(),
+        "artifacts": artifacts_qs.count(),
+        "releases": releases_qs.count(),
+        "memberships": memberships_qs.count(),
+        "runs": runs_qs.count(),
+    }
+    return render(
+        request,
+        "console/organization_detail.html",
+        {
+            "organization": organization,
+            "is_disabled": organization.status == OrganizationStatus.DISABLED,
+            "inventories": inventories,
+            "counts": counts,
+            "list_limit": list_limit,
+        },
+    )
+
+
 @login_required
 def organizations(request: HttpRequest) -> HttpResponse:
     rows = [
-        {"cols": [o.slug, o.name, o.status]} for o in scoping.scoped_organizations(request.user)
+        {
+            "cols": [
+                o.slug,
+                {"text": o.name, "url": "console:organization_detail", "arg": o.slug},
+                "Aktif" if o.status == OrganizationStatus.ACTIVE else "Pasif",
+            ]
+        }
+        for o in scoping.scoped_organizations(request.user)
     ]
     return render(
         request,
@@ -216,7 +290,15 @@ def organizations(request: HttpRequest) -> HttpResponse:
 @login_required
 def projects(request: HttpRequest) -> HttpResponse:
     rows = [
-        {"cols": [p.organization.slug, p.slug, p.name, p.risk_level, p.status]}
+        {
+            "cols": [
+                p.organization.slug,
+                p.slug,
+                {"text": p.name, "url": "console:project_detail", "arg": p.pk},
+                p.risk_level,
+                p.status,
+            ]
+        }
         for p in scoping.scoped_projects(request.user)
     ]
     return render(
@@ -231,6 +313,33 @@ def projects(request: HttpRequest) -> HttpResponse:
                 if admin_organization_ids(request.user) != set()
                 else []
             ),
+        },
+    )
+
+
+def _scoped_project(user: UserLike, pk: int) -> AIProject:
+    try:
+        project = scoping.scoped_projects(user).get(pk=pk)
+    except AIProject.DoesNotExist as exc:
+        raise Http404 from exc
+    set_tenant_context(project.organization_id)
+    return project
+
+
+@login_required
+def project_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    project = _scoped_project(request.user, pk)
+    scenarios_qs = Scenario.objects.filter(project=project).order_by("name", "slug")
+    scenario_candidates = list(scenarios_qs[:201])
+    return render(
+        request,
+        "console/project_detail.html",
+        {
+            "project": project,
+            "organization": project.organization,
+            "scenarios": scenario_candidates[:200],
+            "scenarios_limited": len(scenario_candidates) > 200,
+            "is_disabled": project.organization.status == OrganizationStatus.DISABLED,
         },
     )
 
@@ -252,9 +361,11 @@ def scenarios(request: HttpRequest) -> HttpResponse:
 
 def _scoped_scenario(user: UserLike, pk: int) -> Scenario:
     try:
-        return scoping.scoped_scenarios(user).get(pk=pk)
+        scenario = scoping.scoped_scenarios(user).get(pk=pk)
     except Scenario.DoesNotExist as exc:
         raise Http404 from exc
+    set_tenant_context(scenario.organization_id)
+    return scenario
 
 
 def _release_artifact_rows(release: ScenarioRelease) -> list[dict[str, object]]:
@@ -566,7 +677,7 @@ def scenario_grant_consumer(request: HttpRequest, pk: int, document_set_pk: int)
         else None
     )
     if consumer is None:
-        messages.error(request, "Erişim verilemedi: consumer bu senaryoya bağlı değil.")
+        messages.error(request, "Erişim verilemedi: istemci bu senaryoya bağlı değil.")
     else:
         try:
             document_services.grant_document_set(
@@ -575,7 +686,7 @@ def scenario_grant_consumer(request: HttpRequest, pk: int, document_set_pk: int)
                 principal_ref=str(consumer.id),
                 actor=request.user.get_username(),
             )
-            messages.success(request, "Consumer için doküman erişimi verildi.")
+            messages.success(request, "İstemci için doküman erişimi verildi.")
         except DocumentError as exc:
             messages.error(request, f"Erişim verilemedi: {exc.code}")
     return redirect("console:scenario_detail", pk=scenario.pk)
@@ -601,31 +712,102 @@ def scenario_revoke_consumer(request: HttpRequest, pk: int, grant_pk: int) -> Ht
     if grant is None:
         raise Http404
     document_services.revoke_document_set_grant(grant, actor=request.user.get_username())
-    messages.success(request, "Consumer doküman erişimi kaldırıldı.")
+    messages.success(request, "İstemci doküman erişimi kaldırıldı.")
     return redirect("console:scenario_detail", pk=scenario.pk)
 
 
 @login_required
 def consumers(request: HttpRequest) -> HttpResponse:
     rows = [
-        {"cols": [c.organization.slug, c.name, c.subject, c.protocol, c.status]}
+        {
+            "cols": [
+                c.organization.slug,
+                {"text": c.name, "url": "console:consumer_detail", "arg": c.pk},
+                c.subject,
+                c.protocol,
+                c.status,
+            ]
+        }
         for c in scoping.scoped_consumers(request.user)
     ]
     return render(
         request,
         "console/list.html",
         {
-            "title": "Consumer'lar",
+            "title": "İstemciler",
             "headers": ["Organizasyon", "Ad", "Subject", "Protokol", "Durum"],
             "rows": rows,
             "create_links": (
                 [
-                    {"url": "console:consumer_create", "label": "Yeni consumer"},
-                    {"url": "console:binding_create", "label": "Yeni consumer bağı"},
+                    {"url": "console:consumer_create", "label": "Yeni istemci"},
+                    {"url": "console:binding_create", "label": "Yeni istemci bağı"},
                 ]
                 if admin_organization_ids(request.user) != set()
                 else []
             ),
+        },
+    )
+
+
+def _scoped_consumer(user: UserLike, pk: int) -> Consumer:
+    try:
+        consumer = scoping.scoped_consumers(user).get(pk=pk)
+    except Consumer.DoesNotExist as exc:
+        raise Http404 from exc
+    set_tenant_context(consumer.organization_id)
+    return consumer
+
+
+@login_required
+def consumer_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    consumer = _scoped_consumer(request.user, pk)
+    binding_candidates = list(
+        consumer.bindings.select_related("scenario", "scenario__project").order_by(
+            "scenario__project__name", "scenario__name"
+        )[:101]
+    )
+    bindings_limited = len(binding_candidates) > 100
+    bindings = binding_candidates[:100]
+    scenario_ids = {binding.scenario_id for binding in bindings}
+    grant_candidates = list(
+        DocumentSetGrant.objects.filter(
+            organization_id=consumer.organization_id,
+            principal_type=GrantPrincipalType.CONSUMER,
+            principal_ref=str(consumer.pk),
+        )
+        .select_related("document_set")
+        .order_by("document_set__name", "document_set__logical_id")[:101]
+    )
+    grants_limited = len(grant_candidates) > 100
+    grants = grant_candidates[:100]
+    document_set_ids = {grant.document_set_id for grant in grants}
+    related_bindings = ScenarioDocumentSetBinding.objects.filter(
+        document_set_id__in=document_set_ids, scenario_id__in=scenario_ids
+    ).select_related("scenario", "scenario__project")
+    bindings_by_document_set: dict[int, list[ScenarioDocumentSetBinding]] = {}
+    for binding in related_bindings.order_by("scenario__project__name", "scenario__name"):
+        bindings_by_document_set.setdefault(binding.document_set_id, []).append(binding)
+    grant_rows = []
+    for grant in grants:
+        grant_rows.append(
+            {
+                "grant": grant,
+                "scenario_bindings": bindings_by_document_set.get(grant.document_set_id, []),
+            }
+        )
+    token_candidates = list(consumer.tokens.order_by("name", "prefix")[:101])
+    return render(
+        request,
+        "console/consumer_detail.html",
+        {
+            "consumer": consumer,
+            "bindings": bindings,
+            "bindings_limited": bindings_limited,
+            "grant_rows": grant_rows,
+            "grants_limited": grants_limited,
+            "tokens": token_candidates[:100],
+            "tokens_limited": len(token_candidates) > 100,
+            "is_disabled": consumer.organization.status == OrganizationStatus.DISABLED,
         },
     )
 
@@ -649,9 +831,11 @@ def artifacts(request: HttpRequest) -> HttpResponse:
 
 def _scoped_artifact(user: UserLike, pk: int) -> ArtifactVersion:
     try:
-        return scoping.scoped_artifacts(user).get(pk=pk)
+        artifact = scoping.scoped_artifacts(user).get(pk=pk)
     except ArtifactVersion.DoesNotExist as exc:
         raise Http404 from exc
+    set_tenant_context(artifact.organization_id)
+    return artifact
 
 
 @login_required
@@ -713,6 +897,8 @@ def releases(request: HttpRequest) -> HttpResponse:
         rows.append(
             {
                 "id": r.pk,
+                "scenario_id": r.scenario_id,
+                "org_slug": r.scenario.project.organization.slug,
                 "org": r.scenario.project.organization.slug,
                 "scenario": r.scenario.slug,
                 "status": r.status,
@@ -749,14 +935,38 @@ def releases(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _manageable_release(user: UserLike, release_id: int) -> ScenarioRelease:
-    release = (
-        ScenarioRelease.objects.select_related("scenario__project__organization")
-        .filter(pk=release_id)
-        .first()
+def _scoped_release(user: UserLike, release_id: int) -> ScenarioRelease:
+    try:
+        release = scoping.scoped_releases(user).get(pk=release_id)
+    except ScenarioRelease.DoesNotExist as exc:
+        raise Http404 from exc
+    set_tenant_context(release.organization_id)
+    return release
+
+
+@login_required
+def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
+    release = _scoped_release(request.user, release_id)
+    manifest_json = json.dumps(release.manifest, ensure_ascii=False, indent=2, sort_keys=True)
+    display_limit = int(getattr(settings, "CONSOLE_MAX_ARTIFACT_DISPLAY_CHARS", 500_000))
+    manifest_too_large = len(manifest_json) > display_limit
+    return render(
+        request,
+        "console/release_detail.html",
+        {
+            "release": release,
+            "artifact_rows": _release_artifact_rows(release),
+            "manifest_json": "" if manifest_too_large else manifest_json,
+            "manifest_too_large": manifest_too_large,
+            "canaries": release.canaries.select_related("consumer").order_by("-created_at")[:100],
+            "can_manage": can_manage_releases(request.user, release.organization_id),
+            "is_disabled": release.organization.status == OrganizationStatus.DISABLED,
+        },
     )
-    if release is None:
-        raise Http404
+
+
+def _manageable_release(user: UserLike, release_id: int) -> ScenarioRelease:
+    release = _scoped_release(user, release_id)
     if not can_manage_releases(user, release.scenario.project.organization_id):
         raise PermissionDenied
     return release
@@ -835,6 +1045,7 @@ def canary_stop(request: HttpRequest, canary_id: int) -> HttpResponse:
         raise Http404
     if not can_manage_releases(request.user, canary.scenario.project.organization_id):
         raise PermissionDenied
+    set_tenant_context(canary.organization_id)
     try:
         stop_canary(canary=canary, actor=request.user.get_username())
         messages.success(request, "Canary durduruldu.")
@@ -867,7 +1078,8 @@ def tool_approvals(request: HttpRequest) -> HttpResponse:
                 "tool_ref": approval.invocation.tool_ref,
                 "risk": approval.invocation.risk,
                 "expires": approval.expires_at,
-                "can_decide": bool(set(roles or []) & set(approval.approver_roles)),
+                "can_decide": approval.organization.status == OrganizationStatus.ACTIVE
+                and bool(set(roles or []) & set(approval.approver_roles)),
             }
         )
     return render(request, "console/tool_approvals.html", {"title": "Tool onayları", "rows": rows})
@@ -879,8 +1091,9 @@ def tool_approval_decide(request: HttpRequest, approval_id: int) -> HttpResponse
     approval = ApprovalRequest.objects.filter(pk=approval_id).first()
     if approval is None:
         raise Http404
-    if not _operator_can_access_org(request.user, approval.organization_id):
+    if not _operator_can_mutate_org(request.user, approval.organization_id):
         raise PermissionDenied
+    set_tenant_context(approval.organization_id)
     roles = resolve_actor_roles(
         username=request.user.get_username(), organization_id=approval.organization_id
     )
@@ -910,8 +1123,9 @@ def tool_invocation_cancel(request: HttpRequest, invocation_id: int) -> HttpResp
     invocation = ToolInvocation.objects.filter(pk=invocation_id).first()
     if invocation is None:
         raise Http404
-    if not _operator_can_access_org(request.user, invocation.organization_id):
+    if not _operator_can_mutate_org(request.user, invocation.organization_id):
         raise PermissionDenied
+    set_tenant_context(invocation.organization_id)
     try:
         cancel_invocation(
             invocation_id=invocation.pk,
@@ -976,7 +1190,8 @@ def agent_run_detail(request: HttpRequest, public_id: str) -> HttpResponse:
         "awaiting_role": run.awaiting_role,
         "created": run.created_at,
         "finished": run.finished_at,
-        "can_cancel": run.status not in {"completed", "failed", "timed_out", "cancelled"},
+        "can_cancel": run.organization.status == OrganizationStatus.ACTIVE
+        and run.status not in {"completed", "failed", "timed_out", "cancelled"},
     }
     return render(
         request,
@@ -1142,9 +1357,11 @@ def document_purge(request: HttpRequest, pk: int) -> HttpResponse:
 
 def _scoped_document(user: UserLike, pk: int) -> Document:
     try:
-        return scoping.scoped_documents(user).get(pk=pk)
+        document = scoping.scoped_documents(user).get(pk=pk)
     except Document.DoesNotExist as exc:
         raise Http404 from exc
+    set_tenant_context(document.organization_id)
+    return document
 
 
 @login_required
@@ -1256,6 +1473,7 @@ def document_set_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "console/document_set_detail.html",
         {
             "title": f"Document set · {document_set.logical_id}",
+            "organization": document_set.organization,
             "set": {
                 "id": document_set.id,
                 "org": document_set.organization.slug,
@@ -1566,6 +1784,7 @@ def _scoped_connector_source(user: UserLike, source_pk: int) -> Source:
     source = scoping.scoped_connector_sources(user).filter(pk=source_pk).first()
     if source is None or source.document_set_id is None:
         raise Http404
+    set_tenant_context(source.organization_id)
     return source
 
 
@@ -1821,6 +2040,7 @@ def document_set_promote_index(request: HttpRequest, index_pk: int) -> HttpRespo
     )
     if index is None or index.document_set_version is None:
         raise Http404
+    set_tenant_context(index.organization_id)
     if not can_manage_releases(request.user, index.organization_id):
         raise PermissionDenied
     try:
@@ -1897,16 +2117,20 @@ def document_set_version_publish(request: HttpRequest, version_pk: int) -> HttpR
 
 def _scoped_document_set(user: UserLike, pk: int) -> DocumentSet:
     try:
-        return scoping.scoped_document_sets(user).get(pk=pk)
+        document_set = scoping.scoped_document_sets(user).get(pk=pk)
     except DocumentSet.DoesNotExist as exc:
         raise Http404 from exc
+    set_tenant_context(document_set.organization_id)
+    return document_set
 
 
 def _scoped_set_version(user: UserLike, pk: int) -> DocumentSetVersion:
     try:
-        return scoping.scoped_document_set_versions(user).get(pk=pk)
+        set_version = scoping.scoped_document_set_versions(user).get(pk=pk)
     except DocumentSetVersion.DoesNotExist as exc:
         raise Http404 from exc
+    set_tenant_context(set_version.organization_id)
+    return set_version
 
 
 @login_required
@@ -1951,6 +2175,7 @@ def document_set_unbind_scenario(request: HttpRequest, binding_pk: int) -> HttpR
         .exists()
     ):
         raise Http404
+    set_tenant_context(binding.organization_id)
     if not can_author_scenarios(request.user, binding.organization_id):
         raise PermissionDenied
     document_set_id = binding.document_set_id
@@ -1976,7 +2201,7 @@ def document_set_grant_consumer(request: HttpRequest, pk: int) -> HttpResponse:
         else None
     )
     if consumer is None:
-        messages.error(request, "Grant failed: invalid consumer.")
+        messages.error(request, "İzin verilemedi: geçersiz istemci.")
     else:
         try:
             document_services.grant_document_set(
@@ -1985,7 +2210,7 @@ def document_set_grant_consumer(request: HttpRequest, pk: int) -> HttpResponse:
                 principal_ref=str(consumer.id),
                 actor=request.user.get_username(),
             )
-            messages.success(request, "Consumer retrieval granted.")
+            messages.success(request, "İstemci retrieval izni verildi.")
         except DocumentError as exc:
             messages.error(request, f"Grant failed: {exc.code}")
     return redirect("console:document_set_detail", pk=document_set.pk)
@@ -2000,11 +2225,12 @@ def document_set_revoke_grant(request: HttpRequest, grant_pk: int) -> HttpRespon
         or not scoping.scoped_document_sets(request.user).filter(pk=grant.document_set_id).exists()
     ):
         raise Http404
+    set_tenant_context(grant.organization_id)
     if not can_author_scenarios(request.user, grant.organization_id):
         raise PermissionDenied
     document_set_id = grant.document_set_id
     document_services.revoke_document_set_grant(grant, actor=request.user.get_username())
-    messages.success(request, "Consumer retrieval grant revoked.")
+    messages.success(request, "İstemci retrieval izni kaldırıldı.")
     return redirect("console:document_set_detail", pk=document_set_id)
 
 
@@ -2012,6 +2238,8 @@ def document_set_revoke_grant(request: HttpRequest, grant_pk: int) -> HttpRespon
 @require_POST
 def agent_run_cancel(request: HttpRequest, public_id: str) -> HttpResponse:
     run = _scoped_agent_run(request.user, public_id)
+    if not _operator_can_mutate_org(request.user, run.organization_id):
+        raise PermissionDenied
     try:
         operator_cancel_agent_run(
             run=run,
@@ -2040,12 +2268,22 @@ def _scoped_agent_run(user: UserLike, public_id: str) -> AgentRun:
         raise Http404
     if not _operator_can_access_org(user, run.organization_id):
         raise PermissionDenied
+    set_tenant_context(run.organization_id)
     return run
 
 
 def _operator_can_access_org(user: UserLike, organization_id: int) -> bool:
     allowed = allowed_organization_ids(user)
     return allowed is None or organization_id in allowed
+
+
+def _operator_can_mutate_org(user: UserLike, organization_id: int) -> bool:
+    return (
+        _operator_can_access_org(user, organization_id)
+        and Organization.objects.filter(
+            pk=organization_id, status=OrganizationStatus.ACTIVE
+        ).exists()
+    )
 
 
 def _create(
@@ -2129,7 +2367,7 @@ def consumer_create(request: HttpRequest) -> HttpResponse:
     return _create(
         request,
         form_class=ConsumerForm,
-        title="Yeni consumer",
+        title="Yeni istemci",
         resource_type="consumer",
         permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
         success_url="console:consumers",
@@ -2141,7 +2379,7 @@ def binding_create(request: HttpRequest) -> HttpResponse:
     return _create(
         request,
         form_class=BindingForm,
-        title="Yeni consumer bağı",
+        title="Yeni istemci bağı",
         resource_type="binding",
         permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
         success_url="console:consumers",

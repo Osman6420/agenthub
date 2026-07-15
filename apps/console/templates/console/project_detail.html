@@ -1,0 +1,10 @@
+{% extends "console/base.html" %}
+{% block title %}{{ project.name }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:organization_detail' organization.slug %}">{{ organization.name }}</a><span>›</span><span>{{ project.name }}</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Proje</p><h1>{{ project.name }}</h1><div class="meta-line"><span class="badge {{ project.status }}">{{ project.get_status_display }}</span><span class="badge">Risk: {{ project.get_risk_level_display }}</span><span class="mono">{{ project.slug }}</span></div></div></div>
+{% if is_disabled %}<div class="warning-box">Organizasyon pasif; proje salt okunur gösteriliyor.</div>{% endif %}
+<section class="card"><h2>Proje bilgileri</h2><dl><dt>Sahip</dt><dd>{{ project.owner|default:'—' }}</dd><dt>Veri sınıfı</dt><dd>{{ project.data_classification|default:'—' }}</dd><dt>Varsayılan dil</dt><dd>{{ project.default_locale }}</dd></dl></section>
+<section class="card"><h2>Senaryolar</h2>{% for scenario in scenarios %}<div class="access-row"><div><strong><a href="{% url 'console:scenario_detail' scenario.id %}">{{ scenario.name }}</a></strong><p class="muted mono">{{ scenario.slug }}</p></div><span class="badge {{ scenario.status }}">{{ scenario.get_status_display }}</span></div>{% empty %}<p class="muted">Bu projede senaryo yok.</p>{% endfor %}</section>
+{% if scenarios_limited %}<div class="notice">Liste ilk 200 senaryoyla sınırlandırılmıştır.</div>{% endif %}
+{% endblock %}

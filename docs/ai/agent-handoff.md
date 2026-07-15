@@ -340,11 +340,27 @@ Current cross-agent state:
   Live profile, endpoint, CA, secret, firewall, privacy and cost activation are assigned to the Phase
   2 closure milestone. Plan/evidence:
   `docs/tasks/phase-2-p10-ai-assisted-authoring/`.
-- **PHASE 2 CLOSURE HARDENING REQUIRED.** Broader Django-table FORCE RLS, a dedicated non-owner app
-  role, upload malware/type scanning, live Confluence/REST/embedding/OCR profiles and live AI
-  authoring with privacy/retention/cost + smoke/rollback evidence remain planned. Concrete secrets,
+- **PHASE 2.5 PRODUCT COHERENCE IS IN PROGRESS BEFORE PHASE 2 LIVE CLOSURE.** Owner decisions are in
+  `docs/planning/phase-2-5-plan.md`: dashboard organization inventory, one organization-overview URL,
+  preserved canonical domain URLs and cross-linked detail pages,
+  system-generated console IDs, detailed artifact/DSL documentation, document-set/source UX,
+  scenario studio, a closed composable transform DSL and additive `/v1/responses` plus
+  `/v1/chat/completions` adapters with client-supplied bounded history. Persistent server-side
+  conversation history moved to Phase 3. Delivery is split into nine reviewable parts. Part 1
+  (dashboard/organization overview + secure navigation graph + guide reconciliation) is implemented
+  and offline-verified in `docs/tasks/phase-2-5-part-1-workspace-navigation/`. The owner approved its
+  singleton tenant-scope narrowing on 2026-07-14. Focused console/tenancy checks, static gates and
+  migration drift pass; PostgreSQL non-owner execution and the Turkish manual browser journey remain
+  pending, so Part 1 is not yet marked fully verified or closed. Changes are uncommitted.
+- **PHASE 2 LIVE ACTIVATION REMAINS THE FINAL CLOSURE GATE.** Broader Django-table FORCE RLS and the
+  dedicated non-owner app role are implemented/staging-equivalent verified. After Phase 2.5, live
+  Confluence/REST/embedding/OCR profiles and live AI authoring with
+  privacy/retention/cost + smoke/rollback evidence remain. Concrete secrets,
   hosts, CA/DNS/firewall and production mutations still require their execution approvals. Plan:
   `docs/tasks/phase-2-closure-production-hardening/`.
+  Governed upload malware/type scanning, including quarantine/pre-index rejection, fail-closed
+  behavior, limits, redacted audit, tests and runbook, moved to Phase 3 by owner decision on
+  2026-07-14.
   - **P11 RLS/NON-OWNER HARDENING IMPLEMENTED + STAGING-EQUIVALENT VERIFIED.** Nine
     formerly indirect models now have backfilled non-null direct lineage; 47 protected tables use
     canonical FORCE RLS over bounded transaction-local `app.tenant_scope`; console membership,

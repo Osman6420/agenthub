@@ -13,7 +13,7 @@ from typing import cast
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 
 from apps.identity.roles import Role
-from apps.tenancy.models import Organization, OrganizationMembership
+from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 
 UserLike = AbstractBaseUser | AnonymousUser
 
@@ -59,7 +59,8 @@ def user_can_access_organization(user: UserLike, organization_id: int) -> bool:
 
 # --- Write authorization (role-gated) ---------------------------------------
 # Read scope is membership-based (above); creating records additionally requires the
-# right role in the target organization. platform_admin (superuser) may do anything.
+# right role in the target organization. A disabled organization is read-only even for a
+# platform_admin; reactivation is a separate platform lifecycle operation, not an operational write.
 
 _ADMIN_ROLES = frozenset({Role.ORGANIZATION_ADMIN})
 _SCENARIO_AUTHOR_ROLES = frozenset(
@@ -84,11 +85,23 @@ def can_create_organization(user: UserLike) -> bool:
     return is_platform_admin(user)
 
 
+def _organization_accepts_mutations(organization_id: int) -> bool:
+    """Disabled tenants remain readable but reject every operational mutation."""
+
+    return Organization.objects.filter(
+        pk=organization_id, status=OrganizationStatus.ACTIVE
+    ).exists()
+
+
 def can_admin_org(user: UserLike, organization_id: int) -> bool:
+    if not _organization_accepts_mutations(organization_id):
+        return False
     return is_platform_admin(user) or bool(_ADMIN_ROLES & user_roles_in_org(user, organization_id))
 
 
 def can_author_scenarios(user: UserLike, organization_id: int) -> bool:
+    if not _organization_accepts_mutations(organization_id):
+        return False
     return is_platform_admin(user) or bool(
         _SCENARIO_AUTHOR_ROLES & user_roles_in_org(user, organization_id)
     )
@@ -96,13 +109,15 @@ def can_author_scenarios(user: UserLike, organization_id: int) -> bool:
 
 def can_manage_releases(user: UserLike, organization_id: int) -> bool:
     """Promote/canary/rollback requires ``release_manager`` (or platform admin)."""
+    if not _organization_accepts_mutations(organization_id):
+        return False
     return is_platform_admin(user) or bool(
         _RELEASE_MANAGER_ROLES & user_roles_in_org(user, organization_id)
     )
 
 
 def admin_organization_ids(user: UserLike) -> set[int] | None:
-    """Organizations the user may administer (None = all, platform admin)."""
+    """Active organizations the user may administer (None = all active, platform admin)."""
     if is_platform_admin(user):
         return None
     if not getattr(user, "is_authenticated", False):
@@ -110,13 +125,15 @@ def admin_organization_ids(user: UserLike) -> set[int] | None:
     concrete = cast(AbstractBaseUser, user)
     return set(
         OrganizationMembership.objects.filter(
-            user_id=concrete.pk, role__in=_ADMIN_ROLES
+            user_id=concrete.pk,
+            role__in=_ADMIN_ROLES,
+            organization__status=OrganizationStatus.ACTIVE,
         ).values_list("organization_id", flat=True)
     )
 
 
 def author_organization_ids(user: UserLike) -> set[int] | None:
-    """Organizations where the user may author scenarios (None = all)."""
+    """Active organizations where the user may author scenarios (None = all active)."""
     if is_platform_admin(user):
         return None
     if not getattr(user, "is_authenticated", False):
@@ -124,6 +141,8 @@ def author_organization_ids(user: UserLike) -> set[int] | None:
     concrete = cast(AbstractBaseUser, user)
     return set(
         OrganizationMembership.objects.filter(
-            user_id=concrete.pk, role__in=_SCENARIO_AUTHOR_ROLES
+            user_id=concrete.pk,
+            role__in=_SCENARIO_AUTHOR_ROLES,
+            organization__status=OrganizationStatus.ACTIVE,
         ).values_list("organization_id", flat=True)
     )

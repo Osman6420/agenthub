@@ -344,8 +344,9 @@ in place), so the milestone numbers below are scope units, not the build order.
   P7.4b generic REST, periodic no-op refresh and compatible unchanged-vector reuse are implemented
   and verified offline under ADR-0007; live endpoint/credential rollout remains gated.
 - **M5 — Phase 2 production closure hardening**: broader Django-table FORCE RLS, dedicated non-owner
-  application role, upload malware/type scanning, and concrete live Confluence/REST/embedding/OCR
-  profiles with privacy/retention, network/secret, smoke and rollback evidence. Authoritative task:
+  application role, and concrete live Confluence/REST/embedding/OCR profiles with
+  privacy/retention, network/secret, smoke and rollback evidence. Governed upload malware/type
+  scanning moved as a complete security package to Phase 3. Authoritative Phase 2 task:
   [`phase-2-closure-production-hardening`](../../tasks/phase-2-closure-production-hardening/plan.md).
 - **M5 — Console UI**: per-scenario document sources, set membership, binding, upload,
   soft-delete/purge — role/tenant-scoped, non-authoritative.
@@ -387,7 +388,8 @@ Remaining (non-blocking, decided at their milestone):
 - Blob dedup by checksum — optional; defer unless storage pressure warrants.
 - Connector specifics — Confluence is Data Center with a least-privilege PAT profile and
   connector-specific private policy (ADR-0006); generic-REST source definition and auth remain
-  governed by ADR-0007; live source/auth review and upload size/type/scan limits remain operational gates.
+  governed by ADR-0007; live source/auth review remains a Phase 2 operational gate. Upload
+  malware/type scanning and its limits moved to Phase 3.
 - Vector storage — the separate immutable store is decided by ADR-0003; changing it requires a
   superseding ADR.
 

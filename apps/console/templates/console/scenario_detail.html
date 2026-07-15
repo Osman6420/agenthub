@@ -3,8 +3,8 @@
 {% block title %}{{ scenario.name }} · AgentHub{% endblock %}
 {% block content %}
 <nav class="breadcrumbs" aria-label="İçerik yolu">
-  <a href="{% url 'console:organizations' %}">{{ scenario.project.organization.name }}</a><span>›</span>
-  <a href="{% url 'console:projects' %}">{{ scenario.project.name }}</a><span>›</span>
+  <a href="{% url 'console:organization_detail' scenario.project.organization.slug %}">{{ scenario.project.organization.name }}</a><span>›</span>
+  <a href="{% url 'console:project_detail' scenario.project.id %}">{{ scenario.project.name }}</a><span>›</span>
   <span aria-current="page">{{ scenario.name }}</span>
 </nav>
 
@@ -23,7 +23,7 @@
 
 <div class="summary-grid">
   <div class="summary-card"><span>Doküman seti</span><strong>{{ relationship_rows|length }}</strong></div>
-  <div class="summary-card"><span>Consumer bağı</span><strong>{{ consumer_bindings|length }}</strong></div>
+  <div class="summary-card"><span>İstemci bağı</span><strong>{{ consumer_bindings|length }}</strong></div>
   <div class="summary-card"><span>Aktif release</span><strong>{% if active_release %}#{{ active_release.id }}{% else %}Yok{% endif %}</strong></div>
 </div>
 
@@ -36,7 +36,7 @@
 
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Sürüm geçmişi</p><h2>Release'ler</h2></div><a href="{% url 'console:releases' %}">Tüm release operasyonları →</a></div>
-  {% if release_rows %}<div class="table-scroll"><table><caption class="sr-only">Senaryonun release geçmişi</caption><thead><tr><th>Release</th><th>Durum</th><th>Runtime</th><th>Artifact rolleri</th><th>Oluşturulma</th></tr></thead><tbody>{% for item in release_rows %}<tr><td>#{{ item.release.id }}</td><td><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></td><td>{{ item.release.runtime_version }}</td><td>{{ item.artifacts|length }}</td><td>{{ item.release.created_at }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">Bu senaryo için release yok.</p>{% endif %}
+  {% if release_rows %}<div class="table-scroll"><table><caption class="sr-only">Senaryonun release geçmişi</caption><thead><tr><th>Release</th><th>Durum</th><th>Runtime</th><th>Artifact rolleri</th><th>Oluşturulma</th></tr></thead><tbody>{% for item in release_rows %}<tr><td><a href="{% url 'console:release_detail' item.release.id %}">#{{ item.release.id }}</a></td><td><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></td><td>{{ item.release.runtime_version }}</td><td>{{ item.artifacts|length }}</td><td>{{ item.release.created_at }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">Bu senaryo için release yok.</p>{% endif %}
 </section>
 
 <section class="card">
@@ -50,7 +50,7 @@
 
 <section class="card">
   <div class="section-heading">
-    <div><p class="eyebrow">Erişim haritası</p><h2>Doküman setleri ve consumer erişimi</h2></div>
+    <div><p class="eyebrow">Erişim haritası</p><h2>Doküman setleri ve istemci erişimi</h2></div>
     {% if can_write and candidate_document_sets %}
     <form class="compact-form" method="post" action="{% url 'console:scenario_bind_document_set' scenario.id %}">
       {% csrf_token %}
@@ -61,7 +61,7 @@
     </form>
     {% endif %}
   </div>
-  <div class="notice"><strong>Nasıl çalışır?</strong> Senaryo yalnızca bağlı setleri kullanabilir. Bir consumer ayrıca ilgili set için erişim almalıdır. Set bağı release derlemesinde sabitlenir; consumer erişimi retrieval sırasında uygulanır ve doküman seti seviyesindedir.</div>
+  <div class="notice"><strong>Nasıl çalışır?</strong> Senaryo yalnızca bağlı setleri kullanabilir. Bir istemci ayrıca ilgili set için erişim almalıdır. Set bağı release derlemesinde sabitlenir; istemci erişimi retrieval sırasında uygulanır ve doküman seti seviyesindedir.</div>
 
   {% for row in relationship_rows %}
   <article class="relationship-card">
@@ -78,10 +78,10 @@
     </div>
     <div class="relationship-body">
       <div>
-        <h4>Bu senaryoya bağlı consumer’lar</h4>
+        <h4>Bu senaryoya bağlı istemciler</h4>
         {% for item in row.consumer_rows %}
         <div class="access-row">
-          <div><strong>{{ item.binding.consumer.name }}</strong><br><span class="muted mono">{{ item.binding.consumer.subject }}</span></div>
+          <div><strong><a href="{% url 'console:consumer_detail' item.binding.consumer.id %}">{{ item.binding.consumer.name }}</a></strong><br><span class="muted mono">{{ item.binding.consumer.subject }}</span></div>
           {% if item.grant %}
             <span class="access-ok">Doküman erişimi var</span>
             {% if can_write %}<form method="post" action="{% url 'console:scenario_revoke_consumer' scenario.id item.grant.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Erişimi kaldır</button></form>{% endif %}
@@ -90,20 +90,20 @@
             {% if can_write %}<form method="post" action="{% url 'console:scenario_grant_consumer' scenario.id row.document_set.id %}">{% csrf_token %}<input type="hidden" name="consumer_id" value="{{ item.binding.consumer.id }}"><button class="button secondary" type="submit">Erişim ver</button></form>{% endif %}
           {% endif %}
         </div>
-        {% empty %}<p class="muted">Bu senaryoya bağlı aktif consumer yok. Önce consumer–senaryo bağı oluşturulmalı.</p>{% endfor %}
-        {% if row.other_grants %}<div class="warning-box">Bu sete senaryoya bağlı olmayan veya pasif consumer grant’leri de verilmiş. Doküman seti detayından inceleyin.</div>{% endif %}
+        {% empty %}<p class="muted">Bu senaryoya bağlı aktif istemci yok. Önce istemci–senaryo bağı oluşturulmalı.</p>{% endfor %}
+        {% if row.other_grants %}<div class="warning-box">Bu sete senaryoya bağlı olmayan veya pasif istemci izinleri de verilmiş. Doküman seti detayından inceleyin.</div>{% endif %}
       </div>
-      <div>{% if row.scenario_count > 1 %}<div class="warning-box">Bu doküman seti {{ row.scenario_count }} senaryoya bağlıdır. Consumer grant değişikliği seti kullanan diğer senaryoları da etkileyebilir.</div>{% endif %}{% if can_write %}<form method="post" action="{% url 'console:scenario_unbind_document_set' scenario.id row.binding.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Set bağını kaldır</button></form>{% endif %}</div>
+      <div>{% if row.scenario_count > 1 %}<div class="warning-box">Bu doküman seti {{ row.scenario_count }} senaryoya bağlıdır. İstemci izni değişikliği seti kullanan diğer senaryoları da etkileyebilir.</div>{% endif %}{% if can_write %}<form method="post" action="{% url 'console:scenario_unbind_document_set' scenario.id row.binding.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Set bağını kaldır</button></form>{% endif %}</div>
     </div>
   </article>
   {% empty %}<div class="empty"><h3>Doküman seti bağlı değil</h3><p>Retrieval varsayılan olarak kapalıdır. Bu senaryonun kullanacağı ilk doküman setini bağlayın.</p></div>{% endfor %}
 </section>
 
 <section class="card">
-  <div class="section-heading"><div><p class="eyebrow">Çağıran sistemler</p><h2>Consumer–senaryo bağları</h2></div><a href="{% url 'console:consumers' %}">Consumer yönetimi →</a></div>
-  {% if consumer_bindings %}<div class="table-scroll"><table><caption class="sr-only">Senaryoya bağlı consumer'lar</caption><thead><tr><th>Consumer</th><th>Protokol</th><th>Yetkiler</th><th>Durum</th></tr></thead><tbody>
-    {% for binding in consumer_bindings %}<tr><td><strong>{{ binding.consumer.name }}</strong><br><span class="muted mono">{{ binding.consumer.subject }}</span></td><td>{{ binding.consumer.get_protocol_display }}</td><td>{% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</td><td><span class="badge {{ binding.status }}">{{ binding.get_status_display }}</span></td></tr>{% endfor %}
-  </tbody></table></div>{% else %}<p class="muted">Bu senaryoyu çağırmaya yetkili consumer yok.</p>{% endif %}
+  <div class="section-heading"><div><p class="eyebrow">Çağıran sistemler</p><h2>İstemci–senaryo bağları</h2></div><a href="{% url 'console:consumers' %}">İstemci yönetimi →</a></div>
+  {% if consumer_bindings %}<div class="table-scroll"><table><caption class="sr-only">Senaryoya bağlı istemciler</caption><thead><tr><th>İstemci</th><th>Protokol</th><th>Yetkiler</th><th>Durum</th></tr></thead><tbody>
+    {% for binding in consumer_bindings %}<tr><td><strong><a href="{% url 'console:consumer_detail' binding.consumer.id %}">{{ binding.consumer.name }}</a></strong><br><span class="muted mono">{{ binding.consumer.subject }}</span></td><td>{{ binding.consumer.get_protocol_display }}</td><td>{% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</td><td><span class="badge {{ binding.status }}">{{ binding.get_status_display }}</span></td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="muted">Bu senaryoyu çağırmaya yetkili istemci yok.</p>{% endif %}
 </section>
 <script src="{% static 'console/copy_text.js' %}" defer></script>
 {% endblock %}
