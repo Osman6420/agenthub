@@ -45,12 +45,13 @@ export function App({
         api.nodeSchema(orgSlug), api.listDrafts(), api.listArtifactDrafts(),
       ]);
       setSchema(s);
-      setDrafts(list.drafts.filter((d) => d.organization === orgSlug));
+      setDrafts(list.drafts.filter((d) => d.organization === orgSlug &&
+        (!initial?.scenario_id || d.scenario_id === initial.scenario_id)));
       setArtifactDrafts(artifactList.drafts.filter((d) => d.organization === orgSlug));
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
     }
-  }, [api, orgSlug]);
+  }, [api, initial?.scenario_id, orgSlug]);
 
   useEffect(() => {
     void reload();
@@ -89,6 +90,8 @@ export function App({
     try {
       const draft = await api.createDraft({
         organization: orgSlug,
+        ...(initial?.project_id ? { project_id: initial.project_id } : {}),
+        ...(initial?.scenario_id ? { scenario_id: initial.scenario_id } : {}),
         name: newName,
         logical_id: newId,
         body: {},

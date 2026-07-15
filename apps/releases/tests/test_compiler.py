@@ -88,6 +88,19 @@ def test_compile_fails_on_missing_reference(scenario: Scenario) -> None:
 
 
 @pytest.mark.django_db
+def test_compile_rejects_role_type_confusion(scenario: Scenario) -> None:
+    _seed_contracts(scenario.project.organization)
+    with pytest.raises(CompileError, match="incompatible"):
+        compile_release(
+            scenario=scenario,
+            refs=[ArtifactRef("output_contract", ArtifactType.INPUT_CONTRACT, "customer_query", 1)],
+            runtime_version="rt:3.0.0",
+            created_by="alice",
+        )
+    assert ScenarioRelease.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_compile_fails_on_inline_secret_in_pinned_body(scenario: Scenario) -> None:
     org = scenario.project.organization
     # Bypass the service to plant a secret-bearing artifact, then compile.

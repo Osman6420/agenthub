@@ -11,7 +11,7 @@ from django.core.cache import cache
 from apps.artifacts.types import ArtifactType
 from apps.audit.services import record_event
 from apps.builder import services
-from apps.catalog.models import AIProject
+from apps.catalog.models import AIProject, Scenario
 from apps.orchestration.authoring import (
     AuthoringContract,
     AuthoringProviderError,
@@ -210,6 +210,7 @@ def accept_candidate(
     *,
     organization: Organization,
     project: AIProject | None,
+    scenario: Scenario | None = None,
     actor: str,
     name: str,
     logical_id: str,
@@ -217,6 +218,7 @@ def accept_candidate(
     artifact_type: Any = ArtifactType.WORKFLOW_DEFINITION,
     prompt_contract: Any = None,
     draft_id: int | None = None,
+    expected_revision: int | None = None,
     request_id: str = "",
 ):
     if not isinstance(artifact_type, str):
@@ -258,6 +260,7 @@ def accept_candidate(
         return services.create_draft(
             organization=organization,
             project=project,
+            scenario=scenario,
             name=name,
             logical_id=logical_id,
             body=body,
@@ -268,7 +271,12 @@ def accept_candidate(
     if draft is None or (project is not None and draft.project_id != project.id):
         raise services.BuilderError("draft_not_found")
     return services.update_draft(
-        draft, actor=actor, name=name or None, body=body, request_id=request_id
+        draft,
+        actor=actor,
+        expected_revision=expected_revision,
+        name=name or None,
+        body=body,
+        request_id=request_id,
     )
 
 

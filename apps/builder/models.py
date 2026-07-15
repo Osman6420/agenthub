@@ -33,6 +33,13 @@ class WorkflowDraft(TimeStampedModel):
         blank=True,
         related_name="workflow_drafts",
     )
+    scenario = models.ForeignKey(
+        "catalog.Scenario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="workflow_drafts",
+    )
     name = models.CharField(max_length=200)
     # The target artifact ``logical_id`` used when the draft is published.
     logical_id = models.CharField(max_length=128)
@@ -40,6 +47,8 @@ class WorkflowDraft(TimeStampedModel):
     body = models.JSONField(default=dict, blank=True)
     created_by = models.CharField(max_length=200)
     updated_by = models.CharField(max_length=200)
+    # Monotonic compare-and-swap token for editor updates and publish/delete actions.
+    revision = models.PositiveBigIntegerField(default=1)
     # Records the most recent artifact version published from this draft (0 = never).
     last_published_version = models.PositiveIntegerField(default=0)
     last_published_at = models.DateTimeField(null=True, blank=True)
@@ -87,6 +96,7 @@ class ArtifactDraft(TimeStampedModel):
     body = models.JSONField(default=dict)
     created_by = models.CharField(max_length=200)
     updated_by = models.CharField(max_length=200)
+    revision = models.PositiveBigIntegerField(default=1)
 
     class Meta:
         constraints = [

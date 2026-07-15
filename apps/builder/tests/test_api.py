@@ -13,6 +13,7 @@ from apps.artifacts.models import ArtifactVersion
 from apps.audit.models import AuditEvent
 from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.tests.conftest import BuilderFixture, simple_workflow
+from apps.catalog.models import AIProject, Scenario
 from apps.orchestration.authoring import (
     AuthoringContract,
     AuthoringResponse,
@@ -123,6 +124,46 @@ def test_author_creates_draft(client: Client, bf: BuilderFixture) -> None:
     assert AuditEvent.objects.filter(action="console.builder.draft.create").exists()
 
 
+def test_author_creates_scenario_scoped_draft_and_rejects_foreign_scenario(
+    client: Client, bf: BuilderFixture
+) -> None:
+    scenario = Scenario.objects.create(project=bf.project, slug="studio", name="Studio")
+    foreign_project = AIProject.objects.create(
+        organization=bf.other_org, slug="foreign", name="Foreign"
+    )
+    foreign = Scenario.objects.create(project=foreign_project, slug="private", name="Private")
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": scenario.pk,
+            "name": "Studio flow",
+            "logical_id": "studio_flow",
+            "body": {},
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["scenario_id"] == scenario.pk
+    denied = _post(
+        client,
+        reverse("builder_api:drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": foreign.pk,
+            "name": "Forged",
+            "logical_id": "forged",
+            "body": {},
+        },
+    )
+    assert denied.status_code == 400
+    assert denied.json()["error"]["code"] == "scenario_not_found"
+    assert not WorkflowDraft.objects.filter(logical_id="forged").exists()
+
+
 def test_non_author_cannot_create(client: Client, bf: BuilderFixture) -> None:
     client.force_login(bf.viewer)
     response = _post(
@@ -162,11 +203,30 @@ def test_duplicate_logical_id_is_rejected(client: Client, bf: BuilderFixture) ->
 def test_author_updates_draft_body(client: Client, bf: BuilderFixture) -> None:
     client.force_login(bf.author)
     url = reverse("builder_api:draft_detail", args=[bf.draft.pk])
-    response = _put(client, url, {"name": "Renamed", "body": {"kind": "Workflow"}})
+    response = _put(client, url, {"revision": 1, "name": "Renamed", "body": {"kind": "Workflow"}})
     assert response.status_code == 200
     bf.draft.refresh_from_db()
     assert bf.draft.name == "Renamed"
     assert bf.draft.updated_by == "author"
+    assert bf.draft.revision == 2
+
+
+def test_stale_workflow_update_is_conflict_without_mutation(
+    client: Client, bf: BuilderFixture
+) -> None:
+    client.force_login(bf.author)
+    url = reverse("builder_api:draft_detail", args=[bf.draft.pk])
+    assert _put(client, url, {"revision": 1, "name": "First editor"}).status_code == 200
+    response = _put(
+        client,
+        url,
+        {"revision": 1, "name": "STALE_PRIVATE_BODY", "body": {"secret": "PRIVATE"}},
+    )
+    assert response.status_code == 409
+    assert response.json() == {"error": {"code": "stale_revision", "message": "stale_revision"}}
+    bf.draft.refresh_from_db()
+    assert bf.draft.name == "First editor"
+    assert bf.draft.body == simple_workflow()
 
 
 def test_non_author_cannot_update_or_delete(client: Client, bf: BuilderFixture) -> None:
@@ -180,7 +240,12 @@ def test_non_author_cannot_update_or_delete(client: Client, bf: BuilderFixture) 
 def test_author_deletes_draft(client: Client, bf: BuilderFixture) -> None:
     client.force_login(bf.author)
     url = reverse("builder_api:draft_detail", args=[bf.draft.pk])
-    assert client.delete(url).status_code == 200
+    assert (
+        client.delete(
+            url, data=json.dumps({"revision": 1}), content_type="application/json"
+        ).status_code
+        == 200
+    )
     assert not WorkflowDraft.objects.filter(pk=bf.draft.pk).exists()
 
 
@@ -212,7 +277,7 @@ def test_diagnostics_invalid_body_returns_errors(client: Client, bf: BuilderFixt
 def test_publish_creates_workflow_artifact(client: Client, bf: BuilderFixture) -> None:
     client.force_login(bf.author)
     url = reverse("builder_api:draft_publish", args=[bf.draft.pk])
-    response = _post(client, url, {})
+    response = _post(client, url, {"revision": 1})
     assert response.status_code == 201
     data = response.json()
     assert data["artifact_type"] == "workflow_definition"
@@ -224,6 +289,7 @@ def test_publish_creates_workflow_artifact(client: Client, bf: BuilderFixture) -
     assert AuditEvent.objects.filter(action="console.builder.draft.publish").exists()
     bf.draft.refresh_from_db()
     assert bf.draft.last_published_version == 1
+    assert bf.draft.revision == 2
 
 
 def test_non_author_cannot_publish(client: Client, bf: BuilderFixture) -> None:
@@ -243,7 +309,7 @@ def test_publish_rejects_inline_secret(client: Client, bf: BuilderFixture) -> No
 
     client.force_login(bf.author)
     url = reverse("builder_api:draft_publish", args=[bf.draft.pk])
-    response = _post(client, url, {})
+    response = _post(client, url, {"revision": 1})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "publish_rejected"
     assert not ArtifactVersion.objects.filter(organization=bf.org).exists()
@@ -793,14 +859,19 @@ def test_artifact_draft_is_tenant_scoped_mutable_and_has_no_publish_action(
     updated = _put(
         client,
         detail_url,
-        {"name": "Girdi v2", "body": {"type": "object", "properties": {}}},
+        {"revision": 1, "name": "Girdi v2", "body": {"type": "object", "properties": {}}},
     )
     assert updated.status_code == 200
     assert updated.json()["name"] == "Girdi v2"
     # POST is deliberately absent: generic drafts cannot publish in P10.2.
     assert _post(client, detail_url, {}).status_code == 405
     assert not ArtifactVersion.objects.exists()
-    assert client.delete(detail_url).status_code == 200
+    assert (
+        client.delete(
+            detail_url, data=json.dumps({"revision": 2}), content_type="application/json"
+        ).status_code
+        == 200
+    )
     assert not ArtifactDraft.objects.exists()
     assert AuditEvent.objects.filter(action="console.builder.artifact_draft.update").exists()
     assert AuditEvent.objects.filter(action="console.builder.artifact_draft.delete").exists()
@@ -821,7 +892,7 @@ def test_artifact_draft_update_revalidates_and_rejects_unknown_fields(
     )
     client.force_login(bf.author)
     url = reverse("builder_api:artifact_draft_detail", args=[draft.pk])
-    invalid = _put(client, url, {"body": {"type": 42}})
+    invalid = _put(client, url, {"revision": 1, "body": {"type": 42}})
     assert invalid.status_code == 400
     assert invalid.json()["error"]["code"] == "candidate_invalid_artifact"
     unexpected = _put(client, url, {"artifact_type": "input_contract"})
@@ -829,3 +900,31 @@ def test_artifact_draft_update_revalidates_and_rejects_unknown_fields(
     assert unexpected.json()["error"]["code"] == "unexpected_field"
     draft.refresh_from_db()
     assert draft.artifact_type == "output_contract"
+
+
+def test_stale_artifact_draft_update_is_conflict_without_mutation(
+    client: Client, bf: BuilderFixture
+) -> None:
+    draft = ArtifactDraft.objects.create(
+        organization=bf.org,
+        project=bf.project,
+        artifact_type="input_contract",
+        name="Original",
+        logical_id="concurrent_input",
+        body={"type": "object"},
+        created_by="author",
+        updated_by="author",
+    )
+    client.force_login(bf.author)
+    url = reverse("builder_api:artifact_draft_detail", args=[draft.pk])
+    assert _put(client, url, {"revision": 1, "name": "First editor"}).status_code == 200
+    response = _put(
+        client,
+        url,
+        {"revision": 1, "name": "STALE_PRIVATE", "body": {"type": "string"}},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "stale_revision"
+    draft.refresh_from_db()
+    assert draft.name == "First editor"
+    assert draft.body == {"type": "object"}

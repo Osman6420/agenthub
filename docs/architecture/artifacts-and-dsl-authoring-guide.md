@@ -134,6 +134,11 @@ scope bu tek organizasyona daraltılır.
 
 Authoring yüzeylerinin rolleri:
 
+Workflow ve sözleşme taslakları monotonic `revision` taşır. Update/delete ve workflow publish,
+operatörün okuduğu revision ile atomik karşılaştırma yapar; stale istek `stale_revision` conflict
+olarak reddedilir ve daha yeni authoring state'i sessizce ezemez. Conflict yanıtı taslak gövdesini
+yansıtmaz. Bu revision immutable artifact version veya release version değildir.
+
 - Scenario Studio/Builder: mutable taslak ve canonical validation girişidir; doğrudan active runtime
   değiştirmez.
 - Artifact detail: bir immutable exact version’ın body/checksum ve pin kullanımını inceler.
@@ -1076,6 +1081,22 @@ Yalnız JSON döndür; açıklama veya Markdown fence ekleme.
   `apps/console/scoping.py`, `apps/console/templates/console/`
 - Human membership/write authorization and tenant context: `apps/tenancy/services.py`,
   `apps/tenancy/middleware.py`, `apps/tenancy/context.py`
+
+## 19. Scenario Studio lifecycle contract
+
+- A workflow draft may carry direct nullable scenario lineage. The server verifies that scenario,
+  project and organization agree; a deep link is never authorization.
+- Mutable workflow and artifact drafts carry an integer revision. Update, delete and workflow
+  publication require the revision the editor read; a stale write returns `stale_revision` with
+  HTTP 409 and does not replace the stored body.
+- The scenario page lists only immutable `ArtifactVersion` records from the scenario organization.
+  A release manager can assign unique manifest roles and compile an exact candidate pin; selection
+  never edits or clones the artifact and never promotes the candidate.
+- Reserved artifact-type roles and their dotted variants accept only the matching artifact type.
+  `workflow_definition` and `agent_definition` must use their canonical reserved roles. The release
+  compiler repeats this validation and remains authoritative for version/checksum resolution.
+- Draft, published artifact, candidate release and active release are separate lifecycle states.
+  Only the existing evaluated promotion path changes served runtime behavior.
 
 Bu dosyalardaki değişiklik sözleşme değişikliğidir; kılavuz, tests, compatibility ve migration/release
 etkileri aynı değişiklik içinde güncellenmelidir.

@@ -10,6 +10,8 @@ export interface OrgOption {
 export interface BuilderInitial {
   organization?: string;
   draft_id?: number;
+  project_id?: number;
+  scenario_id?: number;
 }
 
 export interface NodeFieldSchema {
@@ -77,11 +79,13 @@ export interface Draft {
   organization: string;
   organization_id: number;
   project_id: number | null;
+  scenario_id: number | null;
   name: string;
   logical_id: string;
   body: Record<string, unknown>;
   last_published_version: number;
   last_published_at: string | null;
+  revision: number;
   can_write: boolean;
 }
 
@@ -111,6 +115,7 @@ export interface ArtifactDraft {
   logical_id: string;
   body: Record<string, unknown>;
   updated_at: string;
+  revision: number;
   can_write: boolean;
 }
 

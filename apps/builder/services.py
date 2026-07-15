@@ -25,7 +25,7 @@ from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import ArtifactValidationError, compute_checksum, validate_body
 from apps.audit.services import record_event
 from apps.builder.models import ArtifactDraft, WorkflowDraft
-from apps.catalog.models import AIProject
+from apps.catalog.models import AIProject, Scenario
 from apps.tenancy.models import Organization
 from apps.workflows.compiler import compile_workflow
 
@@ -53,6 +53,13 @@ class BuilderError(ValueError):
         super().__init__(message or code)
 
 
+def _require_revision(*, expected: Any, actual: int) -> None:
+    if not isinstance(expected, int) or isinstance(expected, bool) or expected < 1:
+        raise BuilderError("revision_required")
+    if expected != actual:
+        raise BuilderError("stale_revision")
+
+
 def _validated_body(body: Any) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise BuilderError("invalid_body", "draft body must be a JSON object")
@@ -71,6 +78,7 @@ def create_draft(
     body: dict[str, Any] | None,
     actor: str,
     project: AIProject | None = None,
+    scenario: Scenario | None = None,
     request_id: str = "",
 ) -> WorkflowDraft:
     name = (name or "").strip()
@@ -81,11 +89,17 @@ def create_draft(
         raise BuilderError("logical_id_required", "logical_id is required")
     if project is not None and project.organization_id != organization.id:
         raise BuilderError("project_mismatch", "project must belong to the organization")
+    if scenario is not None:
+        if scenario.organization_id != organization.id:
+            raise BuilderError("scenario_mismatch")
+        if project is None or scenario.project_id != project.id:
+            raise BuilderError("scenario_project_mismatch")
     if WorkflowDraft.objects.filter(organization=organization, logical_id=logical_id).exists():
         raise BuilderError("duplicate_logical_id", "a draft with this logical_id already exists")
     draft = WorkflowDraft.objects.create(
         organization=organization,
         project=project,
+        scenario=scenario,
         name=name,
         logical_id=logical_id,
         body=_validated_body(body or {}),
@@ -101,11 +115,13 @@ def update_draft(
     draft: WorkflowDraft,
     *,
     actor: str,
+    expected_revision: Any,
     name: str | None = None,
     body: dict[str, Any] | None = None,
     request_id: str = "",
 ) -> WorkflowDraft:
     locked = WorkflowDraft.objects.select_for_update().get(pk=draft.pk)
+    _require_revision(expected=expected_revision, actual=locked.revision)
     if name is not None:
         stripped = name.strip()
         if not stripped:
@@ -114,15 +130,20 @@ def update_draft(
     if body is not None:
         locked.body = _validated_body(body)
     locked.updated_by = actor
-    locked.save(update_fields=["name", "body", "updated_by", "updated_at"])
+    locked.revision += 1
+    locked.save(update_fields=["name", "body", "updated_by", "revision", "updated_at"])
     _audit(actor, "update", locked, request_id=request_id)
     return locked
 
 
 @transaction.atomic
-def delete_draft(draft: WorkflowDraft, *, actor: str, request_id: str = "") -> None:
-    _audit(actor, "delete", draft, request_id=request_id)
-    draft.delete()
+def delete_draft(
+    draft: WorkflowDraft, *, actor: str, expected_revision: Any, request_id: str = ""
+) -> None:
+    locked = WorkflowDraft.objects.select_for_update().get(pk=draft.pk)
+    _require_revision(expected=expected_revision, actual=locked.revision)
+    _audit(actor, "delete", locked, request_id=request_id)
+    locked.delete()
 
 
 def diagnose(body: Any) -> dict[str, Any]:
@@ -255,11 +276,13 @@ def update_artifact_draft(
     draft: ArtifactDraft,
     *,
     actor: str,
+    expected_revision: Any,
     name: str | None = None,
     body: dict[str, Any] | None = None,
     request_id: str = "",
 ) -> ArtifactDraft:
     locked = ArtifactDraft.objects.select_for_update().get(pk=draft.pk)
+    _require_revision(expected=expected_revision, actual=locked.revision)
     if name is not None:
         stripped = name.strip()
         if not stripped:
@@ -274,15 +297,20 @@ def update_artifact_draft(
             raise BuilderError("candidate_invalid_artifact")
         locked.body = candidate
     locked.updated_by = actor
-    locked.save(update_fields=["name", "body", "updated_by", "updated_at"])
+    locked.revision += 1
+    locked.save(update_fields=["name", "body", "updated_by", "revision", "updated_at"])
     _audit_artifact_draft(actor, "update", locked, request_id=request_id)
     return locked
 
 
 @transaction.atomic
-def delete_artifact_draft(draft: ArtifactDraft, *, actor: str, request_id: str = "") -> None:
-    _audit_artifact_draft(actor, "delete", draft, request_id=request_id)
-    draft.delete()
+def delete_artifact_draft(
+    draft: ArtifactDraft, *, actor: str, expected_revision: Any, request_id: str = ""
+) -> None:
+    locked = ArtifactDraft.objects.select_for_update().get(pk=draft.pk)
+    _require_revision(expected=expected_revision, actual=locked.revision)
+    _audit_artifact_draft(actor, "delete", locked, request_id=request_id)
+    locked.delete()
 
 
 def _audit_artifact_draft(actor: str, verb: str, draft: ArtifactDraft, *, request_id: str) -> None:
@@ -303,6 +331,7 @@ def publish_draft(
     draft: WorkflowDraft,
     *,
     actor: str,
+    expected_revision: Any,
     source_git_revision: str = "",
     request_id: str = "",
 ) -> ArtifactVersion:
@@ -313,6 +342,7 @@ def publish_draft(
     introduces no parallel lifecycle.
     """
     locked = WorkflowDraft.objects.select_for_update().get(pk=draft.pk)
+    _require_revision(expected=expected_revision, actual=locked.revision)
     try:
         artifact = create_artifact_version(
             organization=locked.organization,
@@ -329,7 +359,10 @@ def publish_draft(
 
     locked.last_published_version = artifact.version
     locked.last_published_at = timezone.now()
-    locked.save(update_fields=["last_published_version", "last_published_at", "updated_at"])
+    locked.revision += 1
+    locked.save(
+        update_fields=["last_published_version", "last_published_at", "revision", "updated_at"]
+    )
     record_event(
         actor_type="user",
         actor_id=actor,

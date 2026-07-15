@@ -82,6 +82,7 @@ def test_scenario_shows_exact_active_artifact_release_and_project_draft(client: 
     draft = WorkflowDraft.objects.create(
         organization=org,
         project=project,
+        scenario=scenario,
         name="Policy graph",
         logical_id=artifact.logical_id,
         body=_workflow(),
@@ -97,9 +98,119 @@ def test_scenario_shows_exact_active_artifact_release_and_project_draft(client: 
     assert "workflow_definition" in body
     assert artifact.ref in body
     assert "checksum doğru" in body
-    assert f"organization={org.slug}&amp;draft={draft.pk}" in body
+    assert f"scenario={scenario.public_id}&amp;draft={draft.pk}" in body
     assert "release #" in body
     assert "En fazla 50 node ve 100 edge" in body
+
+
+@pytest.mark.django_db
+def test_release_manager_compiles_exact_same_tenant_candidate_without_activation(
+    client: Client,
+) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    _project, scenario = _scenario(org)
+    workflow = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="flow",
+        body=_workflow(),
+        created_by="author",
+    )
+    contract = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.INPUT_CONTRACT,
+        logical_id="input",
+        body={"type": "object"},
+        created_by="author",
+    )
+    client.force_login(_member("manager", org, Role.RELEASE_MANAGER))
+    response = client.post(
+        reverse("console:scenario_compile_candidate", args=[scenario.public_id]),
+        {
+            "artifact_ids": [str(workflow.pk), str(contract.pk)],
+            f"role_{workflow.pk}": "workflow_definition",
+            f"role_{contract.pk}": "input_contract",
+        },
+    )
+    assert response.status_code == 302
+    release = ScenarioRelease.objects.get()
+    assert release.status == ReleaseStatus.CANDIDATE
+    assert release.manifest["artifacts"]["workflow_definition"]["ref"] == workflow.ref
+    assert release.manifest["artifacts"]["input_contract"]["checksum"] == contract.checksum
+    assert not ScenarioRelease.objects.filter(status=ReleaseStatus.ACTIVE).exists()
+
+
+@pytest.mark.django_db
+def test_candidate_compile_denies_auditor_foreign_artifact_and_type_confusion(
+    client: Client,
+) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    other = Organization.objects.create(slug="org-b", name="B")
+    _project, scenario = _scenario(org)
+    local = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.INPUT_CONTRACT,
+        logical_id="input",
+        body={"type": "object"},
+        created_by="author",
+    )
+    foreign = create_artifact_version(
+        organization=other,
+        artifact_type=ArtifactType.INPUT_CONTRACT,
+        logical_id="private",
+        body={"type": "object", "title": "FOREIGN_PRIVATE"},
+        created_by="other",
+    )
+    url = reverse("console:scenario_compile_candidate", args=[scenario.public_id])
+    client.force_login(_member("auditor-denied", org, Role.AUDITOR))
+    assert client.post(url, {"artifact_ids": [str(local.pk)]}).status_code == 403
+
+    client.force_login(_member("manager-safe", org, Role.RELEASE_MANAGER))
+    assert (
+        client.post(
+            url,
+            {"artifact_ids": [str(foreign.pk)], f"role_{foreign.pk}": "input_contract"},
+        ).status_code
+        == 404
+    )
+    confused = client.post(
+        url,
+        {"artifact_ids": [str(local.pk)], f"role_{local.pk}": "output_contract"},
+        follow=True,
+    )
+    assert confused.status_code == 200
+    assert not ScenarioRelease.objects.exists()
+    assert "FOREIGN_PRIVATE" not in confused.content.decode()
+
+
+@pytest.mark.django_db
+def test_candidate_compile_rolls_back_when_audit_fails(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    _project, scenario = _scenario(org)
+    artifact = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.INPUT_CONTRACT,
+        logical_id="input",
+        body={"type": "object"},
+        created_by="author",
+    )
+    client.force_login(_member("manager-audit", org, Role.RELEASE_MANAGER))
+
+    def fail_audit(**_kwargs: Any) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr("apps.console.views.record_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        client.post(
+            reverse("console:scenario_compile_candidate", args=[scenario.public_id]),
+            {
+                "artifact_ids": [str(artifact.pk)],
+                f"role_{artifact.pk}": "input_contract",
+            },
+        )
+    assert not ScenarioRelease.objects.exists()
 
 
 @pytest.mark.django_db

@@ -26,11 +26,13 @@ function draftFixture(overrides: Partial<Draft> = {}): Draft {
     organization: "b-org",
     organization_id: 1,
     project_id: null,
+    scenario_id: null,
     name: "Flow",
     logical_id: "flow_a",
     body: {},
     last_published_version: 0,
     last_published_at: null,
+    revision: 1,
     can_write: true,
     ...overrides,
   };
@@ -67,9 +69,10 @@ function mockFetch(): Call[] {
           logical_id: "flow_a",
           version: 1,
           checksum: "c".repeat(64),
+          revision: 3,
         });
       }
-      return respond({ id: 1 });
+      return respond({ ...draftFixture(), revision: 2 });
     }),
   );
   return calls;
@@ -140,6 +143,10 @@ describe("end-to-end builder flow", () => {
     const diag = calls.find((c) => c.url.includes("/diagnostics/"));
     expect((diag?.body as { body: { spec: { nodes: unknown[] } } }).body.spec.nodes).toHaveLength(3);
     expect(diag?.csrf).toBe("tok-123");
+    const save = calls.find((c) => c.url.endsWith("/drafts/1/") && c.method === "PUT");
+    expect((save?.body as { revision: number }).revision).toBe(1);
+    const publish = calls.find((c) => c.url.includes("/publish/"));
+    expect((publish?.body as { revision: number }).revision).toBe(2);
     expect(calls.some((c) => c.url.includes("/publish/") && c.method === "POST")).toBe(true);
   });
 
@@ -158,5 +165,21 @@ describe("end-to-end builder flow", () => {
       await result.current.save();
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("publishes a dirty draft with the revision returned by its save", async () => {
+    const calls = mockFetch();
+    const api = new BuilderApi("/console/api/builder/");
+    const { result } = renderHook(() => useBuilder(api, schema, draftFixture()));
+    act(() => result.current.addNode("input"));
+
+    await act(async () => {
+      await result.current.publish();
+    });
+
+    const save = calls.find((call) => call.url.endsWith("/drafts/1/") && call.method === "PUT");
+    const publish = calls.find((call) => call.url.includes("/publish/"));
+    expect((save?.body as { revision: number }).revision).toBe(1);
+    expect((publish?.body as { revision: number }).revision).toBe(2);
   });
 });

@@ -217,6 +217,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | AI-assisted authoring (Phase 2 · WS3) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output allowlist, immutable prompt contracts and non-publishing contract drafts; live activation at Phase 2 closure | Existing ModelProfile/SSRF-safe egress + canonical validators | [P10 AI authoring](../tasks/phase-2-p10-ai-assisted-authoring/plan.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md), [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P10 verification](../tasks/phase-2-p10-ai-assisted-authoring/verification.md) |
 | Product coherence (Phase 2.5) | **Nine parts planned; required before Phase 2 live closure** — Part 1 dashboard/organization-overview/navigation is implemented and offline-verified with closure carryovers; Part 2 identifiers/UUID navigation is completed and verified; Parts 3–5 ownership/credentials, document-set lifecycle and unified source/mapping/index journey are implemented and automated-verified with Turkish owner browser review pending. Later parts cover scenario studio + reusable artifact selection, transform DSL, OpenAI adapters and integrated hardening | Verified Phase 2 application scope | [phase-2-5-plan](phase-2-5-plan.md) + [Part 1](../tasks/phase-2-5-part-1-workspace-navigation/plan.md) + [Part 2 archive](archive/phase-2-5-part-2-system-identifiers-2026-07-15/plan.md) + [Part 3](../tasks/phase-2-5-part-3-ownership-credentials/plan.md) + [Part 4](../tasks/phase-2-5-part-4-document-set-lifecycle/plan.md) + [Part 5](../tasks/phase-2-5-part-5-source-mapping-index-journey/plan.md) | Part 1–5 threat models complete; later task plans/ADRs pending at their gates | [Part 1 verification](../tasks/phase-2-5-part-1-workspace-navigation/verification.md) + [Part 2 verification](archive/phase-2-5-part-2-system-identifiers-2026-07-15/verification.md) + [Part 3 evidence](../tasks/phase-2-5-part-3-ownership-credentials/verification.md) + [Part 4 evidence](../tasks/phase-2-5-part-4-document-set-lifecycle/verification.md) + [Part 5 evidence](../tasks/phase-2-5-part-5-source-mapping-index-journey/verification.md) |
 | Phase 3 deferred security/identity/data | **Discovery/planned; moved out of Phase 2/2.5** — Personal MCP identity/OBO, governed upload malware/type scanning and persistent server-side conversation history | IdP/OBO/downstream trust, scanner-boundary and conversation-lifecycle decisions | [phase-3-plan](phase-3-plan.md) | ADRs pending | Verification pending |
+| Future durable workflow orchestration | **Backlog; revisit after Phase 2.5 Parts 6–7** — extend the current bounded DAG only from approved execution contracts, not from UI palette demand | Durable state/resume, idempotency, cancellation, recovery, authorization and resource-limit decisions | Planning task pending | ADR pending | Verification pending |
 
 ## Cross-cutting concerns
 
@@ -235,6 +236,25 @@ ownership, and compliance requirements still require production approval.
 3. Implement and verify the first secure vertical slice defined in the target plan.
 4. Add ingestion/evaluation/release operations with rollback evidence.
 5. Add workflow/tool/agent capabilities only after their threat models and controls are approved.
+
+### Future durable workflow node catalogue
+
+Revisit the following catalogue after Phase 2.5 Parts 6–7. Current supported nodes remain the
+compiler allowlist; this list is not an implementation commitment and must not appear as supported
+UI functionality before its runtime contract exists:
+
+- Existing/current families: input, output/format, condition/router, model generation,
+  retrieval/RAG and governed tool call.
+- Part 7 candidate: allowlisted transform operations and richer governed retrieval.
+- Future durable-orchestration candidates: parallel split/join, sub-workflow, agent call, human
+  approval, policy check, wait/event, explicit error handler and compensation/rollback step.
+
+Every new node family requires its own schema/compiler/runtime semantics, resource bounds,
+authorization and tenant-isolation review, idempotency/retry/cancellation behavior, safe
+observability and compatibility tests. Parallel, wait/event, approval, sub-workflow, error-handler
+or compensation nodes additionally require a durable pause/resume and crash-recovery design. Do not
+model endpoints, credentials or raw secrets inside workflow JSON; continue resolving only governed
+logical bindings from an exact release.
 
 ## Risks
 

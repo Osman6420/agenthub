@@ -40,8 +40,8 @@ def test_diagnose_ok_for_valid_body(bf: BuilderFixture) -> None:
 
 
 def test_publish_increments_version(bf: BuilderFixture) -> None:
-    first = services.publish_draft(bf.draft, actor="author")
-    second = services.publish_draft(bf.draft, actor="author")
+    first = services.publish_draft(bf.draft, actor="author", expected_revision=1)
+    second = services.publish_draft(bf.draft, actor="author", expected_revision=2)
     assert first.version == 1
     assert second.version == 2
     assert (
@@ -56,7 +56,7 @@ def test_publish_is_immutable_source_of_truth(bf: BuilderFixture) -> None:
     # The published artifact checksum is the canonical checksum of the draft body.
     from apps.artifacts.validation import compute_checksum
 
-    artifact = services.publish_draft(bf.draft, actor="author")
+    artifact = services.publish_draft(bf.draft, actor="author", expected_revision=1)
     assert artifact.checksum == compute_checksum(bf.draft.body)
 
 

@@ -92,7 +92,7 @@ export class BuilderApi {
   }
 
   updateArtifactDraft(
-    id: number, payload: { name?: string; body?: Record<string, unknown> },
+    id: number, payload: { revision: number; name?: string; body?: Record<string, unknown> },
   ): Promise<ArtifactDraft> {
     return request(this.url(`/artifact-drafts/${id}/`), {
       method: "PUT",
@@ -100,8 +100,10 @@ export class BuilderApi {
     });
   }
 
-  deleteArtifactDraft(id: number): Promise<{ deleted: boolean }> {
-    return request(this.url(`/artifact-drafts/${id}/`), { method: "DELETE" });
+  deleteArtifactDraft(id: number, revision: number): Promise<{ deleted: boolean }> {
+    return request(this.url(`/artifact-drafts/${id}/`), {
+      method: "DELETE", body: JSON.stringify({ revision }),
+    });
   }
 
   artifactDraftDiagnostics(
@@ -119,6 +121,8 @@ export class BuilderApi {
 
   createDraft(payload: {
     organization: string;
+    project_id?: number;
+    scenario_id?: number;
     name: string;
     logical_id: string;
     body: Record<string, unknown>;
@@ -129,15 +133,19 @@ export class BuilderApi {
     });
   }
 
-  updateDraft(id: number, payload: { name?: string; body?: Record<string, unknown> }): Promise<Draft> {
+  updateDraft(
+    id: number, payload: { revision: number; name?: string; body?: Record<string, unknown> },
+  ): Promise<Draft> {
     return request<Draft>(this.url(`/drafts/${id}/`), {
       method: "PUT",
       body: JSON.stringify(payload),
     });
   }
 
-  deleteDraft(id: number): Promise<{ deleted: boolean }> {
-    return request(this.url(`/drafts/${id}/`), { method: "DELETE" });
+  deleteDraft(id: number, revision: number): Promise<{ deleted: boolean }> {
+    return request(this.url(`/drafts/${id}/`), {
+      method: "DELETE", body: JSON.stringify({ revision }),
+    });
   }
 
   diagnostics(id: number, body: Record<string, unknown>): Promise<DiagnosticsResult> {
@@ -147,13 +155,16 @@ export class BuilderApi {
     });
   }
 
-  publish(id: number): Promise<{
+  publish(id: number, revision: number): Promise<{
     published: boolean;
     artifact_type: string;
     logical_id: string;
     version: number;
     checksum: string;
+    revision: number;
   }> {
-    return request(this.url(`/drafts/${id}/publish/`), { method: "POST", body: "{}" });
+    return request(this.url(`/drafts/${id}/publish/`), {
+      method: "POST", body: JSON.stringify({ revision }),
+    });
   }
 }

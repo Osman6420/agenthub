@@ -182,6 +182,10 @@ Log in as `editor` (or `admin`) and open **Builder** (`/console/builder/`).
 | 2.9 | Try to close the browser tab with unsaved edits | Browser warns (beforeunload) |
 | 2.10 | **Save**, then **Publish** | Creates a `workflow_definition` artifact (see Artifacts screen) |
 | 2.11 | Log in as `auditor`, open the same draft | Read-only: palette/save/publish disabled |
+| 2.12 | Open a scenario and choose **Scenario Studio** | Builder opens with that scenario/project context; unrelated drafts are absent |
+| 2.13 | Open the same draft in two tabs, save in tab A, then save tab B | Tab B receives a stale-revision conflict and keeps its unsaved candidate |
+| 2.14 | As `releaser`, select compatible immutable artifacts on the scenario page and compile | A candidate release shows exact roles, versions and checksums; active release is unchanged |
+| 2.15 | Repeat as `auditor`, then forge a foreign/incompatible artifact ID | Auditor has no compile action; forged input fails without creating a release or disclosing the artifact |
 
 The published artifact then follows the normal compile → eval → promote path (§4).
 

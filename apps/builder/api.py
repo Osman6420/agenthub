@@ -27,7 +27,7 @@ from django.views.decorators.http import require_http_methods
 from apps.builder import authoring, services
 from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.node_schema import build_node_schema
-from apps.catalog.models import AIProject
+from apps.catalog.models import AIProject, Scenario
 from apps.tenancy.models import Organization
 from apps.tenancy.services import allowed_organization_ids, can_author_scenarios
 
@@ -46,7 +46,8 @@ def operator_api(view: Callable[..., HttpResponse]) -> Callable[..., HttpRespons
         try:
             return view(request, *args, **kwargs)
         except services.BuilderError as exc:
-            return JsonResponse({"error": {"code": exc.code, "message": str(exc)}}, status=400)
+            status = 409 if exc.code == "stale_revision" else 400
+            return JsonResponse({"error": {"code": exc.code, "message": str(exc)}}, status=status)
         except PermissionDenied:
             return JsonResponse({"error": {"code": "forbidden"}}, status=403)
         except Http404:
@@ -98,12 +99,14 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
         {
             "organization",
             "project_id",
+            "scenario_id",
             "name",
             "logical_id",
             "candidate",
             "artifact_type",
             "prompt_contract",
             "draft_id",
+            "revision",
         },
     )
     org = _resolve_org_in_scope(request, payload.get("organization"))
@@ -114,6 +117,7 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
     draft = authoring.accept_candidate(
         organization=org,
         project=project,
+        scenario=_resolve_scenario(org, project, payload.get("scenario_id")),
         actor=_actor(request),
         name=payload.get("name", ""),
         logical_id=payload.get("logical_id", ""),
@@ -121,6 +125,7 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
         artifact_type=payload.get("artifact_type", "workflow_definition"),
         prompt_contract=payload.get("prompt_contract"),
         draft_id=payload.get("draft_id"),
+        expected_revision=payload.get("revision"),
         request_id=_request_id(request),
     )
     if isinstance(draft, ArtifactDraft):
@@ -194,6 +199,7 @@ def _serialize(draft: WorkflowDraft, *, can_write: bool) -> dict[str, Any]:
         "organization": draft.organization.slug,
         "organization_id": draft.organization_id,
         "project_id": draft.project_id,
+        "scenario_id": draft.scenario_id,
         "name": draft.name,
         "logical_id": draft.logical_id,
         "body": draft.body,
@@ -203,6 +209,7 @@ def _serialize(draft: WorkflowDraft, *, can_write: bool) -> dict[str, Any]:
         ),
         "created_by": draft.created_by,
         "updated_by": draft.updated_by,
+        "revision": draft.revision,
         "updated_at": draft.updated_at.isoformat(),
         # Drives the frontend read-only mode; the server still re-checks on every write.
         "can_write": can_write,
@@ -222,6 +229,7 @@ def _serialize_artifact_draft(draft: ArtifactDraft, *, can_write: bool) -> dict[
         "body": draft.body,
         "created_by": draft.created_by,
         "updated_by": draft.updated_by,
+        "revision": draft.revision,
         "updated_at": draft.updated_at.isoformat(),
         "can_write": can_write,
     }
@@ -253,10 +261,14 @@ def drafts(request: HttpRequest) -> HttpResponse:
             {
                 "id": d.pk,
                 "organization": d.organization.slug,
+                "organization_id": d.organization_id,
+                "project_id": d.project_id,
+                "scenario_id": d.scenario_id,
                 "name": d.name,
                 "logical_id": d.logical_id,
                 "last_published_version": d.last_published_version,
                 "updated_at": d.updated_at.isoformat(),
+                "revision": d.revision,
                 "can_write": can_author_scenarios(request.user, d.organization_id),
             }
             for d in qs
@@ -264,9 +276,13 @@ def drafts(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"drafts": items})
 
     payload = _json_body(request)
+    _reject_unknown_fields(
+        payload, {"organization", "project_id", "scenario_id", "name", "logical_id", "body"}
+    )
     org = _resolve_org_in_scope(request, payload.get("organization"))
     _require_author(request, org.id)
     project = _resolve_project(org, payload.get("project_id"))
+    scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
     draft = services.create_draft(
         organization=org,
         name=payload.get("name", ""),
@@ -274,6 +290,7 @@ def drafts(request: HttpRequest) -> HttpResponse:
         body=payload.get("body"),
         actor=_actor(request),
         project=project,
+        scenario=scenario,
         request_id=_request_id(request),
     )
     return JsonResponse(_serialize(draft, can_write=True), status=201)
@@ -289,13 +306,22 @@ def draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
 
     _require_author(request, draft.organization_id)
     if request.method == "DELETE":
-        services.delete_draft(draft, actor=_actor(request), request_id=_request_id(request))
+        payload = _json_body(request)
+        _reject_unknown_fields(payload, {"revision"})
+        services.delete_draft(
+            draft,
+            actor=_actor(request),
+            expected_revision=payload.get("revision"),
+            request_id=_request_id(request),
+        )
         return JsonResponse({"deleted": True})
 
     payload = _json_body(request)
+    _reject_unknown_fields(payload, {"name", "body", "revision"})
     updated = services.update_draft(
         draft,
         actor=_actor(request),
+        expected_revision=payload.get("revision"),
         name=payload.get("name"),
         body=payload.get("body"),
         request_id=_request_id(request),
@@ -318,7 +344,15 @@ def draft_diagnostics(request: HttpRequest, pk: int) -> HttpResponse:
 def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
     draft = _scoped_draft(request, pk)
     _require_author(request, draft.organization_id)
-    artifact = services.publish_draft(draft, actor=_actor(request), request_id=_request_id(request))
+    payload = _json_body(request)
+    _reject_unknown_fields(payload, {"revision"})
+    artifact = services.publish_draft(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        request_id=_request_id(request),
+    )
+    draft.refresh_from_db(fields=["revision"])
     return JsonResponse(
         {
             "published": True,
@@ -326,6 +360,7 @@ def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
             "logical_id": artifact.logical_id,
             "version": artifact.version,
             "checksum": artifact.checksum,
+            "revision": draft.revision,
         },
         status=201,
     )
@@ -360,15 +395,21 @@ def artifact_draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
         return JsonResponse(_serialize_artifact_draft(draft, can_write=can_write))
     _require_author(request, draft.organization_id)
     if request.method == "DELETE":
+        payload = _json_body(request)
+        _reject_unknown_fields(payload, {"revision"})
         services.delete_artifact_draft(
-            draft, actor=_actor(request), request_id=_request_id(request)
+            draft,
+            actor=_actor(request),
+            expected_revision=payload.get("revision"),
+            request_id=_request_id(request),
         )
         return JsonResponse({"deleted": True})
     payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
-    _reject_unknown_fields(payload, {"name", "body"})
+    _reject_unknown_fields(payload, {"name", "body", "revision"})
     updated = services.update_artifact_draft(
         draft,
         actor=_actor(request),
+        expected_revision=payload.get("revision"),
         name=payload.get("name"),
         body=payload.get("body"),
         request_id=_request_id(request),
@@ -393,3 +434,16 @@ def _resolve_project(org: Organization, ref: Any) -> AIProject | None:
     if project is None:
         raise services.BuilderError("project_not_found", "project not found in organization")
     return project
+
+
+def _resolve_scenario(org: Organization, project: AIProject | None, ref: Any) -> Scenario | None:
+    if ref in (None, ""):
+        return None
+    if not isinstance(ref, int) and not (isinstance(ref, str) and ref.isdigit()):
+        raise services.BuilderError("scenario_invalid")
+    scenario = Scenario.objects.filter(pk=int(ref), organization=org).first()
+    if scenario is None:
+        raise services.BuilderError("scenario_not_found")
+    if project is None or scenario.project_id != project.id:
+        raise services.BuilderError("scenario_project_mismatch")
+    return scenario

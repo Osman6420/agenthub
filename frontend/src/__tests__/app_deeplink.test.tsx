@@ -8,6 +8,7 @@ const draft = {
   organization: "org-b",
   organization_id: 2,
   project_id: 4,
+  scenario_id: null,
   name: "Deep linked graph",
   logical_id: "graph",
   body: {
@@ -25,6 +26,7 @@ const draft = {
   },
   last_published_version: 1,
   last_published_at: null,
+  revision: 1,
   can_write: false,
 };
 

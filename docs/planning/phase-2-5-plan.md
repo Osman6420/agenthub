@@ -59,7 +59,7 @@ assuming a later part is complete.
 | Part 3 | **Implemented and automated-verified; Turkish owner browser review pending.** Durable project ownership and consumer credential lifecycle | P2.5.1 ownership/consumer subset | Authentication, authorization and secrets implementation approved 2026-07-15 |
 | Part 4 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Document-set-first content lifecycle | P2.5.3 | Storage/purge compatibility and authorization review passed 2026-07-15 |
 | Part 5 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Unified source, mapping and index journey | P2.5.4 | Egress-profile boundary and operational-failure review passed 2026-07-15 |
-| Part 6 | Unified scenario studio, reusable artifact selection and canonical authoring contract | P2.5.5 + P2.5.2 authoring sections | Canonical compiler round-trip and publish-boundary review |
+| Part 6 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Scenario-scoped Studio, optimistic concurrency and immutable artifact candidate composition | P2.5.5 + P2.5.2 authoring sections | Full SQLite/PostgreSQL, compiler boundary, authorization and compatibility evidence recorded 2026-07-16 |
 | Part 7 | Governed transform/retrieval DSL | P2.5.6 + P2.5.2 DSL sections | DSL contract, resource limits and runtime security approval |
 | Part 8 | OpenAI-compatible invocation adapters | P2.5.7 | Additive public API/authentication approval |
 | Part 9 | Integrated hardening and Phase 2 closure handoff | Phase 2.5 acceptance | Full regression, Turkish journey and owner sign-off |
@@ -79,6 +79,9 @@ Detailed Part 2 plan:
 
 Detailed Part 3 plan:
 [`phase-2-5-part-3-ownership-credentials`](../tasks/phase-2-5-part-3-ownership-credentials/plan.md).
+
+Detailed Part 6 plan:
+[`phase-2-5-part-6-scenario-studio`](../tasks/phase-2-5-part-6-scenario-studio/plan.md).
 
 ## P2.5.1 — Organization overview and navigable domain graph
 

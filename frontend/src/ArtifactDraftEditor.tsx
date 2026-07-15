@@ -45,7 +45,7 @@ export function ArtifactDraftEditor({
     const body = parsedBody();
     if (!body) return;
     try {
-      const updated = await api.updateArtifactDraft(draft.id, { name, body });
+      const updated = await api.updateArtifactDraft(draft.id, { revision: draft.revision, name, body });
       onChange(updated);
       setStatus("Taslak kaydedildi.");
     } catch (error) {
@@ -55,7 +55,7 @@ export function ArtifactDraftEditor({
 
   async function remove() {
     try {
-      await api.deleteArtifactDraft(draft.id);
+      await api.deleteArtifactDraft(draft.id, draft.revision);
       onChange(null);
       onClose();
     } catch (error) {

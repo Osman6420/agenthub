@@ -16,6 +16,7 @@ const draft: ArtifactDraft = {
   logical_id: "input_v1",
   body: { type: "object" },
   updated_at: "2026-07-14T00:00:00Z",
+  revision: 1,
   can_write: true,
 };
 

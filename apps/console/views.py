@@ -114,6 +114,12 @@ from apps.ingestion.tasks import (
     sync_rest_source,
 )
 from apps.ingestion.vector_store import set_tenant_context
+from apps.releases.compiler import (
+    ArtifactRef,
+    CompileError,
+    compile_release,
+    role_accepts_artifact_type,
+)
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.tenancy.identifiers import IdentifierAllocationError
@@ -645,7 +651,7 @@ def scenario_detail(
     bound_set_ids = {binding.document_set_id for binding in bindings}
     project_drafts = list(
         WorkflowDraft.objects.filter(
-            organization_id=organization_id, project=scenario.project
+            organization_id=organization_id, project=scenario.project, scenario=scenario
         ).order_by("-updated_at")[:50]
     )
     drafts_by_logical_id = {draft.logical_id: draft for draft in project_drafts}
@@ -666,6 +672,11 @@ def scenario_detail(
             "-created_at", "-pk"
         )[:20]
     ]
+    artifact_candidates = list(
+        ArtifactVersion.objects.filter(organization_id=organization_id).order_by(
+            "type", "logical_id", "-version"
+        )[:201]
+    )
     return render(
         request,
         "console/scenario_detail.html",
@@ -676,6 +687,8 @@ def scenario_detail(
             "active_release": active_release,
             "active_artifacts": active_artifacts,
             "release_rows": release_rows,
+            "artifact_candidates": artifact_candidates[:200],
+            "artifact_candidates_limited": len(artifact_candidates) > 200,
             "project_drafts": project_drafts,
             "dsl_guide": _workflow_dsl_guide(),
             "consumer_bindings": consumer_bindings,
@@ -685,8 +698,73 @@ def scenario_detail(
             .exclude(id__in=bound_set_ids)
             .order_by("name", "logical_id"),
             "can_write": can_author_scenarios(request.user, organization_id),
+            "can_compile_release": can_manage_releases(request.user, organization_id),
         },
     )
+
+
+@login_required
+@require_POST
+def scenario_compile_candidate(request: HttpRequest, public_id: object) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, public_id=public_id)
+    organization_id = scenario.organization_id
+    if not can_manage_releases(request.user, organization_id):
+        raise PermissionDenied
+    if scenario.organization.status != OrganizationStatus.ACTIVE:
+        raise PermissionDenied
+    raw_ids = request.POST.getlist("artifact_ids")
+    if not raw_ids or len(raw_ids) > 50 or len(set(raw_ids)) != len(raw_ids):
+        messages.error(request, "Candidate için 1–50 benzersiz artifact sürümü seçin.")
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    if any(not value.isdigit() or len(value) > 19 for value in raw_ids):
+        raise Http404
+    artifacts = list(
+        ArtifactVersion.objects.filter(
+            organization_id=organization_id, pk__in=[int(value) for value in raw_ids]
+        )
+    )
+    if len(artifacts) != len(raw_ids):
+        raise Http404
+    refs: list[ArtifactRef] = []
+    for artifact in artifacts:
+        role = request.POST.get(f"role_{artifact.pk}", "").strip()
+        if not role_accepts_artifact_type(role, artifact.type):
+            messages.error(
+                request,
+                f"{artifact.type} için manifest rolü canonical role/type sözleşmesiyle uyumsuz.",
+            )
+            return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+        refs.append(ArtifactRef(role, artifact.type, artifact.logical_id, artifact.version))
+    if len({ref.role for ref in refs}) != len(refs):
+        messages.error(request, "Manifest rolleri benzersiz olmalıdır.")
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    active = ScenarioRelease.objects.filter(scenario=scenario, status=ReleaseStatus.ACTIVE).first()
+    runtime_version = active.runtime_version if active else "runtime:v1"
+    try:
+        with transaction.atomic():
+            release = compile_release(
+                scenario=scenario,
+                refs=refs,
+                runtime_version=runtime_version,
+                created_by=request.user.get_username(),
+            )
+            record_event(
+                actor_type="user",
+                actor_id=request.user.get_username(),
+                action="console.scenario.release.compile",
+                outcome="success",
+                organization_id=organization_id,
+                resource_type="scenario_release",
+                resource_id=str(release.pk),
+                reason=release.artifact_manifest_sha256,
+                request_id=_request_id(request),
+                trace_id=_trace_id(request),
+            )
+    except CompileError:
+        messages.error(request, "Candidate release canonical compiler tarafından reddedildi.")
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    messages.success(request, f"Candidate release #{release.pk} oluşturuldu; runtime değişmedi.")
+    return redirect("console:release_detail", release_id=release.pk)
 
 
 @login_required
@@ -1427,7 +1505,20 @@ def builder(request: HttpRequest) -> HttpResponse:
     organizations_by_slug = {org.slug: org for org in scoped_orgs}
     requested_org = request.GET.get("organization", "")
     requested_draft = request.GET.get("draft", "")
+    requested_scenario = request.GET.get("scenario", "")
     initial: dict[str, object] = {}
+    scenario = None
+    if requested_scenario:
+        scenario = (
+            scoping.scoped_scenarios(request.user).filter(public_id=requested_scenario).first()
+        )
+        if scenario is None or (requested_org and requested_org != scenario.organization.slug):
+            raise Http404
+        initial = {
+            "organization": scenario.organization.slug,
+            "project_id": scenario.project_id,
+            "scenario_id": scenario.pk,
+        }
     if requested_draft:
         if not requested_draft.isdigit() or len(requested_draft) > 19:
             raise Http404
@@ -1439,8 +1530,12 @@ def builder(request: HttpRequest) -> HttpResponse:
         ).first()
         if draft is None or (requested_org and requested_org != draft.organization.slug):
             raise Http404
-        initial = {"organization": draft.organization.slug, "draft_id": draft.pk}
-    elif requested_org:
+        if scenario is not None and (
+            draft.scenario_id != scenario.pk or draft.project_id != scenario.project_id
+        ):
+            raise Http404
+        initial.update({"organization": draft.organization.slug, "draft_id": draft.pk})
+    elif requested_org and scenario is None:
         if requested_org not in organizations_by_slug:
             raise Http404
         initial = {"organization": requested_org}

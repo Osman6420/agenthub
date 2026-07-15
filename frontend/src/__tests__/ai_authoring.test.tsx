@@ -12,8 +12,9 @@ describe("AI authoring panel", () => {
       const accepted = String(url).endsWith("/accept/");
       return new Response(JSON.stringify(accepted ? {
         id: 7, organization: "org", organization_id: 1, project_id: null,
+        scenario_id: null,
         name: "AI", logical_id: "ai_flow", body: {}, last_published_version: 0,
-        last_published_at: null, can_write: true,
+        last_published_at: null, revision: 1, can_write: true,
       } : {
         artifact_type: "workflow_definition", candidate: { kind: "Workflow" },
         diagnostics: { ok: true, errors: [] },
@@ -45,7 +46,8 @@ describe("AI authoring panel", () => {
       return new Response(JSON.stringify(accepted ? {
         id: 8, draft_kind: "artifact", artifact_type: "input_contract",
         organization: "org", organization_id: 1, project_id: 3,
-        name: "Girdi", logical_id: "input_v1", body: { type: "object" }, can_write: true,
+        name: "Girdi", logical_id: "input_v1", body: { type: "object" },
+        updated_at: "2026-07-16T00:00:00Z", revision: 1, can_write: true,
       } : {
         artifact_type: "input_contract", candidate: { type: "object" },
         diagnostics: { ok: true, errors: [], compiled_checksum: "b".repeat(64) },

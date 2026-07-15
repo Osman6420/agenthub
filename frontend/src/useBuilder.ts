@@ -7,7 +7,7 @@ import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import type { Connection, Edge, EdgeChange, Node, NodeChange } from "@xyflow/react";
 import { useCallback, useMemo, useState } from "react";
 
-import type { BuilderApi } from "./api";
+import { ApiError, type BuilderApi } from "./api";
 import { canonicalJson, dslToGraph, graphToDsl } from "./dsl";
 import { defaultConfig, nodeTypeSchema, suggestNodeId } from "./schema";
 import type {
@@ -39,7 +39,7 @@ export interface BuilderController {
   updateNodeConfig: (id: string, config: NodeConfig) => void;
   removeSelected: () => void;
   runDiagnostics: () => Promise<void>;
-  save: () => Promise<void>;
+  save: () => Promise<number | undefined>;
   publish: () => Promise<void>;
 }
 
@@ -52,6 +52,7 @@ export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): B
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
   const [status, setStatus] = useState<string>("");
+  const [revision, setRevision] = useState<number>(draft.revision);
 
   const readOnly = !draft.can_write;
 
@@ -168,18 +169,31 @@ export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): B
   }, [api, applyErrorHighlights, body, draft.id]);
 
   const save = useCallback(async () => {
-    if (readOnly) return;
-    await api.updateDraft(draft.id, { body: body as unknown as Record<string, unknown> });
-    setSavedCanonical(canonicalJson(body));
-    setStatus("Draft kaydedildi");
-  }, [api, body, draft.id, readOnly]);
+    if (readOnly) return undefined;
+    try {
+      const updated = await api.updateDraft(draft.id, {
+        revision, body: body as unknown as Record<string, unknown>,
+      });
+      setRevision(updated.revision);
+      setSavedCanonical(canonicalJson(body));
+      setStatus("Draft kaydedildi");
+      return updated.revision;
+    } catch (error) {
+      setStatus(error instanceof ApiError && error.code === "stale_revision"
+        ? "Taslak başka bir editör tarafından değiştirildi. Çalışmanız korunuyor; yenileyip uzlaştırın."
+        : String(error));
+      throw error;
+    }
+  }, [api, body, draft.id, readOnly, revision]);
 
   const publish = useCallback(async () => {
     if (readOnly) return;
-    if (isDirty) await save();
-    const result = await api.publish(draft.id);
+    const publishRevision = isDirty ? await save() : revision;
+    if (publishRevision === undefined) return;
+    const result = await api.publish(draft.id, publishRevision);
+    setRevision(result.revision);
     setStatus(`Yayımlandı: ${result.logical_id} v${result.version}`);
-  }, [api, draft.id, isDirty, readOnly, save]);
+  }, [api, draft.id, isDirty, readOnly, revision, save]);
 
   return {
     nodes,

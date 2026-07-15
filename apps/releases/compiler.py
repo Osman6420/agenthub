@@ -17,9 +17,12 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import canonical_json, compute_checksum, validate_body
 from apps.catalog.models import Scenario
 from apps.releases.models import ReleaseStatus, ScenarioRelease
+
+MAX_MANIFEST_ROLE_LENGTH = 128
 
 
 class CompileError(ValueError):
@@ -34,6 +37,34 @@ class ArtifactRef:
     type: str
     logical_id: str
     version: int
+
+
+def role_accepts_artifact_type(role: str, artifact_type: str) -> bool:
+    """Return whether a manifest role may pin ``artifact_type``.
+
+    Canonical singleton roles use the artifact type verbatim. Repeatable roles use a
+    type-prefixed namespace (for example ``tool_binding.search`` or
+    ``prompt_template.summary``). This prevents type confusion while retaining
+    multiple exact pins of one compatible type.
+    """
+    if (
+        not isinstance(role, str)
+        or not role
+        or len(role) > MAX_MANIFEST_ROLE_LENGTH
+        or not all(character.isalnum() or character in "._-" for character in role)
+    ):
+        return False
+    reserved = {value for value, _label in ArtifactType.choices}
+    prefix = role.split(".", 1)[0]
+    if role in reserved or prefix in reserved:
+        return role == artifact_type or role.startswith(f"{artifact_type}.")
+    # Workflow and agent runtimes require their canonical singleton roles. Other
+    # types may intentionally use semantic roles such as ``prompt`` or ``search``;
+    # those remain compatible unless they impersonate a reserved type namespace.
+    return artifact_type not in {
+        ArtifactType.WORKFLOW_DEFINITION,
+        ArtifactType.AGENT_DEFINITION,
+    }
 
 
 def _resolve(scenario: Scenario, ref: ArtifactRef) -> ArtifactVersion:
@@ -78,6 +109,8 @@ def compile_release(
     for ref in refs:
         if ref.role in artifacts_manifest:
             raise CompileError(f"duplicate role in release: {ref.role}")
+        if not role_accepts_artifact_type(ref.role, ref.type):
+            raise CompileError(f"role '{ref.role}' is incompatible with artifact type '{ref.type}'")
         artifact = _resolve(scenario, ref)
         # Defense in depth: re-validate the pinned body at compile time.
         try:
