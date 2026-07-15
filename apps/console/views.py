@@ -42,6 +42,7 @@ from apps.console.forms import (
     ConnectorScheduleForm,
     ConsumerForm,
     ConsumerTokenIssueForm,
+    DocumentReplacementForm,
     DocumentSetBuildForm,
     DocumentSetBulkUploadForm,
     DocumentSetForm,
@@ -58,10 +59,12 @@ from apps.documents.models import (
     DocumentLifecycle,
     DocumentSet,
     DocumentSetGrant,
+    DocumentSetMembership,
     DocumentSetVersion,
     DocumentSetVersionStatus,
     DocumentVersion,
     GrantPrincipalType,
+    ParseStatus,
     ScenarioDocumentSetBinding,
 )
 from apps.documents.services import DocumentError
@@ -1447,12 +1450,7 @@ def builder(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def documents(request: HttpRequest) -> HttpResponse:
-    """List the operator's document sets + documents and offer upload (P8.1).
-
-    Read scope is tenant membership (``allowed_organization_ids``); upload/soft-delete require
-    ``can_author_scenarios`` in the target org and are re-checked server-side. Non-authoritative:
-    all state changes go through the audited ``apps.documents.services``.
-    """
+    """List tenant-scoped document sets as the primary content workspace."""
     user = request.user
     sets = [
         {
@@ -1466,35 +1464,53 @@ def documents(request: HttpRequest) -> HttpResponse:
         }
         for s in scoping.scoped_document_sets(user).order_by("organization_id", "logical_id")
     ]
-    docs = [
-        {
-            "id": d.id,
-            "public_id": d.public_id,
-            "org": d.organization.slug,
-            "logical_id": d.logical_id,
-            "title": d.title,
-            "version": d.current_version,
-            "tombstoned": d.is_tombstoned,
-            "can_write": can_author_scenarios(user, d.organization_id),
-            "can_purge": can_admin_org(user, d.organization_id),
-        }
-        for d in scoping.scoped_documents(user).order_by("organization_id", "logical_id")
-    ]
-    upload_form = DocumentUploadForm(user=user)
-    set_form = DocumentSetForm(user=user)
-    # An operator can upload iff they may author in at least one org (None = platform admin).
     can_upload = author_organization_ids(user) != set()
+    can_open_advanced_inventory = admin_organization_ids(user) != set()
     return render(
         request,
         "console/documents.html",
         {
-            "title": "Documents",
+            "title": "Doküman setleri",
             "sets": sets,
-            "documents": docs,
-            "set_form": set_form,
-            "form": upload_form,
+            "set_form": DocumentSetForm(user=user),
             "can_upload": can_upload,
+            "can_open_advanced_inventory": can_open_advanced_inventory,
         },
+    )
+
+
+@login_required
+def advanced_document_inventory(request: HttpRequest) -> HttpResponse:
+    """Elevated storage/tombstone/purge inventory, separate from the product journey."""
+    organization_ids = admin_organization_ids(request.user)
+    if organization_ids == set():
+        raise PermissionDenied
+    queryset = scoping.scoped_documents(request.user)
+    if organization_ids is not None:
+        queryset = queryset.filter(organization_id__in=organization_ids)
+    pinned_document_ids = set(
+        DocumentSetMembership.objects.filter(document_version__document__in=queryset).values_list(
+            "document_version__document_id", flat=True
+        )
+    )
+    docs = [
+        {
+            "public_id": document.public_id,
+            "org": document.organization.slug,
+            "logical_id": document.logical_id,
+            "title": document.title,
+            "version": document.current_version,
+            "tombstoned": document.is_tombstoned,
+            "pinned": document.pk in pinned_document_ids,
+            "can_write": can_author_scenarios(request.user, document.organization_id),
+            "can_purge": can_admin_org(request.user, document.organization_id),
+        }
+        for document in queryset.order_by("organization_id", "logical_id")
+    ]
+    return render(
+        request,
+        "console/document_inventory_advanced.html",
+        {"title": "Gelişmiş doküman envanteri", "documents": docs},
     )
 
 
@@ -1535,7 +1551,7 @@ def document_soft_delete(
         raise PermissionDenied
     document_services.soft_delete_document(document, actor=request.user.get_username())
     messages.success(request, f"Document {document.logical_id} tombstoned.")
-    return redirect("console:documents")
+    return redirect("console:advanced_document_inventory")
 
 
 @login_required
@@ -1557,7 +1573,7 @@ def document_purge(
             messages.success(request, f"Document purged ({removed} versions removed).")
         except DocumentError as exc:
             messages.error(request, f"Purge failed: {exc.code}")
-    return redirect("console:documents")
+    return redirect("console:advanced_document_inventory")
 
 
 def _scoped_document(user: UserLike, pk: int | None = None, public_id: object = None) -> Document:
@@ -1629,8 +1645,13 @@ def document_set_detail(
             ],
             "members": [
                 {
+                    "membership_id": m.id,
+                    "public_id": m.document_version.document.public_id,
                     "logical_id": m.document_version.document.logical_id,
+                    "title": m.document_version.document.title,
                     "version": m.document_version.version,
+                    "parse_status": m.document_version.parse_status,
+                    "tombstoned": m.document_version.document.is_tombstoned,
                     "ordinal": m.ordinal,
                 }
                 for m in v.memberships.select_related("document_version__document").order_by(
@@ -1652,6 +1673,79 @@ def document_set_detail(
         .first()
     )
     latest_version = document_set.versions.order_by("-version").first()
+    latest_members = (
+        list(latest_version.memberships.select_related("document_version").all())
+        if latest_version is not None
+        else []
+    )
+    parsed_count = sum(
+        item.document_version.parse_status == ParseStatus.PARSED for item in latest_members
+    )
+    staged_ready = IndexVersion.objects.filter(
+        organization_id=document_set.organization_id,
+        document_set_version__document_set=document_set,
+        status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
+    ).exists()
+    lifecycle_steps = [
+        {
+            "label": "Yüklendi",
+            "complete": bool(latest_members),
+            "detail": f"{len(latest_members)} doküman sürümü"
+            if latest_members
+            else "Henüz içerik yok",
+            "next": "Dosya yükleyin" if can_write and not latest_members else "",
+        },
+        {
+            "label": "Ayrıştırıldı / normalize edildi",
+            "complete": bool(latest_members) and parsed_count == len(latest_members),
+            "detail": f"{parsed_count}/{len(latest_members)} hazır",
+            "next": "İndeks oluşturma ayrıştırmayı çalıştırır"
+            if latest_members and parsed_count != len(latest_members)
+            else "",
+        },
+        {
+            "label": "Set taslağı",
+            "complete": latest_version is not None,
+            "detail": latest_version.status if latest_version else "Taslak yok",
+            "next": "Taslağı yayımlayın"
+            if can_write
+            and latest_version is not None
+            and latest_version.status == DocumentSetVersionStatus.DRAFT
+            else "",
+        },
+        {
+            "label": "Set sürümü yayımlandı",
+            "complete": latest_version is not None
+            and latest_version.status != DocumentSetVersionStatus.DRAFT,
+            "detail": "Yayımlandı"
+            if latest_version is not None
+            and latest_version.status != DocumentSetVersionStatus.DRAFT
+            else "Taslak üyelik değişebilir",
+            "next": "Önce taslağı yayımlayın"
+            if latest_version is not None
+            and latest_version.status == DocumentSetVersionStatus.DRAFT
+            else "",
+        },
+        {
+            "label": "Staged indeks hazır",
+            "complete": staged_ready,
+            "detail": "İndeks sürümü mevcut" if staged_ready else "Promotable indeks yok",
+            "next": "Yayımlanmış set sürümünden staged indeks oluşturun"
+            if can_write
+            and latest_version is not None
+            and latest_version.status != DocumentSetVersionStatus.DRAFT
+            and not staged_ready
+            else "",
+        },
+        {
+            "label": "Aktif indeks",
+            "complete": active_index is not None,
+            "detail": f"İndeks v{active_index.version}" if active_index else "Serve edilmiyor",
+            "next": "Değerlendirilen promotable indeksi aktif edin"
+            if can_promote_index and active_index is None
+            else "",
+        },
+    ]
     # Active, uploaded documents in this set's tenant, offered as members of a draft version.
     candidate_docs = [
         {"id": d.id, "logical_id": d.logical_id, "version": d.current_version}
@@ -1695,6 +1789,8 @@ def document_set_detail(
             "versions": versions,
             "latest_version": latest_version,
             "active_index": active_index,
+            "lifecycle_steps": lifecycle_steps,
+            "sources": document_set.connector_sources.order_by("name"),
             "bulk_upload_form": DocumentSetBulkUploadForm(),
             # The same choices render once per published set version; omit duplicate HTML ids.
             "build_form": DocumentSetBuildForm(
@@ -1723,6 +1819,156 @@ def document_set_detail(
             "can_promote_index": can_promote_index,
             "max_batch_files": int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20)),
         },
+    )
+
+
+def _scoped_set_document(
+    user: UserLike, document_set: DocumentSet, document_public_id: object
+) -> Document:
+    document = (
+        scoping.scoped_documents(user)
+        .filter(
+            public_id=str(document_public_id),
+            organization_id=document_set.organization_id,
+            versions__memberships__document_set_version__document_set=document_set,
+        )
+        .select_related("source", "organization")
+        .distinct()
+        .first()
+    )
+    if document is None:
+        raise Http404
+    return document
+
+
+@login_required
+def document_set_document_detail(
+    request: HttpRequest, public_id: object, document_public_id: object
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, public_id=public_id)
+    document = _scoped_set_document(request.user, document_set, document_public_id)
+    memberships = list(
+        DocumentSetMembership.objects.filter(
+            organization_id=document_set.organization_id,
+            document_version__document=document,
+            document_set_version__document_set=document_set,
+        )
+        .select_related("document_set_version", "document_version")
+        .order_by("-document_set_version__version", "-document_version__version")
+    )
+    versions = list(document.versions.order_by("-version"))
+    return render(
+        request,
+        "console/document_set_document_detail.html",
+        {
+            "title": f"{document.title or document.logical_id} · {document_set.name}",
+            "organization": document_set.organization,
+            "set": document_set,
+            "document": document,
+            "versions": versions,
+            "memberships": memberships,
+            "replacement_form": DocumentReplacementForm(),
+            "can_write": can_author_scenarios(request.user, document.organization_id),
+        },
+    )
+
+
+@login_required
+@require_POST
+def document_set_document_replace(
+    request: HttpRequest, public_id: object, document_public_id: object
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, public_id=public_id)
+    document = _scoped_set_document(request.user, document_set, document_public_id)
+    if not can_author_scenarios(request.user, document.organization_id):
+        raise PermissionDenied
+    form = DocumentReplacementForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, "Yeni sürüm yüklenemedi: bir dosya seçin.")
+    else:
+        upload = form.cleaned_data["file"]
+        mime_type = _UPLOAD_MIME_BY_SUFFIX.get(Path(upload.name).suffix.lower(), "")
+        try:
+            version = document_services.upload_document(
+                organization=document.organization,
+                logical_id=document.logical_id,
+                title=document.title or Path(upload.name).stem,
+                mime_type=mime_type,
+                data=upload.read(),
+                actor=request.user.get_username(),
+                source=document.source,
+                request_id=_request_id(request),
+            )
+            draft = document_services.get_or_create_manual_draft(
+                document_set=document_set,
+                actor=request.user.get_username(),
+                request_id=_request_id(request),
+            )
+            document_services.upsert_document_in_set_draft(
+                set_version=draft,
+                document_version=version,
+                actor=request.user.get_username(),
+                request_id=_request_id(request),
+            )
+            messages.success(
+                request, f"Yeni v{version.version} sürümü taslak v{draft.version}'e eklendi."
+            )
+        except (DocumentError, StorageError) as exc:
+            messages.error(
+                request, f"Yeni sürüm yüklenemedi: {getattr(exc, 'code', 'STORAGE_ERROR')}"
+            )
+    return redirect(
+        "console:document_set_document_detail",
+        public_id=document_set.public_id,
+        document_public_id=document.public_id,
+    )
+
+
+@login_required
+@require_POST
+def document_set_remove_member(
+    request: HttpRequest, version_pk: int, membership_pk: int
+) -> HttpResponse:
+    set_version = _scoped_set_version(request.user, version_pk)
+    if not can_author_scenarios(request.user, set_version.organization_id):
+        raise PermissionDenied
+    try:
+        document_services.remove_document_from_set_draft(
+            set_version=set_version,
+            membership_id=membership_pk,
+            actor=request.user.get_username(),
+            request_id=_request_id(request),
+        )
+        messages.success(request, "Doküman taslaktan çıkarıldı; saklanan içerik silinmedi.")
+    except DocumentError as exc:
+        messages.error(request, f"Doküman çıkarılamadı: {exc.code}")
+    return redirect(
+        "console:document_set_detail_public", public_id=set_version.document_set.public_id
+    )
+
+
+@login_required
+@require_POST
+def document_set_document_tombstone(
+    request: HttpRequest, public_id: object, document_public_id: object
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, public_id=public_id)
+    document = _scoped_set_document(request.user, document_set, document_public_id)
+    if not can_author_scenarios(request.user, document.organization_id):
+        raise PermissionDenied
+    document_services.soft_delete_document(
+        document,
+        actor=request.user.get_username(),
+        request_id=_request_id(request),
+    )
+    messages.success(
+        request,
+        "Doküman tombstone edildi; yayımlanmış sürümler ve saklanan baytlar korunuyor.",
+    )
+    return redirect(
+        "console:document_set_document_detail",
+        public_id=document_set.public_id,
+        document_public_id=document.public_id,
     )
 
 

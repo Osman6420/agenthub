@@ -14,6 +14,11 @@
   <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Release derlemesinde pinlenir</small></div>
 </div>
 
+<div class="card">
+  <div class="section-heading"><div><h2>Uçtan uca yaşam döngüsü</h2><p class="muted">Her aşama mevcut durumu, engeli ve yetkiniz varsa sonraki işlemi gösterir.</p></div></div>
+  {% for step in lifecycle_steps %}<div class="access-row"><div><strong>{{ forloop.counter }}. {{ step.label }}</strong><p class="muted">{{ step.detail }}</p></div>{% if step.complete %}<span class="access-ok">Hazır</span>{% else %}<span class="access-missing">Bekliyor</span>{% endif %}<span class="muted">{{ step.next }}</span></div>{% endfor %}
+</div>
+
 <div class="card action-card">
   <div><h2>Bağlı kaynaklar ve periyodik yenileme</h2><p class="muted">Confluence veya generic REST kaynaklarını, mapping sözleşmelerini ve değişiklik sonrası otomasyonu bu set için yönetin.</p></div>
   <a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynakları yönet</a>
@@ -46,7 +51,7 @@
     <div class="relationship-body">
       <div>
         <h4>Dokümanlar</h4>
-        {% for m in v.members %}<p><span class="mono">{{ m.logical_id }}</span> <span class="badge">v{{ m.version }}</span></p>{% empty %}<p class="muted">Bu sürüm boş.</p>{% endfor %}
+        {% for m in v.members %}<div class="access-row"><div><a href="{% url 'console:document_set_document_detail' set.public_id m.public_id %}"><strong>{{ m.title|default:m.logical_id }}</strong></a><p><span class="mono">{{ m.logical_id }}</span> <span class="badge">v{{ m.version }}</span> <span class="badge {{ m.parse_status }}">{{ m.parse_status }}</span>{% if m.tombstoned %} <span class="badge disabled">tombstone</span>{% endif %}</p></div><span></span>{% if can_write and v.is_draft %}<form method="post" action="{% url 'console:document_set_remove_member' v.id m.membership_id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Taslak sürümden çıkar</button></form>{% endif %}</div>{% empty %}<p class="muted">Bu sürüm boş.</p>{% endfor %}
         {% if can_write and v.is_draft %}
         <form class="compact-form" method="post" action="{% url 'console:document_set_add_member' v.id %}">
           {% csrf_token %}<label for="document-{{ v.id }}">Mevcut dokümanı ekle</label><div class="field-row"><select id="document-{{ v.id }}" name="document_id" required>{% for d in candidate_docs %}<option value="{{ d.id }}">{{ d.logical_id }} (v{{ d.version }})</option>{% endfor %}</select><button class="button secondary" type="submit">Ekle</button></div>
@@ -69,6 +74,12 @@
     </div>
   </div>
   {% empty %}<div class="empty">Henüz bir set sürümü yok. Toplu yükleme ilk taslağı otomatik açar.</div>{% endfor %}
+</div>
+
+<div class="card">
+  <div class="section-heading"><div><h2>Kaynaklar</h2><p class="muted">Bu sete içerik sağlayan manuel yüklemeler ve yönetilen connector kaynakları.</p></div><a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynakları yönet</a></div>
+  <p><span class="badge active">Manuel yükleme</span> Set çalışma alanındaki toplu yükleme ve replacement işlemleri</p>
+  {% for source in sources %}<p><strong>{{ source.name }}</strong> <span class="badge">{{ source.connector_type }}</span> <span class="badge {{ source.status }}">{{ source.status }}</span></p>{% empty %}<p class="muted">Bağlı connector kaynağı yok.</p>{% endfor %}
 </div>
 
 <div class="card">

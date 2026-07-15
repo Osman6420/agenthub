@@ -1,0 +1,15 @@
+{% extends "console/base.html" %}
+{% block title %}Gelişmiş doküman envanteri · AgentHub{% endblock %}
+{% block content %}
+
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><span>Gelişmiş envanter</span></div>
+<div class="page-heading"><div><p class="eyebrow">Yönetici alanı</p><h1>Gelişmiş doküman envanteri</h1><p class="muted">Saklama, tombstone ve geri alınamaz fiziksel purge işlemleri. İçerik üretimi doküman setlerinden yapılır.</p></div></div>
+<div class="warning-box">Purge yalnız tombstone edilmiş ve hiçbir set sürümüne pinlenmemiş içerikte çalışır. İşlem audit edilir ve geri alınamaz.</div>
+
+<div class="card table-card">
+  {% if documents %}<div class="table-scroll"><table><caption class="sr-only">Yönetici doküman envanteri</caption><thead><tr><th>Organizasyon</th><th>ID / başlık</th><th>Sürüm</th><th>Durum</th><th>İşlem</th></tr></thead><tbody>
+  {% for d in documents %}<tr><td>{{ d.org }}</td><td><span class="mono">{{ d.logical_id }}</span><div>{{ d.title }}</div></td><td>v{{ d.version }}</td><td>{% if d.tombstoned %}<span class="badge disabled">tombstone</span>{% else %}<span class="badge active">aktif</span>{% endif %}</td><td class="row-action">{% if d.can_write and not d.tombstoned %}<form class="inline" method="post" action="{% url 'console:document_soft_delete_public' d.public_id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Tombstone et</button></form>{% elif d.tombstoned and d.pinned %}<span class="muted">Set sürümünde pinli; purge engelli.</span>{% elif d.tombstoned and d.can_purge %}<form method="post" action="{% url 'console:document_purge_public' d.public_id %}">{% csrf_token %}<label class="muted">Kalıcı silmek için <strong>{{ d.logical_id }}</strong> yazın <input name="confirm_logical_id" required autocomplete="off"></label><button class="button danger" type="submit">Kalıcı sil</button></form>{% else %}—{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">Yönetebildiğiniz organizasyonlarda tekil doküman yok.</div>{% endif %}
+</div>
+
+{% endblock %}

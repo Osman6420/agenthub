@@ -62,13 +62,16 @@ def test_documents_list_is_tenant_scoped(client: Client) -> None:
         data=b"b",
         actor="seed",
     )
+    DocumentSet.objects.create(organization=org_a, logical_id="set-a", name="Set A")
     DocumentSet.objects.create(organization=org_b, logical_id="set-b", name="Set B")
 
     client.force_login(_member("alice", org_a, Role.PROJECT_OWNER))
     body = client.get(reverse("console:documents")).content.decode()
-    assert "doc-a" in body
-    assert "doc-b" not in body  # org B is outside alice's scope
+    assert "set-a" in body
     assert "set-b" not in body
+    assert "doc-a" not in body  # standalone inventory is not part of the primary journey
+    assert "doc-b" not in body
+    assert "Gelişmiş envanteri aç" not in body
 
 
 @pytest.mark.django_db

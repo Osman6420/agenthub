@@ -245,6 +245,13 @@ class DocumentSetBulkUploadForm(forms.Form):
     uploads = MultipleFileField(label="Dosyalar")
 
 
+class DocumentReplacementForm(forms.Form):
+    file = forms.FileField(
+        label="Yeni dosya",
+        help_text="Yeni immutable sürüm oluşturulur; mevcut kimlik korunur.",
+    )
+
+
 class DocumentSetBuildForm(forms.Form):
     embedding_profile = forms.ModelChoiceField(
         queryset=EmbeddingProfile.objects.none(), label="Embedding profili"

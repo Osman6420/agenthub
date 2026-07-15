@@ -138,7 +138,14 @@ Authoring yüzeylerinin rolleri:
   değiştirmez.
 - Artifact detail: bir immutable exact version’ın body/checksum ve pin kullanımını inceler.
 - Release detail: scenario runtime’ının exact artifact pinlerini ve manifest checksum’unu inceler.
-- Document-set detail: scenario binding ve istemci retrieval grant ilişkilerini gösterir.
+- Document-set detail: içerik ekleme, immutable replacement, taslaktan çıkarma, tombstone, sürüm,
+  parse/normalize, staged/active indeks, kaynak, scenario binding ve istemci retrieval grant
+  ilişkilerini tek yaşam döngüsünde gösterir. Published set sürümleri değişmez; replacement yeni
+  `DocumentVersion` üretip yalnız manuel taslağın exact pinini günceller. Tombstone baytları veya
+  tarihsel pinleri silmez.
+- Tekil document envanteri primary navigation değildir. Yalnız organizasyon/platform yöneticilerinin
+  açabildiği gelişmiş saklama alanı tombstone ve purge operasyonlarını sunar. Purge, typed confirmation,
+  tombstone ve hiçbir set sürümünde pin bulunmaması koşullarını korur.
 - İstemci detail: scenario binding, effective document-set grant ve yalnız güvenli token metadata
   gösterir. Organizasyon yöneticisi ayrı POST aksiyonlarıyla bearer token üretebilir, döndürebilir
   veya iptal edebilir; plaintext yalnız başarılı üretim/döndürme yanıtında bir kez gösterilir.

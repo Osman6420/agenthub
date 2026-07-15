@@ -523,6 +523,45 @@ def add_document_to_set_version(
 
 
 @transaction.atomic
+def remove_document_from_set_draft(
+    *,
+    set_version: DocumentSetVersion,
+    membership_id: int,
+    actor: str,
+    request_id: str = "",
+) -> None:
+    """Remove one exact membership from a mutable draft without touching document bytes."""
+    locked = DocumentSetVersion.objects.select_for_update().get(pk=set_version.pk)
+    if locked.is_frozen:
+        raise DocumentError("SET_VERSION_FROZEN", "published set versions are immutable")
+    membership = (
+        DocumentSetMembership.objects.select_for_update()
+        .filter(
+            pk=membership_id,
+            document_set_version=locked,
+            organization_id=locked.organization_id,
+        )
+        .select_related("document_version__document")
+        .first()
+    )
+    if membership is None:
+        raise DocumentError("MEMBERSHIP_NOT_FOUND", "membership is not in this draft")
+    document_version_id = membership.document_version_id
+    membership.delete()
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="documents.set_version.remove_member",
+        outcome="success",
+        organization_id=locked.organization_id,
+        resource_type="document_set_version",
+        resource_id=f"{locked.document_set.logical_id}:v{locked.version}",
+        request_id=request_id,
+        before={"document_version_id": document_version_id},
+    )
+
+
+@transaction.atomic
 def publish_document_set_version(
     *, set_version: DocumentSetVersion, actor: str, request_id: str = ""
 ) -> DocumentSetVersion:

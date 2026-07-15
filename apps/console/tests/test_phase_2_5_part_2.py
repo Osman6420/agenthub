@@ -121,7 +121,7 @@ def test_uuid_routes_are_canonical_and_legacy_routes_remain_scoped() -> None:
 
     assert (
         reverse("console:document_soft_delete_public", args=[document.public_id])
-        in client.get(reverse("console:documents")).content.decode()
+        in client.get(reverse("console:advanced_document_inventory")).content.decode()
     )
     assert (
         reverse("console:consumer_detail_public", args=[consumer.public_id])

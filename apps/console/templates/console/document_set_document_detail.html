@@ -1,0 +1,28 @@
+{% extends "console/base.html" %}
+{% block title %}{{ document.title|default:document.logical_id }} · AgentHub{% endblock %}
+{% block content %}
+
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><a href="{% url 'console:document_set_detail_public' set.public_id %}">{{ set.name }}</a><span>›</span><span>{{ document.title|default:document.logical_id }}</span></div>
+<div class="page-heading">
+  <div><p class="eyebrow">{{ organization.slug }} · Set içeriği</p><h1>{{ document.title|default:document.logical_id }}</h1><p class="muted mono">{{ document.logical_id }}</p></div>
+  {% if document.is_tombstoned %}<span class="badge disabled">tombstone</span>{% else %}<span class="badge active">aktif</span>{% endif %}
+</div>
+
+<div class="summary-grid">
+  <div class="summary-card"><span>Güncel sürüm</span><strong>v{{ document.current_version }}</strong></div>
+  <div class="summary-card"><span>Kaynak</span><strong class="text-value">{% if document.source %}{{ document.source.name }}{% else %}Manuel yükleme{% endif %}</strong></div>
+  <div class="summary-card"><span>Set pinleri</span><strong>{{ memberships|length }}</strong></div>
+</div>
+
+{% if can_write and not document.is_tombstoned %}
+<div class="card relationship-grid">
+  <div><h2>Yeni sürüm yükle</h2><p class="muted">Belge kimliği korunur; immutable yeni sürüm oluşturulur ve manuel taslağa pinlenir.</p><form class="form-card" method="post" action="{% url 'console:document_set_document_replace' set.public_id document.public_id %}" enctype="multipart/form-data">{% csrf_token %}{{ replacement_form.as_p }}<button type="submit">Yeni sürümü taslağa ekle</button></form></div>
+  <div><h2>İçeriği tombstone et</h2><p class="muted">Yeni retrieval ve yüklemeler durur. Yayımlanmış set pinleri ve saklanan baytlar silinmez.</p><form method="post" action="{% url 'console:document_set_document_tombstone' set.public_id document.public_id %}">{% csrf_token %}<button class="button danger" type="submit">Tombstone et</button></form></div>
+</div>
+{% endif %}
+
+<div class="card table-card"><div class="table-scroll"><table><caption class="sr-only">Doküman sürümleri</caption><thead><tr><th>Sürüm</th><th>Ayrıştırma</th><th>Tür</th><th>Boyut</th><th>Oluşturma</th></tr></thead><tbody>{% for version in versions %}<tr><td>v{{ version.version }}</td><td><span class="badge {{ version.parse_status }}">{{ version.parse_status }}</span></td><td>{{ version.mime_type }}</td><td>{{ version.byte_size }} bayt</td><td>{{ version.created_at }}</td></tr>{% endfor %}</tbody></table></div></div>
+
+<div class="card"><h2>Set sürümü pinleri</h2>{% for membership in memberships %}<p><a href="{% url 'console:document_set_detail_public' set.public_id %}">Set v{{ membership.document_set_version.version }}</a> <span class="badge {{ membership.document_set_version.status }}">{{ membership.document_set_version.status }}</span> → doküman v{{ membership.document_version.version }}</p>{% empty %}<p class="muted">Bu set içinde pin yok.</p>{% endfor %}</div>
+
+{% endblock %}

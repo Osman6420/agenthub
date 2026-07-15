@@ -99,6 +99,11 @@ urlpatterns = [
     path("canaries/<int:canary_id>/stop/", views.canary_stop, name="canary_stop"),
     path("builder/", views.builder, name="builder"),
     path("documents/", views.documents, name="documents"),
+    path(
+        "documents/advanced/",
+        views.advanced_document_inventory,
+        name="advanced_document_inventory",
+    ),
     path("documents/upload/", views.document_upload, name="document_upload"),
     path(
         "documents/<int:pk>/soft-delete/",
@@ -122,6 +127,21 @@ urlpatterns = [
         "document-sets/id/<uuid:public_id>/",
         views.document_set_detail,
         name="document_set_detail_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/documents/id/<uuid:document_public_id>/",
+        views.document_set_document_detail,
+        name="document_set_document_detail",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/documents/id/<uuid:document_public_id>/replace/",
+        views.document_set_document_replace,
+        name="document_set_document_replace",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/documents/id/<uuid:document_public_id>/tombstone/",
+        views.document_set_document_tombstone,
+        name="document_set_document_tombstone",
     ),
     path(
         "document-sets/id/<uuid:public_id>/connectors/",
@@ -217,6 +237,11 @@ urlpatterns = [
         "document-set-versions/<int:version_pk>/add-member/",
         views.document_set_add_member,
         name="document_set_add_member",
+    ),
+    path(
+        "document-set-versions/<int:version_pk>/members/<int:membership_pk>/remove/",
+        views.document_set_remove_member,
+        name="document_set_remove_member",
     ),
     path(
         "document-set-versions/<int:version_pk>/publish/",
