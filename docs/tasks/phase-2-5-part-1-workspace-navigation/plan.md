@@ -337,8 +337,8 @@ the migration/tenant-isolation approval before continuing.
 
 ## Status
 
-Implemented; offline verification is complete, while PostgreSQL non-owner verification and the
-Turkish manual browser journey remain pending. The owner approved starting Part 1 on 2026-07-14
+Implemented and owner-accepted for progression on 2026-07-15; offline verification is complete,
+while PostgreSQL non-owner verification remains an explicit Phase 2.5 closure carryover. The owner approved starting Part 1 on 2026-07-14
 after confirming that existing canonical domain links remain unchanged. Implementation approval
 includes the planned narrowing of transaction-local tenant scope for organization-overview and
 trusted target-object requests; it does not authorize production access or any broader

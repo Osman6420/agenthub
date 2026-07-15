@@ -1,7 +1,8 @@
 # Verification: phase-2-5-part-1-workspace-navigation
 
-> Status: Implemented and offline-verified on 2026-07-14. PostgreSQL non-owner execution and the
-> Turkish manual browser journey remain required before this part is fully verified and closed.
+> Status: Implemented and offline-verified on 2026-07-14; the owner declared Part 1 finished and
+> authorized progression on 2026-07-15. PostgreSQL non-owner execution remains required technical
+> evidence before Phase 2.5 closure and is not represented as already verified.
 
 ## Environment
 
@@ -30,7 +31,7 @@
 | Full suite, initial collection | Repository pytest command with the runtime workaround | **Blocked by environment** | Python 3.14 attempted to load CPython 3.13 `pydantic_core` and `lxml` binaries in two modules |
 | Broad suite excluding the two collection-blocked modules | Same pytest command with those two modules ignored | **625 passed, 29 skipped, 1 environment failure** | Remaining OCR failure is the same CPython 3.13 `cryptography/_cffi_backend` ABI mismatch |
 | PostgreSQL non-owner suite | Not run | **Pending** | Mandatory acceptance evidence; SQLite cannot prove FORCE RLS behavior |
-| Turkish browser journey | Not run | **Pending owner review** | Responsive and assistive-technology acceptance remains waived |
+| Turkish product journey | Owner completion statement, 2026-07-15 | **Accepted for progression** | A separate step-by-step browser transcript was not recorded; responsive and assistive-technology acceptance remains waived |
 
 ## Acceptance criteria mapping
 
@@ -40,12 +41,12 @@
    `test_disabled_organization_is_readable_but_rejects_direct_mutation` and
    `test_platform_admin_cannot_mutate_disabled_organization`.
 3. Platform-admin access remains explicit in the dashboard and organization detail presentation;
-   automated access behavior is covered, while owner visual acceptance remains pending.
+   automated access behavior is covered and owner product acceptance is recorded on 2026-07-15.
 4. Trusted target resolution and singleton context installation: covered by
    `test_organization_and_target_details_install_single_tenant_context` and foreign-target tests.
 5. PostgreSQL transaction-local singleton/reset behavior: **pending PostgreSQL non-owner run**.
 6. Organization inventories and organization/project/scenario/document-set/client navigation:
-   covered by organization inventory and relationship-link tests; manual Turkish journey pending.
+   covered by organization inventory and relationship-link tests; owner accepted Part 1 for progression.
 7. Exact artifact/release navigation: covered by the release/artifact assertions in
    `test_scenario_document_set_consumer_and_release_pages_cross_link`.
 8. Cross-tenant targets and labels: foreign project, client application and release return 404;
@@ -53,7 +54,7 @@
 9. Existing scenario URL remains canonical: asserted without redirect by
    `test_detail_pages_are_cross_tenant_safe_and_keep_canonical_urls`.
    Existing focused console tests cover unchanged POST endpoints, authorization and CSRF behavior.
-10. Turkish terminology is implemented in navigation/templates; owner manual review is pending.
+10. Turkish terminology is implemented in navigation/templates; owner product acceptance is recorded.
 11. The artifact/DSL guide now separates Current, Part 1, Later Phase 2.5 and Phase 3 contracts and
     links its code authorities. Automated link/fence validation remains included in final diff checks.
 12. Confirmed by diff and migration check: no schema, credential, gateway API or live-call change.
@@ -100,7 +101,6 @@
 ## Checks not completed
 
 - PostgreSQL non-owner singleton scope, empty/wrong scope denial and transaction reset.
-- Manual Turkish forward/reverse journey and visibly privileged platform-admin review.
 - Representative organization-overview query-count budget.
 - A completely green full repository suite on the current machine; the installed binary wheels are
   for Python 3.13 while the available interpreter is Python 3.14.
@@ -112,17 +112,17 @@
   shows the bound.
 - Organization slugs and integer object locators remain visible to authorized users by design;
   Part 2 introduces generated identifiers, while authorization continues to ignore locator value.
-- Manual Turkish wording and navigation coherence may still require presentation-only adjustments.
+- A separate step-by-step browser transcript was not recorded; future wording feedback may still
+  produce presentation-only adjustments without reopening the accepted Part 1 scope.
 
 ## Human review required
 
+- The owner's 2026-07-15 completion statement is recorded as product acceptance and authorization
+  to progress to Part 2; it does not fabricate execution evidence for the pending PostgreSQL gate.
 - Run focused console/tenancy tests against PostgreSQL using the dedicated non-owner application
   role and record singleton/reset evidence.
-- Review dashboard -> organization -> project -> scenario -> document set -> client application and
-  reverse navigation, plus artifact/release inspection.
-- Confirm disabled organization read-only presentation and platform-admin privileged context.
 
 ## Final status
 
-Implemented and offline-verified; not fully verified or closed until PostgreSQL and owner browser
-acceptance evidence is recorded.
+Implemented, offline-verified, and owner-accepted for progression. PostgreSQL non-owner evidence
+remains a Phase 2.5 technical closure requirement.
