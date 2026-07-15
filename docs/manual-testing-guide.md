@@ -66,6 +66,65 @@ $env:MCP_ENABLED = 'true'; $env:METRICS_BEARER_TOKEN = '<METRICS_TOKEN>'
 > will silently grab async runs and fail them (e.g. `WORKFLOW_NODE_UNSUPPORTED`). Kill any
 > extra `celery ... worker -Q runtime` processes first.
 
+### 0.1 Windows Python/test troubleshooting
+
+Use the repository `.venv` first. If `.venv\Scripts\python.exe` fails before Python starts with
+`A specified logon session does not exist`, inspect `.venv\pyvenv.cfg`. A Microsoft Store Python
+base executable can become unavailable to a non-interactive agent session even while the venv
+packages remain intact. This is an environment-launcher failure, not test evidence.
+
+Do not run that Python 3.13 venv with an unrelated Python 3.12 executable by adding
+`.venv\Lib\site-packages` to `PYTHONPATH`. Pure-Python imports may appear to work, but compiled
+packages such as NumPy, pydantic-core and pgvector will fail because their `cp313` extensions do not
+match Python 3.12.
+
+When the host launcher cannot be restored during the task, an isolated Python 3.13 container may be
+used as a verification fallback. It mounts the current workspace, installs from the unchanged
+`pyproject.toml`, uses no production data/secrets, and is removed after the command:
+
+```powershell
+# SQLite test profile. Do not add pytest -q or a pytest timeout.
+docker run --rm `
+  -v "${PWD}:/app" -w /app `
+  -e DJANGO_SETTINGS_MODULE=config.settings.test `
+  -e PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 `
+  python:3.13-slim sh -lc `
+  "pip install --disable-pip-version-check . pytest pytest-django >/tmp/install.log && python -m pytest -p pytest_django.plugin"
+
+# PostgreSQL/pgvector/RLS profile; first confirm Compose postgres/redis are healthy.
+docker run --rm --network agenthub_default `
+  -v "${PWD}:/app" -w /app `
+  -e DJANGO_SETTINGS_MODULE=config.settings.local `
+  -e DATABASE_URL=postgres://agenthub:agenthub@postgres:5432/agenthub `
+  -e REDIS_URL=redis://redis:6379/0 `
+  -e MCP_ENABLED=true -e METRICS_ENABLED=true `
+  -e METRICS_BEARER_TOKEN=test-metrics-token `
+  -e PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 `
+  python:3.13-slim sh -lc `
+  "pip install --disable-pip-version-check . pytest pytest-django >/tmp/install.log && python -m pytest -p pytest_django.plugin"
+```
+
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` prevents unrelated globally installed pytest plugins (for
+example LangSmith) from importing optional compiled dependencies. Load `pytest_django.plugin`
+explicitly so Django setup still occurs. This fallback may require network access to resolve the
+declared dependencies; record that fact in verification evidence.
+
+The canonical Compose application image currently has a separate build-order defect: its Dockerfile
+runs `pip install .` after copying `pyproject.toml` but before copying the `config` package. A failure
+such as `package directory 'config' does not exist` happens during image build and does not exercise
+the requested code. Do not report it as a test failure or patch production dependencies to bypass
+it. Use the isolated full-workspace container above, and track the Dockerfile repair as its own task.
+
+For type and Django checks in the fallback container, install development-only tooling only inside
+that disposable container; do not modify repository dependencies:
+
+```powershell
+docker run --rm -v "${PWD}:/app" -w /app `
+  -e DJANGO_SETTINGS_MODULE=config.settings.test `
+  python:3.13-slim sh -lc `
+  "pip install --disable-pip-version-check . mypy django-stubs >/tmp/install.log && python -m mypy apps && python manage.py check && python manage.py makemigrations --check --dry-run && python -m compileall apps config"
+```
+
 The seeder provisions:
 
 | Thing | Value |

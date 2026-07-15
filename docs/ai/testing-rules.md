@@ -22,4 +22,27 @@ Quarantine a flaky test only with ownership, evidence, risk, and a removal deadl
 
 ## Repository commands
 
-No executable test, formatter, lint, type-check, or migration command is currently repository-verified. The target-plan examples are not runnable evidence. When manifests/configuration are introduced, record canonical local and CI commands here and in [`engineering-rules.md`](engineering-rules.md).
+The repository-verified host commands are:
+
+```powershell
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\ruff.exe format --check apps
+.venv\Scripts\ruff.exe check apps
+.venv\Scripts\mypy.exe apps
+.venv\Scripts\python.exe manage.py check
+.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+.venv\Scripts\python.exe -m compileall apps config
+```
+
+Run tests without pytest `-q` so collection, progress, skips and failure context remain visible. Do
+not impose a pytest timeout; allow the suite to finish, using a background process plus log polling
+when the calling tool cannot remain attached indefinitely. A command-runner safety ceiling is not a
+substitute for a pytest timeout and must be long enough not to terminate a healthy suite.
+
+The SQLite test settings do not prove PostgreSQL RLS, pgvector, advisory-lock or retrieval behavior.
+Applicable work must also run the PostgreSQL profile documented in
+[`manual-testing-guide.md` section 0.1](../manual-testing-guide.md#01-windows-pythontest-troubleshooting).
+That section is also the canonical recovery procedure for Microsoft Store venv launcher failures,
+Python ABI mismatches, unrelated pytest plugin autoload failures and the known Compose image
+build-order defect. Record the exact profile, pass/skip counts and environmental fallback in the
+task verification file.
