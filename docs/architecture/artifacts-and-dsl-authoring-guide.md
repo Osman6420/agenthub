@@ -108,7 +108,7 @@ oluşumunu fail-closed durdurur.
 
 ### 2.5 Organizasyon sahipliği ve authoring girişleri
 
-**Phase 2.5 Part 1 — implementation in progress.** Hedef bilgi mimarisi:
+**Phase 2.5 Part 1–3 mevcut davranış.** Bilgi mimarisi:
 
 ```text
 Dashboard
@@ -140,11 +140,14 @@ Authoring yüzeylerinin rolleri:
 - Release detail: scenario runtime’ının exact artifact pinlerini ve manifest checksum’unu inceler.
 - Document-set detail: scenario binding ve istemci retrieval grant ilişkilerini gösterir.
 - İstemci detail: scenario binding, effective document-set grant ve yalnız güvenli token metadata
-  gösterir; token plaintext göstermez.
+  gösterir. Organizasyon yöneticisi ayrı POST aksiyonlarıyla bearer token üretebilir, döndürebilir
+  veya iptal edebilir; plaintext yalnız başarılı üretim/döndürme yanıtında bir kez gösterilir.
 
-Bu navigasyon davranışı ancak
-`docs/tasks/phase-2-5-part-1-workspace-navigation/verification.md` tamamlandığında **Mevcut** olarak
-yeniden etiketlenir.
+Proje sahipliği yeni console kayıtlarında serbest metin değildir. Seçilen sahip aynı aktif
+organizasyondaki `organization_admin` veya `project_owner` üyeliğine durable FK ile bağlanır;
+membership silme, proje yeniden atanmadan `PROTECT` ile engellenir. Eski `owner` metni ve GitOps
+string sözleşmesi uyumluluk etiketi olarak korunur ve yetki vermez. Migrasyon yalnız aynı
+organizasyonda username'i tam eşleşen eski kayıtları bağlar; eşleşmeyen değerleri tahmin etmez.
 
 ## 3. Ortak güvenlik kuralları
 
@@ -192,8 +195,26 @@ alias'ı normalize proje-senaryo prefix'i ile dört karakterlik kriptografik bas
 suffix'ten oluşur. Proje, senaryo, doküman, doküman seti ve istemci uygulama console
 linkleri tenant-scoped immutable UUID `public_id` kullanır. Eski integer console
 route'ları geçiş uyumluluğu için aynı authorization handler'larına bağlı kalır; UUID,
-slug veya route bilgisi hiçbir zaman yetki vermez. Artifact/release locator'ları ve
-consumer subject/token sözleşmesi bu partta değişmemiştir.
+slug veya route bilgisi hiçbir zaman yetki vermez. Artifact/release locator'ları bu partta
+değişmemiştir.
+
+### 3.3.1 Consumer bearer kimliği ve token yaşam döngüsü
+
+Varsayılan bearer modunda normal console akışı `Consumer.subject` istemez. Domain servisi görünen
+addan türetilmeyen, organizasyon içinde unique, `consumer-` prefix'li kriptografik opaque subject
+üretir. GitOps/import mevcut explicit subject sözleşmesini idempotent deklaratif kullanım için
+korur; OIDC/mTLS subject girişi bu modlar ayrıca yapılandırılana kadar console'da gösterilmez.
+
+Bir consumer birden çok adlandırılmış token taşıyabilir. Issue ve rotate yalnız aktif consumer ve
+aktif organizasyon için `organization_admin`/platform admin yetkisiyle, login + CSRF + POST
+sınırında çalışır. Rotate seçilen aktif tokenı aynı transaction'da revoke edip replacement üretir;
+revoke idempotent'tir ve pasif consumer için de savunma amacıyla kullanılabilir. Token mutasyonu ve
+başarılı audit kaydı tek transaction'dadır; audit yazılamazsa credential değişikliği rollback olur.
+
+Plaintext token URL, session, message, audit veya veritabanına yazılmaz. Yalnız SHA-256 hash ve
+güvenli prefix kalıcıdır. Tek-seferlik HTML yanıtı `Cache-Control: no-store`, `Pragma: no-cache` ve
+`Referrer-Policy: no-referrer` taşır. Sonraki detail GET yalnız ad, prefix, status ve last-used
+metadata gösterir. Revoked token gateway ve MCP çözümlemesinde fail-closed reddedilir.
 
 ### 3.4 Artifact ref biçimi
 

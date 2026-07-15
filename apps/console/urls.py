@@ -72,6 +72,21 @@ urlpatterns = [
     path("consumers/new/", views.consumer_create, name="consumer_create"),
     path("consumers/<int:pk>/", views.consumer_detail, name="consumer_detail"),
     path("consumers/id/<uuid:public_id>/", views.consumer_detail, name="consumer_detail_public"),
+    path(
+        "consumers/id/<uuid:public_id>/tokens/issue/",
+        views.consumer_token_issue,
+        name="consumer_token_issue",
+    ),
+    path(
+        "consumers/id/<uuid:public_id>/tokens/<int:token_id>/rotate/",
+        views.consumer_token_rotate,
+        name="consumer_token_rotate",
+    ),
+    path(
+        "consumers/id/<uuid:public_id>/tokens/<int:token_id>/revoke/",
+        views.consumer_token_revoke,
+        name="consumer_token_revoke",
+    ),
     path("bindings/new/", views.binding_create, name="binding_create"),
     path("artifacts/", views.artifacts, name="artifacts"),
     path("artifacts/<int:pk>/", views.artifact_detail, name="artifact_detail"),

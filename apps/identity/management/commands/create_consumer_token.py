@@ -6,9 +6,8 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.audit.services import record_event
+from apps.identity.credentials import CredentialLifecycleError, issue_consumer_token
 from apps.identity.models import Consumer
-from apps.identity.tokens import create_token
 
 
 class Command(BaseCommand):
@@ -31,16 +30,13 @@ class Command(BaseCommand):
                 f"consumer not found: {options['organization']}/{options['subject']}"
             )
 
-        token, raw = create_token(consumer, options["name"])
-        record_event(
-            actor_type="user",
-            actor_id=options["actor"],
-            action="consumer_token.create",
-            outcome="success",
-            organization_id=consumer.organization_id,
-            resource_type="consumer_token",
-            resource_id=str(token.pk),
-            reason=token.prefix,
-        )
+        try:
+            _token, raw = issue_consumer_token(
+                consumer=consumer,
+                name=options["name"],
+                actor_id=options["actor"],
+            )
+        except CredentialLifecycleError as exc:
+            raise CommandError(exc.code) from exc
         self.stdout.write(self.style.SUCCESS("Token created (store it now; shown once):"))
         self.stdout.write(raw)

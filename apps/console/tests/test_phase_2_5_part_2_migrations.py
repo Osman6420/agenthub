@@ -22,6 +22,11 @@ CONSTRAINED = [
     ("documents", "0005_public_ids_constrain"),
     ("identity", "0006_consumer_public_id_constrain"),
 ]
+LATEST = [
+    ("catalog", "0006_aiproject_owner_membership"),
+    ("documents", "0005_public_ids_constrain"),
+    ("identity", "0006_consumer_public_id_constrain"),
+]
 
 
 def _state_apps(targets: list[tuple[str, str]]) -> Apps:
@@ -71,3 +76,6 @@ def test_public_id_migrations_backfill_preserve_and_reforward() -> None:
         model = reforwarded_apps.get_model(app_label, model_name)
         row = model.objects.get(**{lookup: value})
         assert row.public_id == public_ids[(app_label, model_name)]
+
+    # Migration tests share the test database schema; restore the current leaf for later tests.
+    _state_apps(LATEST)

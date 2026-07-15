@@ -11,6 +11,7 @@ import hashlib
 import secrets
 
 from django.utils import timezone
+from django.views.decorators.debug import sensitive_variables
 
 from apps.identity.models import Consumer, ConsumerStatus, ConsumerToken, TokenStatus
 
@@ -22,15 +23,20 @@ def hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
 
+@sensitive_variables("raw")
 def create_token(consumer: Consumer, name: str) -> tuple[ConsumerToken, str]:
     """Create a token for a consumer; returns (record, plaintext-shown-once)."""
     raw = secrets.token_urlsafe(_TOKEN_BYTES)
-    token = ConsumerToken.objects.create(
-        consumer=consumer,
-        name=name,
-        prefix=raw[:_PREFIX_LEN],
-        token_hash=hash_token(raw),
-    )
+    try:
+        token = ConsumerToken.objects.create(
+            consumer=consumer,
+            name=name,
+            prefix=raw[:_PREFIX_LEN],
+            token_hash=hash_token(raw),
+        )
+    except BaseException:
+        raw = ""
+        raise
     return token, raw
 
 

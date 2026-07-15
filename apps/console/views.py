@@ -24,6 +24,7 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_POST
 
 from apps.agents.models import AgentRun
@@ -32,7 +33,7 @@ from apps.artifacts.models import ArtifactVersion
 from apps.audit.services import record_event
 from apps.builder.models import WorkflowDraft
 from apps.catalog.models import AIProject, Scenario
-from apps.catalog.services import create_console_project, create_console_scenario
+from apps.catalog.services import ProjectOwnerError, create_console_project, create_console_scenario
 from apps.console import scoping
 from apps.console.forms import (
     BindingForm,
@@ -40,6 +41,7 @@ from apps.console.forms import (
     ConfluenceSourceForm,
     ConnectorScheduleForm,
     ConsumerForm,
+    ConsumerTokenIssueForm,
     DocumentSetBuildForm,
     DocumentSetBulkUploadForm,
     DocumentSetForm,
@@ -65,6 +67,14 @@ from apps.documents.models import (
 from apps.documents.services import DocumentError
 from apps.documents.storage import StorageError
 from apps.evaluations.services import EvalError, run_eval
+from apps.identity.credentials import (
+    ConsumerSubjectAllocationError,
+    CredentialLifecycleError,
+    create_console_consumer,
+    issue_consumer_token,
+    revoke_consumer_token,
+    rotate_consumer_token,
+)
 from apps.identity.models import BindingStatus, Consumer, ConsumerBinding, ConsumerStatus
 from apps.ingestion.confluence_services import (
     ConfluenceAuthorizationError,
@@ -178,6 +188,75 @@ def _audit_create(
         resource_type=resource_type,
         resource_id=resource_id,
     )
+
+
+def _request_id(request: HttpRequest) -> str:
+    return str(getattr(request, "request_id", ""))[:64]
+
+
+def _trace_id(request: HttpRequest) -> str:
+    return str(getattr(request, "trace_id", ""))[:64]
+
+
+def _authorize_consumer_credentials(request: HttpRequest, consumer: Consumer, action: str) -> None:
+    if can_admin_org(request.user, consumer.organization_id):
+        return
+    record_event(
+        actor_type="user",
+        actor_id=request.user.get_username(),
+        action=action,
+        outcome="deny",
+        organization_id=consumer.organization_id,
+        resource_type="consumer",
+        resource_id=str(consumer.pk),
+        reason="CREDENTIAL_ADMIN_REQUIRED_OR_ORGANIZATION_INACTIVE",
+        request_id=_request_id(request),
+        trace_id=_trace_id(request),
+    )
+    raise PermissionDenied
+
+
+def _audit_credential_failure(
+    request: HttpRequest, consumer: Consumer, action: str, reason: str
+) -> None:
+    record_event(
+        actor_type="user",
+        actor_id=request.user.get_username(),
+        action=action,
+        outcome="failure",
+        organization_id=consumer.organization_id,
+        resource_type="consumer",
+        resource_id=str(consumer.pk),
+        reason=reason,
+        request_id=_request_id(request),
+        trace_id=_trace_id(request),
+    )
+
+
+@sensitive_variables("raw_token")
+def _token_reveal_response(
+    request: HttpRequest,
+    *,
+    consumer: Consumer,
+    raw_token: str,
+    token_name: str,
+    action_label: str,
+) -> HttpResponse:
+    response = render(
+        request,
+        "console/consumer_token_reveal.html",
+        {
+            "consumer": consumer,
+            "raw_token": raw_token,
+            "token_name": token_name,
+            "action_label": action_label,
+        },
+    )
+    response["Cache-Control"] = "no-store, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Referrer-Policy"] = "no-referrer"
+    response["X-Robots-Tag"] = "noindex, nofollow"
+    return response
 
 
 @login_required
@@ -841,8 +920,94 @@ def consumer_detail(
             "tokens": token_candidates[:100],
             "tokens_limited": len(token_candidates) > 100,
             "is_disabled": consumer.organization.status == OrganizationStatus.DISABLED,
+            "can_manage_credentials": can_admin_org(request.user, consumer.organization_id),
+            "can_issue_credentials": can_admin_org(request.user, consumer.organization_id)
+            and consumer.status == ConsumerStatus.ACTIVE,
+            "token_issue_form": ConsumerTokenIssueForm(),
         },
     )
+
+
+@login_required
+@require_POST
+@sensitive_variables("raw")
+def consumer_token_issue(request: HttpRequest, public_id: object) -> HttpResponse:
+    consumer = _scoped_consumer(request.user, public_id=public_id)
+    _authorize_consumer_credentials(request, consumer, "consumer_token.issue")
+    form = ConsumerTokenIssueForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Token adı geçersiz.")
+        return redirect("console:consumer_detail_public", public_id=consumer.public_id)
+    try:
+        token, raw = issue_consumer_token(
+            consumer=consumer,
+            name=form.cleaned_data["name"],
+            actor_id=request.user.get_username(),
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+    except CredentialLifecycleError as exc:
+        _audit_credential_failure(request, consumer, "consumer_token.issue", exc.code)
+        messages.error(request, "Pasif bir istemci için yeni token oluşturulamaz.")
+        return redirect("console:consumer_detail_public", public_id=consumer.public_id)
+    return _token_reveal_response(
+        request,
+        consumer=consumer,
+        raw_token=raw,
+        token_name=token.name,
+        action_label="Token oluşturuldu",
+    )
+
+
+@login_required
+@require_POST
+@sensitive_variables("raw")
+def consumer_token_rotate(request: HttpRequest, public_id: object, token_id: int) -> HttpResponse:
+    consumer = _scoped_consumer(request.user, public_id=public_id)
+    _authorize_consumer_credentials(request, consumer, "consumer_token.rotate")
+    try:
+        token, raw = rotate_consumer_token(
+            consumer=consumer,
+            token_id=token_id,
+            actor_id=request.user.get_username(),
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+    except CredentialLifecycleError as exc:
+        if exc.code == "TOKEN_NOT_FOUND":
+            raise Http404 from exc
+        _audit_credential_failure(request, consumer, "consumer_token.rotate", exc.code)
+        messages.error(request, "Yalnız etkin istemci ve token döndürülebilir.")
+        return redirect("console:consumer_detail_public", public_id=consumer.public_id)
+    return _token_reveal_response(
+        request,
+        consumer=consumer,
+        raw_token=raw,
+        token_name=token.name,
+        action_label="Token döndürüldü",
+    )
+
+
+@login_required
+@require_POST
+def consumer_token_revoke(request: HttpRequest, public_id: object, token_id: int) -> HttpResponse:
+    consumer = _scoped_consumer(request.user, public_id=public_id)
+    _authorize_consumer_credentials(request, consumer, "consumer_token.revoke")
+    try:
+        changed = revoke_consumer_token(
+            consumer=consumer,
+            token_id=token_id,
+            actor_id=request.user.get_username(),
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+    except CredentialLifecycleError as exc:
+        raise Http404 from exc
+    messages.success(
+        request,
+        "Token iptal edildi." if changed else "Token daha önce iptal edilmişti.",
+    )
+    return redirect("console:consumer_detail_public", public_id=consumer.public_id)
 
 
 @login_required
@@ -2412,7 +2577,7 @@ def _create(
                     instance = create_console_project(
                         organization=form.cleaned_data["organization"],
                         name=form.cleaned_data["name"],
-                        owner=form.cleaned_data["owner"],
+                        owner_membership=form.cleaned_data["owner_membership"],
                         risk_level=form.cleaned_data["risk_level"],
                         status=form.cleaned_data["status"],
                     )
@@ -2425,6 +2590,13 @@ def _create(
                         risk_level=form.cleaned_data["risk_level"],
                         status=form.cleaned_data["status"],
                     )
+                elif resource_type == "consumer":
+                    instance = create_console_consumer(
+                        organization=form.cleaned_data["organization"],
+                        name=form.cleaned_data["name"],
+                        protocol=form.cleaned_data["protocol"],
+                        status=form.cleaned_data["status"],
+                    )
                 else:
                     instance = form.save()
                 if organization_id is None or instance is None:
@@ -2432,15 +2604,25 @@ def _create(
                 _audit_create(request, resource_type, str(instance.pk), organization_id)
         except IdentifierAllocationError:
             form.add_error(None, IdentifierAllocationError.code)
+        except ConsumerSubjectAllocationError:
+            form.add_error(None, ConsumerSubjectAllocationError.code)
+        except ProjectOwnerError:
+            form.add_error(
+                "owner_membership", "Seçilen proje sahibi artık bu organizasyona atanamaz."
+            )
         else:
             if resource_type == "organization":
-                return redirect("console:organization_detail", slug=instance.slug)
+                organization = cast(Organization, instance)
+                return redirect("console:organization_detail", slug=organization.slug)
             if resource_type == "project":
                 project = cast(AIProject, instance)
                 return redirect("console:project_detail_public", public_id=project.public_id)
             if resource_type == "scenario":
                 scenario = cast(Scenario, instance)
                 return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+            if resource_type == "consumer":
+                consumer = cast(Consumer, instance)
+                return redirect("console:consumer_detail_public", public_id=consumer.public_id)
             return redirect(success_url)
     return render(request, "console/form.html", {"title": title, "form": form})
 

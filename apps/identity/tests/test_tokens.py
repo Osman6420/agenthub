@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from apps.identity.models import Consumer, ConsumerStatus, TokenStatus
+from apps.audit.models import AuditEvent
+from apps.identity import credentials
+from apps.identity.credentials import (
+    issue_consumer_token,
+    revoke_consumer_token,
+    rotate_consumer_token,
+)
+from apps.identity.models import Consumer, ConsumerStatus, ConsumerToken, TokenStatus
 from apps.identity.tokens import create_token, hash_token, resolve_consumer
 from apps.tenancy.models import Organization
 
@@ -46,3 +53,42 @@ def test_disabled_consumer_denied() -> None:
     consumer = _consumer(status=ConsumerStatus.DISABLED)
     _, raw = create_token(consumer, "t")
     assert resolve_consumer(raw) is None
+
+
+@pytest.mark.django_db
+def test_issue_rolls_back_when_audit_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    consumer = _consumer()
+
+    def fail_audit(**_kwargs: object) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(credentials, "record_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        issue_consumer_token(consumer=consumer, name="t", actor_id="admin")
+
+    assert not ConsumerToken.objects.exists()
+
+
+@pytest.mark.django_db
+def test_rotate_and_revoke_roll_back_when_audit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    consumer = _consumer()
+    token, raw = create_token(consumer, "t")
+
+    def fail_audit(**_kwargs: object) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(credentials, "record_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        rotate_consumer_token(consumer=consumer, token_id=token.pk, actor_id="admin")
+    token.refresh_from_db()
+    assert token.status == TokenStatus.ACTIVE
+    assert ConsumerToken.objects.count() == 1
+    assert resolve_consumer(raw) == consumer
+
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        revoke_consumer_token(consumer=consumer, token_id=token.pk, actor_id="admin")
+    token.refresh_from_db()
+    assert token.status == TokenStatus.ACTIVE
+    assert not AuditEvent.objects.exists()

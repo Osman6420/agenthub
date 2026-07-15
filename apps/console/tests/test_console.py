@@ -136,7 +136,9 @@ def test_project_owner_is_selected_from_members_in_admin_scope(client: Client) -
     OrganizationMembership.objects.create(
         organization=org_a, user=admin, role=Role.ORGANIZATION_ADMIN
     )
-    OrganizationMembership.objects.create(organization=org_a, user=owner_a, role=Role.PROJECT_OWNER)
+    owner_membership = OrganizationMembership.objects.create(
+        organization=org_a, user=owner_a, role=Role.PROJECT_OWNER
+    )
     OrganizationMembership.objects.create(
         organization=org_b, user=outsider, role=Role.PROJECT_OWNER
     )
@@ -146,7 +148,7 @@ def test_project_owner_is_selected_from_members_in_admin_scope(client: Client) -
     body = response.content.decode()
 
     assert response.status_code == 200
-    assert 'name="owner"' in body
+    assert 'name="owner_membership"' in body
     assert "owner-a" in body
     assert "outsider" not in body
 
@@ -156,7 +158,7 @@ def test_project_owner_is_selected_from_members_in_admin_scope(client: Client) -
             "organization": org_a.pk,
             "slug": "alpha",
             "name": "Alpha",
-            "owner": "owner-a",
+            "owner_membership": owner_membership.pk,
             "risk_level": "medium",
             "status": "active",
         },
@@ -165,6 +167,7 @@ def test_project_owner_is_selected_from_members_in_admin_scope(client: Client) -
     project = AIProject.objects.get(organization=org_a)
     assert project.slug.startswith("alpha-")
     assert project.owner == "owner-a"
+    assert project.owner_membership == owner_membership
 
 
 @pytest.mark.django_db
@@ -177,7 +180,9 @@ def test_project_owner_must_belong_to_selected_organization(client: Client) -> N
         OrganizationMembership.objects.create(
             organization=organization, user=admin, role=Role.ORGANIZATION_ADMIN
         )
-    OrganizationMembership.objects.create(organization=org_b, user=owner_b, role=Role.PROJECT_OWNER)
+    owner_membership = OrganizationMembership.objects.create(
+        organization=org_b, user=owner_b, role=Role.PROJECT_OWNER
+    )
     client.force_login(admin)
 
     response = client.post(
@@ -186,14 +191,16 @@ def test_project_owner_must_belong_to_selected_organization(client: Client) -> N
             "organization": org_a.pk,
             "slug": "forbidden-owner",
             "name": "Forbidden owner",
-            "owner": "owner-b",
+            "owner_membership": owner_membership.pk,
             "risk_level": "medium",
             "status": "active",
         },
     )
 
     assert response.status_code == 200
-    assert "Selected owner is not a member" in response.content.decode()
+    assert (
+        "Seçilen proje sahibi bu organizasyonun uygun bir üyesi değil" in response.content.decode()
+    )
     assert not AIProject.objects.filter(slug="forbidden-owner").exists()
 
 

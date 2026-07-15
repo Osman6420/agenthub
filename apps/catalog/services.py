@@ -5,35 +5,73 @@ from __future__ import annotations
 from django.db import IntegrityError, transaction
 
 from apps.catalog.models import AIProject, AliasStatus, Scenario, ScenarioAlias
+from apps.identity.roles import Role
 from apps.tenancy.identifiers import (
     MAX_ALLOCATION_ATTEMPTS,
     IdentifierAllocationError,
     allocate_identifier,
     allocate_scenario_alias,
 )
-from apps.tenancy.models import Organization
+from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 
 
-def create_console_project(*, organization: Organization, name: str, **fields: object) -> AIProject:
+class ProjectOwnerError(ValueError):
+    code = "PROJECT_OWNER_INVALID"
+
+
+def create_console_project(
+    *,
+    organization: Organization,
+    name: str,
+    owner_membership: OrganizationMembership | None = None,
+    **fields: object,
+) -> AIProject:
     """Create a project while keeping explicit-ID GitOps paths unchanged."""
-    for _attempt in range(MAX_ALLOCATION_ATTEMPTS):
-        slug = allocate_identifier(
-            name,
-            fallback="project",
-            max_length=64,
-            exists=lambda value: AIProject.objects.filter(
-                organization=organization, slug=value
-            ).exists(),
+    with transaction.atomic():
+        locked_organization = (
+            Organization.objects.select_for_update().filter(pk=organization.pk).first()
         )
-        try:
-            with transaction.atomic():
-                return AIProject.objects.create(
-                    organization=organization, slug=slug, name=name, **fields
-                )
-        except IntegrityError:
-            if AIProject.objects.filter(organization=organization, slug=slug).exists():
-                continue
-            raise
+        if locked_organization is None or locked_organization.status != OrganizationStatus.ACTIVE:
+            raise ProjectOwnerError
+        owner = ""
+        if owner_membership is not None:
+            current_owner = (
+                OrganizationMembership.objects.select_for_update()
+                .select_related("user")
+                .filter(pk=owner_membership.pk)
+                .first()
+            )
+            if (
+                current_owner is None
+                or current_owner.organization_id != locked_organization.pk
+                or current_owner.role not in {Role.ORGANIZATION_ADMIN, Role.PROJECT_OWNER}
+            ):
+                raise ProjectOwnerError
+            owner_membership = current_owner
+            owner = current_owner.user.get_username()
+        for _attempt in range(MAX_ALLOCATION_ATTEMPTS):
+            slug = allocate_identifier(
+                name,
+                fallback="project",
+                max_length=64,
+                exists=lambda value: AIProject.objects.filter(
+                    organization=locked_organization, slug=value
+                ).exists(),
+            )
+            try:
+                with transaction.atomic():
+                    return AIProject.objects.create(
+                        organization=locked_organization,
+                        slug=slug,
+                        name=name,
+                        owner_membership=owner_membership,
+                        owner=owner,
+                        **fields,
+                    )
+            except IntegrityError:
+                if AIProject.objects.filter(organization=locked_organization, slug=slug).exists():
+                    continue
+                raise
     raise IdentifierAllocationError
 
 

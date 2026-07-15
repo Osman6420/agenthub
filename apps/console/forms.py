@@ -17,6 +17,7 @@ from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet, ScenarioDocumentSetBinding
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer, ConsumerBinding
+from apps.identity.roles import Role
 from apps.ingestion.models import (
     ConfluenceProfile,
     ConfluenceProfileStatus,
@@ -51,12 +52,24 @@ class OrganizationForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
 
 
+class ProjectOwnerChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, membership: OrganizationMembership) -> str:
+        return (
+            f"{membership.user.get_username()} · {membership.organization.name} · "
+            f"{membership.get_role_display()}"
+        )
+
+
 class ProjectForm(forms.ModelForm):
-    owner = forms.ChoiceField(required=False, choices=())
+    owner_membership = ProjectOwnerChoiceField(
+        queryset=OrganizationMembership.objects.none(),
+        label="Proje sahibi",
+        help_text="Yalnız seçilen organizasyonun yönetici veya proje sahibi üyeleri atanabilir.",
+    )
 
     class Meta:
         model = AIProject
-        fields = ["organization", "name", "owner", "risk_level", "status"]
+        fields = ["organization", "name", "owner_membership", "risk_level", "status"]
         labels = {"name": "Proje adı"}
         help_texts = {"name": "Kalıcı proje kimliği otomatik oluşturulur."}
 
@@ -66,35 +79,30 @@ class ProjectForm(forms.ModelForm):
         cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
             Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
         )
-        memberships = OrganizationMembership.objects.select_related("organization", "user")
+        memberships = OrganizationMembership.objects.select_related("organization", "user").filter(
+            organization__status=OrganizationStatus.ACTIVE,
+            role__in=[Role.ORGANIZATION_ADMIN, Role.PROJECT_OWNER],
+        )
         if ids is not None:
             memberships = memberships.filter(organization_id__in=ids)
-        owner_organizations: dict[str, set[str]] = {}
-        for membership in memberships:
-            username = membership.user.get_username()
-            owner_organizations.setdefault(username, set()).add(membership.organization.slug)
-        cast(forms.ChoiceField, self.fields["owner"]).choices = [
-            ("", "---------"),
-            *[
-                (username, f"{username} ({', '.join(sorted(organizations))})")
-                for username, organizations in sorted(owner_organizations.items())
-            ],
-        ]
+        cast(
+            forms.ModelChoiceField, self.fields["owner_membership"]
+        ).queryset = memberships.order_by("organization__name", "user__username")
 
     def clean(self) -> dict[str, Any] | None:
         cleaned_data = super().clean()
         if cleaned_data is None:
             return None
         organization = cleaned_data.get("organization")
-        owner = cleaned_data.get("owner")
+        owner_membership = cleaned_data.get("owner_membership")
         if (
             organization
-            and owner
-            and not OrganizationMembership.objects.filter(
-                organization=organization, user__username=owner
-            ).exists()
+            and owner_membership
+            and owner_membership.organization_id != organization.pk
         ):
-            self.add_error("owner", "Selected owner is not a member of this organization.")
+            self.add_error(
+                "owner_membership", "Seçilen proje sahibi bu organizasyonun uygun bir üyesi değil."
+            )
         return cleaned_data
 
 
@@ -120,7 +128,12 @@ class ScenarioForm(forms.ModelForm):
 class ConsumerForm(forms.ModelForm):
     class Meta:
         model = Consumer
-        fields = ["organization", "subject", "name", "protocol", "status"]
+        fields = ["organization", "name", "protocol", "status"]
+        labels = {"name": "İstemci uygulama adı", "protocol": "Protokol"}
+        help_texts = {
+            "name": "Bearer kimlik konusu sistem tarafından güvenli ve kalıcı olarak oluşturulur.",
+            "protocol": "Kimlik bilgisi, istemci oluşturulduktan sonra ayrı olarak üretilir.",
+        }
 
     def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -128,6 +141,15 @@ class ConsumerForm(forms.ModelForm):
         cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
             Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
         )
+
+
+class ConsumerTokenIssueForm(forms.Form):
+    name = forms.CharField(
+        max_length=200,
+        label="Token adı",
+        help_text="Örneğin: üretim, test veya entegrasyon adı. Gizli değer burada saklanmaz.",
+        strip=True,
+    )
 
 
 class BindingForm(forms.ModelForm):

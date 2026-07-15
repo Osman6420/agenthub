@@ -31,8 +31,10 @@ docker compose -f deploy/compose/docker-compose.yml up --build
 
 ## Public API (gateway)
 
-Consumer'lar tek giriş noktası olan gateway'i kullanır. Önce bir consumer token'ı
-oluşturun (düz metin bir kez gösterilir), sonra `POST /v1/invoke` çağırın:
+Consumer'lar tek giriş noktası olan gateway'i kullanır. Organizasyon yöneticisi console'da
+istemci detayından adlandırılmış bearer token oluşturabilir; düz metin yalnız başarılı yanıtta bir
+kez gösterilir. Token aynı yüzeyden döndürülebilir veya iptal edilebilir. Otomasyon/yerel yönetim
+için mevcut komut da korunur; ardından `POST /v1/invoke` çağrılır:
 
 ```powershell
 .\.venv\Scripts\python manage.py create_consumer_token --organization mcm --subject ug-backend --name demo
@@ -42,6 +44,10 @@ oluşturun (düz metin bir kez gösterilir), sonra `POST /v1/invoke` çağırın
 #   -H "Idempotency-Key: <uuid>" \
 #   -d '{"scenario_alias":"customer-information","input":{"query":"Iade nasil yapilir?"}}'
 ```
+
+Normal bearer-mode console consumer oluşturma akışı subject istemez; opaque subject'i sistem
+üretir. Explicit subject yalnız mevcut GitOps/import ve management-command lookup uyumluluğunda
+kalır. Token plaintext/hash değerlerini log, audit veya uygulama mesajlarına kopyalamayın.
 
 Kimlik yoksa `401`, yetkisiz alias/capability'de `403`, aynı idempotency key farklı
 gövdeyle `409` döner. Cevap üretimi (RAG runtime) Sprint 4'te geliyor; şu an gateway

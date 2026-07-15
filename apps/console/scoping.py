@@ -29,7 +29,7 @@ def scoped_organizations(user: UserLike) -> QuerySet[Organization]:
 
 def scoped_projects(user: UserLike) -> QuerySet[AIProject]:
     allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
-    qs = AIProject.objects.select_related("organization")
+    qs = AIProject.objects.select_related("organization", "owner_membership__user")
     return qs if allowed is None else qs.filter(organization_id__in=allowed)
 
 
