@@ -1,0 +1,28 @@
+{
+  "contract_version": "python-node-negative-sandbox-corpus/v1",
+  "safety": "INERT_FIXTURES_DO_NOT_RUN_OUTSIDE_APPROVED_SANDBOX",
+  "cases": [
+    {"id": "dynamic-eval", "category": "static", "source_template": "def run(input, config): return eval(input['x'])", "expected": "PY_DYNAMIC_EVAL"},
+    {"id": "dynamic-import", "category": "static", "source_template": "def run(input, config): return __import__(input['module'])", "expected": "PY_IMPORT_DYNAMIC"},
+    {"id": "dunder-subclasses", "category": "static", "source_template": "def run(input, config): return object.__subclasses__()", "expected": "PY_REFLECT_DUNDER"},
+    {"id": "filesystem-open", "category": "static", "source_template": "def run(input, config): return open('/etc/passwd').read()", "expected": "PY_IO_FILESYSTEM"},
+    {"id": "process-spawn", "category": "static", "source_template": "import subprocess\ndef run(input, config): return subprocess.run(['id'])", "expected": "PY_PROCESS_IMPORT"},
+    {"id": "socket-egress", "category": "static", "source_template": "import socket\ndef run(input, config): return socket.create_connection(('1.1.1.1', 53))", "expected": "PY_NETWORK_IMPORT"},
+    {"id": "unsafe-pickle", "category": "static", "source_template": "import pickle\ndef run(input, config): return pickle.loads(input['payload'])", "expected": "PY_SERIALIZE_PICKLE"},
+    {"id": "ctypes-native", "category": "static", "source_template": "import ctypes\ndef run(input, config): return ctypes.CDLL(None)", "expected": "PY_PROCESS_NATIVE"},
+    {"id": "environment-read", "category": "runtime", "source_template": "import os\ndef run(input, config): return dict(os.environ)", "expected": "SANDBOX_ENV_DENIED"},
+    {"id": "root-write", "category": "runtime", "source_template": "def run(input, config): open('/owned','w').write('x'); return {}", "expected": "SANDBOX_ROOT_READ_ONLY"},
+    {"id": "dns-egress", "category": "runtime", "source_template": "import socket\ndef run(input, config): return socket.getaddrinfo('example.invalid', 443)", "expected": "SANDBOX_NETWORK_DENIED"},
+    {"id": "metadata-egress", "category": "runtime", "source_template": "import socket\ndef run(input, config): return socket.create_connection(('169.254.169.254', 80))", "expected": "SANDBOX_NETWORK_DENIED"},
+    {"id": "infinite-loop", "category": "resource", "source_template": "def run(input, config):\n while True: pass", "expected": "SANDBOX_WALL_OR_CPU_LIMIT"},
+    {"id": "memory-bomb", "category": "resource", "source_template": "def run(input, config): return bytearray(1024*1024*1024)", "expected": "SANDBOX_MEMORY_LIMIT"},
+    {"id": "fork-bomb", "category": "resource", "source_template": "import os\ndef run(input, config):\n while True: os.fork()", "expected": "SANDBOX_PID_LIMIT"},
+    {"id": "scratch-bomb", "category": "resource", "source_template": "def run(input, config): open('/tmp/fill','wb').write(b'x'*10000000); return {}", "expected": "SANDBOX_SCRATCH_LIMIT"},
+    {"id": "output-bomb", "category": "resource", "source_template": "def run(input, config): return {'x':'a'*10000000}", "expected": "SANDBOX_OUTPUT_LIMIT"},
+    {"id": "checksum-substitution", "category": "protocol", "mutation": "revision_checksum", "expected": "RUNNER_CHECKSUM_MISMATCH"},
+    {"id": "expired-request", "category": "protocol", "mutation": "expires_at_before_now", "expected": "RUNNER_REQUEST_EXPIRED"},
+    {"id": "replayed-request", "category": "protocol", "mutation": "reuse_execution_id", "expected": "RUNNER_REQUEST_REPLAYED"},
+    {"id": "malformed-result", "category": "protocol", "mutation": "invalid_json_result", "expected": "RUNNER_RESULT_INVALID"},
+    {"id": "cancel-race", "category": "protocol", "mutation": "cancel_after_start_before_result", "expected": "RUNNER_CANCELLED_OR_LATE_RESULT_IGNORED"}
+  ]
+}

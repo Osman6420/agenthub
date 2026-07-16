@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agenthub:python-node-security-review-report:v1",
+  "title": "Python node security review report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "revision_checksum",
+    "rule_set",
+    "runner_image_digest",
+    "findings",
+    "probe_summary",
+    "outcome",
+    "report_checksum"
+  ],
+  "properties": {
+    "contract_version": {"const": "python-node-security-review-report/v1"},
+    "revision_checksum": {"$ref": "#/$defs/sha256"},
+    "rule_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "checksum"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+        "checksum": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "runner_image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "findings": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "severity", "line", "column", "count"],
+        "properties": {
+          "code": {"type": "string", "pattern": "^PY_[A-Z0-9_]{1,63}$"},
+          "severity": {"enum": ["warning", "critical"]},
+          "line": {"type": "integer", "minimum": 0, "maximum": 10000},
+          "column": {"type": "integer", "minimum": 0, "maximum": 10000},
+          "count": {"type": "integer", "minimum": 1, "maximum": 10000}
+        }
+      }
+    },
+    "probe_summary": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["probe", "outcome", "reason_code"],
+        "properties": {
+          "probe": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+          "outcome": {"enum": ["pass", "blocked", "error"]},
+          "reason_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$"}
+        }
+      }
+    },
+    "outcome": {"enum": ["pass", "blocked", "error"]},
+    "report_checksum": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

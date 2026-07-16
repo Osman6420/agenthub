@@ -10,7 +10,10 @@ Plan two related but independently deliverable Phase 2.6 capabilities:
    graph/JSON candidates from server-owned capability context without requiring user-supplied system
    identifiers.
 
-This record plans implementation only. It does not authorize tenant-code execution, a runner or
+This record plans implementation only. The first P2.6.8 parallel-wave isolation spike and inert
+contracts are documented in [ADR-0011](../../adr/0011-reviewed-python-node-isolation-and-lifecycle.md),
+[the spike record](isolation-spike.md) and [the contract record](python-node-contracts.md). They do
+not authorize tenant-code execution, a runner or
 production dependency, authentication/authorization changes, live model egress, database reset or
 production activation.
 
@@ -41,6 +44,10 @@ Do not rename or reinterpret the existing artifact/runtime contract. Preserve it
   `custom_node_definition`, registry and releases remain compatible.
 - **Python node**: scenario-author source with a separate draft/review/revision model and isolated
   execution boundary.
+
+The spike freezes the product terminology but does not rename the persisted
+`custom_node_definition`: existing records are **managed nodes** and future reviewed source records
+are **Python nodes**. `execution_class` is authoritative; labels are not.
 
 Both may appear under the workflow node family `custom`, but their catalog entry includes an
 explicit `execution_class` (`managed` or `python`). New Python-node workflow config uses a fixed
@@ -135,6 +142,11 @@ lineage/authorization and reruns canonical validation.
 - No tenant source is executed during this part unless the spike environment is explicitly approved
   and contains no platform credentials or network authority.
 
+First-wave decision: recommend private content-addressed object storage with KMS envelope
+encryption; assigned platform source reviewer plus author-own-source access; metadata-only
+organization-admin/auditor views; pin/legal-hold-aware retention. These remain data, authorization
+and infrastructure owner approval gates, not implemented behavior.
+
 ### P2.6.8B — Python-node authoring and review control plane
 
 Plan additive tenant-owned models with direct organization lineage:
@@ -167,8 +179,8 @@ mutable draft
 - Review decision and activation require platform admin and bind exact checksums under transaction.
 - Platform-admin review sees the exact automated report. Critical status prevents approval at the
   service/database boundary; warning acceptance records an explicit rationale.
-- Approval and activation may be one explicit atomic platform-admin action or two explicit actions;
-  choose in implementation plan, but no approved revision becomes active accidentally.
+- Approval and activation are two explicit platform-admin actions under ADR-0011, so no approved
+  revision becomes active accidentally.
 - Scenario authors may create/edit/test/submit only within `can_author_scenarios` scope.
 - Organization admins may list/detail safe metadata and review status for their organization but do
   not approve or view source by default.
@@ -188,8 +200,9 @@ mutable draft
   capability, but the unresolved graph remains transient and cannot pass save/publish.
 - Release compiler pins exact Python-node revision/checksum and safe execution metadata; never source.
 - Runtime re-resolves organization, active policy and checksum before dispatch and validates input
-  and returned patch again. Decide via ADR whether disable blocks only new runs or also queued/in-flight
-  execution.
+  and returned patch again. Disable blocks new runs/releases and not-started dispatch immediately;
+  already-started sandboxes may finish under their durable pin, while an independent emergency kill
+  switch cancels them. Late results cannot mutate a terminal run.
 - Runner output is untrusted and merges only through the Phase 2.6 typed state-mapping/protected-key
   policy.
 - Preserve all existing managed-node behavior and fixtures. Studio labels “Yönetilen node” versus
@@ -421,9 +434,9 @@ Parallelization:
 ## Implementation steps
 
 1. Approve this plan, threat model and explicit authorization matrix.
-2. Run minimum-runner isolation spike; write and approve runner ADR, optional hardening decision and
-   protocol/resource budgets.
-3. Freeze Python-node lifecycle/checksum/automated-review/public-catalog schemas and AI context/result
+2. Review and accept the completed minimum-runner isolation spike and proposed ADR-0011; approve
+   target-runtime evidence, optional hardening decision and protocol/resource budgets.
+3. Review the frozen Python-node lifecycle/checksum/automated-review/public-catalog schemas and AI context/result
    schemas.
 4. Implement Python-node control plane, identifier allocation and automated review without runtime
    workflow execution.
@@ -483,12 +496,13 @@ Parallelization:
 
 ## Open questions
 
-1. Minimum runner topology, whether stronger sandbox hardening is justified, source storage
-   encryption and runner image patch ownership.
+1. Target OpenShift acceptance of the recommended per-execution OCI runner, whether shared-kernel
+   residual risk triggers gVisor/Kata/microVM, and named runner image patch ownership.
 2. Exact stdlib module allowlist and whether any module subsets require different risk tiers.
-3. Source-view permission for organization admins and auditors; recommended default is metadata only.
-4. Whether platform approval atomically activates or activation is a second explicit action.
-5. Disable semantics for queued/in-flight executions.
+3. Approval of the recommended source-view predicate: assigned platform reviewer plus author-own
+   scope; organization admins and auditors metadata only.
+4. Approval of separate review and activation actions.
+5. Approval of disable semantics and emergency in-flight kill authority.
 6. Exact per-section context budgets and schema-summary algorithm.
 7. Whether AI may generate Python source only after an explicit second user action; recommended yes.
 8. Whether pointer-rich diagnostics require a compiler diagnostic contract change shared by all
@@ -496,8 +510,9 @@ Parallelization:
 
 ## Status
 
-Planned. Implementation has not started. Isolation spike/ADR and authorization approval are hard
-gates.
+Implemented for the first P2.6.8 parallel-wave documentation/contract scope. Tenant execution,
+persistence, APIs, authorization changes and deployment remain unimplemented. ADR-0011 acceptance,
+target-runtime isolation evidence, P2.6.1 and owner approvals are hard runtime-branch gates.
 
 ## Completion criteria
 

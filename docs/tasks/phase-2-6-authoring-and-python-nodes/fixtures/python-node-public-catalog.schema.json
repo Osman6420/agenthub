@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agenthub:python-node-public-catalog:v1",
+  "title": "Safe workflow node catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "snapshot_checksum", "nodes"],
+  "properties": {
+    "contract_version": {"const": "workflow-node-public-catalog/v1"},
+    "snapshot_checksum": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "nodes": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node_ref",
+          "execution_class",
+          "display_name",
+          "purpose",
+          "lifecycle_status",
+          "revision",
+          "revision_checksum",
+          "config_schema",
+          "input_schema",
+          "output_schema"
+        ],
+        "properties": {
+          "node_ref": {"type": "string", "minLength": 1, "maxLength": 160},
+          "execution_class": {"enum": ["managed", "python"]},
+          "display_name": {"type": "string", "minLength": 1, "maxLength": 160},
+          "purpose": {"type": "string", "maxLength": 500},
+          "lifecycle_status": {"const": "active"},
+          "revision": {"type": "integer", "minimum": 1},
+          "revision_checksum": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "config_schema": {"$ref": "#/$defs/schemaSummary"},
+          "input_schema": {"$ref": "#/$defs/schemaSummary"},
+          "output_schema": {"$ref": "#/$defs/schemaSummary"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "schemaSummary": {
+      "type": "object",
+      "maxProperties": 32,
+      "additionalProperties": true
+    }
+  }
+}

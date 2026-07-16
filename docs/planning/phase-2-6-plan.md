@@ -351,6 +351,11 @@ Detailed P2.6.10 plan and threat model:
   runner container/service. Stronger gVisor/Kata/microVM isolation is optional hardening selected
   only if the spike, deployment platform or risk review justifies its operational cost. Python
   AST/import filtering alone is not an isolation boundary.
+- First-wave spike outcome: recommend a separate runner control plane with a per-execution,
+  non-root, credentials-free, network-denied, resource-limited OCI sandbox. Local Docker proves
+  basic namespace/cgroup flags but reports default `runc` with unconfined seccomp, so production
+  acceptance requires target OpenShift RuntimeDefault-or-stricter seccomp/LSM/network/resource
+  evidence. gVisor/Kata/microVM remains conditional; no production dependency is selected here.
 - Run mandatory automated security review before human review: syntax/AST and closed-import checks,
   forbidden builtin/reflection checks, source/schema bounds, static security rules, schema fixtures,
   timeout/memory/output probes and a versioned rule-set report. Critical findings block submission or
@@ -360,8 +365,10 @@ Detailed P2.6.10 plan and threat model:
   capability; enforce wall/CPU/memory/PID/output limits and terminate on breach.
 - Allow workflows to select only active, organization-allowed exact revisions. Pending/rejected/
   disabled revisions may appear as authoring status but cannot pass canonical save/publish/release
-  gates. Disabling prevents new runs/releases while preserving historical run and review lineage;
-  in-flight policy must be decided in the ADR.
+  gates. Disabling prevents new runs/releases while preserving historical run and review lineage.
+- ADR-0011 proposes separate explicit review and activation. Disable blocks new runs/releases and
+  queued-but-not-started dispatch; started attempts retain their exact pin and may finish unless an
+  independently authorized emergency kill cancels them. Historical lineage is preserved.
 
 ### Exit criteria
 
@@ -600,10 +607,11 @@ Additional owner decisions closed on 2026-07-16 in P2.6.0:
 
 Remaining decisions owned by later parts:
 
-1. Confirm the minimum isolated-runner baseline and decide whether stronger sandbox hardening is
-   justified through the P2.6.8 spike/ADR.
-2. Decide source-at-rest encryption, retention and authorized source-view roles.
-3. Decide whether disabling a Python-node revision cancels in-flight calls or only blocks new ones.
+1. Accept ADR-0011's recommended minimum runner after target OpenShift evidence; decide whether
+   shared-kernel residual risk requires gVisor/Kata/microVM.
+2. Approve recommended private content-addressed KMS-encrypted source storage, retention/legal hold
+   periods and assigned source-review role.
+3. Approve proposed disable/new-dispatch/in-flight/emergency-kill semantics.
 4. Approve the authoring-context section/byte/token budgets and initial memory-only transient policy.
 5. Approve ingestion job states, timeout/heartbeat thresholds and PostgreSQL-versus-Redis heartbeat
     authority.

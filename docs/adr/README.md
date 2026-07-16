@@ -18,3 +18,4 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 | [0008](0008-durable-workflow-transition-state-machine.md) | Accepted | P2.6 transactional durable workflow transitions, typed child records and recovery invariants. |
 | [0009](0009-child-run-capability-attenuation.md) | Accepted | P2.6 pinned child workflow/agent calls with non-delegating capability attenuation. |
 | [0010](0010-workflow-dataflow-join-wait-and-human-task-contract.md) | Accepted | Restricted dataflow paths, deterministic joins, authenticated one-time event resume and typed human tasks. |
+| [0011](0011-reviewed-python-node-isolation-and-lifecycle.md) | Proposed | P2.6.8 minimum isolated runner, exact-checksum review/activation, source governance and safe catalog contract. |
