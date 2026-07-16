@@ -27,8 +27,42 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
         "fields": [],
     },
     {"type": "retrieve", "label": "Retrieve", "category": "rag", "fields": []},
-    {"type": "generate", "label": "Generate", "category": "rag", "fields": []},
-    {"type": "format_output", "label": "Format output", "category": "rag", "fields": []},
+    {
+        "type": "generate",
+        "label": "Generate",
+        "category": "rag",
+        "fields": [
+            {
+                "name": "prompt_ref",
+                "kind": "identifier",
+                "required": False,
+                "help": (
+                    "İsteğe bağlı prompt release rolü; boşsa varsayılan prompt kullanılır."
+                ),
+            },
+            {
+                "name": "model_profile_ref",
+                "kind": "identifier",
+                "required": False,
+                "help": (
+                    "İsteğe bağlı model profili release rolü; boşsa varsayılan kullanılır."
+                ),
+            },
+        ],
+    },
+    {
+        "type": "format_output",
+        "label": "Format output",
+        "category": "rag",
+        "fields": [
+            {
+                "name": "template_ref",
+                "kind": "text",
+                "required": False,
+                "help": "Mevcut runtime bunu artifact ref değil, doğrudan çıktı metni sayar.",
+            }
+        ],
+    },
     {
         "type": "validate_contract",
         "label": "Validate contract",

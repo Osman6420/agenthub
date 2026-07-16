@@ -23,7 +23,7 @@ export function defaultConfig(nodeType: NodeTypeSchema | undefined): NodeConfig 
   const config: NodeConfig = {};
   if (!nodeType) return config;
   for (const field of nodeType.fields) {
-    config[field.name] = field.kind === "object" ? {} : "";
+    if (field.required) config[field.name] = field.kind === "object" ? {} : "";
   }
   return config;
 }

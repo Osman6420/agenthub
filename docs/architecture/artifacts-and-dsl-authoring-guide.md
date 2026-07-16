@@ -1084,6 +1084,11 @@ Yalnız JSON döndür; açıklama veya Markdown fence ekleme.
 
 ## 19. Scenario Studio lifecycle contract
 
+- Builder configuration forms mirror the current compiler/runtime contract: `generate` exposes
+  optional `prompt_ref` and `model_profile_ref` manifest-role identifiers; `format_output` exposes
+  the current literal `template_ref`; `condition`, `tool`, and `custom` expose their governed
+  fields. `input`, `retrieve`, `validate_contract`, and `end` accept no configuration. Blank
+  optional identifiers are omitted rather than serialized as invalid empty values.
 - Scenario Studio is one scenario's authoring page, not an organization-wide shared canvas. The
   server locks organization/project/scenario context and the UI identifies that context.
 - Workflow JSON and graph are two views of the same mutable draft candidate. A non-empty imported

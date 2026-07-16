@@ -25,7 +25,7 @@ export interface BuilderInitial {
 
 export interface NodeFieldSchema {
   name: string;
-  kind: "expression" | "identifier" | "enum" | "object";
+  kind: "expression" | "identifier" | "text" | "enum" | "object";
   required?: boolean;
   help?: string;
   options_ref?: "tool_binding_roles" | "custom_nodes";

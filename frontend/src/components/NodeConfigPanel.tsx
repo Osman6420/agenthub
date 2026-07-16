@@ -28,8 +28,11 @@ export function NodeConfigPanel({
   const typeSchema = nodeTypeSchema(schema, node.data.nodeType);
   const config = node.data.config ?? {};
 
-  const setField = (name: string, value: unknown) => {
-    onChange(node.id, { ...config, [name]: value });
+  const setField = (name: string, value: unknown, required: boolean) => {
+    const next = { ...config };
+    if (!required && value === "") delete next[name];
+    else next[name] = value;
+    onChange(node.id, next);
   };
 
   return (
@@ -53,7 +56,7 @@ export function NodeConfigPanel({
                 aria-label={field.name}
                 disabled={disabled}
                 value={typeof value === "string" ? value : ""}
-                onChange={(e) => setField(field.name, e.target.value)}
+                onChange={(e) => setField(field.name, e.target.value, !!field.required)}
                 style={inputStyle}
               >
                 <option value="">—</option>
@@ -75,7 +78,7 @@ export function NodeConfigPanel({
                 aria-label={field.name}
                 disabled={disabled}
                 defaultValue={JSON.stringify(value ?? {}, null, 2)}
-                onBlur={(e) => setField(field.name, safeJson(e.target.value))}
+                onBlur={(e) => setField(field.name, safeJson(e.target.value), !!field.required)}
                 rows={4}
                 style={{ ...inputStyle, fontFamily: "monospace" }}
               />
@@ -89,7 +92,7 @@ export function NodeConfigPanel({
               aria-label={field.name}
               disabled={disabled}
               value={typeof value === "string" ? value : ""}
-              onChange={(e) => setField(field.name, e.target.value)}
+              onChange={(e) => setField(field.name, e.target.value, !!field.required)}
               style={inputStyle}
             />
             {field.help && <span style={helpStyle}>{field.help}</span>}

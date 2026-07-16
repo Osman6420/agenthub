@@ -196,6 +196,7 @@ Log in as `editor` (or `admin`) and open **Builder** (`/console/builder/`).
 | 2.23 | Open an existing scenario with a linked draft | Only that scenario's workflow opens; JSON and graph show the same body and graph edits appear in JSON |
 | 2.24 | Open an existing scenario with an active workflow but no linked draft, then choose the active-workflow editing action | The exact checksum-matching active body is copied to a new scenario draft; the active release and immutable artifact remain unchanged |
 | 2.25 | Repeat 2.21–2.24 as `auditor` and with a foreign-tenant scenario URL | Auditor can inspect but cannot edit/copy; foreign scenario is not disclosed |
+| 2.26 | Select every workflow node and inspect its configuration panel | Generate shows optional prompt/model role fields; format output, condition, tool and custom show their supported fields; input, retrieve, validate contract and end correctly state that they have no configuration |
 
 The published artifact then follows the normal compile → eval → promote path (§4).
 

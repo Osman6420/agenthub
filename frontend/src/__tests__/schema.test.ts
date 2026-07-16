@@ -11,6 +11,12 @@ const schema: NodeSchema = {
   node_types: [
     { type: "input", label: "Input", category: "io", fields: [], is_entry: true, singleton: true },
     {
+      type: "generate", label: "Generate", category: "rag", fields: [
+        { name: "prompt_ref", kind: "identifier", required: false },
+        { name: "model_profile_ref", kind: "identifier", required: false },
+      ],
+    },
+    {
       type: "tool",
       label: "Tool",
       category: "tool",
@@ -37,8 +43,8 @@ const schema: NodeSchema = {
 
 describe("schema helpers", () => {
   it("resolves enum options from the shared lists", () => {
-    const toolField = schema.node_types[1].fields[0];
-    const customField = schema.node_types[2].fields[0];
+    const toolField = schema.node_types[2].fields[0];
+    const customField = schema.node_types[3].fields[0];
     expect(fieldOptions(schema, toolField)).toEqual(["search_web"]);
     expect(fieldOptions(schema, customField)).toEqual(["summarize"]);
   });
@@ -49,7 +55,8 @@ describe("schema helpers", () => {
       input_key: "",
       output_key: "",
     });
-    expect(defaultConfig(nodeTypeSchema(schema, "custom"))).toEqual({ node_ref: "", fields: {} });
+    expect(defaultConfig(nodeTypeSchema(schema, "custom"))).toEqual({ node_ref: "" });
+    expect(defaultConfig(nodeTypeSchema(schema, "generate"))).toEqual({});
     expect(defaultConfig(nodeTypeSchema(schema, "input"))).toEqual({});
   });
 
