@@ -43,6 +43,5 @@ The SQLite test settings do not prove PostgreSQL RLS, pgvector, advisory-lock or
 Applicable work must also run the PostgreSQL profile documented in
 [`manual-testing-guide.md` section 0.1](../manual-testing-guide.md#01-windows-pythontest-troubleshooting).
 That section is also the canonical recovery procedure for Microsoft Store venv launcher failures,
-Python ABI mismatches, unrelated pytest plugin autoload failures and the known Compose image
-build-order defect. Record the exact profile, pass/skip counts and environmental fallback in the
-task verification file.
+Python ABI mismatches and unrelated pytest plugin autoload failures. Record the exact profile,
+pass/skip counts and environmental fallback in the task verification file.

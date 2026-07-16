@@ -109,11 +109,9 @@ example LangSmith) from importing optional compiled dependencies. Load `pytest_d
 explicitly so Django setup still occurs. This fallback may require network access to resolve the
 declared dependencies; record that fact in verification evidence.
 
-The canonical Compose application image currently has a separate build-order defect: its Dockerfile
-runs `pip install .` after copying `pyproject.toml` but before copying the `config` package. A failure
-such as `package directory 'config' does not exist` happens during image build and does not exercise
-the requested code. Do not report it as a test failure or patch production dependencies to bypass
-it. Use the isolated full-workspace container above, and track the Dockerfile repair as its own task.
+The canonical Compose image copies the declared local Python packages before `pip install .`. If an
+older cached build reports `package directory 'config' does not exist`, rebuild the application image
+from the current Dockerfile before diagnosing application code.
 
 For type and Django checks in the fallback container, install development-only tooling only inside
 that disposable container; do not modify repository dependencies:
@@ -340,7 +338,49 @@ As `releaser` (or `admin`) on the **Releases** screen, or via CLI:
 
 ---
 
-## 8. Re-seed / reset
+## 8. Phase 2.5 owner acceptance
+
+Run these checks after the automated Part 9 gates. Record pass/fail, the operator role, scenario or
+object ID, and a screenshot or request ID for failures. Do not paste tokens, prompts, document bytes,
+provider responses or secrets into the acceptance record.
+
+| # | Owner acceptance test | Expected |
+| --- | --- | --- |
+| 8.1 | Log in as `admin`, select `demo`, then follow Organization → Project → Scenario → Document set → Consumer → Release and the reverse links | Every page stays in the selected organization, uses Turkish-first labels and exposes no unrelated tenant rows/counts |
+| 8.2 | Repeat relevant pages as `editor`, `releaser`, `auditor`, then use a foreign-tenant object URL | Mutations match the role matrix; foreign objects return 404 and do not leak labels/counts |
+| 8.3 | Create a project, scenario and REST consumer | System IDs are generated; required ownership is explicit; the token is shown once and never redisplayed |
+| 8.4 | Complete upload → draft → publish → staged index → promote for a document set, then inspect its scenario/source cross-links | Immutable versions and pins are visible; no source sync or upload activates content directly |
+| 8.5 | Preview Confluence and REST mapping with invalid then valid synthetic input, without live egress | Invalid mapping fails safely; preview reveals no endpoint/credential and does not mutate published/active state |
+| 8.6 | Open a new scenario's Studio, paste a complete valid `agenthub/v1` workflow JSON, switch to graph, edit node settings, validate and save | JSON and graph represent the same scenario-isolated draft; all supported nodes expose governed configuration or explicitly valid no-config semantics |
+| 8.7 | Reopen the scenario from its own detail page and edit both JSON and graph; attempt stale concurrent save and an unknown/oversized DSL operation | Existing graph remains editable; stale save conflicts; unknown or over-budget DSL fails closed with useful diagnostics |
+| 8.8 | Create/compile/evaluate/promote a release with optional output contract, invoke it, then rollback | Exact immutable artifacts and optional contract are pinned; rollback restores the superseded release atomically |
+| 8.9 | Invoke the same bound RAG alias through `/v1/chat/completions` and `/v1/responses` with the REST token; try the MCP token and an unbound alias | REST calls return compatible bounded envelopes; MCP token and unbound alias are denied without content leakage |
+| 8.10 | Invoke through MCP with the MCP token; try the REST token | MCP succeeds only for the bound MCP consumer; REST credential is denied |
+| 8.11 | Inspect audit/usage/metrics after creation, denial, invocation, promotion and rollback | Actor/tenant/action/outcome/request correlation is present; tokens, content, endpoints and credentials are absent |
+| 8.12 | Disable the REST/MCP consumer or adapter feature, retry invocation, then restore it | Traffic fails closed while disabled and resumes only after explicit restoration; immutable history remains intact |
+
+Owner sign-off for Phase 2.5 means all applicable checks above pass or have an explicitly accepted,
+documented residual finding. It does not close Phase 2 live activation.
+
+## 9. Phase 2 live-environment acceptance
+
+Perform this section only with approved synthetic/non-production data and a named change/rollback
+owner. Each row requires the exact environment-specific approval described in the Phase 2 closure
+plan; local stubs do not count.
+
+| # | Live acceptance test | Expected evidence |
+| --- | --- | --- |
+| 9.1 | Provision the dedicated production application role and exercise an empty, valid and cross-tenant pooled request/worker context | Role is non-owner, non-superuser and `NOBYPASSRLS`; empty/cross-tenant access denies; pooled context does not leak |
+| 9.2 | Register approved Confluence and generic REST profiles, grant only `demo`, run one bounded synthetic preview/sync, then disable each profile | CA/DNS/firewall and redirect controls pass; only the granted tenant receives a draft; audit is redacted; disable stops egress |
+| 9.3 | Register approved embedding and OCR profiles and build one bounded synthetic index/document | Retention/privacy and cost ceilings are approved; timeout/size/token/page limits apply; uncertain post-send outcomes are not blindly retried |
+| 9.4 | Configure the approved AI-authoring model and run candidate → diagnostics → explicit draft transfer | Candidate remains non-publishing; canonical diagnostics are authoritative; disabling `AI_AUTHORING_MODEL_PROFILE_ID` stops authoring |
+| 9.5 | Review dashboards/alerts and audit records for the smoke operations; execute documented disable/rollback drills | Request IDs correlate logs/metrics/audit without secrets/content; rollback owners confirm recovery and residual risks |
+
+Phase 2 closes only after all five rows have attached evidence plus privacy/retention, spend and
+residual-risk approval. If a provider is intentionally omitted, the owner must remove that capability
+from the approved Phase 2 target or explicitly accept the unverified risk; absence is not a pass.
+
+## 10. Re-seed / reset
 
 ```powershell
 # Wipe and rebuild the demo tenant (prints a fresh token)

@@ -32,6 +32,42 @@ its generated probe role.
   embedding, OCR and AI authoring.
 - Privacy/retention, cost ceilings, audit/monitoring, disable and rollback evidence.
 
+## Phase 2.5 handoff readiness (2026-07-16)
+
+Phase 2.5 Parts 1–9 are completed, verified and owner-accepted. The canonical application image builds;
+frontend, full SQLite, full PostgreSQL/Redis, formatter, lint, type, Django, migration and compile
+gates pass, and the authenticated Turkish product journey was accepted on 2026-07-16.
+
+The live Phase 2 items below remain blocked on concrete owner/environment inputs rather than code:
+
+| Live item | Required input and approval |
+| --- | --- |
+| Confluence | Approved base URL, CA/DNS/private-CIDR policy, secret reference, synthetic space/page and disable owner |
+| Generic REST | Approved HTTPS URL, auth secret reference, response mapping, synthetic payload, schedule and disable owner |
+| Embedding | Provider/model profile, endpoint/network policy, retention/privacy decision, token/cost ceiling and synthetic text |
+| OCR | Provider profile, endpoint/network policy, retention/privacy decision, page/size/cost ceiling and synthetic document |
+| AI authoring | `ModelProfile`, `AI_AUTHORING_MODEL_PROFILE_ID`, privacy/retention/spend approval and non-publishing candidate smoke input |
+| Production RLS | Exact database/pool topology, application role secret, change window, rollback approver and pool-leak evidence |
+| Operations | Alert/metric owner, redacted audit review, disable/rollback drill and residual-risk sign-off |
+
+No real profile, credential, network rule, production role or production data was created or changed
+during the Part 9 local verification.
+
+## Local live-closure probe — 2026-07-16
+
+- The local PostgreSQL catalog inventory found all expected protected/bootstrap/telemetry tables,
+  but `check_tenant_rls --app-role agenthub_app` failed closed with `APP_ROLE_MISSING` and 47
+  table-specific `SELECT_MISSING` findings (48 total). No role/grant/policy mutation was attempted.
+- Active local embedding profiles exist, including one deterministic synthetic index that is active,
+  store-ready and contains one document/chunk. This is useful local evidence, not production approval.
+- A local `gemini-chat` model profile exists. The running web/worker were started with the selected
+  AI-authoring profile and both governed Scenario Studio and live Gemini workflow candidates passed
+  canonical diagnostics. A separately launched shell did not inherit that process environment;
+  this was an inspection-scope mismatch, not missing AI-authoring functionality. The selector is not
+  persisted in the developer `.env`. No Confluence, generic REST or OCR profile is registered.
+- Consequently Phase 2.5 is closed, but Phase 2 live-environment closure remains open and must not be
+  represented as passed until the missing role/profile/network/privacy/cost/rollback evidence lands.
+
 Governed upload malware/type scanning and its quarantine/failure/redaction/runbook evidence moved
 to Phase 3 by owner decision on 2026-07-14; it is not a Phase 2 closure criterion.
 

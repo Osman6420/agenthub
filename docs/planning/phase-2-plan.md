@@ -383,7 +383,8 @@ review remains prioritized, while responsive/accessibility manual acceptance is 
 Workstream 3 P10.1/P10.2 is offline-verified. P11 RLS/non-owner hardening is implemented and
 staging-equivalent verified without production mutation; live profiles and live activation remain
 required at Phase 2 closure. Personal MCP, upload scanning and persistent server-side conversation
-history moved to Phase 3. Phase 2.5 product-coherence development is planned before live closure.**
+history moved to Phase 3. Phase 2.5 product coherence is completed and owner-accepted; live closure
+remains the final Phase 2 gate.**
 
 ### Workstream status
 
@@ -392,7 +393,7 @@ history moved to Phase 3. Phase 2.5 product-coherence development is planned bef
 | 1 | Document plane | **Offline scope verified; P11 RLS/non-owner hardening implemented and staging-equivalent verified** — live Confluence/REST/embedding/OCR profiles remain closure work; upload scanning moved to Phase 3. Decisions = ADR-0003–0007. |
 | 2 | UI modernization + Turkish | **P9.1–P9.5 implemented and automated verification complete** — responsive/keyboard/screen-reader manual acceptance waived; Turkish terminology remains priority |
 | 3 | AI-assisted authoring (+ builder preview) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output candidates use immutable checksummed prompt contracts, canonical diagnostics and explicit workflow/contract-draft transfer. Live activation is a Phase 2 closure gate. |
-| 2.5 | Product coherence | **Planned before live closure** — organization workspace, cross-linked details, system IDs, architecture/DSL guide, document/source UX, scenario studio, transform DSL and OpenAI-compatible adapters |
+| 2.5 | Product coherence | **Completed, verified and owner-accepted 2026-07-16** — organization workspace, cross-linked details, system IDs, architecture/DSL guide, document/source UX, Scenario Studio, governed transform/retrieval DSL and OpenAI-compatible adapters |
 | Closure | Production readiness | **Partially complete** — begins after Phase 2.5; P11 RLS/non-owner role is implemented/verified without production mutation; production activation, live profiles, privacy/retention/cost approval, live smoke and rollback evidence remain |
 | 5 | Live model runtime (real generation) | **P1 + P5 + P6 implemented + verified** — catalog/shared egress/chat provider (opt-in); P5 wired real retrieve/generate into the agent loop + workflow nodes + per-node prompt/model binding; **P6 added the authored, governed agent system prompt**. WS5 runtime is functionally complete for the current scope (real chat + ACL RAG in `/v1/query`, workflows, and agents) |
 

@@ -1,11 +1,10 @@
-# AgentHub — Phase 2.5 Product Coherence Plan (IN PROGRESS)
+# AgentHub — Phase 2.5 Product Coherence Plan (COMPLETED)
 
-> **Status: IN PROGRESS.** Owner decisions recorded on 2026-07-14. The owner declared Part 1
-> finished and authorized progression on 2026-07-15; its PostgreSQL non-owner evidence remains an
-> explicit technical closure carryover rather than being silently treated as verified. Part 2 is
-> completed, owner-accepted, and verified with a green full PostgreSQL suite. Phase 2.5
-> runs after the verified Phase 2 application increments and before Phase 2
-> live-environment closure acceptance. Planning does not authorize authentication/authorization,
+> **Status: COMPLETED AND OWNER-ACCEPTED (2026-07-16).** Parts 1–9 are implemented and verified.
+> The owner delegated the final local Turkish journey to Codex; authenticated browser/API evidence,
+> full SQLite/PostgreSQL/frontend gates and the Part 9 review passed. PostgreSQL production-role and
+> real external-profile evidence remain explicit Phase 2 live-closure carryover rather than being
+> silently treated as verified. Planning does not authorize authentication/authorization,
 > tenant-isolation, public-API, dependency, secret, IAM, network or production mutations; each
 > applicable implementation increment retains the explicit approval gates in `AGENTS.md`.
 
@@ -59,13 +58,13 @@ assuming a later part is complete.
 | --- | --- | --- | --- |
 | Part 1 | **Owner-accepted for progression; implemented/offline-verified, PostgreSQL non-owner evidence carried to closure.** Dashboard, organization overview and secure navigable domain graph | P2.5.1 navigation subset + P2.5.2 documentation baseline | Tenant-scope implementation approved 2026-07-14; progression accepted 2026-07-15 |
 | Part 2 | **Completed, owner-accepted, and verified.** System-generated identifiers and coherent creation forms | P2.5.1 identifier subset | Full SQLite/PostgreSQL, migration, authorization and compatibility evidence recorded 2026-07-15 |
-| Part 3 | **Implemented and automated-verified; Turkish owner browser review pending.** Durable project ownership and consumer credential lifecycle | P2.5.1 ownership/consumer subset | Authentication, authorization and secrets implementation approved 2026-07-15 |
-| Part 4 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Document-set-first content lifecycle | P2.5.3 | Storage/purge compatibility and authorization review passed 2026-07-15 |
-| Part 5 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Unified source, mapping and index journey | P2.5.4 | Egress-profile boundary and operational-failure review passed 2026-07-15 |
-| Part 6 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Scenario-isolated JSON/graph authoring, optimistic concurrency and immutable artifact candidate composition | P2.5.5 + P2.5.2 authoring sections | Owner-found Studio gap closed; full SQLite/PostgreSQL and frontend evidence recorded 2026-07-16 |
-| Part 7 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Versioned governed transform/chunking/retrieval contracts and bounded runtime | P2.5.6 + P2.5.2 DSL sections | Full SQLite/PostgreSQL, closed registry, resource limits and ACL non-bypass evidence recorded 2026-07-16 |
-| Part 8 | **Implemented and automated-verified; authenticated live smoke and Turkish owner browser review pending.** OpenAI-compatible invocation adapters | P2.5.7 | Full SQLite/PostgreSQL, protocol denial, bounded history and compatibility evidence recorded 2026-07-16 |
-| Part 9 | Integrated hardening and Phase 2 closure handoff | Phase 2.5 acceptance | Full regression, Turkish journey and owner sign-off |
+| Part 3 | **Completed, verified and owner-accepted.** Durable project ownership and consumer credential lifecycle | P2.5.1 ownership/consumer subset | Authenticated token issue/one-time display/revoke/restore and redacted audit journey passed 2026-07-16 |
+| Part 4 | **Completed, verified and owner-accepted.** Document-set-first content lifecycle | P2.5.3 | Full authorization/storage regression plus integrated organization relationship journey accepted 2026-07-16 |
+| Part 5 | **Completed, verified and owner-accepted.** Unified source, mapping and index journey | P2.5.4 | Full egress/mapping/index regression and local active synthetic index evidence accepted 2026-07-16 |
+| Part 6 | **Completed, verified and owner-accepted.** Scenario-isolated JSON/graph authoring, optimistic concurrency and immutable artifact candidate composition | P2.5.5 + P2.5.2 authoring sections | Scenario-scoped JSON → graph → config → validate → publish browser journey passed 2026-07-16 |
+| Part 7 | **Completed, verified and owner-accepted.** Versioned governed transform/chunking/retrieval contracts and bounded runtime | P2.5.6 + P2.5.2 DSL sections | Full closed-registry, resource-limit and ACL non-bypass evidence accepted 2026-07-16 |
+| Part 8 | **Completed, verified and owner-accepted.** OpenAI-compatible invocation adapters | P2.5.7 | Authenticated Chat/Responses and REST/MCP positive/cross-protocol denial smoke passed 2026-07-16 |
+| Part 9 | **Completed, verified and owner-accepted.** Integrated hardening and Phase 2 closure handoff | Phase 2.5 acceptance | Full regression, canonical image build, Turkish journey, credential disable/restore, audit and rollback evidence recorded 2026-07-16 |
 
 The architecture/artifact/DSL guide is a cross-cutting deliverable, not a one-time documentation
 sprint. Every part updates the guide in the same change when it introduces, clarifies or retires a

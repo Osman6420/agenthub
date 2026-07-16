@@ -36,17 +36,13 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
                 "name": "prompt_ref",
                 "kind": "identifier",
                 "required": False,
-                "help": (
-                    "İsteğe bağlı prompt release rolü; boşsa varsayılan prompt kullanılır."
-                ),
+                "help": ("İsteğe bağlı prompt release rolü; boşsa varsayılan prompt kullanılır."),
             },
             {
                 "name": "model_profile_ref",
                 "kind": "identifier",
                 "required": False,
-                "help": (
-                    "İsteğe bağlı model profili release rolü; boşsa varsayılan kullanılır."
-                ),
+                "help": ("İsteğe bağlı model profili release rolü; boşsa varsayılan kullanılır."),
             },
         ],
     },

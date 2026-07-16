@@ -14,14 +14,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies first for better layer caching.
+# The application packages are part of the local project metadata, so they must exist before
+# `pip install .`. Copy only package sources here; the bind-mounted development tree still replaces
+# them in Compose while immutable builds retain a cacheable dependency/application layer.
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install .
-
-# Application code.
-COPY manage.py ./
 COPY config ./config
 COPY apps ./apps
+RUN pip install --upgrade pip && pip install .
+
+# Runtime entry point.
+COPY manage.py ./
 
 # Run as a non-root user.
 RUN useradd --create-home --uid 10001 appuser \
