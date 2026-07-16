@@ -249,23 +249,25 @@ by this task plan.
 
 ## Open questions
 
-1. Is the initial workflow `transform` node pinned-profile-only, or may it carry an exact bounded
-   inline operation list? Owner/architecture approval is required before implementation.
-2. What are the exact pointer length/segment/depth, mapping-entry, per-value expansion and total
-   workflow-state byte limits? They must be fixed as constants and tests, not configuration-free
-   behavior.
-3. Which existing node types require explicit mappings at cutover versus retaining a compatibility
-   default when mappings are absent? The answer must not expose ambient state to tools/custom nodes.
-4. What compiled workflow/checkpoint contract version identifies the new semantics and what exact
-   stale-run behavior is operator-visible?
-5. Can schema compatibility be proven for every pinned custom/tool profile at compile time, or which
-   unknown cases must be rejected versus runtime-validated before side effects?
+All closed against live code in [`decisions.md`](decisions.md):
+
+1. Transform node is **pinned-profile-only** (D1); no inline operation list.
+2. Fixed constants (D2): pointer ≤256 chars / ≤12 segments; ≤24 mapping entries each; state bytes
+   bounded by the existing `MAX_STATE_BYTES` re-checked after every mapping.
+3. Mappings are **optional and additive** (D3); absent = current ambient behavior, present = node-local
+   isolation (hard for `tool`/`custom`). `transform` requires both mappings.
+4. Compiled contract is **`agenthub/compiled-workflow/v2`** (D4); the runtime fails closed
+   (`WORKFLOW_COMPILER_VERSION_UNSUPPORTED`) on any other compiled version. No DB migration.
+5. Compile time enforces syntax/protected/bounds/conflicts; source/destination **type** compatibility
+   is validated at runtime before any side effect (D6).
 
 ## Status
 
-Planned. P2.6.0 and ADR-0010 define the target grammar, but P2.6.0 merge/verification, the transform
-contract choice, exact budgets and compiled-contract cutover identifier must close before
-implementation begins.
+Verified on branch `phase-2-6/p2-6-1-state-mapping` (baseline `88fc203`). Smallest complete compiler,
+runtime, release, builder, fixture-compatible and documentation change with tests is present; SQLite
+and PostgreSQL evidence is recorded in [`verification.md`](verification.md). Not merged; the
+integration owner opens dependent lanes (P2.6.2/P2.6.3/P2.6.5/P2.6.8) after this branch merges to the
+Phase 2.6 integration branch.
 
 ## Completion criteria
 

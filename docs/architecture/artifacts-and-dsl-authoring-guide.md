@@ -489,7 +489,9 @@ Hard limits:
 ```
 
 `config` opsiyoneldir ve yoksa `{}` kabul edilir. Node yalnız `id`, `type`, opsiyonel `config`
-alanlarını taşıyabilir. Config ağacı içinde şu key adları her seviyede yasaktır:
+ve — mapping-eligible node türlerinde — opsiyonel `input_mapping`/`output_mapping` alanlarını
+taşıyabilir (bkz. [§8.4.1](#841-typed-state-mapping-input_mapping--output_mapping)). Config ağacı
+içinde şu key adları her seviyede yasaktır:
 
 ```text
 endpoint, url, entrypoint, package, python, code, secret
@@ -630,13 +632,35 @@ Graph sonunda output contract tekrar uygulanır; node explicit ara doğrulama sa
 }
 ```
 
-- `binding_role`: release manifestindeki exact `tool_binding` rolü.
-- `input_key`: state’te tool input object’inin anahtarı; object değilse `{}` kullanılır.
-- `output_key`: redacted tool output’un state’e yazılacağı anahtar.
+- `binding_role`: release manifestindeki exact `tool_binding` rolü (zorunlu).
+- `input_key`: state’te tool input object’inin anahtarı; object değilse `{}` kullanılır. Opsiyoneldir
+  ve `input_mapping` ile birlikte kullanılamaz (biri veya diğeri).
+- `output_key`: redacted tool output’un state’e yazılacağı anahtar. `output_key` veya
+  `output_mapping`’ten **tam olarak biri** verilmelidir.
 
 Tool proxy consumer capability, pinned binding, field allowlist, risk, approval, rate limit,
 destination ve idempotency kontrollerini tekrar uygular. Approval gerekirse workflow durable olarak
 pause olur; karar sonrası aynı node’dan devam eder.
+
+#### `transform`
+
+```json
+{
+  "id": "normalize",
+  "type": "transform",
+  "config": {"transform_profile_ref": "transform_profile.normalize"},
+  "input_mapping": [{"from": "/input/rows", "to": "/rows"}],
+  "output_mapping": [{"from": "/result", "to": "/evidence/normalized"}]
+}
+```
+
+- `transform_profile_ref`: release manifestinde immutable bir `transform_profile` artifact’ına pin
+  edilmiş rol adı. Release compiler, pin edilmemiş/foreign/mutable profili fail-closed reddeder.
+- Kapalı `agenthub/transform/v1` operasyon registry’sini yeniden kullanır; inline operasyon,
+  expression veya template taşımaz.
+- Hem `input_mapping` hem `output_mapping` **zorunludur**. Girdi envelope’u profile’a input value
+  olarak verilir; sonuç `/result` altında output envelope’una konur ve `output_mapping` ile state’e
+  yazılır. `documents.map` çıktısı JSON-safe dict listesine normalize edilir.
 
 #### `custom`
 
@@ -663,6 +687,31 @@ kontrol edilir, restricted context alır ve dönen bounded patch state’e merge
 ```
 
 Config ve outgoing edge kabul etmez. Graph bittiğinde `state.output` object olmalıdır.
+
+### 8.4.1 Typed state mapping (`input_mapping` / `output_mapping`)
+
+`retrieve`, `generate`, `tool`, `custom` ve `transform` node’ları opsiyonel typed mapping taşıyabilir.
+Mapping yalnız veri taşır; hiçbir zaman yetki taşımaz ve expression/template/kod içermez.
+
+- Her mapping `{"from": "<pointer>", "to": "<pointer>"}` girişlerinden oluşan bir listedir
+  (her biri en fazla 24 giriş).
+- Pointer’lar ADR-0010 restricted absolute JSON Pointer’dır: örn. `/input/customer_id`. Root/boş
+  pointer, URI fragment, wildcard (`*`), recursive descent (`**`), filter, array append (`-`) ve
+  negatif index yasaktır; escape yalnız `~0` (`~`) ve `~1` (`/`); en fazla 256 karakter ve 12 segment.
+- `input_mapping` verildiğinde node yalnız map ettiği alanlardan oluşan **node-local envelope**’u
+  görür; declare etmediği ambient state’i almaz (`tool`/`custom` için exfiltration sınırı).
+- `output_mapping` hedefleri yalnız iş namespace’lerine yazabilir: `/input`, `/retrieval`,
+  `/branches`, `/evidence`, `/decisions`, `/output`. Sunucuya ait namespace’ler (tenant, actor,
+  authorization, capability, release, execution, secret, budget, audit, …) — yazım/case/escape/
+  Unicode-confusable farkı gözetmeksizin — reddedilir (`WORKFLOW_PATH_PROTECTED`).
+- İki giriş aynı veya çakışan (ata/alt) hedefe yazamaz (`WORKFLOW_MAPPING_CONFLICT`).
+- Runtime output mapping’i copy-on-success uygular: bir giriş çözülmez/tip uyuşmazsa state kısmen
+  değişmez. Compiled workflow contract versiyonu `agenthub/compiled-workflow/v2`’dir; eski compiled
+  graph/checkpoint yeni semantikle çalıştırılamaz.
+
+Stabil diagnostic kodları: `WORKFLOW_PATH_INVALID`, `WORKFLOW_PATH_PROTECTED`,
+`WORKFLOW_MAPPING_CONFLICT`, `WORKFLOW_MAPPING_INVALID`, `WORKFLOW_MAPPING_MISSING`,
+`WORKFLOW_MAPPING_TYPE_MISMATCH`.
 
 ### 8.5 Tam RAG workflow örneği
 
