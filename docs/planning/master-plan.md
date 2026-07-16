@@ -22,6 +22,13 @@ implemented and verified offline. P9.1–P9.5 and P10.1/P10.2 are also implement
 production-hardening/live-profile closure milestone remains Phase 2 work. Personal MCP identity/OBO,
 governed upload scanning and persistent server-side conversation history moved to Phase 3. Concrete
 live changes retain their explicit gates.
+The local development environment has governed Gemini chat and 3072-dimension `halfvec`
+embedding profiles registered and live-smoke-verified through the shared SSRF-safe provider seams;
+credentials remain environment-injected, and no active release or index was changed.
+Local Scenario Studio AI authoring is enabled against that governed profile, and host-mode document
+storage is verified against the canonical MinIO bucket with environment-injected credentials.
+Workflow AI authoring and console copy surfaces now share one bounded 2.8 KB LLM guide; the detailed
+artifact/DSL architecture guide remains the human reference.
 The owner added Phase 2.5 product-coherence work before Phase 2 live closure; see
 [`phase-2-5-plan`](phase-2-5-plan.md). Part 1 dashboard/organization navigation is implemented and
 offline-verified; PostgreSQL non-owner verification and the Turkish manual browser journey remain
@@ -217,7 +224,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | AI-assisted authoring (Phase 2 · WS3) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output allowlist, immutable prompt contracts and non-publishing contract drafts; live activation at Phase 2 closure | Existing ModelProfile/SSRF-safe egress + canonical validators | [P10 AI authoring](../tasks/phase-2-p10-ai-assisted-authoring/plan.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md), [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P10 verification](../tasks/phase-2-p10-ai-assisted-authoring/verification.md) |
 | Product coherence (Phase 2.5) | **Completed, verified and owner-accepted 2026-07-16** — all nine parts, authenticated Turkish journey, Scenario Studio JSON/graph/config/publish, REST/MCP/OpenAI smoke, credential disable/restore, audit and rollback passed; live environment evidence remains Phase 2 closure scope | Verified Phase 2 application scope | [phase-2-5-plan](phase-2-5-plan.md) + [Part 9](../tasks/phase-2-5-part-9-integrated-hardening/plan.md) | Part threat models complete; no unresolved Phase 2.5 high finding | [Part 9 evidence](../tasks/phase-2-5-part-9-integrated-hardening/verification.md) |
 | Phase 3 deferred security/identity/data/agents | **Discovery/planned; moved out of Phase 2/2.5/2.6** — Personal MCP identity/OBO, governed upload malware/type scanning, persistent server-side conversation history and optional bounded multi-agent supervision | IdP/OBO/downstream trust, scanner/conversation lifecycles, and proof that multi-agent adds value beyond Phase 2.6 composition | [phase-3-plan](phase-3-plan.md) | ADRs pending | Verification pending |
-| Advanced enterprise orchestration (Phase 2.6) | **Proposed; implementation not started** — in-place unreleased `agenthub/v1` evolution for typed state mapping, bounded parallel/join, durable waits, compensation, child workflow/agent composition and advanced governed agent loops; reviewed MCP catalog sync remains in scope; multi-agent moved to Phase 3 | Phase 2.5 Parts 6–7, current workflow/tool/agent runtimes, durable state/resume and authorization decisions | [phase-2-6-plan](phase-2-6-plan.md) | ADRs pending in P2.6.0 | Verification pending |
+| Advanced enterprise orchestration (Phase 2.6) | **P2.6.0 completed and committed; runtime implementation not started** — accepted orchestration/dataflow/child-authority contracts, merge ownership and seven inert enterprise target workflows form the first parallel-wave baseline; reviewed MCP catalog sync remains in scope and multi-agent remains Phase 3 | Phase 2.5 Parts 6–7, current workflow/tool/agent runtimes, durable state/resume and authorization decisions | [phase-2-6-plan](phase-2-6-plan.md) | [ADR-0008](../adr/0008-durable-workflow-transition-state-machine.md), [ADR-0009](../adr/0009-child-run-capability-attenuation.md), [ADR-0010](../adr/0010-workflow-dataflow-join-wait-and-human-task-contract.md) Accepted | [P2.6.0 verification](../tasks/phase-2-6-contract-and-scenario-foundation/verification.md) completed |
 
 ## Cross-cutting concerns
 
