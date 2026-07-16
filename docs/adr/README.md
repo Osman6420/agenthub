@@ -15,3 +15,6 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 | [0005](0005-shared-ssrf-safe-egress-adapter.md) | Accepted | WS1/WS5 M0 implementation contract detailing ADR-0002's shared egress mechanism; does not supersede ADR-0002. |
 | [0006](0006-confluence-private-corporate-egress.md) | Accepted | P7.4 connector-specific private corporate egress; preserves ADR-0005 public-only defaults. |
 | [0007](0007-governed-rest-contract-incremental-refresh.md) | Accepted | P7.4b closed REST mapping, periodic incremental refresh/vector reuse, and gated optional promotion. |
+| [0008](0008-durable-workflow-transition-state-machine.md) | Accepted | P2.6 transactional durable workflow transitions, typed child records and recovery invariants. |
+| [0009](0009-child-run-capability-attenuation.md) | Accepted | P2.6 pinned child workflow/agent calls with non-delegating capability attenuation. |
+| [0010](0010-workflow-dataflow-join-wait-and-human-task-contract.md) | Accepted | Restricted dataflow paths, deterministic joins, authenticated one-time event resume and typed human tasks. |

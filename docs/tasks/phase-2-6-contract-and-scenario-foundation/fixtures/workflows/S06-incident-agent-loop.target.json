@@ -1,0 +1,25 @@
+{
+  "fixture_status": "target_not_importable",
+  "scenario_id": "S06",
+  "target_contract": {
+    "api_version": "agenthub/v1",
+    "kind": "Workflow",
+    "metadata": {"id": "incident_observe_act_verify"},
+    "spec": {
+      "input_node": "input",
+      "nodes": [
+        {"id": "input", "type": "input"},
+        {"id": "incident_agent", "type": "agent_call", "config": {"agent_role": "incident_responder", "max_decisions": 6, "allowed_actions": ["retrieve", "tool", "verify", "respond", "escalate"]}, "input_mapping": [{"from": "/input", "to": "/input/incident"}], "output_mapping": [{"from": "/output", "to": "/incident_result"}]},
+        {"id": "manual_reconcile", "type": "human_task", "config": {"decision_roles": ["platform_admin"], "self_approval_allowed": false, "expires_in_seconds": 3600, "decision_schema": {"type": "string", "enum": ["resolved", "escalate"]}}},
+        {"id": "end", "type": "end"}
+      ],
+      "edges": [
+        {"from": "input", "to": "incident_agent"},
+        {"from": "incident_agent", "to": "end", "on": "success"},
+        {"from": "incident_agent", "to": "manual_reconcile", "on": "outcome_unknown"},
+        {"from": "incident_agent", "to": "manual_reconcile", "on": "budget_exhausted"},
+        {"from": "manual_reconcile", "to": "end"}
+      ]
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "fixture_status": "target_not_importable",
+  "scenario_id": "S03",
+  "target_contract": {
+    "api_version": "agenthub/v1",
+    "kind": "Workflow",
+    "metadata": {"id": "procurement_exception_sod"},
+    "spec": {
+      "input_node": "input",
+      "nodes": [
+        {"id": "input", "type": "input"},
+        {"id": "decision_parallel", "type": "parallel", "config": {"join": "decision_join", "max_concurrency": 2}},
+        {"id": "finance_decision", "type": "human_task", "config": {"decision_roles": ["approver"], "self_approval_allowed": false, "expires_in_seconds": 86400, "decision_schema": {"type": "string", "enum": ["approve", "reject"]}}},
+        {"id": "compliance_decision", "type": "human_task", "config": {"decision_roles": ["organization_admin"], "self_approval_allowed": false, "expires_in_seconds": 86400, "decision_schema": {"type": "string", "enum": ["approve", "reject"]}}},
+        {"id": "decision_join", "type": "join", "config": {"mode": "all", "branches": ["finance", "compliance"], "merge": [{"from": "/branches/finance/output", "to": "/decisions/finance"}, {"from": "/branches/compliance/output", "to": "/decisions/compliance"}]}},
+        {"id": "end", "type": "end"}
+      ],
+      "edges": [
+        {"from": "input", "to": "decision_parallel"},
+        {"from": "decision_parallel", "to": "finance_decision", "branch": "finance"},
+        {"from": "decision_parallel", "to": "compliance_decision", "branch": "compliance"},
+        {"from": "finance_decision", "to": "decision_join", "branch": "finance"},
+        {"from": "compliance_decision", "to": "decision_join", "branch": "compliance"},
+        {"from": "decision_join", "to": "end"}
+      ]
+    }
+  }
+}

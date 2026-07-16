@@ -1,0 +1,27 @@
+{
+  "fixture_status": "target_not_importable",
+  "scenario_id": "S04",
+  "target_contract": {
+    "api_version": "agenthub/v1",
+    "kind": "Workflow",
+    "metadata": {"id": "aml_evidence_fanout"},
+    "spec": {
+      "input_node": "input",
+      "nodes": [
+        {"id": "input", "type": "input"},
+        {"id": "entity_checks", "type": "for_each", "config": {"items_path": "/input/entities", "item_path": "/item", "max_items": 25, "max_concurrency": 5, "body_entry": "check_entity", "join": "entity_join"}},
+        {"id": "check_entity", "type": "tool", "config": {"binding_role": "aml_screening", "input_key": "item", "output_key": "result"}},
+        {"id": "entity_join", "type": "join", "config": {"mode": "threshold", "required": 1, "branches": ["for_each_items"], "merge": [{"from": "/branches/for_each_items/output", "to": "/evidence/entities"}]}},
+        {"id": "synthesize", "type": "generate", "input_mapping": [{"from": "/evidence/entities", "to": "/input/evidence"}]},
+        {"id": "end", "type": "end"}
+      ],
+      "edges": [
+        {"from": "input", "to": "entity_checks"},
+        {"from": "entity_checks", "to": "check_entity", "branch": "for_each_items"},
+        {"from": "check_entity", "to": "entity_join", "branch": "for_each_items"},
+        {"from": "entity_join", "to": "synthesize"},
+        {"from": "synthesize", "to": "end"}
+      ]
+    }
+  }
+}

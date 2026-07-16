@@ -1,0 +1,34 @@
+{
+  "fixture_status": "target_not_importable",
+  "scenario_id": "S05",
+  "target_contract": {
+    "api_version": "agenthub/v1",
+    "kind": "Workflow",
+    "metadata": {"id": "pii_remediation"},
+    "spec": {
+      "input_node": "input",
+      "nodes": [
+        {"id": "input", "type": "input"},
+        {"id": "find_records", "type": "retrieve"},
+        {"id": "classify", "type": "custom", "config": {"node_ref": "approved_pii_classifier", "fields": {}}, "input_mapping": [{"from": "/retrieval", "to": "/input/records"}]},
+        {"id": "approval", "type": "human_task", "config": {"decision_roles": ["organization_admin"], "self_approval_allowed": false, "expires_in_seconds": 86400, "decision_schema": {"type": "string", "enum": ["approve", "reject"]}}},
+        {"id": "remediate", "type": "tool", "config": {"binding_role": "pii_remediator", "input_key": "approved_plan", "output_key": "remediation_result"}},
+        {"id": "verify", "type": "tool", "config": {"binding_role": "pii_verifier", "input_key": "remediation_result", "output_key": "verification"}},
+        {"id": "manual_reconcile", "type": "human_task", "config": {"decision_roles": ["platform_admin"], "self_approval_allowed": false, "expires_in_seconds": 86400, "decision_schema": {"type": "string", "enum": ["resolved", "escalate"]}}},
+        {"id": "end", "type": "end"}
+      ],
+      "edges": [
+        {"from": "input", "to": "find_records"},
+        {"from": "find_records", "to": "classify"},
+        {"from": "classify", "to": "approval"},
+        {"from": "approval", "to": "remediate", "on": "approved"},
+        {"from": "approval", "to": "end", "on": "rejected"},
+        {"from": "remediate", "to": "verify", "on": "success"},
+        {"from": "remediate", "to": "manual_reconcile", "on": "outcome_unknown"},
+        {"from": "verify", "to": "end", "on": "success"},
+        {"from": "verify", "to": "manual_reconcile", "on": "failure"},
+        {"from": "manual_reconcile", "to": "end"}
+      ]
+    }
+  }
+}

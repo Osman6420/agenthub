@@ -1,0 +1,28 @@
+{
+  "fixture_status": "target_not_importable",
+  "schema_ref": "target-scenario-contract.schema.json",
+  "scenarios": [
+    {"scenario_id": "S01", "purpose": "Regulatory evidence and exception decision", "required_parts": ["P2.6.1", "P2.6.2", "P2.6.3", "P2.6.11"]},
+    {"scenario_id": "S02", "purpose": "Human-approved infrastructure change with verification and safe recovery", "required_parts": ["P2.6.3", "P2.6.4", "P2.6.6"]},
+    {"scenario_id": "S03", "purpose": "Procurement exception with separation of duties", "required_parts": ["P2.6.2", "P2.6.3", "P2.6.11"]},
+    {"scenario_id": "S04", "purpose": "AML and fraud evidence fan-out with deterministic synthesis", "required_parts": ["P2.6.1", "P2.6.2", "P2.6.11"]},
+    {"scenario_id": "S05", "purpose": "Data-governance and PII remediation pipeline", "required_parts": ["P2.6.1", "P2.6.3", "P2.6.4", "P2.6.8"]},
+    {"scenario_id": "S06", "purpose": "Incident observe-act-verify loop", "required_parts": ["P2.6.4", "P2.6.6", "P2.6.11"]},
+    {"scenario_id": "S07", "purpose": "Contract review through pinned child workflows and agent calls", "required_parts": ["P2.6.4", "P2.6.5", "P2.6.6"]}
+  ],
+  "required_trajectories": [
+    "happy",
+    "invalid_input",
+    "authentication_failure",
+    "authorization_denial",
+    "cross_tenant_denial",
+    "timeout",
+    "cancellation",
+    "replay_redelivery",
+    "partial_failure",
+    "stale_resume",
+    "budget_exhaustion",
+    "audit_redaction",
+    "crash_restart_recovery"
+  ]
+}

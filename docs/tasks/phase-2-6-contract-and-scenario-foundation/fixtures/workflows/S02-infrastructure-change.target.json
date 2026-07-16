@@ -1,0 +1,33 @@
+{
+  "fixture_status": "target_not_importable",
+  "scenario_id": "S02",
+  "target_contract": {
+    "api_version": "agenthub/v1",
+    "kind": "Workflow",
+    "metadata": {"id": "approved_infrastructure_change"},
+    "spec": {
+      "input_node": "input",
+      "nodes": [
+        {"id": "input", "type": "input"},
+        {"id": "approval", "type": "human_task", "config": {"decision_roles": ["approver"], "self_approval_allowed": false, "expires_in_seconds": 3600, "decision_schema": {"type": "string", "enum": ["approve", "reject"]}}},
+        {"id": "apply_change", "type": "tool", "config": {"binding_role": "change_executor", "input_key": "approved_change", "output_key": "change_result"}, "retry": {"mode": "idempotent_transient_only", "max_attempts": 2}},
+        {"id": "verify_change", "type": "tool", "config": {"binding_role": "change_verifier", "input_key": "change_result", "output_key": "verification"}},
+        {"id": "rollback", "type": "tool", "config": {"binding_role": "change_rollback", "input_key": "change_result", "output_key": "rollback_result"}},
+        {"id": "manual_reconcile", "type": "human_task", "config": {"decision_roles": ["platform_admin"], "self_approval_allowed": false, "expires_in_seconds": 86400, "decision_schema": {"type": "string", "enum": ["resolved", "escalate"]}}},
+        {"id": "end", "type": "end"}
+      ],
+      "edges": [
+        {"from": "input", "to": "approval"},
+        {"from": "approval", "to": "apply_change", "on": "approved"},
+        {"from": "approval", "to": "end", "on": "rejected"},
+        {"from": "apply_change", "to": "verify_change", "on": "success"},
+        {"from": "apply_change", "to": "manual_reconcile", "on": "outcome_unknown"},
+        {"from": "verify_change", "to": "end", "on": "success"},
+        {"from": "verify_change", "to": "rollback", "on": "failure"},
+        {"from": "rollback", "to": "end", "on": "success"},
+        {"from": "rollback", "to": "manual_reconcile", "on": "failure"},
+        {"from": "manual_reconcile", "to": "end"}
+      ]
+    }
+  }
+}

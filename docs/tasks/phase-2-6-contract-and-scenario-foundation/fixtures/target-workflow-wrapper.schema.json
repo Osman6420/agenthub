@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agenthub:p2.6:target-workflow-wrapper",
+  "title": "P2.6 inert target workflow wrapper",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fixture_status", "scenario_id", "target_contract"],
+  "properties": {
+    "fixture_status": {"const": "target_not_importable"},
+    "scenario_id": {"type": "string", "pattern": "^S[0-9]{2}$"},
+    "target_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "kind", "metadata", "spec"],
+      "properties": {
+        "api_version": {"const": "agenthub/v1"},
+        "kind": {"const": "Workflow"},
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id"],
+          "properties": {"id": {"type": "string", "minLength": 1, "maxLength": 64}}
+        },
+        "spec": {
+          "type": "object",
+          "required": ["input_node", "nodes", "edges"],
+          "properties": {
+            "input_node": {"type": "string"},
+            "nodes": {"type": "array", "minItems": 2, "maxItems": 50},
+            "edges": {"type": "array", "maxItems": 100}
+          }
+        }
+      }
+    }
+  }
+}
