@@ -19,6 +19,8 @@ set_version = (
 index = IndexVersion.objects.filter(document_set_version=set_version).order_by("-version").first()
 scenario = ScenarioAlias.objects.get(alias=TAG).scenario
 release = ScenarioRelease.objects.filter(scenario=scenario).order_by("-id").first()
+if set_version is None or index is None or release is None:
+    raise RuntimeError("SMOKE_LINEAGE_INCOMPLETE")
 consumer = Consumer.objects.get(subject=f"{TAG}-consumer")
 _, raw_token = create_token(consumer, f"{TAG}-retry")
 

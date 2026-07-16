@@ -28,3 +28,10 @@ groups:
         annotations:
           summary: MCP authorization denials are elevated
           runbook_url: docs/operations/sprint-7-observability-runbook.md#mcp-denials
+      - alert: AgentHubIngestionWorkerUnavailable
+        expr: agenthub_ingestion_worker_compatible == 0
+        for: 5m
+        labels: {severity: ticket}
+        annotations:
+          summary: No recent contract/config-compatible ingestion worker is visible
+          runbook_url: docs/manual-testing-guide.md#0-bring-up-the-stack

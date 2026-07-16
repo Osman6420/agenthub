@@ -14,6 +14,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 from django.urls import reverse
 
+from apps.audit.models import AuditEvent
 from apps.documents import storage
 from apps.documents.models import (
     DocumentSet,
@@ -22,6 +23,8 @@ from apps.documents.models import (
 )
 from apps.documents.services import create_document_set, upload_document
 from apps.identity.roles import Role
+from apps.ingestion.job_lifecycle import create_build_job
+from apps.ingestion.tests.test_staged_build import _granted_profile, _published_set_version
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
@@ -125,3 +128,39 @@ def test_non_author_cannot_create_set(client: Client) -> None:
     )
     assert response.status_code == 302  # form invalid (org outside author scope)
     assert not DocumentSet.objects.filter(organization=org, logical_id="kb").exists()
+
+
+@pytest.mark.django_db
+def test_build_job_actions_are_role_and_tenant_scoped(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("apps.ingestion.job_lifecycle.dispatch_outbox", lambda **kwargs: 0)
+    org_a = Organization.objects.create(slug="job-a", name="A")
+    org_b = Organization.objects.create(slug="job-b", name="B")
+    version_b = _published_set_version(org_b, ["text"])
+    profile_b = _granted_profile(org_b)
+    job, _ = create_build_job(
+        document_set_version=version_b,
+        embedding_profile=profile_b,
+        ocr_profile=None,
+        actor="owner-b",
+    )
+    client.force_login(_member("owner-a", org_a, Role.PROJECT_OWNER))
+    assert (
+        client.post(
+            reverse("console:document_set_cancel_build_job", args=[job.public_id])
+        ).status_code
+        == 404
+    )
+    client.force_login(_member("auditor-b", org_b, Role.AUDITOR))
+    assert (
+        client.post(
+            reverse("console:document_set_cancel_build_job", args=[job.public_id])
+        ).status_code
+        == 403
+    )
+    assert AuditEvent.objects.filter(
+        action="ingestion.staged_index.authorization_denied",
+        outcome="failure",
+        resource_id=str(job.public_id),
+    ).exists()

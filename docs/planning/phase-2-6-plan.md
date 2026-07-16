@@ -421,6 +421,11 @@ Detailed P2.6.10 plan and threat model:
 
 ## P2.6.10 — Durable ingestion job lifecycle and worker/config readiness
 
+**Branch status (2026-07-16): implemented and verified on
+`phase-2-6/p2-6-10-ingestion-lifecycle`; pending ordered integration.** See the
+[task verification](../tasks/phase-2-6-ingestion-operational-lifecycle/verification.md) and
+[ADR 0011](../adr/0011-durable-ingestion-build-jobs-and-worker-readiness.md).
+
 - Add a tenant-owned staged-index build job before broker dispatch, carrying immutable request
   checksum and lineage, attempt, bounded progress, timestamps, safe error code and result index.
 - Use server-owned states `dispatch_pending`, `queued`, `running`, `retry_wait`, `succeeded`,

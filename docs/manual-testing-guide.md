@@ -49,6 +49,11 @@ npm --prefix frontend run build
 $env:DJANGO_SETTINGS_MODULE = 'config.settings.local'
 $env:DATABASE_URL = 'postgres://agenthub:agenthub@localhost:5432/agenthub'
 $env:REDIS_URL    = 'redis://localhost:6379/0'
+$env:OBJECT_STORE_ENDPOINT = 'http://localhost:9000'
+$env:OBJECT_STORE_BUCKET = 'agenthub'
+$env:AWS_ACCESS_KEY_ID = '<LOCAL_MINIO_ACCESS_KEY>'
+$env:AWS_SECRET_ACCESS_KEY = '<LOCAL_MINIO_SECRET_KEY>'
+$env:AGENTHUB_SERVICE_REVISION = 'development'
 
 # Apply migrations, then seed the demo tenant (prints operator password + API token)
 .venv\Scripts\python.exe manage.py migrate
@@ -60,11 +65,23 @@ $env:MCP_ENABLED = 'true'; $env:METRICS_BEARER_TOKEN = '<METRICS_TOKEN>'
 
 # In a second terminal: the async runtime worker (Windows -> --pool=solo)
 .venv\Scripts\python.exe -m celery -A config.celery worker --pool=solo -Q runtime,default -l info
+
+# In separate terminals: ingestion worker and periodic durable reconciler.
+.venv\Scripts\python.exe manage.py check_ingestion_preflight
+.venv\Scripts\python.exe -m celery -A config.celery worker --pool=solo -Q ingestion -l info
+.venv\Scripts\python.exe -m celery -A config.celery beat -l info
+
+# After the worker has consumed a heartbeat/reconciler task:
+.venv\Scripts\python.exe manage.py check_ingestion_preflight --require-worker
 ```
 
 > **Only run one runtime worker.** A stale worker from an earlier session running older code
 > will silently grab async runs and fail them (e.g. `WORKFLOW_NODE_UNSUPPORTED`). Kill any
 > extra `celery ... worker -Q runtime` processes first.
+
+The same warning applies to `-Q ingestion`: broker reachability alone is not readiness. The
+preflight prints only contract revision, a shortened non-secret configuration fingerprint and a
+coarse compatible-worker result. It never prints object-store credentials or endpoints.
 
 ### 0.1 Windows Python/test troubleshooting
 

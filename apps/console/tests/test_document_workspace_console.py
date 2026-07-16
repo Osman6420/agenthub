@@ -198,15 +198,14 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     assert "embedding.internal.example" not in detail.content.decode()
     assert "secret://embedding" not in detail.content.decode()
 
-    with patch("apps.console.views.build_document_set_index_task.apply_async") as enqueue:
+    with patch("apps.console.views.create_build_job", return_value=(object(), True)) as create_job:
         response = client.post(url, {"embedding_profile": granted.pk, "ocr_profile": ""})
         assert response.status_code == 302
-        enqueue.assert_called_once()
-    assert AuditEvent.objects.filter(action="ingestion.staged_index.request_authorized").exists()
+        create_job.assert_called_once()
 
-    with patch("apps.console.views.build_document_set_index_task.apply_async") as enqueue:
+    with patch("apps.console.views.create_build_job") as create_job:
         client.post(url, {"embedding_profile": foreign.pk, "ocr_profile": ""})
-        enqueue.assert_not_called()
+        create_job.assert_not_called()
 
 
 @pytest.mark.django_db

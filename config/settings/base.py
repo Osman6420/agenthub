@@ -132,7 +132,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.ingestion.tasks.dispatch_connector_schedules",
         "schedule": 60.0,
         "options": {"queue": "ingestion"},
-    }
+    },
+    "reconcile-staged-index-build-jobs": {
+        "task": "apps.ingestion.tasks.reconcile_staged_index_build_jobs",
+        "schedule": 30.0,
+        "options": {"queue": "ingestion"},
+    },
 }
 
 # --- Gateway / DRF ----------------------------------------------------------
@@ -223,6 +228,11 @@ INGESTION_HTTP_ALLOWED_HOSTS = env.list("INGESTION_HTTP_ALLOWED_HOSTS", default=
 INGESTION_MAX_SOURCE_BYTES = env.int("INGESTION_MAX_SOURCE_BYTES", default=10_000_000)
 INGESTION_HTTP_TIMEOUT_SECONDS = env.int("INGESTION_HTTP_TIMEOUT_SECONDS", default=15)
 INGESTION_EMBEDDING_DIMENSIONS = 64
+INGESTION_BUILD_MAX_ATTEMPTS = env.int("INGESTION_BUILD_MAX_ATTEMPTS", default=3)
+INGESTION_WORKER_HEARTBEAT_TTL_SECONDS = env.int(
+    "INGESTION_WORKER_HEARTBEAT_TTL_SECONDS", default=30
+)
+INGESTION_RUNNING_STALE_SECONDS = env.int("INGESTION_RUNNING_STALE_SECONDS", default=300)
 
 # P7.4 Confluence-only private egress. Mapping values are deployment-owned CIDR lists; the secure
 # default is empty, so a profile cannot resolve a private destination until operations provisions a

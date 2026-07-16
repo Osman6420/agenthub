@@ -36,7 +36,7 @@ if project is None:
     raise RuntimeError("DEMO_PROJECT_NOT_FOUND")
 admin = get_user_model().objects.get(username=ACTOR)
 
-document_set, _ = DocumentSet.objects.get_or_create(
+document_set, _document_set_created = DocumentSet.objects.get_or_create(
     organization=org,
     logical_id=TAG,
     defaults={"name": "Yerel doküman embedding smoke"},
@@ -59,7 +59,7 @@ if draft is None or not draft.memberships.exists():
     raise RuntimeError("UPLOAD_DRAFT_NOT_CREATED")
 published = document_services.publish_document_set_version(set_version=draft, actor=ACTOR)
 
-scenario, _ = Scenario.objects.get_or_create(
+scenario, _scenario_created = Scenario.objects.get_or_create(
     project=project,
     slug=TAG,
     defaults={
@@ -101,7 +101,7 @@ build_document_set_index_task.apply_async(
     args=[published.pk, profile.pk, org.pk, ACTOR, None], queue="ingestion"
 )
 index = None
-for _ in range(60):
+for _poll_attempt in range(60):
     index = (
         IndexVersion.objects.filter(document_set_version=published, embedding_profile=profile)
         .order_by("-version")
@@ -113,7 +113,7 @@ for _ in range(60):
 if index is None:
     raise RuntimeError("INDEX_NOT_CREATED")
 if index.status != IndexStatus.PROMOTABLE:
-    raise RuntimeError(f"INDEX_{index.status}:{index.failure_code}")
+    raise RuntimeError(f"INDEX_{index.status}")
 promote_staged_index(index, actor=ACTOR)
 
 artifact = create_artifact_version(
@@ -140,7 +140,7 @@ release = compile_release(
 )
 promote_release(release)
 
-consumer, _ = Consumer.objects.get_or_create(
+consumer, _consumer_created = Consumer.objects.get_or_create(
     organization=org,
     subject=f"{TAG}-consumer",
     defaults={"name": "Yerel doküman smoke consumer", "protocol": ConsumerProtocol.REST},
@@ -154,7 +154,7 @@ document_services.grant_document_set(
     principal_ref=str(consumer.pk),
     actor=ACTOR,
 )
-_, raw_token = create_token(consumer, f"{TAG}-token")
+_token_record, raw_token = create_token(consumer, f"{TAG}-token")
 
 request = urllib.request.Request(
     "http://127.0.0.1:8000/v1/query",
