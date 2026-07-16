@@ -44,14 +44,19 @@ export interface BuilderController {
   applyJsonCandidate: (body: unknown) => Promise<boolean>;
 }
 
-export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): BuilderController {
+export function useBuilder(
+  api: BuilderApi,
+  schema: NodeSchema,
+  draft: Draft,
+  initialDiagnostics: DiagnosticsResult | null = null,
+): BuilderController {
   const initial = useMemo(() => dslToGraph(draft.body), [draft.body]);
   const [nodes, setNodes] = useState<Node<BuilderNodeData>[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
   const [workflowId, setWorkflowId] = useState<string>(initial.workflowId || draft.logical_id);
   const [inputNodeId, setInputNodeId] = useState<string>(initial.inputNodeId);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(initialDiagnostics);
   const [status, setStatus] = useState<string>("");
   const [revision, setRevision] = useState<number>(draft.revision);
 
@@ -163,7 +168,9 @@ export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): B
   }, []);
 
   const runDiagnostics = useCallback(async () => {
-    const result = await api.diagnostics(draft.id, body as unknown as Record<string, unknown>);
+    const result = draft.id === 0
+      ? await api.transientDiagnostics({ organization: draft.organization, body: body as unknown as Record<string, unknown> })
+      : await api.diagnostics(draft.id, body as unknown as Record<string, unknown>);
     setDiagnostics(result);
     applyErrorHighlights(result);
     setStatus(result.ok ? "Workflow geçerli" : "Doğrulama sorun buldu");
@@ -202,7 +209,9 @@ export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): B
       return false;
     }
     const bodyCandidate = candidate as Record<string, unknown>;
-    const result = await api.diagnostics(draft.id, bodyCandidate);
+    const result = draft.id === 0
+      ? await api.transientDiagnostics({ organization: draft.organization, body: bodyCandidate })
+      : await api.diagnostics(draft.id, bodyCandidate);
     setDiagnostics(result);
     if (!result.ok) {
       setStatus("JSON canonical workflow doğrulamasından geçmedi");

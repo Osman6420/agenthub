@@ -8,7 +8,7 @@ import { Toolbar } from "./components/Toolbar";
 import { WorkflowNode } from "./components/WorkflowNode";
 import { ApiError, type BuilderApi } from "./api";
 import { useBuilder } from "./useBuilder";
-import type { Draft, NodeSchema } from "./types";
+import type { DiagnosticsResult, Draft, NodeSchema } from "./types";
 
 import "@xyflow/react/dist/style.css";
 
@@ -18,15 +18,20 @@ export function Editor({
   api,
   schema,
   draft,
+  onSaveTransient,
+  initialDiagnostics,
 }: {
   api: BuilderApi;
   schema: NodeSchema;
   draft: Draft;
+  onSaveTransient?: (body: Record<string, unknown>, name: string) => Promise<void>;
+  initialDiagnostics?: DiagnosticsResult;
 }) {
-  const builder = useBuilder(api, schema, draft);
+  const builder = useBuilder(api, schema, draft, initialDiagnostics ?? null);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<"graph" | "json">("graph");
   const [jsonText, setJsonText] = useState(() => JSON.stringify(draft.body, null, 2));
+  const [transientName, setTransientName] = useState(draft.name);
   const wrapper = useRef<HTMLDivElement>(null);
   const jsonDirty = view === "json" && jsonText !== JSON.stringify(builder.body, null, 2);
 
@@ -117,9 +122,32 @@ export function Editor({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "78vh" }}>
-      {draft.id === 0
+      {draft.id === 0 && !onSaveTransient
         ? <div style={{ padding: 10, borderBottom: "1px solid #262b36" }}>
           <strong>{draft.name}</strong> · immutable aktif workflow önizlemesi
+        </div>
+        : draft.id === 0 ? <div style={{ padding: 10, borderBottom: "1px solid #262b36" }}>
+          <strong>AI geçici adayı</strong>
+          <input aria-label="taslak görünen adı" value={transientName}
+            onChange={(event) => setTransientName(event.target.value)} />
+          <button type="button" disabled={busy} onClick={() => void runAction("validate")}>Doğrula</button>
+          <button type="button" disabled={busy || !transientName.trim()}
+            onClick={() => {
+              setBusy(true);
+              void onSaveTransient?.(
+                builder.body as unknown as Record<string, unknown>, transientName,
+              ).catch((error: unknown) => {
+                builder.setStatusError(error instanceof ApiError ? error.code : String(error));
+              }).finally(() => setBusy(false));
+            }}>
+            Kaydet
+          </button>
+          <span style={{ marginLeft: 8 }}>Henüz DB kaydı değildir; yayımlama ayrı adımdır.</span>
+          {builder.diagnostics && !builder.diagnostics.ok && <div role="alert">
+            {builder.diagnostics.errors.map((error) => <div key={error.code}>
+              {error.code}: {error.message}
+            </div>)}
+          </div>}
         </div>
         : <Toolbar builder={builder} draftName={draft.name} busy={busy || jsonDirty} onAction={runAction} />}
       <div style={{ display: "flex", gap: 8, padding: "8px 0" }}>

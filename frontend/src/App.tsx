@@ -4,7 +4,7 @@ import { ApiError, BuilderApi } from "./api";
 import { AiAuthoringPanel } from "./AiAuthoringPanel";
 import { ArtifactDraftEditor } from "./ArtifactDraftEditor";
 import { Editor } from "./Editor";
-import type { ArtifactDraft, BuilderInitial, Draft, NodeSchema, OrgOption } from "./types";
+import type { AiCandidateResult, ArtifactDraft, BuilderInitial, Draft, NodeSchema, OrgOption } from "./types";
 
 // Top-level bootstrap: pick an organization (from the server-rendered scope), load its
 // node-schema and drafts, then open or create a draft and hand off to the Editor. All
@@ -35,6 +35,7 @@ export function App({
   const [newJson, setNewJson] = useState("");
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
   const [scenarioAutoHandled, setScenarioAutoHandled] = useState(false);
+  const [transient, setTransient] = useState<{ result: AiCandidateResult; projectId: number } | null>(null);
 
   const org = orgs.find((o) => o.slug === orgSlug);
   const canWrite = !!org?.can_write;
@@ -168,7 +169,26 @@ export function App({
         <button type="button" onClick={() => setActive(null)} style={backBtn}>
           ← Draft'lar
         </button>
-        <Editor api={api} schema={schema} draft={active} />
+        <Editor api={api} schema={schema} draft={active}
+          initialDiagnostics={active.id === 0 && transient ? transient.result.diagnostics : undefined}
+          onSaveTransient={active.id === 0 && transient ? async (body, name) => {
+            const existing = drafts[0];
+            const updateExisting = existing ? window.confirm(
+              `Bu scenario için “${existing.name}” taslağı var. Tamam: mevcut taslağı güncelle; İptal: yeni kopya oluştur.`,
+            ) : false;
+            const saved = await api.acceptCandidate({
+              organization: orgSlug, project_id: transient.projectId,
+              scenario_id: initial?.scenario_id, name,
+              artifact_type: "workflow_definition", candidate: body,
+              prompt_contract: transient.result.prompt_contract,
+              authoring_context: transient.result.authoring_context,
+              ...(updateExisting ? { draft_id: existing.id, revision: existing.revision } : {}),
+            });
+            if ("artifact_type" in saved) return;
+            setTransient(null);
+            await reload();
+            setActive(saved);
+          } : undefined} />
       </div>
     );
   }
@@ -257,10 +277,15 @@ export function App({
 
       {canWrite && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
         lockedProjectId={initial?.project_id} scenarioId={initial?.scenario_id}
-        onAccepted={(draft) => {
-          void reload();
-          if ("artifact_type" in draft) setActiveArtifact(draft);
-          else setActive(draft);
+        onGenerated={(result, projectId) => {
+          setTransient({ result, projectId });
+          setActive({
+            id: 0, organization: orgSlug, organization_id: 0,
+            project_id: projectId, scenario_id: initial?.scenario_id ?? null,
+            name: initial?.scenario_name ? `${initial.scenario_name} workflow` : "AI workflow adayı",
+            logical_id: "transient-ai-candidate", body: result.candidate,
+            last_published_version: 0, last_published_at: null, revision: 1, can_write: true,
+          });
         }} />}
 
       {canWrite && (

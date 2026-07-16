@@ -113,7 +113,12 @@ def get_authoring_contract(artifact_type: str) -> AuthoringContract:
 
 class AuthoringProvider(Protocol):
     def generate(
-        self, *, profile_id: str, description: str, contract: AuthoringContract
+        self,
+        *,
+        profile_id: str,
+        description: str,
+        contract: AuthoringContract,
+        server_context: dict[str, Any] | None = None,
     ) -> AuthoringResponse: ...
 
 
@@ -126,7 +131,12 @@ class OpenAICompatibleAuthoringProvider:
         self._egress = egress_client
 
     def generate(
-        self, *, profile_id: str, description: str, contract: AuthoringContract
+        self,
+        *,
+        profile_id: str,
+        description: str,
+        contract: AuthoringContract,
+        server_context: dict[str, Any] | None = None,
     ) -> AuthoringResponse:
         try:
             profile = ModelProfile.objects.get(
@@ -138,6 +148,31 @@ class OpenAICompatibleAuthoringProvider:
             "model": profile.model,
             "messages": [
                 {"role": "system", "content": contract.system_instructions},
+                {
+                    "role": "system",
+                    "content": json.dumps(
+                        {
+                            "authoring_context": server_context or {},
+                            "output_contract": {
+                                "allowed_status": [
+                                    "workflow_candidate",
+                                    "capability_missing",
+                                ],
+                                "workflow_candidate": {
+                                    "status": "workflow_candidate",
+                                    "candidate": "Workflow object",
+                                },
+                                "capability_missing": {
+                                    "status": "capability_missing",
+                                    "required_capability": "string",
+                                    "suggested_custom_node": "bounded metadata object",
+                                },
+                            },
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
                 {"role": "user", "content": description},
             ],
             "max_tokens": profile.max_output_tokens,

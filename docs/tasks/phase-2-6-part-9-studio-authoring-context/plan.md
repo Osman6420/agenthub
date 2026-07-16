@@ -284,8 +284,11 @@ These decisions must close as constants, schemas and tests before implementation
 
 ## Status
 
-Planned. P2.6.0 is complete; implementation may begin from the approved integration baseline. The
-Python-node catalog integration remains dependent on the P2.6.8 safe public metadata contract.
+Implemented on the dedicated P2.6.9 branch. The bounded scenario context, strict result union,
+reference conformance, transient Studio graph/JSON state, transient diagnostics, explicit
+update/copy save and server identifier allocation are present. Python-node public catalog/scaffold
+integration remains dependent on the P2.6.8 safe contract; PostgreSQL and full backend verification
+remain open in the verification record.
 
 ## Completion criteria
 

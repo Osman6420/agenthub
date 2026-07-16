@@ -74,13 +74,17 @@ def _actor_id(request: HttpRequest) -> int:
 @require_http_methods(["POST"])
 def ai_candidates(request: HttpRequest) -> HttpResponse:
     payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=False))
-    _reject_unknown_fields(payload, {"organization", "project_id", "description", "artifact_type"})
+    _reject_unknown_fields(payload, {"organization", "project_id", "scenario_id", "description", "artifact_type"})
     org = _resolve_org_in_scope(request, payload.get("organization"))
     _require_author(request, org.id)
-    if _resolve_project(org, payload.get("project_id")) is None:
+    project = _resolve_project(org, payload.get("project_id"))
+    if project is None:
         raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
     result = authoring.generate_candidate(
         organization=org,
+        project=project,
+        scenario=scenario,
         actor=_actor(request),
         actor_id=_actor_id(request),
         description=payload.get("description"),
@@ -105,6 +109,7 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
             "candidate",
             "artifact_type",
             "prompt_contract",
+            "authoring_context",
             "draft_id",
             "revision",
         },
@@ -124,6 +129,7 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
         candidate=payload.get("candidate"),
         artifact_type=payload.get("artifact_type", "workflow_definition"),
         prompt_contract=payload.get("prompt_contract"),
+        authoring_context=payload.get("authoring_context"),
         draft_id=payload.get("draft_id"),
         expected_revision=payload.get("revision"),
         request_id=_request_id(request),
@@ -131,6 +137,17 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
     if isinstance(draft, ArtifactDraft):
         return JsonResponse(_serialize_artifact_draft(draft, can_write=True), status=201)
     return JsonResponse(_serialize(draft, can_write=True), status=201)
+
+
+@operator_api
+@require_http_methods(["POST"])
+def transient_diagnostics(request: HttpRequest) -> HttpResponse:
+    """Canonical validation for an unsaved Studio candidate; never persists it."""
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(payload, {"organization", "body"})
+    org = _resolve_org_in_scope(request, payload.get("organization"))
+    _require_author(request, org.id)
+    return JsonResponse(services.diagnose(payload.get("body")))
 
 
 def _json_body(request: HttpRequest, *, max_bytes: int | None = None) -> dict[str, Any]:

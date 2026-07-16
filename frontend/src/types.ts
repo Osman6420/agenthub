@@ -105,10 +105,19 @@ export interface DiagnosticsResult {
 }
 
 export interface AiCandidateResult {
+  status: "workflow_candidate";
   artifact_type: AiCandidateType;
   candidate: Record<string, unknown>;
   diagnostics: DiagnosticsResult;
   prompt_contract: { id: string; revision: number; checksum: string };
+  authoring_context: { contract: string; checksum: string };
+}
+
+export interface CapabilityMissingResult {
+  status: "capability_missing";
+  required_capability: string;
+  suggestion: Record<string, unknown>;
+  authoring_context: { contract: string; checksum: string };
 }
 
 export type AiCandidateType = "workflow_definition" | "input_contract" | "output_contract";
