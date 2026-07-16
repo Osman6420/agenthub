@@ -100,7 +100,8 @@ def test_scenario_shows_exact_active_artifact_release_and_project_draft(client: 
     assert "checksum doğru" in body
     assert f"scenario={scenario.public_id}&amp;draft={draft.pk}" in body
     assert "release #" in body
-    assert "En fazla 50 node ve 100 edge" in body
+    assert "AgentHub Workflow DSL — LLM Authoring Guide" in body
+    assert "Maximum 50 nodes, 100 edges" in body
 
 
 @pytest.mark.django_db

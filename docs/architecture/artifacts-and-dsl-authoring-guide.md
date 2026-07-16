@@ -1031,6 +1031,10 @@ engeller.
 
 ## 16. LLM’e verilecek kopyalanabilir kısa talimat
 
+Runtime AI authoring ve console “LLM için kopyala” yüzeylerinin ortak, kısa ve bounded kaynağı
+[`workflow-dsl-llm-guide.md`](workflow-dsl-llm-guide.md) dosyasıdır. Bu ayrıntılı doküman insan ve
+mimari referans olarak kalır; kısa dosya yalnız workflow üretmek için gereken mevcut sözleşmeyi taşır.
+
 Aşağıdaki metin workflow taslağı üretmek için kullanılabilir; çıktı yine backend validator’dan
 geçmelidir:
 

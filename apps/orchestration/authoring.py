@@ -13,13 +13,11 @@ from django.conf import settings
 from django.utils.module_loading import import_string
 
 from apps.artifacts.types import ArtifactType
+from apps.orchestration.authoring_guide import workflow_authoring_guide
 from apps.orchestration.egress import ModelEgressError, ModelEgressOutcomeUnknown
 from apps.orchestration.models import ModelProfile, ModelProfileStatus
 
-WORKFLOW_SYSTEM_INSTRUCTIONS = """You generate AgentHub workflow DSL as JSON data only.
-Return exactly one JSON object with api_version agenthub/v1, kind Workflow, metadata.id,
-and spec containing input_node, nodes and edges. Use only the supplied platform DSL rules.
-Never emit credentials, endpoints, headers, executable code, markdown, or explanations."""
+WORKFLOW_SYSTEM_INSTRUCTIONS = workflow_authoring_guide()
 
 INPUT_CONTRACT_SYSTEM_INSTRUCTIONS = """You generate an AgentHub input contract as JSON data only.
 Return exactly one JSON object that is a valid JSON Schema Draft 2020-12 document describing the

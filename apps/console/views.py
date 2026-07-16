@@ -114,6 +114,7 @@ from apps.ingestion.tasks import (
     sync_rest_source,
 )
 from apps.ingestion.vector_store import set_tenant_context
+from apps.orchestration.authoring_guide import workflow_authoring_guide
 from apps.releases.compiler import (
     ArtifactRef,
     CompileError,
@@ -139,7 +140,6 @@ from apps.tenancy.services import (
 from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_approval
 from apps.tools.authz import resolve_actor_roles
 from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
-from apps.workflows.compiler import BUILTIN_NODE_TYPES, MAX_EDGES, MAX_NODES
 
 _UPLOAD_MIME_BY_SUFFIX = {
     ".csv": "text/csv",
@@ -543,25 +543,7 @@ def _release_artifact_rows(release: ScenarioRelease) -> list[dict[str, object]]:
 
 
 def _workflow_dsl_guide() -> str:
-    node_types = ", ".join(sorted(BUILTIN_NODE_TYPES))
-    return (
-        "AgentHub workflow DSL kuralları\n\n"
-        "- Kök anahtarlar tam olarak: api_version, kind, metadata, spec.\n"
-        "- api_version='agenthub/v1', kind='Workflow'; metadata yalnız id içerir.\n"
-        "- spec tam olarak input_node, nodes ve edges içerir.\n"
-        f"- En fazla {MAX_NODES} node ve {MAX_EDGES} edge kullanılabilir.\n"
-        f"- İzinli built-in node türleri: {node_types}.\n"
-        "- Node ID'leri benzersizdir; input_node bir input node'a işaret eder.\n"
-        "- Grafik döngüsüz olmalı, tüm node'lar erişilebilir olmalı ve erişilebilir bir end "
-        "node içermelidir.\n"
-        "- end dışındaki her node'un çıkışı olmalı; end node'un çıkışı olamaz.\n"
-        "- condition edge'lerinde when boolean'dır; koşul ifadeleri bounded ve güvenli AST "
-        "altkümesiyle sınırlıdır.\n"
-        "- URL, endpoint, secret, code, python, package ve entrypoint gibi yetki/çalıştırma "
-        "alanları DSL config içinde kullanılamaz.\n"
-        "- Bu metin yardımcı rehberdir; tek otorite backend canonical validator/compiler'dır. "
-        "Üretilen aday her zaman validate edilmeden publish edilmemelidir."
-    )
+    return workflow_authoring_guide()
 
 
 @login_required
