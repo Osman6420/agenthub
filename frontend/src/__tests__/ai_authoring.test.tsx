@@ -7,8 +7,10 @@ import { BuilderApi } from "../api";
 describe("AI authoring panel", () => {
   it("previews a candidate and transfers it only after explicit acceptance", async () => {
     const calls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
       calls.push(String(url));
+      bodies.push(JSON.parse(String(options?.body ?? "{}")) as Record<string, unknown>);
       const accepted = String(url).endsWith("/accept/");
       return new Response(JSON.stringify(accepted ? {
         id: 7, organization: "org", organization_id: 1, project_id: null,
@@ -24,7 +26,8 @@ describe("AI authoring panel", () => {
     }));
     const accepted = vi.fn();
     render(<AiAuthoringPanel api={new BuilderApi("/console/api/builder/")}
-      organization="org" projects={[{ id: 3, name: "Project" }]} onAccepted={accepted} />);
+      organization="org" projects={[{ id: 3, name: "Project" }]} lockedProjectId={3}
+      scenarioId={17} onAccepted={accepted} />);
 
     fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "akış" } });
     fireEvent.click(screen.getByText("Aday üret"));
@@ -35,6 +38,8 @@ describe("AI authoring panel", () => {
     fireEvent.click(screen.getByText("Adayı taslağa aktar ve aç"));
     await waitFor(() => expect(accepted).toHaveBeenCalled());
     expect(calls).toHaveLength(2);
+    expect(bodies[1].project_id).toBe(3);
+    expect(bodies[1].scenario_id).toBe(17);
   });
 
   it("transfers a JSON contract to an artifact draft without opening the workflow editor", async () => {

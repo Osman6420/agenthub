@@ -186,6 +186,16 @@ Log in as `editor` (or `admin`) and open **Builder** (`/console/builder/`).
 | 2.13 | Open the same draft in two tabs, save in tab A, then save tab B | Tab B receives a stale-revision conflict and keeps its unsaved candidate |
 | 2.14 | As `releaser`, select compatible immutable artifacts on the scenario page and compile | A candidate release shows exact roles, versions and checksums; active release is unchanged |
 | 2.15 | Repeat as `auditor`, then forge a foreign/incompatible artifact ID | Auditor has no compile action; forged input fails without creating a release or disclosing the artifact |
+| 2.16 | Publish a valid `agenthub/transform/v1` profile and compile a candidate that pins it | Exact immutable version/checksum is retained; active runtime is unchanged |
+| 2.17 | Add an unknown operation, code field, malformed pointer or excessive nesting | Publication/compile fails with a stable content-free validation code |
+| 2.18 | Replay the same transform input twice | Canonical output and source identity are identical; input is not mutated |
+| 2.19 | Use a retrieval profile with top-k, threshold and metadata filter | Results remain inside release pins, tenant and consumer ACL; threshold is applied |
+| 2.20 | Forge organization, consumer, index or document-set IDs inside retrieval JSON | Exact-key validation rejects the profile; no authority scope is widened |
+| 2.21 | Open **Scenario Studio** from a new scenario, paste a complete valid `agenthub/v1` Workflow JSON and create the draft | The page names and locks the scenario/project; the JSON opens as the equivalent graph and remains editable in both views |
+| 2.22 | In the JSON view enter malformed or compiler-invalid workflow JSON, then attempt to switch/apply/save | The current graph is preserved, save/publish cannot use the unapplied JSON and a stable safe diagnostic is shown |
+| 2.23 | Open an existing scenario with a linked draft | Only that scenario's workflow opens; JSON and graph show the same body and graph edits appear in JSON |
+| 2.24 | Open an existing scenario with an active workflow but no linked draft, then choose the active-workflow editing action | The exact checksum-matching active body is copied to a new scenario draft; the active release and immutable artifact remain unchanged |
+| 2.25 | Repeat 2.21–2.24 as `auditor` and with a foreign-tenant scenario URL | Auditor can inspect but cannot edit/copy; foreign scenario is not disclosed |
 
 The published artifact then follows the normal compile → eval → promote path (§4).
 

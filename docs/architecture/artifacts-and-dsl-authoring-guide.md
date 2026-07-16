@@ -1084,6 +1084,14 @@ Yalnız JSON döndür; açıklama veya Markdown fence ekleme.
 
 ## 19. Scenario Studio lifecycle contract
 
+- Scenario Studio is one scenario's authoring page, not an organization-wide shared canvas. The
+  server locks organization/project/scenario context and the UI identifies that context.
+- Workflow JSON and graph are two views of the same mutable draft candidate. A non-empty imported
+  body is accepted only after canonical workflow validation; graph serialization remains the body
+  saved and published.
+- If a scenario has no linked draft but has an exact checksum-matching active workflow pin, Studio
+  may show that immutable body as a source. Editing explicitly copies it into a new scenario-linked
+  mutable draft; the artifact and active release are never updated in place.
 - A workflow draft may carry direct nullable scenario lineage. The server verifies that scenario,
   project and organization agree; a deep link is never authorization.
 - Mutable workflow and artifact drafts carry an integer revision. Update, delete and workflow
@@ -1097,6 +1105,27 @@ Yalnız JSON döndür; açıklama veya Markdown fence ekleme.
   compiler repeats this validation and remains authoritative for version/checksum resolution.
 - Draft, published artifact, candidate release and active release are separate lifecycle states.
   Only the existing evaluated promotion path changes served runtime behavior.
+
+## 20. Governed transform, chunking and retrieval v1
+
+Implemented immutable contracts are `agenthub/transform/v1` (`transform_profile`),
+`agenthub/chunking/v1` (`chunking_profile`) and `agenthub/retrieval/v1`
+(`retrieval_profile`). Transform v1 has an exact-key closed registry: `records.select`,
+`records.filter`, `fields.rename`, `fields.drop`, `fields.default`, `text.normalize`,
+`text.replace` and `documents.map`. Conditions contain only bounded boolean groups and typed
+comparisons over JSON Pointers. Unknown operations, fields and dangerous pointer segments fail
+closed.
+
+The executor deep-copies input, performs no network/filesystem/secret lookup and checks caps before
+and after every step: 64 KB definition, 32 steps, expression depth 6, 32 filter terms, 2,000
+records, 8,000 characters per string, 2 MB output and one second execution. Tenant limits can only
+lower platform caps. Preview and runtime must use the same validator and executor.
+
+Chunking v1 supports bounded characters, whitespace tokens, headings, pages and tables. Retrieval
+v1 supports keyword/vector/hybrid selection, bounded `top_k`, score threshold, normalized hybrid
+weights, safe metadata conditions and an opaque reranker reference. It cannot carry organization,
+consumer, index or document-set authority. Runtime revalidates the profile; providers intersect it
+with server-owned tenant, release-pin and ACL scope and apply the threshold.
 
 Bu dosyalardaki değişiklik sözleşme değişikliğidir; kılavuz, tests, compatibility ve migration/release
 etkileri aynı değişiklik içinde güncellenmelidir.

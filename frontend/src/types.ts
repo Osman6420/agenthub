@@ -12,6 +12,15 @@ export interface BuilderInitial {
   draft_id?: number;
   project_id?: number;
   scenario_id?: number;
+  scenario_name?: string;
+  project_name?: string;
+  active_workflow?: {
+    logical_id: string;
+    name: string;
+    version: number;
+    checksum: string;
+    body: Record<string, unknown>;
+  };
 }
 
 export interface NodeFieldSchema {

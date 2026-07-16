@@ -25,24 +25,43 @@ export function Editor({
 }) {
   const builder = useBuilder(api, schema, draft);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<"graph" | "json">("graph");
+  const [jsonText, setJsonText] = useState(() => JSON.stringify(draft.body, null, 2));
   const wrapper = useRef<HTMLDivElement>(null);
+  const jsonDirty = view === "json" && jsonText !== JSON.stringify(builder.body, null, 2);
 
   // Unsaved-change protection against a full page unload.
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (builder.isDirty) {
+      if (builder.isDirty || jsonDirty) {
         e.preventDefault();
         e.returnValue = "";
       }
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [builder.isDirty]);
+  }, [builder.isDirty, jsonDirty]);
 
   const selectedNode = useMemo(
     () => builder.nodes.find((n) => n.id === builder.selectedNodeId) ?? null,
     [builder.nodes, builder.selectedNodeId],
   );
+
+  useEffect(() => {
+    if (view === "graph") setJsonText(JSON.stringify(builder.body, null, 2));
+  }, [builder.body, view]);
+
+  const applyJson = useCallback(async () => {
+    setBusy(true);
+    try {
+      const parsed = JSON.parse(jsonText) as unknown;
+      if (await builder.applyJsonCandidate(parsed)) setView("graph");
+    } catch {
+      builder.setStatusError("Geçerli bir JSON nesnesi girin");
+    } finally {
+      setBusy(false);
+    }
+  }, [builder, jsonText]);
 
   // Typed edges: an outgoing edge from a condition node is auto-typed true then false.
   const onConnect = useCallback(
@@ -98,7 +117,29 @@ export function Editor({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "78vh" }}>
-      <Toolbar builder={builder} draftName={draft.name} busy={busy} onAction={runAction} />
+      {draft.id === 0
+        ? <div style={{ padding: 10, borderBottom: "1px solid #262b36" }}>
+          <strong>{draft.name}</strong> · immutable aktif workflow önizlemesi
+        </div>
+        : <Toolbar builder={builder} draftName={draft.name} busy={busy || jsonDirty} onAction={runAction} />}
+      <div style={{ display: "flex", gap: 8, padding: "8px 0" }}>
+        <button type="button" aria-pressed={view === "graph"} onClick={() => {
+          if (view === "json" && !builder.readOnly && jsonDirty) void applyJson();
+          else setView("graph");
+        }}>Graph</button>
+        <button type="button" aria-pressed={view === "json"} onClick={() => {
+          setJsonText(JSON.stringify(builder.body, null, 2)); setView("json");
+        }}>JSON</button>
+      </div>
+      {view === "json" ? <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+        {jsonDirty && <div role="status">JSON değişikliklerini kaydetmeden önce doğrulayıp grafe uygulayın.</div>}
+        <textarea aria-label="workflow JSON" value={jsonText} disabled={builder.readOnly}
+          onChange={(event) => setJsonText(event.target.value)}
+          style={{ flex: 1, minHeight: 420, fontFamily: "monospace", padding: 12 }} />
+        {!builder.readOnly && <button type="button" disabled={busy} onClick={() => void applyJson()}>
+          JSON'ı doğrula ve grafe uygula
+        </button>}
+      </div> :
       <div className="ah-builder-editor-body">
         <Palette schema={schema} disabled={builder.readOnly} onAdd={builder.addNode} />
         <div
@@ -135,7 +176,7 @@ export function Editor({
           onChange={builder.updateNodeConfig}
           onRemove={builder.removeSelected}
         />
-      </div>
+      </div>}
     </div>
   );
 }

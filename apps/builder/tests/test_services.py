@@ -26,6 +26,28 @@ def test_create_rejects_oversized_body(bf: BuilderFixture) -> None:
     assert not WorkflowDraft.objects.filter(logical_id="flow_big").exists()
 
 
+def test_create_rejects_nonempty_invalid_workflow_but_allows_empty_graph_start(
+    bf: BuilderFixture,
+) -> None:
+    with pytest.raises(services.BuilderError) as exc:
+        services.create_draft(
+            organization=bf.org,
+            name="invalid",
+            logical_id="invalid_import",
+            body={"kind": "Python"},
+            actor="author",
+        )
+    assert exc.value.code == "candidate_invalid_workflow"
+    empty = services.create_draft(
+        organization=bf.org,
+        name="empty",
+        logical_id="empty_graph",
+        body={},
+        actor="author",
+    )
+    assert empty.body == {}
+
+
 def test_diagnose_matches_publish_on_secret(bf: BuilderFixture) -> None:
     body = simple_workflow()
     body["spec"]["nodes"][1]["config"]["password"] = "hunter2literal"  # noqa: S105

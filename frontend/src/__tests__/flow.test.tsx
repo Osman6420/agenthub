@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BuilderApi } from "../api";
+import { canonicalJson } from "../dsl";
 import { useBuilder } from "../useBuilder";
 import type { Draft, NodeSchema } from "../types";
 
@@ -83,6 +84,33 @@ afterEach(() => {
 });
 
 describe("end-to-end builder flow", () => {
+  it("applies a backend-validated JSON candidate to the editable graph", async () => {
+    const calls = mockFetch();
+    const api = new BuilderApi("/console/api/builder/");
+    const { result } = renderHook(() => useBuilder(api, schema, draftFixture()));
+    const candidate = {
+      api_version: "agenthub/v1",
+      kind: "Workflow",
+      metadata: { id: "imported" },
+      spec: {
+        input_node: "request",
+        nodes: [{ id: "request", type: "input" }, { id: "done", type: "end" }],
+        edges: [{ from: "request", to: "done" }],
+      },
+    };
+
+    await act(async () => {
+      expect(await result.current.applyJsonCandidate(candidate)).toBe(true);
+    });
+    expect(result.current.workflowId).toBe("imported");
+    expect(result.current.nodes.map((node) => node.id)).toEqual(["request", "done"]);
+    expect(canonicalJson(result.current.body)).toBe(canonicalJson({
+      ...candidate,
+      spec: { ...candidate.spec, nodes: [...candidate.spec.nodes].sort((a, b) => a.id.localeCompare(b.id)) },
+    }));
+    expect(calls.some((call) => call.url.endsWith("/drafts/1/diagnostics/"))).toBe(true);
+  });
+
   it("builds a graph, validates, saves, and publishes through the backend API", async () => {
     document.cookie = "csrftoken=tok-123";
     const calls = mockFetch();

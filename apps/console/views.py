@@ -1518,7 +1518,29 @@ def builder(request: HttpRequest) -> HttpResponse:
             "organization": scenario.organization.slug,
             "project_id": scenario.project_id,
             "scenario_id": scenario.pk,
+            "scenario_name": scenario.name,
+            "project_name": scenario.project.name,
         }
+        active_release = ScenarioRelease.objects.filter(
+            scenario=scenario, status=ReleaseStatus.ACTIVE
+        ).first()
+        if active_release is not None:
+            for row in _release_artifact_rows(active_release):
+                artifact = row["artifact"]
+                if (
+                    row["role"] == "workflow_definition"
+                    and row["checksum_matches"]
+                    and isinstance(artifact, ArtifactVersion)
+                    and artifact.type == "workflow_definition"
+                ):
+                    initial["active_workflow"] = {
+                        "logical_id": artifact.logical_id,
+                        "name": f"{scenario.name} aktif workflow",
+                        "version": artifact.version,
+                        "checksum": artifact.checksum,
+                        "body": artifact.body,
+                    }
+                    break
     if requested_draft:
         if not requested_draft.isdigit() or len(requested_draft) > 19:
             raise Http404

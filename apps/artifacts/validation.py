@@ -54,6 +54,28 @@ def validate_body(artifact_type: str, body: Any) -> None:
         except ValueError as exc:
             raise ArtifactValidationError(str(exc)) from exc
 
+    if artifact_type in {
+        ArtifactType.TRANSFORM_PROFILE,
+        ArtifactType.CHUNKING_PROFILE,
+        ArtifactType.RETRIEVAL_PROFILE,
+    }:
+        from apps.artifacts.governed_dsl import (
+            GovernedDSLValidationError,
+            validate_chunking_profile,
+            validate_retrieval_profile,
+            validate_transform_profile,
+        )
+
+        try:
+            if artifact_type == ArtifactType.TRANSFORM_PROFILE:
+                validate_transform_profile(body)
+            elif artifact_type == ArtifactType.CHUNKING_PROFILE:
+                validate_chunking_profile(body)
+            else:
+                validate_retrieval_profile(body)
+        except GovernedDSLValidationError as exc:
+            raise ArtifactValidationError(str(exc)) from exc
+
     if artifact_type == ArtifactType.MODEL_PROFILE:
         from apps.orchestration.profile_schema import (
             ModelProfileValidationError,

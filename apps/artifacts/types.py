@@ -15,6 +15,7 @@ class ArtifactType(models.TextChoices):
     POLICY_PROFILE = "policy_profile", "Policy profile"
     MODEL_PROFILE = "model_profile", "Model profile"
     SOURCE_DEFINITION = "source_definition", "Source definition"
+    TRANSFORM_PROFILE = "transform_profile", "Transform profile"
     CHUNKING_PROFILE = "chunking_profile", "Chunking profile"
     RETRIEVAL_PROFILE = "retrieval_profile", "Retrieval profile"
     WORKFLOW_DEFINITION = "workflow_definition", "Workflow definition"

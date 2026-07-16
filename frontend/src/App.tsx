@@ -32,7 +32,9 @@ export function App({
   const [error, setError] = useState<string>("");
   const [newName, setNewName] = useState("");
   const [newId, setNewId] = useState("");
+  const [newJson, setNewJson] = useState("");
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
+  const [scenarioAutoHandled, setScenarioAutoHandled] = useState(false);
 
   const org = orgs.find((o) => o.slug === orgSlug);
   const canWrite = !!org?.can_write;
@@ -86,28 +88,83 @@ export function App({
     }
   }, [deepLinkHandled, drafts, initial?.draft_id, open, schema]);
 
-  const create = useCallback(async () => {
+  useEffect(() => {
+    if (scenarioAutoHandled || !schema || !initial?.scenario_id || initial.draft_id) return;
+    setScenarioAutoHandled(true);
+    if (drafts.length > 0) void open(drafts[0].id);
+  }, [drafts, initial?.draft_id, initial?.scenario_id, open, scenarioAutoHandled, schema]);
+
+  const create = useCallback(async (bodyOverride?: Record<string, unknown>) => {
     try {
+      let body = bodyOverride ?? {};
+      if (!bodyOverride && newJson.trim()) {
+        const parsed = JSON.parse(newJson) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("Geçerli bir JSON nesnesi girin");
+        }
+        body = parsed as Record<string, unknown>;
+      }
       const draft = await api.createDraft({
         organization: orgSlug,
         ...(initial?.project_id ? { project_id: initial.project_id } : {}),
         ...(initial?.scenario_id ? { scenario_id: initial.scenario_id } : {}),
         name: newName,
         logical_id: newId,
-        body: {},
+        body,
       });
       setNewName("");
       setNewId("");
+      setNewJson("");
       await reload();
       setActive(draft);
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
     }
-  }, [api, newName, newId, orgSlug, reload]);
+  }, [api, initial?.project_id, initial?.scenario_id, newJson, newName, newId, orgSlug, reload]);
+
+  const createFromActive = useCallback(async () => {
+    if (!initial?.active_workflow || !initial.project_id || !initial.scenario_id) return;
+    try {
+      const draft = await api.createDraft({
+        organization: orgSlug,
+        project_id: initial.project_id,
+        scenario_id: initial.scenario_id,
+        name: initial.active_workflow.name,
+        logical_id: `${initial.active_workflow.logical_id}_${initial.scenario_id}`.slice(0, 128),
+        body: initial.active_workflow.body,
+      });
+      await reload();
+      setActive(draft);
+    } catch (err) {
+      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+    }
+  }, [api, initial?.active_workflow, initial?.project_id, initial?.scenario_id, orgSlug, reload]);
+
+  const previewActive = useCallback(() => {
+    if (!initial?.active_workflow || !initial.project_id || !initial.scenario_id) return;
+    setActive({
+      id: 0,
+      organization: orgSlug,
+      organization_id: 0,
+      project_id: initial.project_id,
+      scenario_id: initial.scenario_id,
+      name: initial.active_workflow.name,
+      logical_id: initial.active_workflow.logical_id,
+      body: initial.active_workflow.body,
+      last_published_version: initial.active_workflow.version,
+      last_published_at: null,
+      revision: 1,
+      can_write: false,
+    });
+  }, [initial?.active_workflow, initial?.project_id, initial?.scenario_id, orgSlug]);
 
   if (active && schema) {
     return (
       <div>
+        {initial?.scenario_id && <div style={{ padding: "8px 0 12px" }}>
+          <strong>Scenario Studio · {initial.scenario_name}</strong>
+          <span style={{ color: "#8b95a7", marginLeft: 8 }}>Proje: {initial.project_name}</span>
+        </div>}
         <button type="button" onClick={() => setActive(null)} style={backBtn}>
           ← Draft'lar
         </button>
@@ -129,12 +186,18 @@ export function App({
           {error}
         </div>
       )}
+      {initial?.scenario_id && <section style={{ padding: 12, marginBottom: 16, border: "1px solid #334155", borderRadius: 8 }}>
+        <strong>Scenario Studio · {initial.scenario_name}</strong>
+        <div style={{ color: "#8b95a7" }}>Proje: {initial.project_name} · Organizasyon: {org?.name}</div>
+        <div style={{ fontSize: 13 }}>Bu sayfadaki workflow taslakları yalnız bu senaryoya aittir.</div>
+      </section>}
       <div className="ah-builder-org-row">
         <label style={{ color: "#8b95a7", fontSize: 13 }}>
           Organizasyon
           <select
             aria-label="organizasyon"
             value={orgSlug}
+            disabled={!!initial?.scenario_id}
             onChange={(e) => setOrgSlug(e.target.value)}
             style={{ marginLeft: 8, padding: "6px 8px" }}
           >
@@ -169,6 +232,15 @@ export function App({
         ))}
       </ul>
 
+      {initial?.scenario_id && initial.active_workflow && drafts.length === 0 && <section
+        style={{ padding: 12, margin: "16px 0", border: "1px solid #334155", borderRadius: 8 }}>
+        <strong>Aktif workflow · v{initial.active_workflow.version}</strong>
+        <div><code>{initial.active_workflow.logical_id}</code> · checksum {initial.active_workflow.checksum.slice(0, 12)}</div>
+        <button type="button" onClick={previewActive} style={openBtn}>JSON/graph görüntüle</button>
+        {canWrite && <button type="button" onClick={() => void createFromActive()}
+          style={{ ...openBtn, marginLeft: 8 }}>Yeni taslak olarak düzenle</button>}
+      </section>}
+
       <h2 style={{ margin: "20px 0 8px" }}>Sözleşme taslakları</h2>
       {artifactDrafts.length === 0 && <div style={{ color: "#8b95a7" }}>
         Henüz sözleşme taslağı yok.
@@ -184,6 +256,7 @@ export function App({
       </ul>
 
       {canWrite && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
+        lockedProjectId={initial?.project_id} scenarioId={initial?.scenario_id}
         onAccepted={(draft) => {
           void reload();
           if ("artifact_type" in draft) setActiveArtifact(draft);
@@ -207,6 +280,10 @@ export function App({
             onChange={(e) => setNewId(e.target.value)}
             style={createInput}
           />
+          {initial?.scenario_id && <textarea aria-label="yeni workflow JSON" rows={12}
+            placeholder="İsteğe bağlı: agenthub/v1 Workflow JSON'unun tamamını buraya yapıştırın. Boş bırakırsanız graph ile başlayın."
+            value={newJson} onChange={(event) => setNewJson(event.target.value)}
+            style={{ display: "block", width: "100%", margin: "10px 0", fontFamily: "monospace" }} />}
           <button type="button" disabled={!newName || !newId} onClick={() => void create()} style={openBtn}>
             Oluştur
           </button>

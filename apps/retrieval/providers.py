@@ -46,7 +46,12 @@ class StaticRetrievalProvider:
         consumer_id: int | None = None,
     ) -> list[RetrievedChunk]:
         top_k = int(profile.get("top_k", len(self._chunks))) if profile else len(self._chunks)
-        ranked = sorted(self._chunks, key=lambda c: c.score, reverse=True)
+        threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
+        ranked = sorted(
+            (chunk for chunk in self._chunks if chunk.score >= threshold),
+            key=lambda c: c.score,
+            reverse=True,
+        )
         return ranked[:top_k]
 
 
@@ -68,6 +73,9 @@ class DemoRetrievalProvider:
         consumer_id: int | None = None,
     ) -> list[RetrievedChunk]:
         passage = "Iade sureci: urun tesliminden itibaren 14 gun icinde iade talebi olusturulur."
+        threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
+        if 0.82 < threshold:
+            return []
         return [
             RetrievedChunk(
                 text=passage,
@@ -111,6 +119,7 @@ class PgvectorRetrievalProvider:
         from apps.ingestion.pipeline import embed_deterministic
 
         top_k = min(max(int(profile.get("top_k", 5)), 1), 50)
+        threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
         query_vector = embed_deterministic(query)
         rows = (
             Chunk.objects.filter(
@@ -133,6 +142,7 @@ class PgvectorRetrievalProvider:
                 score=max(0.0, 1.0 - float(row.distance)),
             )
             for row in rows
+            if max(0.0, 1.0 - float(row.distance)) >= threshold
         ]
 
     def _retrieve_acl(
@@ -224,10 +234,11 @@ class PgvectorRetrievalProvider:
                 document__deleted_at__isnull=True,
             ).select_related("document")
         }
+        threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
         results: list[RetrievedChunk] = []
         for hit, dsv_id in scored:
             version = live.get(hit.document_version_id) if hit.document_version_id else None
-            if version is None:
+            if version is None or hit.score < threshold:
                 continue
             results.append(
                 RetrievedChunk(

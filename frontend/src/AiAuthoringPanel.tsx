@@ -3,8 +3,9 @@ import { useState } from "react";
 import { ApiError, BuilderApi } from "./api";
 import type { AcceptedCandidateDraft, AiCandidateResult, AiCandidateType } from "./types";
 
-export function AiAuthoringPanel({ api, organization, projects, onAccepted }: {
+export function AiAuthoringPanel({ api, organization, projects, lockedProjectId, scenarioId, onAccepted }: {
   api: BuilderApi; organization: string; projects: { id: number; name: string }[];
+  lockedProjectId?: number; scenarioId?: number;
   onAccepted: (draft: AcceptedCandidateDraft) => void;
 }) {
   const [description, setDescription] = useState("");
@@ -12,7 +13,7 @@ export function AiAuthoringPanel({ api, organization, projects, onAccepted }: {
   const [logicalId, setLogicalId] = useState("");
   const [result, setResult] = useState<AiCandidateResult | null>(null);
   const [status, setStatus] = useState("");
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? 0);
+  const [projectId, setProjectId] = useState(lockedProjectId ?? projects[0]?.id ?? 0);
   const [artifactType, setArtifactType] = useState<AiCandidateType>("workflow_definition");
 
   async function generate() {
@@ -31,6 +32,7 @@ export function AiAuthoringPanel({ api, organization, projects, onAccepted }: {
     try {
       const accepted = await api.acceptCandidate({
         organization, project_id: projectId, name, logical_id: logicalId,
+        ...(scenarioId ? { scenario_id: scenarioId } : {}),
         artifact_type: result.artifact_type, candidate: result.candidate,
         prompt_contract: result.prompt_contract,
       });
@@ -42,7 +44,7 @@ export function AiAuthoringPanel({ api, organization, projects, onAccepted }: {
   }
 
   return <section style={{ marginTop: 20, borderTop: "1px solid #262b36", paddingTop: 16 }}>
-    <label>Proje<select aria-label="AI projesi" value={projectId}
+    <label>Proje<select aria-label="AI projesi" value={projectId} disabled={!!lockedProjectId}
       onChange={(event) => setProjectId(Number(event.target.value))}>
       {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
     </select></label>

@@ -13,6 +13,7 @@ from typing import Any
 
 from django.core.cache import cache
 
+from apps.artifacts.governed_dsl import normalize_retrieval_profile
 from apps.releases.models import ScenarioRelease
 from apps.releases.services import get_artifact_body_for_role
 
@@ -42,13 +43,16 @@ def _build(release: ScenarioRelease) -> ReleaseBundle:
     document_set_version_ids = [
         int(v) for v in raw_dsv if isinstance(v, int) and not isinstance(v, bool)
     ]
+    raw_retrieval_profile = get_artifact_body_for_role(release, "retrieval_profile")
     return ReleaseBundle(
         release_id=release.id,
         organization_id=release.scenario.project.organization_id,
         prompt_text=str(prompt_body.get("template", "")),
         policy=get_artifact_body_for_role(release, "policy") or {},
         model_profile=get_artifact_body_for_role(release, "model_profile") or {},
-        retrieval_profile=get_artifact_body_for_role(release, "retrieval_profile") or {},
+        retrieval_profile=(
+            normalize_retrieval_profile(raw_retrieval_profile) if raw_retrieval_profile else {}
+        ),
         input_contract=get_artifact_body_for_role(release, "input_contract"),
         output_contract=get_artifact_body_for_role(release, "output_contract"),
         index_versions=index_versions,

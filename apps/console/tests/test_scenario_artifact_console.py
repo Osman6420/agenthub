@@ -346,3 +346,39 @@ def test_builder_deep_link_is_server_scoped(client: Client) -> None:
     )
     assert client.get(url, {"organization": other.slug, "draft": str(draft.pk)}).status_code == 404
     assert client.get(url, {"draft": "9" * 10_000}).status_code == 404
+
+
+@pytest.mark.django_db
+def test_scenario_studio_bootstrap_names_context_and_projects_exact_active_workflow(
+    client: Client,
+) -> None:
+    org = Organization.objects.create(slug="org-studio", name="Studio Org")
+    project, scenario = _scenario(org)
+    workflow = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="active_flow",
+        body=_workflow(),
+        created_by="author",
+    )
+    release = compile_release(
+        scenario=scenario,
+        refs=[ArtifactRef("workflow_definition", workflow.type, workflow.logical_id, 1)],
+        runtime_version="runtime:v1",
+        created_by="releaser",
+    )
+    release.status = ReleaseStatus.ACTIVE
+    release.save(update_fields=["status"])
+    client.force_login(_member("studio-auditor", org, Role.AUDITOR))
+
+    response = client.get(
+        reverse("console:builder"),
+        {"organization": org.slug, "scenario": str(scenario.public_id)},
+    )
+    body = response.content.decode()
+    assert response.status_code == 200
+    assert f'"scenario_id": {scenario.pk}' in body
+    assert f'"scenario_name": "{scenario.name}"' in body
+    assert f'"project_name": "{project.name}"' in body
+    assert '"logical_id": "active_flow"' in body
+    assert workflow.checksum in body

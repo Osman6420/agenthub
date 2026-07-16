@@ -41,6 +41,7 @@ export interface BuilderController {
   runDiagnostics: () => Promise<void>;
   save: () => Promise<number | undefined>;
   publish: () => Promise<void>;
+  applyJsonCandidate: (body: unknown) => Promise<boolean>;
 }
 
 export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): BuilderController {
@@ -195,6 +196,28 @@ export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): B
     setStatus(`Yayımlandı: ${result.logical_id} v${result.version}`);
   }, [api, draft.id, isDirty, readOnly, revision, save]);
 
+  const applyJsonCandidate = useCallback(async (candidate: unknown) => {
+    if (readOnly || !candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      setStatus("Geçerli bir JSON nesnesi girin");
+      return false;
+    }
+    const bodyCandidate = candidate as Record<string, unknown>;
+    const result = await api.diagnostics(draft.id, bodyCandidate);
+    setDiagnostics(result);
+    if (!result.ok) {
+      setStatus("JSON canonical workflow doğrulamasından geçmedi");
+      return false;
+    }
+    const parsed = dslToGraph(bodyCandidate);
+    setNodes(parsed.nodes);
+    setEdges(parsed.edges);
+    setWorkflowId(parsed.workflowId || draft.logical_id);
+    setInputNodeId(parsed.inputNodeId);
+    setSelectedNodeId(null);
+    setStatus("JSON grafe uygulandı; kaydetmeden önce değişiklikleri inceleyin");
+    return true;
+  }, [api, draft.id, draft.logical_id, readOnly]);
+
   return {
     nodes,
     edges,
@@ -217,5 +240,6 @@ export function useBuilder(api: BuilderApi, schema: NodeSchema, draft: Draft): B
     runDiagnostics,
     save,
     publish,
+    applyJsonCandidate,
   };
 }

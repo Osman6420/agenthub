@@ -96,13 +96,16 @@ def create_draft(
             raise BuilderError("scenario_project_mismatch")
     if WorkflowDraft.objects.filter(organization=organization, logical_id=logical_id).exists():
         raise BuilderError("duplicate_logical_id", "a draft with this logical_id already exists")
+    candidate = _validated_body(body or {})
+    if candidate and not diagnose(candidate)["ok"]:
+        raise BuilderError("candidate_invalid_workflow")
     draft = WorkflowDraft.objects.create(
         organization=organization,
         project=project,
         scenario=scenario,
         name=name,
         logical_id=logical_id,
-        body=_validated_body(body or {}),
+        body=candidate,
         created_by=actor,
         updated_by=actor,
     )

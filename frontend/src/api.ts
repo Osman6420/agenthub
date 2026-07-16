@@ -74,6 +74,7 @@ export class BuilderApi {
 
   acceptCandidate(payload: {
     organization: string; project_id: number; name: string; logical_id: string;
+    scenario_id?: number;
     artifact_type: AiCandidateType; candidate: Record<string, unknown>;
     prompt_contract: AiCandidateResult["prompt_contract"];
   }): Promise<AcceptedCandidateDraft> {
