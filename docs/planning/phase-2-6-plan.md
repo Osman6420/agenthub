@@ -184,6 +184,9 @@ Detailed P2.6.2 plan and threat model:
 Detailed P2.6.8–P2.6.9 plan and threat model:
 [`phase-2-6-authoring-and-python-nodes`](../tasks/phase-2-6-authoring-and-python-nodes/plan.md).
 
+Dedicated P2.6.9 implementation plan and threat model:
+[`phase-2-6-part-9-studio-authoring-context`](../tasks/phase-2-6-part-9-studio-authoring-context/plan.md).
+
 Detailed P2.6.10 plan and threat model:
 [`phase-2-6-ingestion-operational-lifecycle`](../tasks/phase-2-6-ingestion-operational-lifecycle/plan.md).
 
