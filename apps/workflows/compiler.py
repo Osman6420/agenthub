@@ -8,10 +8,16 @@ from typing import Any
 
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
+from apps.workflows.state_mapping import MappingError, compile_mappings
 
 MAX_NODES = 50
 MAX_EDGES = 100
 MAX_IDENTIFIER_LENGTH = 64
+
+# Compiled-contract version (ADR-0008). Bumped for the P2.6.1 typed-mapping semantics so a
+# stale v1 compiled graph or checkpoint can never be resumed under the new runtime.
+COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v2"
+COMPILER_VERSION = "workflow-compiler/v2"
 
 BUILTIN_NODE_TYPES = frozenset(
     {
@@ -24,8 +30,13 @@ BUILTIN_NODE_TYPES = frozenset(
         "end",
         "custom",
         "tool",
+        "transform",
     }
 )
+
+# Nodes that may declare typed ``input_mapping``/``output_mapping`` (P2.6.1). Control/IO nodes
+# never carry mappings so they cannot silently reshape state.
+MAPPING_ELIGIBLE_NODE_TYPES = frozenset({"retrieve", "generate", "tool", "custom", "transform"})
 
 
 class WorkflowCompileError(ValueError):
@@ -94,7 +105,7 @@ def compile_workflow(
             raise WorkflowCompileError("end nodes cannot have outgoing edges")
 
     graph = {
-        "api_version": "agenthub/compiled-workflow/v1",
+        "api_version": COMPILED_WORKFLOW_API_VERSION,
         "workflow_id": workflow_id,
         "input_node": input_node,
         "nodes": [nodes[node_id] for node_id in sorted(nodes)],
@@ -106,7 +117,12 @@ def compile_workflow(
 
 def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dict[str, Any]:
     node = _mapping(raw, "node")
-    _require_exact_keys(node, {"id", "type", "config"}, "node", optional={"config"})
+    _require_exact_keys(
+        node,
+        {"id", "type", "config", "input_mapping", "output_mapping"},
+        "node",
+        optional={"config", "input_mapping", "output_mapping"},
+    )
     node_id = _identifier(node.get("id"), "node id")
     node_type = node.get("type")
     if node_type not in BUILTIN_NODE_TYPES:
@@ -116,6 +132,8 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
         raise WorkflowCompileError("node config must be an object")
     _reject_dangerous_keys(config)
 
+    input_mapping, output_mapping = _validate_node_mappings(node, node_type)
+
     if node_type == "condition":
         _require_exact_keys(config, {"expression"}, "condition config")
         _validate_condition(config.get("expression"))
@@ -124,13 +142,34 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
         node_ref = _identifier(config.get("node_ref"), "custom node_ref")
         if allowed_custom_nodes is not None and node_ref not in allowed_custom_nodes:
             raise WorkflowCompileError("custom node is not allowed for this workflow")
+    elif node_type == "transform":
+        # Pinned governed-transform profile only (D1): a release manifest role resolving to an
+        # immutable transform_profile artifact. No inline operations, expressions or templates.
+        _require_exact_keys(config, {"transform_profile_ref"}, "transform config")
+        _identifier(config.get("transform_profile_ref"), "transform transform_profile_ref")
+        if input_mapping is None or output_mapping is None:
+            raise WorkflowCompileError("transform node requires input_mapping and output_mapping")
     elif node_type == "tool":
         # A tool node calls the governed tool proxy for a release-pinned binding role;
-        # egress/approval are enforced at runtime, never in the workflow graph.
-        _require_exact_keys(config, {"binding_role", "input_key", "output_key"}, "tool config")
+        # egress/approval are enforced at runtime, never in the workflow graph. The input
+        # source and output sink may be a legacy state key or a typed mapping, never both.
+        _require_exact_keys(
+            config,
+            {"binding_role", "input_key", "output_key"},
+            "tool config",
+            optional={"input_key", "output_key"},
+        )
         _identifier(config.get("binding_role"), "tool binding_role")
-        _identifier(config.get("input_key"), "tool input_key")
-        _identifier(config.get("output_key"), "tool output_key")
+        if "input_key" in config:
+            _identifier(config.get("input_key"), "tool input_key")
+        if "output_key" in config:
+            _identifier(config.get("output_key"), "tool output_key")
+        if input_mapping is not None and "input_key" in config:
+            raise WorkflowCompileError("tool node cannot set both input_key and input_mapping")
+        if (output_mapping is None) == ("output_key" not in config):
+            raise WorkflowCompileError(
+                "tool node requires exactly one of output_key/output_mapping"
+            )
     elif node_type == "generate":
         # Optional per-node prompt/model binding (P5.2): names of manifest roles pinned into the
         # release. The runtime resolves them; a missing role falls back to the release defaults.
@@ -149,7 +188,43 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
     elif node_type in {"input", "validate_contract", "end"} and config:
         raise WorkflowCompileError(f"{node_type} node does not accept config")
 
-    return {"id": node_id, "type": node_type, "config": config}
+    compiled_node: dict[str, Any] = {"id": node_id, "type": node_type, "config": config}
+    if input_mapping is not None:
+        compiled_node["input_mapping"] = input_mapping
+    if output_mapping is not None:
+        compiled_node["output_mapping"] = output_mapping
+    return compiled_node
+
+
+def _validate_node_mappings(
+    node: dict[str, Any], node_type: str
+) -> tuple[list[dict[str, str]] | None, list[dict[str, str]] | None]:
+    """Validate optional typed mappings and return their canonical form (or ``None``).
+
+    Mappings are only accepted on the eligible node types; the shared strict parser and the
+    protected-namespace policy in :mod:`apps.workflows.state_mapping` are the single source of
+    truth for both authoring and runtime.
+    """
+    has_mapping = "input_mapping" in node or "output_mapping" in node
+    if has_mapping and node_type not in MAPPING_ELIGIBLE_NODE_TYPES:
+        raise WorkflowCompileError(f"{node_type} node does not accept mappings")
+    input_mapping = _compile_one_mapping(node.get("input_mapping"), restrict_destination=False)
+    output_mapping = _compile_one_mapping(node.get("output_mapping"), restrict_destination=True)
+    return input_mapping, output_mapping
+
+
+def _compile_one_mapping(
+    entries: Any, *, restrict_destination: bool
+) -> list[dict[str, str]] | None:
+    if entries is None:
+        return None
+    try:
+        compiled = compile_mappings(entries, restrict_destination=restrict_destination)
+        return [dict(item) for item in compiled]
+    except MappingError as exc:
+        # Surface the stable content-free code (WORKFLOW_PATH_INVALID / _PROTECTED /
+        # _MAPPING_CONFLICT / _MAPPING_INVALID) as the diagnostic message.
+        raise WorkflowCompileError(exc.code) from None
 
 
 def _validate_edge(raw: Any, nodes: dict[str, dict[str, Any]]) -> dict[str, Any]:

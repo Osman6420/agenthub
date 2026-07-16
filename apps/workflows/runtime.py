@@ -15,6 +15,7 @@ from django.utils import timezone
 from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
 from apps.orchestration.runtime import RunResult
 from apps.releases.services import get_artifact_body_for_role
+from apps.workflows.compiler import COMPILED_WORKFLOW_API_VERSION, MAPPING_ELIGIBLE_NODE_TYPES
 from apps.workflows.custom_nodes import CustomNodeError, execute_custom_node
 from apps.workflows.models import WorkflowRunEvent, WorkflowRunStatus
 from apps.workflows.services import (
@@ -23,6 +24,11 @@ from apps.workflows.services import (
     _next_sequence,
     _redact,
     resolve_release_workflow,
+)
+from apps.workflows.state_mapping import (
+    MappingError,
+    apply_output_mapping,
+    build_input_envelope,
 )
 
 MAX_NODE_SECONDS = 30
@@ -78,6 +84,9 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
         except ExecutionContextInvalid:
             raise WorkflowRuntimeError("EXECUTION_CONTEXT_INVALID") from None
     graph = run.workflow_version.compiled_graph
+    if graph.get("api_version") != COMPILED_WORKFLOW_API_VERSION:
+        # A stale compiled graph/checkpoint must never run under the new mapping semantics.
+        raise WorkflowRuntimeError("WORKFLOW_COMPILER_VERSION_UNSUPPORTED")
     nodes = {item["id"]: item for item in graph["nodes"]}
     edges: dict[str, list[dict[str, Any]]] = {node_id: [] for node_id in nodes}
     for edge in graph["edges"]:
@@ -95,9 +104,10 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
         if time.time() > run.deadline_at.timestamp():
             raise WorkflowRuntimeError("WORKFLOW_TIMED_OUT")
         node = nodes[current]
-        if node["type"] == "tool":
-            # May raise WorkflowPaused (approval pending) or merge output into state.
-            _run_tool_node(node=node, state=state, run=run, resuming=resuming)
+        if node["type"] in MAPPING_ELIGIBLE_NODE_TYPES:
+            # May raise WorkflowPaused (tool approval pending). Applies typed mappings or the
+            # legacy default write, atomically (copy-on-success) on the returned state.
+            state = _run_eligible_node(node=node, state=state, run=run, resuming=resuming)
             resuming = False
             try:
                 _assert_state_size(state)
@@ -157,26 +167,175 @@ def _validate_output_policy(release: Any, output: dict[str, Any]) -> None:
             raise WorkflowRuntimeError("POLICY_VIOLATION")
 
 
-def _run_tool_node(
+def _run_eligible_node(
     *, node: dict[str, Any], state: dict[str, Any], run: Any, resuming: bool
+) -> dict[str, Any]:
+    """Run a mapping-eligible node and apply its output to the run state.
+
+    Builds a node-local input envelope from a pre-node snapshot when ``input_mapping`` is
+    declared (so the node never receives ambient state it did not select), then projects the
+    node's output envelope into state through ``output_mapping`` (copy-on-success) or the
+    node's legacy default write. A required tool approval raises :class:`WorkflowPaused`
+    before any output is applied.
+    """
+    input_mapping = node.get("input_mapping")
+    output_mapping = node.get("output_mapping")
+    try:
+        input_env = build_input_envelope(state, input_mapping) if input_mapping else None
+    except MappingError as exc:
+        raise WorkflowRuntimeError(exc.code) from None
+
+    if node["type"] == "tool":
+        envelope = _run_tool_node(
+            node=node, state=state, input_env=input_env, run=run, resuming=resuming
+        )
+    else:
+        started = time.monotonic()
+        envelope = _execute_eligible_node(node=node, state=state, input_env=input_env, run=run)
+        if time.monotonic() - started > MAX_NODE_SECONDS:
+            raise WorkflowRuntimeError("WORKFLOW_NODE_TIMED_OUT")
+
+    try:
+        if output_mapping:
+            return apply_output_mapping(state, envelope, output_mapping)
+    except MappingError as exc:
+        raise WorkflowRuntimeError(exc.code) from None
+    _apply_default_output(node, state, envelope)
+    return state
+
+
+def _apply_default_output(
+    node: dict[str, Any], state: dict[str, Any], envelope: dict[str, Any]
 ) -> None:
-    """Execute a governed tool call, pausing the run if approval is pending."""
+    """Legacy per-node default write used when a node declares no ``output_mapping``."""
+    node_type = node["type"]
+    if node_type == "retrieve":
+        state["retrieval"] = envelope
+    elif node_type == "generate":
+        state["output"] = envelope
+    elif node_type == "custom":
+        state.update(envelope)
+    elif node_type == "tool":
+        state[node["config"]["output_key"]] = envelope
+    else:  # pragma: no cover - transform always declares output_mapping (compiler-enforced)
+        raise WorkflowRuntimeError("WORKFLOW_NODE_UNSUPPORTED")
+
+
+def _execute_eligible_node(
+    *, node: dict[str, Any], state: dict[str, Any], input_env: dict[str, Any] | None, run: Any
+) -> dict[str, Any]:
+    """Execute a non-tool mapping-eligible node and return its output envelope."""
+    node_type = node["type"]
+    config = node["config"]
+    release = run.release
+    if node_type == "retrieve":
+        from apps.orchestration.rag_steps import retrieve_for_release
+
+        query = _envelope_query(input_env) if input_env is not None else _workflow_query(state)
+        try:
+            return retrieve_for_release(release=release, query=query, consumer_id=run.consumer_id)
+        except Exception as exc:  # provider-opaque failure -> fail the node with a stable code
+            raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_FAILED") from exc
+    if node_type == "generate":
+        from apps.orchestration.providers import ModelProviderError
+        from apps.orchestration.rag_steps import chunks_from_state, generate_for_release
+
+        context = chunks_from_state(input_env if input_env is not None else state)
+        prompt, model_profile = _generate_bindings(config, release)
+        try:
+            response = generate_for_release(
+                release=release, context=context, prompt=prompt, model_profile=model_profile
+            )
+        except ModelProviderError as exc:
+            raise WorkflowRuntimeError("WORKFLOW_GENERATION_FAILED") from exc
+        source = input_env if input_env is not None else state
+        retrieval = source.get("retrieval") if isinstance(source.get("retrieval"), dict) else {}
+        return {
+            "answer": response.text,
+            "sources": retrieval.get("chunks", []) if isinstance(retrieval, dict) else [],
+        }
+    if node_type == "custom":
+        node_ref = str(config["node_ref"])
+        custom_config = {key: value for key, value in config.items() if key != "node_ref"}
+        # With input_mapping the node sees only its declared envelope, not ambient state.
+        node_state = input_env if input_env is not None else state
+        try:
+            return execute_custom_node(
+                node_ref=node_ref, config=custom_config, state=node_state, run=run
+            )
+        except CustomNodeError as exc:
+            raise WorkflowRuntimeError(exc.code) from None
+    if node_type == "transform":
+        return _run_transform_node(config=config, input_env=input_env, release=release)
+    raise WorkflowRuntimeError("WORKFLOW_NODE_UNSUPPORTED")
+
+
+def _run_transform_node(
+    *, config: dict[str, Any], input_env: dict[str, Any] | None, release: Any
+) -> dict[str, Any]:
+    """Execute the pinned governed transform profile over the node-local input envelope."""
+    from apps.artifacts.governed_dsl import (
+        GovernedDocument,
+        GovernedDSLValidationError,
+        execute_transform,
+    )
+
+    body = get_artifact_body_for_role(release, str(config["transform_profile_ref"]))
+    if not isinstance(body, dict):
+        # A missing/foreign/unpinned profile fails closed; there is no ambient fallback.
+        raise WorkflowRuntimeError("WORKFLOW_TRANSFORM_PROFILE_UNRESOLVED")
+    try:
+        result = execute_transform(body, input_env if input_env is not None else {})
+    except GovernedDSLValidationError:
+        raise WorkflowRuntimeError("WORKFLOW_TRANSFORM_FAILED") from None
+    if isinstance(result, list) and result and isinstance(result[0], GovernedDocument):
+        result = [
+            {
+                "source_id": document.source_id,
+                "title": document.title,
+                "content": document.content,
+                "metadata": document.metadata,
+            }
+            for document in result
+        ]
+    return {"result": result}
+
+
+def _envelope_query(envelope: dict[str, Any]) -> str:
+    query = envelope.get("query")
+    if isinstance(query, str):
+        return query
+    return str(query) if query is not None else ""
+
+
+def _run_tool_node(
+    *,
+    node: dict[str, Any],
+    state: dict[str, Any],
+    input_env: dict[str, Any] | None,
+    run: Any,
+    resuming: bool,
+) -> dict[str, Any]:
+    """Execute a governed tool call, pausing the run if approval is pending.
+
+    Returns the tool's output envelope (the caller applies ``output_mapping`` or the legacy
+    ``output_key`` write). Raises :class:`WorkflowPaused` when approval is pending.
+    """
     from apps.tools.approvals import ToolApprovalError, execute_invocation, request_tool_invocation
     from apps.tools.models import ToolInvocationStatus
 
     config = node["config"]
     role = config["binding_role"]
-    input_key = config["input_key"]
-    output_key = config["output_key"]
-    tool_input = state.get(input_key)
-    if not isinstance(tool_input, dict):
-        tool_input = {}
+    if input_env is not None:
+        tool_input: dict[str, Any] = input_env
+    else:
+        raw = state.get(config["input_key"]) if "input_key" in config else None
+        tool_input = raw if isinstance(raw, dict) else {}
 
     # The eval candidate seam runs without a consumer; produce a deterministic stub so
     # tool-containing workflows remain evaluable without real egress or approval.
     if getattr(run, "consumer_id", None) is None:
-        state[output_key] = {"status": "ok"}
-        return
+        return {"status": "ok"}
 
     context = run.execution_context if isinstance(run.execution_context, dict) else {}
     capabilities = list(context.get("capabilities", []))
@@ -210,11 +369,10 @@ def _run_tool_node(
 
     if invocation.status == ToolInvocationStatus.COMPLETED:
         output = invocation.redacted_output if isinstance(invocation.redacted_output, dict) else {}
-        state[output_key] = output
         if resuming:
             run.awaiting_node = ""
             run.save(update_fields=["awaiting_node", "updated_at"])
-        return
+        return output
     raise WorkflowRuntimeError(f"TOOL_{str(invocation.status).upper()}")
 
 
@@ -239,34 +397,6 @@ def _execute_node(
     config = node["config"]
     if node_type in {"input", "end"}:
         return None
-    if node_type == "retrieve":
-        from apps.orchestration.rag_steps import retrieve_for_release
-
-        try:
-            state["retrieval"] = retrieve_for_release(
-                release=release, query=_workflow_query(state), consumer_id=run.consumer_id
-            )
-        except Exception as exc:  # provider-opaque failure -> fail the node with a stable code
-            raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_FAILED") from exc
-        return None
-    if node_type == "generate":
-        from apps.orchestration.providers import ModelProviderError
-        from apps.orchestration.rag_steps import chunks_from_state, generate_for_release
-
-        context = chunks_from_state(state)
-        prompt, model_profile = _generate_bindings(config, release)
-        try:
-            response = generate_for_release(
-                release=release, context=context, prompt=prompt, model_profile=model_profile
-            )
-        except ModelProviderError as exc:
-            raise WorkflowRuntimeError("WORKFLOW_GENERATION_FAILED") from exc
-        retrieval = state.get("retrieval") if isinstance(state.get("retrieval"), dict) else {}
-        state["output"] = {
-            "answer": response.text,
-            "sources": retrieval.get("chunks", []) if isinstance(retrieval, dict) else [],
-        }
-        return None
     if node_type == "format_output":
         state["output"] = {"answer": str(config.get("template_ref", "")), "sources": []}
         return None
@@ -283,20 +413,6 @@ def _execute_node(
         return None
     if node_type == "condition":
         return _evaluate_condition(config["expression"], state)
-    if node_type == "custom":
-        node_ref = str(config["node_ref"])
-        custom_config = {key: value for key, value in config.items() if key != "node_ref"}
-        try:
-            patch = execute_custom_node(
-                node_ref=node_ref,
-                config=custom_config,
-                state=state,
-                run=run,
-            )
-        except CustomNodeError as exc:
-            raise WorkflowRuntimeError(exc.code) from None
-        state.update(patch)
-        return None
     raise WorkflowRuntimeError("WORKFLOW_NODE_UNSUPPORTED")
 
 

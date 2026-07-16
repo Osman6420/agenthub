@@ -89,7 +89,39 @@ def _binding_body(*, required: bool) -> dict:
     }
 
 
-def _setup(*, risk: str, side_effecting: bool, required: bool) -> tuple[WorkflowRun, Consumer]:
+def _mapped_workflow_body() -> dict:
+    """A tool node that selects its input and routes its output via typed mappings only."""
+    return {
+        "api_version": "agenthub/v1",
+        "kind": "Workflow",
+        "metadata": {"id": "tool_flow.v1"},
+        "spec": {
+            "input_node": "req",
+            "nodes": [
+                {"id": "req", "type": "input"},
+                {
+                    "id": "call",
+                    "type": "tool",
+                    "config": {"binding_role": "tool_binding.search"},
+                    "input_mapping": [{"from": "/input/query", "to": "/query"}],
+                    "output_mapping": [
+                        {"from": "/status", "to": "/output/status"},
+                        {"from": "/status", "to": "/evidence/tool_status"},
+                    ],
+                },
+                {"id": "done", "type": "end"},
+            ],
+            "edges": [
+                {"from": "req", "to": "call"},
+                {"from": "call", "to": "done"},
+            ],
+        },
+    }
+
+
+def _setup(
+    *, risk: str, side_effecting: bool, required: bool, workflow_body: dict | None = None
+) -> tuple[WorkflowRun, Consumer]:
     org = Organization.objects.create(slug=ORG_SLUG, name="Tool Flow Org")
     project = AIProject.objects.create(organization=org, slug="ops", name="Ops")
     scenario = Scenario.objects.create(
@@ -145,7 +177,7 @@ def _setup(*, risk: str, side_effecting: bool, required: bool) -> tuple[Workflow
         organization=org,
         artifact_type=ArtifactType.WORKFLOW_DEFINITION,
         logical_id="tool_flow",
-        body=_workflow_body(),
+        body=workflow_body if workflow_body is not None else _workflow_body(),
         created_by="editor",
     )
     release = compile_release(
@@ -194,6 +226,20 @@ def test_low_risk_tool_completes_without_pause() -> None:
     run.refresh_from_db()
     assert run.status == WorkflowRunStatus.COMPLETED
     assert run.redacted_state["output"]["status"] == "[redacted]"
+
+
+@pytest.mark.django_db
+def test_tool_node_typed_input_and_output_mappings() -> None:
+    run, _consumer = _setup(
+        risk="low", side_effecting=False, required=False, workflow_body=_mapped_workflow_body()
+    )
+    execute_workflow_run(run.id)
+    run.refresh_from_db()
+    assert run.status == WorkflowRunStatus.COMPLETED
+    # The tool output is routed into business namespaces by output_mapping (no legacy
+    # ``output_key`` write path was used).
+    assert run.redacted_state["evidence"]["tool_status"] == "[redacted]"
+    assert run.redacted_state["output"] == {"status": "[redacted]"}
 
 
 @pytest.mark.django_db
