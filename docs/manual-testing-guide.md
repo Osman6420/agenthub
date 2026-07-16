@@ -7,7 +7,7 @@ assumes the demo tenant seeded by `manage.py seed_demo`. Pair it with the
 
 > Credentials and tokens are **generated and printed by `seed_demo`** — they are not stored
 > in this document. Run the seeder and copy the values it prints into the `<PASSWORD>` /
-> `<TOKEN>` placeholders below.
+> `<REST_TOKEN>` / `<MCP_TOKEN>` placeholders below.
 
 ---
 
@@ -134,7 +134,8 @@ The seeder provisions:
 | RAG scenario | alias `customer-information` (capability `query`) |
 | Workflow scenario | alias `support-flow` (a high-risk tool node → approval) |
 | Agent scenario | alias `assistant` |
-| Consumer + token | `demo-client` + `<TOKEN>` (bound to all three) |
+| REST consumer + token | `demo-client` + `<REST_TOKEN>` (bound to all three) |
+| MCP consumer + token | `demo-mcp-client` + `<MCP_TOKEN>` (bound to all three) |
 
 ---
 
@@ -206,7 +207,7 @@ The published artifact then follows the normal compile → eval → promote path
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/v1/query \
-  -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <REST_TOKEN>" -H "Content-Type: application/json" \
   -d '{"scenario_alias":"customer-information","query":"What are your opening hours?"}'
 ```
 
@@ -217,6 +218,36 @@ Negative checks:
 - Omit the `Authorization` header → `401`.
 - Wrong alias / an alias the token isn't bound to → `403`.
 
+### 3.1 OpenAI-compatible HTTPS adapters
+
+Local settings enable these routes; other environments must explicitly set
+`OPENAI_COMPAT_ENABLED=true`. The consumer must use protocol `REST`.
+
+Default synchronous RAG call:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer <REST_TOKEN>" -H "Content-Type: application/json" \
+  -d '{"model":"customer-information","messages":[{"role":"user","content":"What are your opening hours?"}]}'
+```
+
+Expected: `HTTP 200`, `object=chat.completion`, an opaque `chatcmpl_…` id and one assistant
+message. `model` is the bound scenario alias, not an OpenAI/provider model name.
+
+Responses synchronous RAG alternative:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/v1/responses \
+  -H "Authorization: Bearer <REST_TOKEN>" -H "Content-Type: application/json" \
+  -d '{"model":"customer-information","input":"What are your opening hours?"}'
+```
+
+For workflow/agent use `/v1/responses`, `"background":true` and a bounded unique
+`Idempotency-Key`; expect `HTTP 202`, `status=queued` and an opaque run id under `metadata.run_id`.
+`/v1/chat/completions` rejects async scenarios. Both adapters reject streaming, multimodal content,
+client tools/functions and request-side contract/model-profile overrides. A token created for MCP
+is rejected on these HTTPS routes.
+
 ---
 
 ## 4. Consumer API — workflow with human approval (async)
@@ -225,7 +256,7 @@ Negative checks:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/v1/invoke \
-  -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <REST_TOKEN>" -H "Content-Type: application/json" \
   -H "Idempotency-Key: wf-1" \
   -d '{"scenario_alias":"support-flow","input":{"query":"hello"}}'
 ```
@@ -235,7 +266,7 @@ Expected: `HTTP 202`, `"status":"queued"`, a numeric `run_id`.
 **Poll** (after the worker runs it):
 
 ```bash
-curl -s http://127.0.0.1:8000/v1/runs/<run_id> -H "Authorization: Bearer <TOKEN>"
+curl -s http://127.0.0.1:8000/v1/runs/<run_id> -H "Authorization: Bearer <REST_TOKEN>"
 ```
 
 Expected: `"status":"waiting_approval"` — the high-risk tool node paused the run.
@@ -260,7 +291,7 @@ You can also approve in the console: log in as `approver` → **Tool approvals**
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/v1/invoke \
-  -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <REST_TOKEN>" -H "Content-Type: application/json" \
   -H "Idempotency-Key: agent-1" \
   -d '{"scenario_alias":"assistant","input":{"query":"Summarize the refund policy."}}'
 ```
@@ -293,10 +324,11 @@ As `releaser` (or `admin`) on the **Releases** screen, or via CLI:
 - **MCP** (same policy/routing as REST, authenticated):
   ```bash
   curl -s -X POST http://127.0.0.1:8000/mcp/ -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <MCP_TOKEN>" \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
   ```
   Unauthenticated → `401 AUTHENTICATION_REQUIRED` (endpoint enabled only when
-  `MCP_ENABLED=true`).
+  `MCP_ENABLED=true`). A REST token is rejected; create a consumer with protocol `MCP`.
 - **Metrics** (Prometheus; needs the bearer token the server was started with):
   ```bash
   curl -s http://127.0.0.1:8000/internal/metrics -H "Authorization: Bearer <METRICS_TOKEN>"

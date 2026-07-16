@@ -8,9 +8,11 @@ import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from apps.audit.models import AuditEvent
 from apps.gateway.errors import ErrorCode
 from apps.gateway.tests.conftest import Fixture, build_scenario
 from apps.mcp.schemas import TOOLS
+from apps.mcp.tests.conftest import McpFixture
 from apps.releases.models import ReleaseCanary, ReleaseStatus, ScenarioRelease
 
 MCP = "/mcp/"
@@ -34,6 +36,15 @@ def _rpc(method: str, params: dict[str, Any] | None = None, request_id: int = 1)
 def test_mcp_requires_consumer_token() -> None:
     response = _client().post(MCP, _rpc("tools/list"), format="json")
     assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_mcp_rejects_rest_credential() -> None:
+    fixture = build_scenario()
+    response = _client(fixture.raw_token).post(MCP, _rpc("tools/list"), format="json")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == -32001
+    assert AuditEvent.objects.filter(action="mcp.protocol", reason="PROTOCOL_DENIED").exists()
 
 
 @pytest.mark.django_db
@@ -61,8 +72,8 @@ def test_initialize_and_tool_schema_snapshot(scenario_fixture: Fixture) -> None:
 
 
 @pytest.mark.django_db
-def test_mcp_query_matches_rest_release_and_output(scenario_fixture: Fixture) -> None:
-    rest = _client(scenario_fixture.raw_token).post(
+def test_mcp_query_matches_rest_release_and_output(scenario_fixture: McpFixture) -> None:
+    rest = _client(scenario_fixture.rest_token).post(
         "/v1/query",
         {"scenario_alias": scenario_fixture.alias, "query": "hi"},
         format="json",
@@ -88,7 +99,7 @@ def test_mcp_query_matches_rest_release_and_output(scenario_fixture: Fixture) ->
 
 
 @pytest.mark.django_db
-def test_mcp_and_rest_share_sprint6_canary_routing(scenario_fixture: Fixture) -> None:
+def test_mcp_and_rest_share_sprint6_canary_routing(scenario_fixture: McpFixture) -> None:
     active = ScenarioRelease.objects.get(scenario=scenario_fixture.scenario, status="active")
     canary = ScenarioRelease.objects.create(
         scenario=scenario_fixture.scenario,
@@ -105,8 +116,15 @@ def test_mcp_and_rest_share_sprint6_canary_routing(scenario_fixture: Fixture) ->
         expires_at=timezone.now() + timedelta(minutes=5),
         created_by="test",
     )
+    ReleaseCanary.objects.create(
+        scenario=scenario_fixture.scenario,
+        consumer=scenario_fixture.rest_consumer,
+        release=canary,
+        expires_at=timezone.now() + timedelta(minutes=5),
+        created_by="test",
+    )
 
-    rest = _client(scenario_fixture.raw_token).post(
+    rest = _client(scenario_fixture.rest_token).post(
         "/v1/query",
         {"scenario_alias": scenario_fixture.alias, "query": "hi"},
         format="json",

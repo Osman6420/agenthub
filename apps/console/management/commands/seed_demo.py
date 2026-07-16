@@ -3,7 +3,7 @@
 Local development / manual-testing convenience ONLY — never for production. It creates
 operator accounts (one per role), a demo organization/project, one scenario of each
 workload type (RAG, workflow-with-approval, agent), their immutable artifacts + promoted
-releases, and a consumer with a bearer token bound to all three. It is idempotent per
+releases, and REST/MCP consumers with bearer tokens bound to all three. It is idempotent per
 entity (safe to re-run) and prints the credentials/token it minted.
 
 Passwords/tokens are generated at run time and printed once; nothing sensitive is stored
@@ -37,6 +37,7 @@ User = get_user_model()
 
 ORG_SLUG = "demo"
 CONSUMER_SUBJECT = "demo-client"
+MCP_CONSUMER_SUBJECT = "demo-mcp-client"
 
 # Operator accounts: one per role so tenant-scoping and role gating can be exercised.
 OPERATORS = [
@@ -79,10 +80,19 @@ class Command(BaseCommand):
             self._ensure_rag(org, project)
             self._ensure_workflow(org, project)
             self._ensure_agent(org, project)
-            consumer = self._ensure_consumer(org)
+            consumer = self._ensure_consumer(
+                org, subject=CONSUMER_SUBJECT, name="Demo Client", protocol=ConsumerProtocol.REST
+            )
+            mcp_consumer = self._ensure_consumer(
+                org,
+                subject=MCP_CONSUMER_SUBJECT,
+                name="Demo MCP Client",
+                protocol=ConsumerProtocol.MCP,
+            )
             _, raw_token = create_token(consumer, f"demo-cli-{secrets.token_hex(3)}")
+            _, mcp_raw_token = create_token(mcp_consumer, f"demo-mcp-{secrets.token_hex(3)}")
 
-        self._report(password, raw_token)
+        self._report(password, raw_token, mcp_raw_token)
 
     # --- reset --------------------------------------------------------------
 
@@ -346,11 +356,13 @@ class Command(BaseCommand):
 
     # --- consumer + bindings ------------------------------------------------
 
-    def _ensure_consumer(self, org: Organization) -> Consumer:
+    def _ensure_consumer(
+        self, org: Organization, *, subject: str, name: str, protocol: str
+    ) -> Consumer:
         consumer, _ = Consumer.objects.get_or_create(
             organization=org,
-            subject=CONSUMER_SUBJECT,
-            defaults={"name": "Demo Client", "protocol": ConsumerProtocol.REST},
+            subject=subject,
+            defaults={"name": name, "protocol": protocol},
         )
         bindings = {
             "customer-information": [Capability.QUERY],
@@ -373,7 +385,7 @@ class Command(BaseCommand):
 
     # --- report -------------------------------------------------------------
 
-    def _report(self, password: str, raw_token: str) -> None:
+    def _report(self, password: str, raw_token: str, mcp_raw_token: str) -> None:
         out = self.stdout
         out.write(self.style.SUCCESS("Demo tenant seeded."))
         out.write("")
@@ -385,13 +397,17 @@ class Command(BaseCommand):
         out.write("  approver  - approver: decides tool approvals")
         out.write("  auditor   - auditor: read-only")
         out.write("")
-        out.write("Consumer API bearer token (shown once):")
+        out.write("REST consumer bearer token (shown once):")
         out.write(f"  {raw_token}")
+        out.write("MCP consumer bearer token (shown once):")
+        out.write(f"  {mcp_raw_token}")
         out.write("")
         out.write("Scenario aliases (POST to /v1/):")
         out.write("  customer-information  query    -> POST /v1/query")
         out.write("  support-flow          workflow -> POST /v1/invoke  (pauses for approval)")
         out.write("  assistant             agent    -> POST /v1/invoke")
+        out.write("OpenAI-compatible default: POST /v1/chat/completions (RAG)")
+        out.write("MCP ingress: POST /mcp/ with the MCP token")
 
 
 # --- shared bodies (mirror the verified Sprint 8/9 tool-node test fixtures) --

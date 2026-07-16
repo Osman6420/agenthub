@@ -34,6 +34,15 @@ The exact current artifact schemas, workflow/agent DSL, release roles and author
 documented in the
 [Artifact ve DSL Yazım Kılavuzu](artifacts-and-dsl-authoring-guide.md).
 
+Phase 2.5 Part 8 adds disabled-by-default OpenAI-compatible inbound adapters without an
+OpenAI dependency or outbound call. A REST consumer may use `/v1/chat/completions` for synchronous
+RAG or `/v1/responses` for synchronous RAG and background workflow/agent creation. The required
+`model` value is the consumer-bound generated scenario alias, not a provider model or raw database
+identifier. MCP and HTTPS enforce their corresponding consumer protocol and both retain the same
+binding/capability, active/canary release, input/output contract, idempotency, audit and usage
+governance. History is bounded, text-only and request-scoped; streaming, multimodal input, client
+tools/functions and request-side governance overrides are intentionally unsupported.
+
 Phase 2.5 Part 1 implements an authorized organization inventory on `/console/`, an organization
 overview on `/console/o/<slug>/`, and tenant-scoped project, client-application and release detail
 navigation while preserving the existing canonical domain URLs. Authorized disabled organizations

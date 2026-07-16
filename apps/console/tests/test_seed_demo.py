@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 
 from apps.catalog.models import Scenario
-from apps.identity.models import Consumer
+from apps.identity.models import Consumer, ConsumerProtocol
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization
 
@@ -32,6 +32,11 @@ def test_seed_demo_creates_a_complete_tenant() -> None:
     consumer = Consumer.objects.get(organization=org, subject="demo-client")
     assert consumer.bindings.count() == 3
     assert consumer.tokens.count() == 1
+    assert consumer.protocol == ConsumerProtocol.REST
+    mcp_consumer = Consumer.objects.get(organization=org, subject="demo-mcp-client")
+    assert mcp_consumer.protocol == ConsumerProtocol.MCP
+    assert mcp_consumer.bindings.count() == 3
+    assert mcp_consumer.tokens.count() == 1
 
     # One operator account per role exists and is scoped to the org.
     for username in ("admin", "editor", "releaser", "approver", "auditor"):

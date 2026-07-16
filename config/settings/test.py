@@ -14,6 +14,7 @@ DEBUG = False
 
 SECRET_KEY = "test-insecure-key"  # noqa: S105
 MCP_ENABLED = True
+OPENAI_COMPAT_ENABLED = True
 METRICS_BEARER_TOKEN = "test-metrics-token"  # noqa: S105
 
 ALLOWED_HOSTS = ["testserver", "localhost"]

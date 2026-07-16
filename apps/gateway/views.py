@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 import jsonschema
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -34,8 +35,17 @@ from apps.catalog.models import ScenarioType
 from apps.gateway.errors import ApiError, ErrorCode
 from apps.gateway.execution_context import issue_execution_context
 from apps.gateway.models import IdempotencyRecord
+from apps.gateway.openai_compat import (
+    chat_response,
+    compatible_error,
+    parse_chat_request,
+    parse_responses_request,
+    prepare_runtime_input,
+    responses_response,
+)
 from apps.gateway.runtime import dispatch
 from apps.identity.capabilities import Capability
+from apps.identity.models import ConsumerProtocol
 from apps.identity.services import resolve_active_binding
 from apps.observability.models import UsageEvent
 from apps.releases.routing import select_release
@@ -95,6 +105,7 @@ class _GatewayView(APIView):
     """Shared authorization + dispatch pipeline for invoke/query."""
 
     operation = "invoke"
+    required_protocol = ConsumerProtocol.REST
 
     def _extract(self, data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Return (scenario_alias, input_payload). Overridden by the query facade."""
@@ -109,11 +120,40 @@ class _GatewayView(APIView):
     def post(self, request: Request) -> Response:
         started = time.monotonic()
         consumer = request.auth  # set by ConsumerTokenAuthentication
+        if consumer.protocol != self.required_protocol:
+            request_id = getattr(request, "request_id", "")
+            self._record_usage(consumer, request_id, "", ErrorCode.CAPABILITY_DENIED, started)
+            record_event(
+                actor_type="consumer",
+                actor_id=consumer.subject,
+                action=f"gateway.{self.operation}",
+                outcome="deny",
+                organization_id=consumer.organization_id,
+                resource_type="consumer",
+                resource_id=str(consumer.public_id),
+                reason="PROTOCOL_DENIED",
+                request_id=request_id,
+            )
+            raise ApiError(
+                ErrorCode.CAPABILITY_DENIED,
+                "The credential is not enabled for this protocol.",
+                http_status_code=403,
+            )
         request_id = getattr(request, "request_id", "")
-        data = _require_mapping(request.data)
-        alias, input_payload = self._extract(data)
-
+        alias = ""
         try:
+            try:
+                content_length = int(request.META.get("CONTENT_LENGTH") or 0)
+            except (TypeError, ValueError):
+                content_length = settings.GATEWAY_MAX_REQUEST_BYTES + 1
+            if content_length > settings.GATEWAY_MAX_REQUEST_BYTES:
+                raise ApiError(
+                    ErrorCode.VALIDATION_ERROR,
+                    "The request body is too large.",
+                    http_status_code=413,
+                )
+            data = _require_mapping(request.data)
+            alias, input_payload = self._extract(data)
             response = self._process(request, consumer, request_id, alias, input_payload)
         except ApiError as exc:
             self._record_usage(consumer, request_id, alias, exc.code, started)
@@ -150,9 +190,10 @@ class _GatewayView(APIView):
                 http_status_code=403,
             )
         scenario = resolved.binding.scenario
-        if self.operation == "invoke" and scenario.type == ScenarioType.WORKFLOW:
+        dispatch_kind = self._dispatch_kind(scenario, input_payload)
+        if dispatch_kind == "workflow":
             required_capability = Capability.WORKFLOW_RUN
-        elif self.operation == "invoke" and scenario.type == ScenarioType.AGENT:
+        elif dispatch_kind == "agent":
             required_capability = Capability.AGENT_INVOKE
         else:
             required_capability = _QUERY_CAPABILITY
@@ -174,9 +215,10 @@ class _GatewayView(APIView):
                 retryable=True,
             )
 
+        input_payload = self._prepare_input(release, input_payload)
         _validate_input(release, input_payload)
 
-        if scenario.type == ScenarioType.WORKFLOW and self.operation == "invoke":
+        if dispatch_kind == "workflow":
             return self._process_workflow(
                 request=request,
                 consumer=consumer,
@@ -187,7 +229,7 @@ class _GatewayView(APIView):
                 release=release,
             )
 
-        if scenario.type == ScenarioType.AGENT and self.operation == "invoke":
+        if dispatch_kind == "agent":
             return self._process_agent(
                 request=request,
                 consumer=consumer,
@@ -251,6 +293,18 @@ class _GatewayView(APIView):
         )
         return Response(body, status=200)
 
+    def _dispatch_kind(self, scenario: Any, input_payload: dict[str, Any]) -> str:
+        del input_payload
+        if self.operation == "invoke" and scenario.type == ScenarioType.WORKFLOW:
+            return "workflow"
+        if self.operation == "invoke" and scenario.type == ScenarioType.AGENT:
+            return "agent"
+        return "query"
+
+    def _prepare_input(self, release: Any, input_payload: dict[str, Any]) -> dict[str, Any]:
+        del release
+        return input_payload
+
     def _process_workflow(
         self,
         *,
@@ -263,7 +317,9 @@ class _GatewayView(APIView):
         release: Any,
     ) -> Response:
         idempotency_key = request.headers.get("Idempotency-Key", "")
-        request_hash = compute_checksum({"alias": alias, "input": input_payload, "op": "workflow"})
+        request_hash = compute_checksum(
+            {"alias": alias, "input": input_payload, "op": f"{self.operation}:workflow"}
+        )
         if idempotency_key:
             replay = self._check_idempotency(consumer, idempotency_key, request_hash)
             if replay is not None:
@@ -353,7 +409,9 @@ class _GatewayView(APIView):
         release: Any,
     ) -> Response:
         idempotency_key = request.headers.get("Idempotency-Key", "")
-        request_hash = compute_checksum({"alias": alias, "input": input_payload, "op": "agent"})
+        request_hash = compute_checksum(
+            {"alias": alias, "input": input_payload, "op": f"{self.operation}:agent"}
+        )
         if idempotency_key:
             replay = self._check_idempotency(consumer, idempotency_key, request_hash)
             if replay is not None:
@@ -511,6 +569,98 @@ class QueryView(_GatewayView):
         if isinstance(data.get("conversation_id"), str):
             payload["conversation_id"] = data["conversation_id"]
         return alias, payload
+
+
+class _OpenAICompatibilityView(_GatewayView):
+    """Shared compatible envelope/error behavior over the governed gateway."""
+
+    _requested_alias = ""
+
+    def post(self, request: Request) -> Response:
+        if not settings.OPENAI_COMPAT_ENABLED:
+            raise ApiError(
+                ErrorCode.RUNTIME_NOT_AVAILABLE,
+                "The compatibility endpoint is not enabled.",
+                http_status_code=404,
+            )
+        response = super().post(request)
+        body = dict(response.data)
+        body["_http_status"] = response.status_code
+        return Response(self._adapt_success(body), status=response.status_code)
+
+    def handle_exception(self, exc: Exception) -> Response:
+        response = super().handle_exception(exc)
+        response.data = compatible_error(response.data)
+        return response
+
+    def _prepare_input(self, release: Any, input_payload: dict[str, Any]) -> dict[str, Any]:
+        return prepare_runtime_input(release, input_payload)
+
+    def _adapt_success(self, body: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+
+class ChatCompletionsView(_OpenAICompatibilityView):
+    operation = "openai.chat_completions"
+
+    def _extract(self, data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        alias, payload = parse_chat_request(data)
+        self._requested_alias = alias
+        return alias, payload
+
+    def _dispatch_kind(self, scenario: Any, input_payload: dict[str, Any]) -> str:
+        del input_payload
+        if scenario.type != ScenarioType.RAG:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "Chat Completions supports synchronous RAG scenarios only.",
+                http_status_code=400,
+                details=[{"path": ["model"]}],
+            )
+        return "query"
+
+    def _adapt_success(self, body: dict[str, Any]) -> dict[str, Any]:
+        return chat_response(body, str(self._requested_alias))
+
+
+class ResponsesView(_OpenAICompatibilityView):
+    operation = "openai.responses"
+
+    def _extract(self, data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        alias, payload = parse_responses_request(data)
+        self._requested_alias = alias
+        return alias, payload
+
+    def _dispatch_kind(self, scenario: Any, input_payload: dict[str, Any]) -> str:
+        background = input_payload.get("__openai_background", False)
+        if scenario.type == ScenarioType.WORKFLOW:
+            if background is not True:
+                self._background_required()
+            return "workflow"
+        if scenario.type == ScenarioType.AGENT:
+            if background is not True:
+                self._background_required()
+            return "agent"
+        if background is True:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "background is only supported for workflow and agent scenarios.",
+                http_status_code=400,
+                details=[{"path": ["background"]}],
+            )
+        return "query"
+
+    def _adapt_success(self, body: dict[str, Any]) -> dict[str, Any]:
+        return responses_response(body, str(self._requested_alias))
+
+    @staticmethod
+    def _background_required() -> None:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "background=true is required for workflow and agent scenarios.",
+            http_status_code=400,
+            details=[{"path": ["background"]}],
+        )
 
 
 class RunStatusView(APIView):

@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 
 from apps.audit.services import record_event
 from apps.gateway.errors import ApiError
+from apps.identity.models import ConsumerProtocol
 from apps.mcp.service import McpRequestContext, call_tool, visible_tools
 
 _JSONRPC = "2.0"
@@ -31,6 +32,24 @@ class McpView(APIView):
     def post(self, request: Request) -> Response:
         if not settings.MCP_ENABLED:
             return self._rpc_error(None, -32601, "MCP ingress is disabled.", status=404)
+        if request.auth.protocol != ConsumerProtocol.MCP:
+            record_event(
+                actor_type="consumer",
+                actor_id=request.auth.subject,
+                action="mcp.protocol",
+                outcome="deny",
+                organization_id=request.auth.organization_id,
+                resource_type="consumer",
+                resource_id=str(request.auth.public_id),
+                reason="PROTOCOL_DENIED",
+                request_id=getattr(request, "request_id", ""),
+            )
+            return self._rpc_error(
+                None,
+                -32001,
+                "The credential is not enabled for this protocol.",
+                status=403,
+            )
         origin = request.headers.get("Origin")
         if origin and origin not in settings.MCP_ALLOWED_ORIGINS:
             return self._rpc_error(None, -32000, "Origin is not allowed.", status=403)

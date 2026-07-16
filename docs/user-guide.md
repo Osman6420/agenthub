@@ -208,13 +208,19 @@ Consumers authenticate with a **bearer token** (created by an operator via
 | --- | --- |
 | `POST /v1/query` | Synchronous RAG query against the active release |
 | `POST /v1/invoke` | Invoke a workflow or agent scenario (returns `202` + `run_id`) |
+| `POST /v1/chat/completions` | OpenAI-compatible synchronous RAG; `model` is the bound scenario alias |
+| `POST /v1/responses` | OpenAI-compatible RAG or background workflow/agent invocation |
 | `GET /v1/runs/{id}` | Poll a workflow/agent run's redacted status/output |
 | `DELETE /v1/runs/{id}` | Cancel a run (consumer/tenant scoped) |
 | `GET /v1/health/live` | Unauthenticated liveness probe |
 
 Workflow/agent invokes require an `Idempotency-Key` header. Every call is rate-limited per
 consumer, validated against the release input contract, and recorded as a usage event and
-audit entry. The same operations are available over authenticated **MCP** ingress.
+audit entry. REST credentials use HTTPS endpoints; MCP credentials use authenticated **MCP**
+ingress and cannot be exchanged across protocols. OpenAI-compatible history is text-only, bounded
+and not stored as a server-side conversation. Chat Completions is the default for RAG. Workflow and
+agent scenarios require Responses with `background: true` and an `Idempotency-Key`. Streaming,
+multimodal inputs, client tools/functions and request-side output-contract overrides are rejected.
 
 ### Human approval for high-risk tools
 

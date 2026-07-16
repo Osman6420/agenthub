@@ -10,7 +10,7 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.audit.models import AuditEvent
-from apps.catalog.models import AIProject, Scenario
+from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.documents.models import DocumentSet, DocumentSetGrant, ScenarioDocumentSetBinding
 from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
 from apps.identity.roles import Role
@@ -91,6 +91,45 @@ def test_scenario_detail_is_tenant_scoped(client: Client) -> None:
     response = client.get(reverse("console:scenario_detail", args=[foreign_scenario.id]))
 
     assert response.status_code == 404
+
+
+def test_scenario_and_consumer_show_protocol_specific_invocation_guidance(
+    client: Client,
+) -> None:
+    organization = Organization.objects.create(slug="kurum", name="Kurum")
+    scenario = _scenario(organization)
+    ScenarioAlias.objects.create(
+        organization=organization, scenario=scenario, alias="proje-yardim-ab12"
+    )
+    rest_consumer = _consumer(organization, scenario, "portal")
+    mcp_consumer = Consumer.objects.create(
+        organization=organization,
+        subject="mcp-client",
+        name="MCP Client",
+        protocol=ConsumerProtocol.MCP,
+    )
+    ConsumerBinding.objects.create(consumer=mcp_consumer, scenario=scenario, capabilities=["query"])
+    client.force_login(_member("auditor-guidance", organization, Role.AUDITOR))
+
+    scenario_response = client.get(reverse("console:scenario_detail", args=[scenario.id]))
+    scenario_body = scenario_response.content.decode()
+    assert scenario_response.status_code == 200
+    assert "/v1/chat/completions" in scenario_body
+    assert "/v1/responses" in scenario_body
+    assert "proje-yardim-ab12" in scenario_body
+    assert "POST /mcp/" in scenario_body
+
+    rest_response = client.get(
+        reverse("console:consumer_detail_public", args=[rest_consumer.public_id])
+    )
+    assert rest_response.status_code == 200
+    assert "/v1/chat/completions" in rest_response.content.decode()
+
+    mcp_response = client.get(
+        reverse("console:consumer_detail_public", args=[mcp_consumer.public_id])
+    )
+    assert mcp_response.status_code == 200
+    assert "yalnız <code>POST /mcp/</code>" in mcp_response.content.decode()
 
 
 def test_author_manages_relationships_from_scenario_screen(client: Client) -> None:

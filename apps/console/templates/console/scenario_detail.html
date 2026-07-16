@@ -28,6 +28,20 @@
 </div>
 
 <section class="card">
+  <div class="section-heading"><div><p class="eyebrow">Sunum yolları</p><h2>Senaryoyu çağırma</h2><p class="muted">Yetki istemci tokenı + protokol + senaryo alias bağı + capability üzerinden sunucuda doğrulanır.</p></div></div>
+  {% if active_release %}<p>{% if has_output_contract %}<span class="access-ok">Output contract aktif release'e pinli ve runtime'da uygulanıyor.</span>{% else %}<span class="muted">Output contract seçilmemiş; adapter yalnız kendi response envelope sınırlarını uygular.</span>{% endif %}</p>{% else %}<div class="warning-box">Aktif release olmadan hiçbir sunum yolu çalışmaz.</div>{% endif %}
+  {% for binding in consumer_bindings %}
+    <div class="relationship-card"><div class="relationship-head"><div><h3><a href="{% url 'console:consumer_detail_public' binding.consumer.public_id %}">{{ binding.consumer.name }}</a></h3><p class="muted">{{ binding.consumer.get_protocol_display }} · {% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</p></div></div>
+    {% if binding.consumer.protocol == 'rest' %}
+      {% for alias in aliases %}<p><strong>HTTPS varsayılanı:</strong> <code>POST /v1/chat/completions</code> · <code>model: {{ alias.alias }}</code></p>{% endfor %}
+      {% if scenario.type == 'workflow' or scenario.type == 'agent' %}<p class="muted">Bu async senaryo için <code>POST /v1/responses</code>, <code>background: true</code> ve <code>Idempotency-Key</code> kullanın; Chat Completions yalnız senkron RAG içindir.</p>{% else %}<p class="muted"><code>POST /v1/responses</code> senkron alternatif olarak da desteklenir. Streaming ve multimodal input bu sürümde desteklenmez.</p>{% endif %}
+    {% elif binding.consumer.protocol == 'mcp' %}
+      <p><strong>MCP:</strong> <code>POST /mcp/</code> üzerinden <code>agenthub__query</code> / <code>agenthub__invoke</code>. Bu credential HTTPS compatibility endpoint'lerinde kullanılamaz.</p>
+    {% endif %}</div>
+  {% empty %}<p class="muted">Sunum için önce aktif bir istemci–senaryo bağı oluşturun.</p>{% endfor %}
+</section>
+
+<section class="card">
   <div class="section-heading"><div><p class="eyebrow">Çalışan tanım</p><h2>Aktif release artifact'leri</h2><p class="muted">Aşağıdaki roller yalnız aktif release manifestindeki exact immutable version'lardır.</p></div>{% if active_release %}<span class="badge active">release #{{ active_release.id }}</span>{% endif %}</div>
   {% if active_release %}
     {% for row in active_artifacts %}<div class="access-row"><div><strong>{{ row.role }}</strong><p class="muted">{{ row.type }} · {{ row.ref }}</p></div>{% if row.artifact %}<a class="button secondary" href="{% url 'console:artifact_detail' row.artifact.id %}">DSL / detay</a>{% if row.checksum_matches %}<span class="access-ok">checksum doğru</span>{% else %}<span class="access-missing">checksum uyuşmuyor</span>{% endif %}{% if row.workflow_draft %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ row.workflow_draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ row.workflow_draft.id }}">Grafikte aç</a>{% endif %}{% else %}<span class="access-missing">Artifact çözümlenemedi</span>{% endif %}</div>{% empty %}<p class="muted">Aktif release artifact rolü içermiyor.</p>{% endfor %}

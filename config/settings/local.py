@@ -24,3 +24,7 @@ ALLOWED_HOSTS = env.list(
 # Local-only convenience: allow the Django Admin route for debugging. It is never
 # the management surface (ADR-0001) and stays off in production.
 ENABLE_DJANGO_ADMIN = env.bool("ENABLE_DJANGO_ADMIN", default=True)
+
+# Local product testing exposes the additive compatibility routes. Production
+# inherits the disabled-by-default base setting unless explicitly enabled.
+OPENAI_COMPAT_ENABLED = env.bool("OPENAI_COMPAT_ENABLED", default=True)

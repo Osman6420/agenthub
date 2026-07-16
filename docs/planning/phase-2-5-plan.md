@@ -36,8 +36,11 @@ or upload malware/type scanning.
   aliases. The system generates stable identifiers.
 - Put the full architecture, artifact catalog and DSL rules in detailed documentation first; an
   in-product architecture tutorial is not required for Phase 2.5.
-- Preserve the existing gateway endpoints and add both OpenAI-compatible `/v1/responses` and
-  `/v1/chat/completions` adapters.
+- Let an existing scenario be exposed through MCP and/or an HTTPS compatibility endpoint. For an
+  HTTPS exposure, default the adapter to OpenAI-compatible `/v1/chat/completions`; `/v1/responses`
+  remains an explicitly selected alternative rather than an automatically enabled second route.
+- Keep the output contract optional and selectable when composing the scenario release/exposure.
+  When selected, pin its immutable artifact version and enforce it at the runtime output boundary.
 - Conversation history is client-supplied in Phase 2.5. Server-side persistent conversation history
   moves to Phase 3.
 - Provide a broad, composable, allowlist-based transform DSL. Do not execute arbitrary Python in
@@ -61,7 +64,7 @@ assuming a later part is complete.
 | Part 5 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Unified source, mapping and index journey | P2.5.4 | Egress-profile boundary and operational-failure review passed 2026-07-15 |
 | Part 6 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Scenario-isolated JSON/graph authoring, optimistic concurrency and immutable artifact candidate composition | P2.5.5 + P2.5.2 authoring sections | Owner-found Studio gap closed; full SQLite/PostgreSQL and frontend evidence recorded 2026-07-16 |
 | Part 7 | **Implemented and automated-verified; authenticated Turkish owner browser review pending.** Versioned governed transform/chunking/retrieval contracts and bounded runtime | P2.5.6 + P2.5.2 DSL sections | Full SQLite/PostgreSQL, closed registry, resource limits and ACL non-bypass evidence recorded 2026-07-16 |
-| Part 8 | OpenAI-compatible invocation adapters | P2.5.7 | Additive public API/authentication approval |
+| Part 8 | **Implemented and automated-verified; authenticated live smoke and Turkish owner browser review pending.** OpenAI-compatible invocation adapters | P2.5.7 | Full SQLite/PostgreSQL, protocol denial, bounded history and compatibility evidence recorded 2026-07-16 |
 | Part 9 | Integrated hardening and Phase 2 closure handoff | Phase 2.5 acceptance | Full regression, Turkish journey and owner sign-off |
 
 The architecture/artifact/DSL guide is a cross-cutting deliverable, not a one-time documentation
@@ -82,6 +85,9 @@ Detailed Part 3 plan:
 
 Detailed Part 6 plan:
 [`phase-2-5-part-6-scenario-studio`](../tasks/phase-2-5-part-6-scenario-studio/plan.md).
+
+Detailed Part 8 plan:
+[`phase-2-5-part-8-openai-compatible-invocation`](../tasks/phase-2-5-part-8-openai-compatible-invocation/plan.md).
 
 ## P2.5.1 — Organization overview and navigable domain graph
 
@@ -329,8 +335,15 @@ output limits; it is not part of Phase 2.5.
 ## P2.5.7 — OpenAI-compatible invocation and client-supplied history
 
 - Preserve `/v1/query`, `/v1/invoke` and their existing `scenario_alias` contracts.
-- Add `/v1/responses` and `/v1/chat/completions` compatibility adapters. This is an additive public
-  API change and requires a dedicated compatibility/threat-model task before implementation.
+- Treat MCP and HTTPS as explicit scenario exposure choices; enabling one does not implicitly
+  enable the other. Preserve the governed MCP invocation path.
+- Add selectable `/v1/chat/completions` and `/v1/responses` HTTPS compatibility adapters, with
+  `/v1/chat/completions` as the default for a new HTTPS exposure. This is an additive public API
+  change and requires a dedicated compatibility/threat-model task before implementation.
+- Keep the output contract selector optional. If an output contract is selected, pin the exact
+  immutable version into the release/exposure and enforce it after scenario execution; if it is
+  omitted, the adapter still applies its own bounded response-envelope validation but does not
+  invent or infer a business output schema.
 - Route the OpenAI-compatible `model` value through the authenticated consumer's bound generated
   scenario alias; never accept raw project/scenario/release IDs as authority.
 - Support bounded client-supplied `messages`/input history and map it into the scenario input

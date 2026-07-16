@@ -686,6 +686,9 @@ def scenario_detail(
             "aliases": scenario.aliases.order_by("alias"),
             "active_release": active_release,
             "active_artifacts": active_artifacts,
+            "has_output_contract": any(
+                row["role"] == "output_contract" for row in active_artifacts
+            ),
             "release_rows": release_rows,
             "artifact_candidates": artifact_candidates[:200],
             "artifact_candidates_limited": len(artifact_candidates) > 200,
@@ -958,9 +961,9 @@ def consumer_detail(
 ) -> HttpResponse:
     consumer = _scoped_consumer(request.user, pk, public_id)
     binding_candidates = list(
-        consumer.bindings.select_related("scenario", "scenario__project").order_by(
-            "scenario__project__name", "scenario__name"
-        )[:101]
+        consumer.bindings.select_related("scenario", "scenario__project")
+        .prefetch_related("scenario__aliases")
+        .order_by("scenario__project__name", "scenario__name")[:101]
     )
     bindings_limited = len(binding_candidates) > 100
     bindings = binding_candidates[:100]

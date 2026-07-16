@@ -158,6 +158,7 @@ REST_FRAMEWORK = {
 # Signed ExecutionContext lifetime and request body ceiling.
 EXECUTION_CONTEXT_TTL_SECONDS = env.int("EXECUTION_CONTEXT_TTL_SECONDS", default=300)
 GATEWAY_MAX_REQUEST_BYTES = env.int("GATEWAY_MAX_REQUEST_BYTES", default=1_000_000)
+OPENAI_COMPAT_ENABLED = env.bool("OPENAI_COMPAT_ENABLED", default=False)
 
 # --- MCP / telemetry (Sprint 7) --------------------------------------------
 MCP_ENABLED = env.bool("MCP_ENABLED", default=False)
