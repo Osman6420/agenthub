@@ -4,7 +4,9 @@
 > Phase 2 to Phase 3 by owner decision on 2026-07-14. Governed upload malware/type scanning moved
 > with its complete safety boundary on the same date. This document records scope and discovery
 > inputs; it does not authorize a scanner product/dependency/egress or authentication,
-> authorization, IAM, token, network or downstream production changes.
+> authorization, IAM, token, network or downstream production changes. Optional multi-agent
+> supervision moved from proposed Phase 2.6 to Phase 3 by owner decision on 2026-07-16; it remains
+> discovery-only and is not required for Phase 2.6 completion.
 
 ## Purpose
 
@@ -79,6 +81,26 @@ deciding:
 No persistent transcript or “memory” claim is allowed before these controls are implemented and
 verified. Client-supplied history remains available without creating server-side conversation
 state.
+
+## Workstream D — Optional bounded multi-agent supervision
+
+Start this workstream only if Phase 2.6 sub-workflow and single-agent observe–act–verify composition
+cannot satisfy a reviewed business scenario. Multi-agent is not a default architecture goal.
+
+Decisions required before implementation:
+
+1. Supervisor and specialist roles must be immutable and release-pinned; models cannot create or
+   discover new agent authority at runtime.
+2. Every specialist receives attenuated input, capability, tool, token, time and state budgets.
+3. Delegation depth, fan-out, cycles, cancellation and cumulative budget ownership must fail closed.
+4. Shared evidence needs typed merge/conflict semantics; ambient shared mutable memory is excluded.
+5. Conflicting recommendations and every side-effecting final action require an explicit policy or
+   human escalation contract.
+6. Parent/child audit lineage must identify the initiating actor, effective authority, proposal,
+   authorization decision, outcome and safe reason without persisting chain of thought.
+
+Before implementation, require a separate ADR and threat model proving unique value beyond bounded
+parallel/sub-workflow composition.
 
 ## Required planning artifacts
 

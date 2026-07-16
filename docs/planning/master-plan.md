@@ -216,8 +216,8 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Console UX modernization (Phase 2 · WS2) | **P9.1–P9.5 complete**; responsive/accessibility manual acceptance not required, Turkish terminology remains priority | Document plane console + existing React builder | [P9 console UX](../tasks/phase-2-p9-console-ux/plan.md) | [phase-2-plan](phase-2-plan.md) | [P9 verification](../tasks/phase-2-p9-console-ux/verification.md) |
 | AI-assisted authoring (Phase 2 · WS3) | **P10.1/P10.2 implemented and offline-verified** — workflow/input/output allowlist, immutable prompt contracts and non-publishing contract drafts; live activation at Phase 2 closure | Existing ModelProfile/SSRF-safe egress + canonical validators | [P10 AI authoring](../tasks/phase-2-p10-ai-assisted-authoring/plan.md) | [ADR-0002](../adr/0002-model-embedding-egress-profile-catalog-stdlib-adapter.md), [ADR-0005](../adr/0005-shared-ssrf-safe-egress-adapter.md) | [P10 verification](../tasks/phase-2-p10-ai-assisted-authoring/verification.md) |
 | Product coherence (Phase 2.5) | **Nine parts planned; required before Phase 2 live closure** — Parts 1–7 are implemented through workspace coherence, secure lifecycle journeys, Scenario Studio and governed transform/retrieval DSL; Turkish owner browser reviews remain where recorded. Later parts cover OpenAI adapters and integrated hardening | Verified Phase 2 application scope | [phase-2-5-plan](phase-2-5-plan.md) + [Part 6](../tasks/phase-2-5-part-6-scenario-studio/plan.md) + [Part 7](../tasks/phase-2-5-part-7-governed-transform-retrieval-dsl/plan.md) | Part 1–7 threat models complete; later task plans/ADRs pending at their gates | [Part 6 evidence](../tasks/phase-2-5-part-6-scenario-studio/verification.md) + [Part 7 evidence](../tasks/phase-2-5-part-7-governed-transform-retrieval-dsl/verification.md) |
-| Phase 3 deferred security/identity/data | **Discovery/planned; moved out of Phase 2/2.5** — Personal MCP identity/OBO, governed upload malware/type scanning and persistent server-side conversation history | IdP/OBO/downstream trust, scanner-boundary and conversation-lifecycle decisions | [phase-3-plan](phase-3-plan.md) | ADRs pending | Verification pending |
-| Future durable workflow orchestration | **Backlog; revisit after Phase 2.5 Parts 6–7** — extend the current bounded DAG only from approved execution contracts, not from UI palette demand | Durable state/resume, idempotency, cancellation, recovery, authorization and resource-limit decisions | Planning task pending | ADR pending | Verification pending |
+| Phase 3 deferred security/identity/data/agents | **Discovery/planned; moved out of Phase 2/2.5/2.6** — Personal MCP identity/OBO, governed upload malware/type scanning, persistent server-side conversation history and optional bounded multi-agent supervision | IdP/OBO/downstream trust, scanner/conversation lifecycles, and proof that multi-agent adds value beyond Phase 2.6 composition | [phase-3-plan](phase-3-plan.md) | ADRs pending | Verification pending |
+| Advanced enterprise orchestration (Phase 2.6) | **Proposed; implementation not started** — in-place unreleased `agenthub/v1` evolution for typed state mapping, bounded parallel/join, durable waits, compensation, child workflow/agent composition and advanced governed agent loops; reviewed MCP catalog sync remains in scope; multi-agent moved to Phase 3 | Phase 2.5 Parts 6–7, current workflow/tool/agent runtimes, durable state/resume and authorization decisions | [phase-2-6-plan](phase-2-6-plan.md) | ADRs pending in P2.6.0 | Verification pending |
 
 ## Cross-cutting concerns
 
@@ -237,11 +237,12 @@ ownership, and compliance requirements still require production approval.
 4. Add ingestion/evaluation/release operations with rollback evidence.
 5. Add workflow/tool/agent capabilities only after their threat models and controls are approved.
 
-### Future durable workflow node catalogue
+### Phase 2.6 durable workflow node catalogue
 
-Revisit the following catalogue after Phase 2.5 Parts 6–7. Current supported nodes remain the
-compiler allowlist; this list is not an implementation commitment and must not appear as supported
-UI functionality before its runtime contract exists:
+The proposed [Phase 2.6 plan](phase-2-6-plan.md) turns this catalogue into gated delivery parts.
+Current supported nodes remain the compiler allowlist; this list and the plan are not an
+implementation claim and must not appear as supported UI functionality before each runtime contract
+is implemented and verified:
 
 - Existing/current families: input, output/format, condition/router, model generation,
   retrieval/RAG and governed tool call.
