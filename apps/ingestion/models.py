@@ -1206,3 +1206,157 @@ class DocumentOcrJob(TimeStampedModel):
             self.document_version.organization_id != self.organization_id
         ):
             raise ValidationError("OCR job document version must belong to the organization")
+
+
+class StagedIndexBuildJobStatus(models.TextChoices):
+    DISPATCH_PENDING = "dispatch_pending", "Dispatch pending"
+    QUEUED = "queued", "Queued"
+    RUNNING = "running", "Running"
+    RETRY_WAIT = "retry_wait", "Retry waiting"
+    SUCCEEDED = "succeeded", "Succeeded"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+    RECONCILIATION_REQUIRED = "reconciliation_required", "Reconciliation required"
+
+
+class StagedIndexBuildJob(TimeStampedModel):
+    """PostgreSQL-authoritative request-to-result lineage for one staged index build."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="staged_index_build_jobs"
+    )
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    document_set_version = models.ForeignKey(
+        "documents.DocumentSetVersion", on_delete=models.PROTECT, related_name="index_build_jobs"
+    )
+    embedding_profile = models.ForeignKey(
+        EmbeddingProfile, on_delete=models.PROTECT, related_name="index_build_jobs"
+    )
+    ocr_profile = models.ForeignKey(
+        OcrProfile,
+        on_delete=models.PROTECT,
+        related_name="index_build_jobs",
+        null=True,
+        blank=True,
+    )
+    result_index_version = models.OneToOneField(
+        IndexVersion,
+        on_delete=models.PROTECT,
+        related_name="build_job",
+        null=True,
+        blank=True,
+    )
+    request_checksum = models.CharField(max_length=64, editable=False)
+    pipeline_fingerprint = models.CharField(max_length=64, editable=False)
+    requested_by = models.CharField(max_length=255)
+    request_id = models.CharField(max_length=128, blank=True)
+    status = models.CharField(
+        max_length=32,
+        choices=StagedIndexBuildJobStatus.choices,
+        default=StagedIndexBuildJobStatus.DISPATCH_PENDING,
+    )
+    attempt = models.PositiveSmallIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField(default=3)
+    documents_completed = models.PositiveIntegerField(default=0)
+    chunks_completed = models.PositiveIntegerField(default=0)
+    error_code = models.CharField(max_length=64, blank=True)
+    dispatch_attempted_at = models.DateTimeField(null=True, blank=True)
+    queued_at = models.DateTimeField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    revision = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "request_checksum"],
+                name="uniq_staged_job_org_request_checksum",
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    "organization",
+                    "document_set_version",
+                    "embedding_profile",
+                    "pipeline_fingerprint",
+                ],
+                condition=models.Q(
+                    status__in=[
+                        StagedIndexBuildJobStatus.DISPATCH_PENDING,
+                        StagedIndexBuildJobStatus.QUEUED,
+                        StagedIndexBuildJobStatus.RUNNING,
+                        StagedIndexBuildJobStatus.RETRY_WAIT,
+                        StagedIndexBuildJobStatus.RECONCILIATION_REQUIRED,
+                    ]
+                ),
+                name="uniq_active_staged_index_build",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(max_attempts__gte=1, max_attempts__lte=10),
+                name="staged_job_max_attempts_bounded",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(attempt__lte=models.F("max_attempts")),
+                name="staged_job_attempt_within_max",
+            ),
+        ]
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            immutable = (
+                StagedIndexBuildJob.objects.filter(pk=self.pk)
+                .values(
+                    "organization_id",
+                    "document_set_version_id",
+                    "embedding_profile_id",
+                    "ocr_profile_id",
+                    "request_checksum",
+                    "pipeline_fingerprint",
+                    "requested_by",
+                )
+                .first()
+            )
+            current = {
+                "organization_id": self.organization_id,
+                "document_set_version_id": self.document_set_version_id,
+                "embedding_profile_id": self.embedding_profile_id,
+                "ocr_profile_id": self.ocr_profile_id,
+                "request_checksum": self.request_checksum,
+                "pipeline_fingerprint": self.pipeline_fingerprint,
+                "requested_by": self.requested_by,
+            }
+            if immutable is not None and immutable != current:
+                raise ValueError("staged build request lineage is immutable")
+        super().save(*args, **kwargs)
+
+
+class StagedIndexBuildOutbox(TimeStampedModel):
+    """Identifier-only durable dispatch intent committed with its owning job."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="staged_index_build_outbox"
+    )
+    job = models.OneToOneField(StagedIndexBuildJob, on_delete=models.CASCADE, related_name="outbox")
+    request_checksum = models.CharField(max_length=64, editable=False)
+    available_at = models.DateTimeField()
+    published_at = models.DateTimeField(null=True, blank=True)
+    publish_attempts = models.PositiveSmallIntegerField(default=0)
+    last_error_code = models.CharField(max_length=64, blank=True)
+
+
+class IngestionWorkerHeartbeat(TimeStampedModel):
+    """Platform operational evidence; values are opaque and contain no endpoints or secrets."""
+
+    instance_id = models.UUIDField(unique=True)
+    queue_role = models.CharField(max_length=32, default="ingestion")
+    service_revision = models.CharField(max_length=64)
+    contract_revision = models.PositiveSmallIntegerField()
+    config_fingerprint = models.CharField(max_length=64)
+    last_seen_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(queue_role="ingestion"), name="worker_heartbeat_ingestion_role"
+            )
+        ]

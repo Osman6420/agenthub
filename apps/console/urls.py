@@ -269,6 +269,16 @@ urlpatterns = [
         name="document_set_promote_index",
     ),
     path(
+        "document-set-index-jobs/<uuid:public_id>/cancel/",
+        views.document_set_cancel_build_job,
+        name="document_set_cancel_build_job",
+    ),
+    path(
+        "document-set-index-jobs/<uuid:public_id>/retry/",
+        views.document_set_retry_build_job,
+        name="document_set_retry_build_job",
+    ),
+    path(
         "document-sets/<int:pk>/bind-scenario/",
         views.document_set_bind_scenario,
         name="document_set_bind_scenario",

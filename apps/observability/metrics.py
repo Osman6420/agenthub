@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 
 REGISTRY = CollectorRegistry(auto_describe=True)
 
@@ -23,6 +23,45 @@ INGESTION_RUNS = Counter(
     "agenthub_ingestion_runs_total",
     "Ingestion run outcomes.",
     ("status",),
+    registry=REGISTRY,
+)
+INGESTION_BUILD_JOBS = Counter(
+    "agenthub_ingestion_build_jobs_total",
+    "Durable staged-index job transitions.",
+    ("status", "failure_class"),
+    registry=REGISTRY,
+)
+INGESTION_WORKER_COMPATIBLE = Gauge(
+    "agenthub_ingestion_worker_compatible",
+    "Whether a recent contract/config-compatible ingestion worker exists.",
+    registry=REGISTRY,
+)
+INGESTION_WORKER_HEARTBEAT_AGE = Gauge(
+    "agenthub_ingestion_worker_heartbeat_age_seconds",
+    "Age of the freshest contract/config-compatible ingestion worker heartbeat.",
+    registry=REGISTRY,
+)
+INGESTION_OLDEST_QUEUE_AGE = Gauge(
+    "agenthub_ingestion_oldest_queue_age_seconds",
+    "Age of the oldest durable staged-index job awaiting claim.",
+    registry=REGISTRY,
+)
+INGESTION_CLAIM_LATENCY = Histogram(
+    "agenthub_ingestion_claim_latency_seconds",
+    "Delay from durable queue publication to worker claim.",
+    registry=REGISTRY,
+    buckets=(1, 5, 10, 30, 60, 120, 300, 600, 1800),
+)
+INGESTION_BUILD_DURATION = Histogram(
+    "agenthub_ingestion_build_duration_seconds",
+    "Duration from staged-index worker claim to terminal success.",
+    registry=REGISTRY,
+    buckets=(1, 5, 15, 30, 60, 120, 300, 600, 1800),
+)
+INGESTION_RECONCILIATIONS = Counter(
+    "agenthub_ingestion_reconciliations_total",
+    "Bounded staged-index reconciliation outcomes.",
+    ("outcome",),
     registry=REGISTRY,
 )
 EVAL_CASES = Counter(

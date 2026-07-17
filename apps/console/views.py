@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
@@ -87,6 +88,13 @@ from apps.ingestion.confluence_services import (
     create_confluence_sync_run,
     mark_confluence_dispatch_failed,
 )
+from apps.ingestion.job_lifecycle import (
+    BuildJobError,
+    cancel_build_job,
+    compatible_worker_available,
+    create_build_job,
+    retry_build_job,
+)
 from apps.ingestion.models import (
     ConfluenceSyncRun,
     ConnectorType,
@@ -95,6 +103,8 @@ from apps.ingestion.models import (
     RestSyncRun,
     ScheduleAutomationMode,
     Source,
+    StagedIndexBuildJob,
+    StagedIndexBuildJobStatus,
 )
 from apps.ingestion.rest import RestPullError, preview_rest_response
 from apps.ingestion.rest_schema import RestContractError, validate_contract
@@ -108,11 +118,7 @@ from apps.ingestion.rest_services import (
     mark_rest_dispatch_failed,
 )
 from apps.ingestion.staged_build import StagedBuildError, promote_staged_index
-from apps.ingestion.tasks import (
-    build_document_set_index_task,
-    sync_confluence_source,
-    sync_rest_source,
-)
+from apps.ingestion.tasks import sync_confluence_source, sync_rest_source
 from apps.ingestion.vector_store import set_tenant_context
 from apps.orchestration.authoring_guide import workflow_authoring_guide
 from apps.releases.compiler import (
@@ -1723,6 +1729,38 @@ def document_set_detail(
     document_set = _scoped_document_set(request.user, pk, public_id)
     can_write = can_author_scenarios(request.user, document_set.organization_id)
     can_promote_index = can_manage_releases(request.user, document_set.organization_id)
+    worker_available = compatible_worker_available()
+    job_labels: dict[str, tuple[str, str]] = {
+        StagedIndexBuildJobStatus.DISPATCH_PENDING: (
+            "İstek kaydedildi",
+            "Dağıtım yeniden denenecek",
+        ),
+        StagedIndexBuildJobStatus.QUEUED: (
+            "Kuyrukta" if worker_available else "Kuyrukta · uyumlu worker bekleniyor",
+            "Worker talebi aldığında çalışma başlayacak",
+        ),
+        StagedIndexBuildJobStatus.RUNNING: (
+            "Çalışıyor",
+            "İlerleme güvenli aralıklarla güncellenir",
+        ),
+        StagedIndexBuildJobStatus.RETRY_WAIT: (
+            "Yeniden deneme bekleniyor",
+            "Sınır içinde yeniden denenecek",
+        ),
+        StagedIndexBuildJobStatus.SUCCEEDED: (
+            "Promotable indeks hazır",
+            "Aktivasyon ayrı yetki gerektirir",
+        ),
+        StagedIndexBuildJobStatus.FAILED: (
+            "Başarısız",
+            "Güvenli hata kodunu inceleyip yeniden deneyin",
+        ),
+        StagedIndexBuildJobStatus.CANCELLED: ("İptal edildi", "Geç sonuç durumu değiştiremez"),
+        StagedIndexBuildJobStatus.RECONCILIATION_REQUIRED: (
+            "Sonuç uzlaştırma gerektiriyor",
+            "Operatör doğrulaması olmadan yeniden denenmez",
+        ),
+    }
     versions = [
         {
             "id": v.id,
@@ -1747,6 +1785,30 @@ def document_set_detail(
                 for index in v.index_versions.select_related("embedding_profile").order_by(
                     "-version"
                 )
+            ],
+            "jobs": [
+                {
+                    "public_id": job.public_id,
+                    "status": job.status,
+                    "label": job_labels[job.status][0],
+                    "next": job_labels[job.status][1],
+                    "documents": job.documents_completed,
+                    "chunks": job.chunks_completed,
+                    "attempt": job.attempt,
+                    "max_attempts": job.max_attempts,
+                    "error_code": job.error_code,
+                    "can_cancel": can_write
+                    and job.status
+                    not in {
+                        StagedIndexBuildJobStatus.SUCCEEDED,
+                        StagedIndexBuildJobStatus.FAILED,
+                        StagedIndexBuildJobStatus.CANCELLED,
+                    },
+                    "can_retry": can_write
+                    and job.status == StagedIndexBuildJobStatus.FAILED
+                    and job.attempt < job.max_attempts,
+                }
+                for job in v.index_build_jobs.order_by("-created_at", "-pk")[:5]
             ],
             "members": [
                 {
@@ -2659,27 +2721,19 @@ def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpRespo
             "console:document_set_detail_public", public_id=set_version.document_set.public_id
         )
     try:
-        record_event(
-            actor_type="user",
-            actor_id=request.user.get_username(),
-            action="ingestion.staged_index.request_authorized",
-            outcome="success",
-            organization_id=set_version.organization_id,
-            resource_type="document_set_version",
-            resource_id=f"{set_version.document_set.logical_id}:v{set_version.version}",
-            after={"embedding_profile_id": str(profile.public_id)},
+        job, created = create_build_job(
+            document_set_version=set_version,
+            embedding_profile=profile,
+            ocr_profile=ocr_profile,
+            actor=request.user.get_username(),
+            request_id=request.headers.get("X-Request-ID", ""),
         )
-        build_document_set_index_task.apply_async(
-            args=[
-                set_version.pk,
-                profile.pk,
-                set_version.organization_id,
-                request.user.get_username(),
-                ocr_profile.pk if ocr_profile else None,
-            ],
-            queue="ingestion",
+        messages.success(
+            request,
+            "İndeks oluşturma isteği kaydedildi; durum kalıcı olarak izlenebilir."
+            if created
+            else "Aynı indeks isteği zaten kayıtlı; mevcut iş gösteriliyor.",
         )
-        messages.success(request, "Staged indeks isteği ingestion kuyruğuna gönderildi.")
     except Exception:
         record_event(
             actor_type="user",
@@ -2694,6 +2748,62 @@ def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpRespo
         messages.error(request, "İndeks kuyruğuna erişilemedi; daha sonra yeniden deneyin.")
     return redirect(
         "console:document_set_detail_public", public_id=set_version.document_set.public_id
+    )
+
+
+def _scoped_build_job(user: UserLike, public_id: uuid.UUID) -> StagedIndexBuildJob:
+    job = StagedIndexBuildJob.objects.filter(
+        public_id=public_id,
+        document_set_version__in=scoping.scoped_document_set_versions(user),
+    ).first()
+    if job is None:
+        raise Http404
+    set_tenant_context(job.organization_id)
+    return job
+
+
+def _require_build_job_author(request: HttpRequest, job: StagedIndexBuildJob, action: str) -> None:
+    if can_author_scenarios(request.user, job.organization_id):
+        return
+    record_event(
+        actor_type="user",
+        actor_id=request.user.get_username(),
+        action="ingestion.staged_index.authorization_denied",
+        outcome="failure",
+        organization_id=job.organization_id,
+        resource_type="staged_index_build_job",
+        resource_id=str(job.public_id),
+        reason=action,
+    )
+    raise PermissionDenied
+
+
+@login_required
+@require_POST
+def document_set_cancel_build_job(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    job = _scoped_build_job(request.user, public_id)
+    _require_build_job_author(request, job, "cancel")
+    cancel_build_job(job=job, actor=request.user.get_username())
+    messages.success(request, "İndeks işi iptal edildi; geç sonuçlar durumu değiştiremez.")
+    return redirect(
+        "console:document_set_detail_public",
+        public_id=job.document_set_version.document_set.public_id,
+    )
+
+
+@login_required
+@require_POST
+def document_set_retry_build_job(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    job = _scoped_build_job(request.user, public_id)
+    _require_build_job_author(request, job, "retry")
+    try:
+        retry_build_job(job=job, actor=request.user.get_username())
+        messages.success(request, "İndeks işi güvenli yeniden deneme için kaydedildi.")
+    except BuildJobError as exc:
+        messages.error(request, f"İş yeniden denenemedi: {exc.code}")
+    return redirect(
+        "console:document_set_detail_public",
+        public_id=job.document_set_version.document_set.public_id,
     )
 
 

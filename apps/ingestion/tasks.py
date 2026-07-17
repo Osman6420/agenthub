@@ -144,6 +144,79 @@ def build_document_set_index_task(
     return f"built:{index.pk}"
 
 
+@shared_task(bind=True, queue="ingestion", acks_late=True)
+def run_staged_index_build_job(self: object, job_public_id: str) -> str:
+    """Claim and converge one identifier-only durable build request."""
+    from apps.ingestion.embedding import EmbeddingOutcomeUnknown
+    from apps.ingestion.job_lifecycle import (
+        claim_build_job,
+        complete_build_job,
+        fail_build_job,
+        record_worker_heartbeat,
+        update_progress,
+    )
+    from apps.ingestion.ocr import OcrOutcomeUnknown
+    from apps.ingestion.staged_build import StagedBuildError, build_staged_index
+
+    headers = getattr(getattr(self, "request", None), "headers", None) or {}
+    try:
+        organization_id = int(headers["organization_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("TENANT_CONTEXT_REQUIRED") from exc
+    record_worker_heartbeat()
+    job = claim_build_job(public_id=job_public_id, organization_id=organization_id)
+    if job is None:
+        return "already_converged"
+    try:
+        index = build_staged_index(
+            document_set_version=job.document_set_version,
+            embedding_profile=job.embedding_profile,
+            ocr_profile=job.ocr_profile,
+            actor=job.requested_by,
+            request_id=job.request_id,
+            progress_callback=lambda documents, chunks: update_progress(
+                job_id=job.pk,
+                organization_id=organization_id,
+                documents=documents,
+                chunks=chunks,
+            ),
+        )
+        complete_build_job(job_id=job.pk, organization_id=organization_id, index=index)
+    except (EmbeddingOutcomeUnknown, OcrOutcomeUnknown) as exc:
+        fail_build_job(
+            job_id=job.pk,
+            organization_id=organization_id,
+            error_code=str(getattr(exc, "code", "PROVIDER_OUTCOME_UNKNOWN")),
+            ambiguous=True,
+        )
+        raise
+    except StagedBuildError as exc:
+        fail_build_job(
+            job_id=job.pk,
+            organization_id=organization_id,
+            error_code=exc.code,
+            ambiguous=False,
+        )
+        raise
+    except Exception:
+        fail_build_job(
+            job_id=job.pk,
+            organization_id=organization_id,
+            error_code="BUILD_INTERNAL_ERROR",
+            ambiguous=False,
+        )
+        raise
+    return f"built:{index.pk}"
+
+
+@shared_task(queue="ingestion")
+def reconcile_staged_index_build_jobs() -> int:
+    from apps.ingestion.job_lifecycle import reconcile_build_jobs, record_worker_heartbeat
+
+    record_worker_heartbeat()
+    return reconcile_build_jobs()
+
+
 @shared_task(bind=True, queue="ingestion", max_retries=80)
 def apply_connector_automation_task(
     self: object, schedule_id: int, candidate_set_version_id: int, organization_id: int

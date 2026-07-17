@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 
 from django.db import connection, transaction
 from django.db.models import Max
@@ -71,6 +72,7 @@ def build_staged_index(
     request_id: str = "",
     ocr_profile: OcrProfile | None = None,
     ocr_client: AsyncMarkdownOcrClient | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> IndexVersion:
     if connection.vendor != "postgresql":
         # The per-IndexVersion store is a pgvector-only path (ADR-0003).
@@ -93,7 +95,7 @@ def build_staged_index(
     if chunk_fn is None:
         raise StagedBuildError("CHUNKER_UNSUPPORTED")
 
-    fingerprint = _pipeline_fingerprint(
+    fingerprint = pipeline_fingerprint(
         embedding_profile=embedding_profile, chunker=chunker, ocr_profile=ocr_profile
     )
     parent = _compatible_parent(
@@ -130,6 +132,9 @@ def build_staged_index(
             ocr_profile=ocr_profile,
             ocr_client=ocr_client,
             only_document_version_ids=set(member_ids) - set(reusable_ids),
+            progress_callback=progress_callback,
+            initial_document_count=len(reusable_ids),
+            initial_chunk_count=reused_chunks,
         )
         document_count = len(reusable_ids) + embedded_documents
         chunk_count = reused_chunks + embedded_chunks
@@ -216,7 +221,7 @@ def _create_index_version(
         )
 
 
-def _pipeline_fingerprint(
+def pipeline_fingerprint(
     *, embedding_profile: EmbeddingProfile, chunker: str, ocr_profile: OcrProfile | None
 ) -> str:
     payload = {
@@ -264,6 +269,9 @@ def _embed_into_store(
     ocr_profile: OcrProfile | None,
     ocr_client: AsyncMarkdownOcrClient | None,
     only_document_version_ids: set[int] | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
+    initial_document_count: int = 0,
+    initial_chunk_count: int = 0,
 ) -> tuple[int, int]:
     from apps.documents.storage import get_object_store
 
@@ -331,6 +339,11 @@ def _embed_into_store(
         document_count += 1
         if document_count > _MAX_DOCUMENTS or chunk_count > _MAX_CHUNKS:
             raise StagedBuildError("BUILD_TOO_LARGE")
+        if progress_callback is not None:
+            progress_callback(
+                initial_document_count + document_count,
+                initial_chunk_count + chunk_count,
+            )
     return document_count, chunk_count
 
 

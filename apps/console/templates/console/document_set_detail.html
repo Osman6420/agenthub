@@ -65,6 +65,10 @@
         <div class="access-row"><div><strong>{{ index.profile }}</strong><p class="muted">İndeks v{{ index.version }} · {{ index.documents }} doküman · {{ index.chunks }} parça{% if index.reused_documents %} · {{ index.reused_documents }} yeniden kullanıldı{% endif %}</p></div><span class="badge {{ index.status }}">{{ index.status }}</span>{% if index.can_promote %}<form method="post" action="{% url 'console:document_set_promote_index' index.id %}">{% csrf_token %}<button class="button primary" type="submit">Aktif et</button></form>{% endif %}</div>
         {% empty %}<p class="muted">Bu set sürümü için indeks yok.</p>{% endfor %}
 
+        {% for job in v.jobs %}
+        <div class="access-row"><div><strong>{{ job.label }}</strong><p class="muted">{{ job.documents }} doküman · {{ job.chunks }} parça · deneme {{ job.attempt }}/{{ job.max_attempts }}{% if job.error_code %} · {{ job.error_code }}{% endif %}</p><small class="muted">{{ job.next }}</small></div><span class="badge {{ job.status }}">{{ job.status }}</span><div>{% if job.can_cancel %}<form class="inline" method="post" action="{% url 'console:document_set_cancel_build_job' job.public_id %}">{% csrf_token %}<button class="button ghost danger" type="submit">İptal et</button></form>{% endif %}{% if job.can_retry %}<form class="inline" method="post" action="{% url 'console:document_set_retry_build_job' job.public_id %}">{% csrf_token %}<button class="button secondary" type="submit">Yeniden dene</button></form>{% endif %}</div></div>
+        {% empty %}<p class="muted">Kalıcı indeks işi henüz yok.</p>{% endfor %}
+
         {% if can_write and v.can_build %}
         <form class="compact-form" method="post" action="{% url 'console:document_set_build_index' v.id %}">
           {% csrf_token %}<label>Embedding profili</label>{{ build_form.embedding_profile }}<label style="margin-top:8px;">OCR profili</label>{{ build_form.ocr_profile }}<button class="button secondary" type="submit" style="margin-top:10px;">Staged indeks oluştur</button>

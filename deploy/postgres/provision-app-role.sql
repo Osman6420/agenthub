@@ -47,7 +47,8 @@ GRANT SELECT ON
     ingestion_ingestionrun, ingestion_restdocumentcursor, ingestion_restpullcontract,
     ingestion_restsyncrun, ingestion_source, ingestion_tenantconfluenceprofilegrant,
     ingestion_tenantembeddingprofilegrant, ingestion_tenantocrprofilegrant,
-    ingestion_tenantrestpullprofilegrant,
+    ingestion_tenantrestpullprofilegrant, ingestion_stagedindexbuildjob,
+    ingestion_stagedindexbuildoutbox,
     releases_releasecanary, releases_scenariorelease,
     tools_approvalrequest, tools_toolbinding, tools_tooldefinition, tools_toolinvocation,
     workflows_customnodedefinition, workflows_workflowrun, workflows_workflowrunevent,
@@ -75,7 +76,8 @@ GRANT INSERT, UPDATE ON
     ingestion_restdocumentcursor, ingestion_restpullcontract, ingestion_restsyncrun,
     ingestion_source, ingestion_tenantconfluenceprofilegrant,
     ingestion_tenantembeddingprofilegrant, ingestion_tenantocrprofilegrant,
-    ingestion_tenantrestpullprofilegrant,
+    ingestion_tenantrestpullprofilegrant, ingestion_stagedindexbuildjob,
+    ingestion_stagedindexbuildoutbox,
     releases_releasecanary, releases_scenariorelease,
     tools_approvalrequest, tools_toolinvocation,
     workflows_workflowrun
@@ -92,6 +94,9 @@ TO :"app_role";
 
 -- Append-only cross-plane events retain separate access semantics.
 GRANT SELECT, INSERT ON audit_auditevent, observability_usageevent TO :"app_role";
+
+-- Platform heartbeat rows carry no tenant data, endpoints or credentials.
+GRANT SELECT, INSERT, UPDATE ON ingestion_ingestionworkerheartbeat TO :"app_role";
 
 -- Inserts use table-owned sequences; this does not grant table-row visibility.
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"app_role";
