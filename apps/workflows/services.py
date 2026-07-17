@@ -25,6 +25,7 @@ from apps.workflows.models import (
     WorkflowRunEvent,
     WorkflowRunStatus,
     WorkflowVersion,
+    WorkflowWaitStatus,
 )
 
 MAX_STATE_BYTES = 1_048_576
@@ -215,6 +216,11 @@ def cancel_workflow_run(*, run: WorkflowRun, consumer: Consumer) -> WorkflowRun:
         from apps.workflows.parallel import cancel_parallel_work
 
         cancel_parallel_work(organization_id=locked.organization_id, run_id=locked.id)
+        locked.waits.filter(status=WorkflowWaitStatus.PENDING).update(
+            status=WorkflowWaitStatus.CANCELLED,
+            consumed_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
     return locked
 
 

@@ -706,7 +706,9 @@ Mapping yalnız veri taşır; hiçbir zaman yetki taşımaz ve expression/templa
   Unicode-confusable farkı gözetmeksizin — reddedilir (`WORKFLOW_PATH_PROTECTED`).
 - İki giriş aynı veya çakışan (ata/alt) hedefe yazamaz (`WORKFLOW_MAPPING_CONFLICT`).
 - Runtime output mapping’i copy-on-success uygular: bir giriş çözülmez/tip uyuşmazsa state kısmen
-  değişmez. Compiled workflow contract versiyonu `agenthub/compiled-workflow/v3`’dir; eski compiled
+  değişmez. Durable wait düğümleri `event_wait`, `human_task` ve `timer` olarak kapalı şemalarla
+  tanımlanır; event ve insan girdileri yalnız açık `output_mapping` üzerinden state'e girer. Compiled
+  workflow contract versiyonu `agenthub/compiled-workflow/v3`’tür; eski compiled
   graph/checkpoint yeni semantikle çalıştırılamaz.
 
 Stabil diagnostic kodları: `WORKFLOW_PATH_INVALID`, `WORKFLOW_PATH_PROTECTED`,

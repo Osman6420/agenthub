@@ -146,6 +146,9 @@ from apps.tenancy.services import (
 from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_approval
 from apps.tools.authz import resolve_actor_roles
 from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
+from apps.workflows.models import WorkflowWait, WorkflowWaitKind, WorkflowWaitStatus
+from apps.workflows.tasks import execute_workflow_run
+from apps.workflows.waits import WorkflowWaitError, decide_human_task
 
 _UPLOAD_MIME_BY_SUFFIX = {
     ".csv": "text/csv",
@@ -1409,6 +1412,46 @@ def tool_invocation_cancel(request: HttpRequest, invocation_id: int) -> HttpResp
         messages.success(request, f"Tool çağrısı {invocation.pk} iptal edildi.")
     except ToolApprovalError as exc:
         messages.error(request, f"İptal reddedildi: {exc.code}")
+    return redirect("console:tool_approvals")
+
+
+@login_required
+@require_POST
+def workflow_human_task_decide(request: HttpRequest, wait_id: uuid.UUID) -> HttpResponse:
+    allowed = allowed_organization_ids(request.user)
+    waits = WorkflowWait.objects.filter(
+        public_id=wait_id,
+        kind=WorkflowWaitKind.HUMAN,
+        status=WorkflowWaitStatus.PENDING,
+    )
+    if allowed is not None:
+        waits = waits.filter(organization_id__in=allowed)
+    wait = waits.first()
+    if wait is None:
+        raise Http404
+    if not _operator_can_mutate_org(request.user, wait.organization_id):
+        raise PermissionDenied
+    raw_decision = request.POST.get("decision", "")
+    try:
+        decision = json.loads(raw_decision)
+    except (TypeError, json.JSONDecodeError):
+        messages.error(request, "Karar reddedildi: WAIT_PAYLOAD_INVALID")
+        return redirect("console:tool_approvals")
+    set_tenant_context(wait.organization_id)
+    try:
+        decided = decide_human_task(
+            user_id=cast(int, request.user.pk),
+            organization_id=wait.organization_id,
+            wait_id=str(wait.public_id),
+            decision=decision,
+        )
+    except WorkflowWaitError as exc:
+        messages.error(request, f"Karar reddedildi: {exc.code}")
+    else:
+        transaction.on_commit(
+            lambda: execute_workflow_run.delay(decided.run_id, decided.organization_id)
+        )
+        messages.success(request, "İnsan görevi kararı kaydedildi.")
     return redirect("console:tool_approvals")
 
 

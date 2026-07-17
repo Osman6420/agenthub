@@ -166,6 +166,9 @@ Detailed P2.6.1 plan and threat model:
 Detailed P2.6.2 plan and threat model:
 [`phase-2-6-part-2-parallel-join`](../tasks/phase-2-6-part-2-parallel-join/plan.md).
 
+Detailed P2.6.3 plan, threat model and verification:
+[`phase-2-6-part-3-durable-waits`](../tasks/phase-2-6-part-3-durable-waits/plan.md).
+
 | Part | Outcome | Depends on | Primary gates |
 | --- | --- | --- | --- |
 | P2.6.0 | Architecture contract, ADRs and executable scenario corpus | Phase 2.5 Parts 6–7 | Owner scope; DSL compatibility and threat-model approval |

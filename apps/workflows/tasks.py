@@ -20,6 +20,7 @@ from apps.workflows.runtime import (
     execute_graph,
 )
 from apps.workflows.services import _next_sequence
+from apps.workflows.waits import reconcile_due_waits
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +60,17 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
                 WorkflowRunStatus.QUEUED,
                 WorkflowRunStatus.REQUESTED,
                 WorkflowRunStatus.WAITING_APPROVAL,
+                WorkflowRunStatus.WAITING_EVENT,
+                WorkflowRunStatus.WAITING_HUMAN,
+                WorkflowRunStatus.WAITING_TIMER,
             } and not (run.status == WorkflowRunStatus.RUNNING and run.awaiting_node):
                 return str(run.status)
-            resuming = run.status == WorkflowRunStatus.WAITING_APPROVAL
+            resuming = run.status in {
+                WorkflowRunStatus.WAITING_APPROVAL,
+                WorkflowRunStatus.WAITING_EVENT,
+                WorkflowRunStatus.WAITING_HUMAN,
+                WorkflowRunStatus.WAITING_TIMER,
+            }
             run.status = WorkflowRunStatus.RUNNING
             if run.started_at is None:
                 run.started_at = timezone.now()
@@ -187,3 +196,16 @@ def execute_workflow_branch(branch_id: int, organization_id: int) -> str:
     if transition.join_status in {"succeeded", "failed"}:
         execute_workflow_run.delay(branch.run_id, organization_id)
     return transition.outcome
+
+
+@shared_task(queue="runtime", acks_late=True)
+def reconcile_workflow_waits(limit: int = 100) -> int:
+    """Wake due durable waits without holding a worker for their delay."""
+    run_ids = reconcile_due_waits(limit=limit)
+    for run_id in run_ids:
+        organization_id = (
+            WorkflowRun.objects.filter(pk=run_id).values_list("organization_id", flat=True).first()
+        )
+        if organization_id is not None:
+            execute_workflow_run.delay(run_id, organization_id)
+    return len(run_ids)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -56,7 +58,7 @@ class WorkflowVersion(models.Model):
     compiled_graph = models.JSONField()
     checksum = models.CharField(max_length=64)
     # The active compiled-contract version is set explicitly by ``compile_workflow_version``
-    # (``apps.workflows.compiler.COMPILER_VERSION``, currently ``workflow-compiler/v2``). This
+    # (``apps.workflows.compiler.COMPILER_VERSION``, currently ``workflow-compiler/v3``). This
     # column default is only a legacy fallback and is never used by the service path.
     compiler_version = models.CharField(max_length=32, default="workflow-compiler/v1")
     created_by = models.CharField(max_length=200)
@@ -91,6 +93,9 @@ class WorkflowRunStatus(models.TextChoices):
     QUEUED = "queued", "Queued"
     RUNNING = "running", "Running"
     WAITING_APPROVAL = "waiting_approval", "Waiting approval"
+    WAITING_EVENT = "waiting_event", "Waiting event"
+    WAITING_HUMAN = "waiting_human", "Waiting human"
+    WAITING_TIMER = "waiting_timer", "Waiting timer"
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
     TIMED_OUT = "timed_out", "Timed out"
@@ -121,7 +126,7 @@ class WorkflowRun(TimeStampedModel):
         max_length=20, choices=WorkflowRunStatus.choices, default=WorkflowRunStatus.REQUESTED
     )
     error_code = models.CharField(max_length=64, blank=True)
-    # Set to the tool node id while a run is paused for approval; empty otherwise.
+    # Set to the node id while a run is paused; the typed child record owns wait semantics.
     awaiting_node = models.CharField(max_length=64, blank=True)
     deadline_at = models.DateTimeField()
     started_at = models.DateTimeField(null=True, blank=True)
@@ -261,3 +266,60 @@ class WorkflowJoin(TimeStampedModel):
             ),
         ]
         indexes = [models.Index(fields=["organization", "status", "created_at"])]
+
+
+class WorkflowWaitKind(models.TextChoices):
+    EVENT = "event", "Event"
+    TIMER = "timer", "Timer"
+    HUMAN = "human", "Human"
+
+
+class WorkflowWaitStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RESUMED = "resumed", "Resumed"
+    EXPIRED = "expired", "Expired"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class WorkflowWait(TimeStampedModel):
+    """Tenant-owned one-shot checkpoint; correlation is public but never authorization."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="workflow_waits"
+    )
+    run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="waits")
+    kind = models.CharField(max_length=16, choices=WorkflowWaitKind.choices)
+    node_id = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=16, choices=WorkflowWaitStatus.choices, default=WorkflowWaitStatus.PENDING
+    )
+    correlation_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    pending_checksum = models.CharField(max_length=64)
+    workflow_checksum = models.CharField(max_length=64)
+    release_id_snapshot = models.PositiveBigIntegerField()
+    compiler_version = models.CharField(max_length=32)
+    payload_schema = models.JSONField(default=dict, blank=True)
+    output_mapping = models.JSONField(default=list, blank=True)
+    requester_subject = models.CharField(max_length=255, blank=True)
+    allowed_roles = models.JSONField(default=list, blank=True)
+    deny_self_decision = models.BooleanField(default=True)
+    escalation_role = models.CharField(max_length=64, blank=True)
+    escalation_timeout_seconds = models.PositiveIntegerField(default=0)
+    deadline_at = models.DateTimeField()
+    escalated_at = models.DateTimeField(null=True, blank=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    consumed_by = models.CharField(max_length=255, blank=True)
+    redacted_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["run", "node_id"], name="uniq_workflow_wait_run_node")
+        ]
+        indexes = [models.Index(fields=["organization", "status", "deadline_at"])]
+
+    def clean(self) -> None:
+        if self.run_id and self.organization_id != self.run.organization_id:
+            raise ValidationError("wait organization must match run organization")
+        if self.run_id and self.release_id_snapshot != self.run.release_id:
+            raise ValidationError("wait release must match run release")

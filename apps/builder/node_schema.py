@@ -151,6 +151,37 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
             {"name": "fields", "kind": "object", "required": False},
         ],
     },
+    {
+        "type": "event_wait",
+        "label": "Event wait",
+        "category": "control",
+        "supports_mapping": True,
+        "fields": [
+            {"name": "event_role", "kind": "identifier", "required": True},
+            {"name": "payload_schema", "kind": "object", "required": True},
+            {"name": "timeout_seconds", "kind": "integer", "required": True},
+        ],
+    },
+    {
+        "type": "human_task",
+        "label": "Human task",
+        "category": "control",
+        "supports_mapping": True,
+        "fields": [
+            {"name": "allowed_decision_roles", "kind": "list", "required": True},
+            {"name": "decision_schema", "kind": "object", "required": True},
+            {"name": "timeout_seconds", "kind": "integer", "required": True},
+            {"name": "deny_self_decision", "kind": "boolean", "required": False},
+            {"name": "escalation_role", "kind": "identifier", "required": False},
+            {"name": "escalation_timeout_seconds", "kind": "integer", "required": False},
+        ],
+    },
+    {
+        "type": "timer",
+        "label": "Durable timer",
+        "category": "control",
+        "fields": [{"name": "delay_seconds", "kind": "integer", "required": True}],
+    },
     {"type": "end", "label": "End", "category": "io", "is_terminal": True, "fields": []},
 ]
 

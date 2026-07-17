@@ -698,6 +698,10 @@ class RunStatusView(APIView):
         output = run.redacted_state.get("output")
         if run.status == WorkflowRunStatus.COMPLETED and isinstance(output, dict):
             body["output"] = output
+        if run.status == WorkflowRunStatus.WAITING_EVENT:
+            wait = run.waits.filter(kind="event", status="pending").first()
+            if wait is not None:
+                body["event_correlation_id"] = str(wait.public_id)
         return Response(body)
 
     @staticmethod
@@ -746,3 +750,35 @@ class RunStatusView(APIView):
         if run is None:
             raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
         return run
+
+
+class WorkflowEventResumeView(APIView):
+    """Authenticated, tenant-owned and one-time external event ingress."""
+
+    def post(self, request: Request, correlation: str) -> Response:
+        from apps.workflows.tasks import execute_workflow_run
+        from apps.workflows.waits import WorkflowWaitError, resume_event
+
+        if not isinstance(request.data, dict) or set(request.data) != {"payload"}:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "The resume request is invalid.",
+                http_status_code=400,
+            )
+        try:
+            wait = resume_event(
+                consumer=request.auth,
+                correlation=correlation,
+                payload=request.data["payload"],
+            )
+        except WorkflowWaitError as exc:
+            status_code = 404 if exc.code in {"WAIT_NOT_FOUND", "WAIT_TOKEN_INVALID"} else 409
+            if exc.code in {"WAIT_PAYLOAD_INVALID", "WAIT_PAYLOAD_TOO_LARGE"}:
+                status_code = 400
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "The workflow wait could not be resumed.",
+                http_status_code=status_code,
+            ) from None
+        transaction.on_commit(lambda: execute_workflow_run.delay(wait.run_id, wait.organization_id))
+        return Response({"run_id": str(wait.run_id), "status": "queued"}, status=202)

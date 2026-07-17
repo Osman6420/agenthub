@@ -44,7 +44,7 @@ class WorkflowRuntimeError(RuntimeError):
 
 
 class WorkflowPaused(Exception):
-    """Signals that a run is suspended awaiting a tool approval decision."""
+    """Signals that a run is suspended at a durable checkpoint."""
 
 
 class WorkflowParallelPending(Exception):
@@ -115,6 +115,16 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
         if time.time() > run.deadline_at.timestamp():
             raise WorkflowRuntimeError("WORKFLOW_TIMED_OUT")
         node = nodes[current]
+        if resuming and node["type"] in {"event_wait", "human_task", "timer"}:
+            run.awaiting_node = ""
+            run.save(update_fields=["awaiting_node", "updated_at"])
+            resuming = False
+            executed.append(current)
+            outgoing = edges[current]
+            if len(outgoing) != 1:
+                raise WorkflowRuntimeError("WORKFLOW_EDGE_INVALID")
+            current = outgoing[0]["to"]
+            continue
         if node["type"] in {"parallel", "for_each"}:
             from apps.workflows.models import WorkflowBranch
             from apps.workflows.parallel import open_parallel_region
@@ -271,6 +281,11 @@ def _run_eligible_node(
         envelope = _run_tool_node(
             node=node, state=state, input_env=input_env, run=run, resuming=resuming
         )
+    elif node["type"] in {"event_wait", "human_task"}:
+        from apps.workflows.waits import create_wait
+
+        create_wait(run=run, node=node, state=state)
+        raise WorkflowPaused()
     else:
         started = time.monotonic()
         envelope = _execute_eligible_node(node=node, state=state, input_env=input_env, run=run)
@@ -479,6 +494,11 @@ def _execute_node(
     config = node["config"]
     if node_type in {"input", "end"}:
         return None
+    if node_type == "timer":
+        from apps.workflows.waits import create_wait
+
+        create_wait(run=run, node=node, state=state)
+        raise WorkflowPaused()
     if node_type == "format_output":
         state["output"] = {"answer": str(config.get("template_ref", "")), "sources": []}
         return None

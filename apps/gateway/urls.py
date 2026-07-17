@@ -20,4 +20,9 @@ urlpatterns = [
     path("chat/completions", views.ChatCompletionsView.as_view(), name="chat-completions"),
     path("responses", views.ResponsesView.as_view(), name="responses"),
     path("runs/<str:run_id>", views.RunStatusView.as_view(), name="run-status"),
+    path(
+        "workflow-waits/<str:correlation>/resume",
+        views.WorkflowEventResumeView.as_view(),
+        name="workflow-event-resume",
+    ),
 ]
