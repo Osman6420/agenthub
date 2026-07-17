@@ -15,6 +15,7 @@ from apps.workflows.models import WorkflowBranch, WorkflowRun, WorkflowRunEvent,
 from apps.workflows.runtime import (
     WorkflowParallelPending,
     WorkflowPaused,
+    WorkflowRetryPending,
     WorkflowRuntimeError,
     execute_branch_path,
     execute_graph,
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 def _dispatch_branches(branch_ids: tuple[int, ...], organization_id: int) -> None:
     for branch_id in branch_ids:
         execute_workflow_branch.delay(branch_id, organization_id)
+
+
+def _dispatch_retry(run_id: int, organization_id: int, countdown_seconds: int) -> None:
+    execute_workflow_run.apply_async(args=(run_id, organization_id), countdown=countdown_seconds)
 
 
 @shared_task(queue="runtime", acks_late=True)
@@ -102,6 +107,11 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
                     branch_ids = tuple(pending.branch_ids)
                     transaction.on_commit(partial(_dispatch_branches, branch_ids, organization_id))
                 return "parallel_pending"
+            except WorkflowRetryPending as pending:
+                transaction.on_commit(
+                    partial(_dispatch_retry, run_id, organization_id, pending.countdown_seconds)
+                )
+                return "retry_pending"
     except WorkflowRuntimeError as exc:
         return _finish_error(run_id, organization_id, exc.code)
 

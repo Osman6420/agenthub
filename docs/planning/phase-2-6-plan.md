@@ -282,6 +282,9 @@ P2.6.2 task record and is accepted only after integration-owner review.
 
 ## P2.6.4 — Failure, retry and compensation
 
+Detailed implementation plan and threat model:
+[`phase-2-6-part-4-failure-retry-compensation`](../tasks/phase-2-6-part-4-failure-retry-compensation/plan.md).
+
 - Classify node failures as validation, authorization, permanent, transient or outcome unknown.
 - Permit bounded retry only for explicitly idempotent operations with capped backoff/jitter.
 - Add explicit error edges; error payloads expose stable codes, not raw sensitive messages.
@@ -653,9 +656,10 @@ work and P2.6.10 ingestion lifecycle are present on the Phase 2.6 integration ba
 migration apply/rollback/re-apply, RLS/cross-tenant proofs and the complete backend regression pass
 are recorded in the
 [`second-wave integration verification`](../tasks/phase-2-6-wave-2-integration/verification.md).
-P2.6.4 failure/retry/compensation is the next implementation part; activation closures remain
-separate and neither child composition nor scenario-authored Python execution is enabled by this
-gate.
+P2.6.4 failure/retry/compensation is implemented and verified with compiled-workflow v4, durable
+attempt/compensation/recovery state, PostgreSQL FORCE RLS and organization-scoped admin recovery.
+The P2.6.7/P2.6.8/P2.6.9/P2.6.10 activation-closure wave is next; neither child composition nor
+scenario-authored Python execution is enabled by this status update.
 
 ## Completion criteria
 

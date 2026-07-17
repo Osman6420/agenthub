@@ -53,7 +53,9 @@ GRANT SELECT ON
     tools_approvalrequest, tools_toolbinding, tools_tooldefinition, tools_toolinvocation,
     workflows_customnodedefinition, workflows_workflowbranch, workflows_workflowjoin,
     workflows_workflowrun, workflows_workflowchildlink, workflows_workflowrunevent,
-    workflows_workflowwait, workflows_workflowversion
+    workflows_workflowwait, workflows_workflowversion,
+    workflows_workflownodeattempt, workflows_workflowcompensationentry,
+    workflows_workflowrecoverycase, workflows_workflowrecoveryapproval
 TO :"app_role";
 
 -- Immutable/append-only records: create + read, never update/delete through the runtime role.
@@ -82,8 +84,12 @@ GRANT INSERT, UPDATE ON
     releases_releasecanary, releases_scenariorelease,
     tools_approvalrequest, tools_toolinvocation,
     workflows_workflowbranch, workflows_workflowjoin, workflows_workflowrun,
-    workflows_workflowwait, workflows_workflowchildlink
+    workflows_workflowwait, workflows_workflowchildlink,
+    workflows_workflownodeattempt, workflows_workflowcompensationentry,
+    workflows_workflowrecoverycase
 TO :"app_role";
+
+GRANT INSERT ON workflows_workflowrecoveryapproval TO :"app_role";
 
 -- Explicitly deletable operator-owned drafts and document-plane lifecycle rows.
 GRANT INSERT, UPDATE, DELETE ON

@@ -321,4 +321,14 @@ urlpatterns = [
         views.workflow_human_task_decide,
         name="workflow_human_task_decide",
     ),
+    path(
+        "workflow-recoveries/",
+        views.workflow_recoveries,
+        name="workflow_recoveries",
+    ),
+    path(
+        "workflow-recoveries/<uuid:recovery_id>/decide/",
+        views.workflow_recovery_decide,
+        name="workflow_recovery_decide",
+    ),
 ]
