@@ -2,8 +2,8 @@
 
 ## Status
 
-Not started. This record reserves implementation evidence; planning review is not runtime
-verification.
+Partially verified. Implementation is complete for the live capabilities available before the
+P2.6.8 Python-node catalog contract. Frontend production build and complete frontend tests pass.
 
 ## Required evidence
 
@@ -24,12 +24,20 @@ verification.
 
 ## Checks not run
 
-All implementation and runtime checks remain pending.
+- `python -m compileall apps/builder apps/orchestration` — passed.
+- `git diff --check` — passed.
+- `npm run build` — passed (TypeScript and Vite production build).
+- `npm test -- --run` — passed: 7 files, 20 tests.
+- Focused Django/pytest tests — not run: the repository virtualenv launcher fails with
+  `A specified logon session does not exist`; system Python lacks project dependencies.
+- Ruff, mypy, Django checks, migration drift, full SQLite and PostgreSQL/RLS — not run for the same
+  unusable Python environment.
 
 ## Remaining risks
 
-Exact context budgets, invalid-output repair policy, placeholder ID and Python-node scaffold boundary
-must be fixed before implementation completion. Python-node catalog integration waits for P2.6.8.
+Python-node public metadata and the in-Studio scaffold action wait for P2.6.8. The initial invalid
+candidate repair path is graph/JSON only and browser-memory-only as planned. Backend tests were added
+but could not be executed locally, so integration and database behavior still require CI evidence.
 
 ## Human review required
 
@@ -38,4 +46,5 @@ any discovered public API, authorization, production dependency or new persisten
 
 ## Final status
 
-Planned; implementation and verification have not started.
+Implemented; partially verified. Do not mark P2.6.9 completed until backend/SQLite/PostgreSQL gates
+and the P2.6.8 public Python-node catalog integration close.

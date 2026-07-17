@@ -29,7 +29,12 @@ class FakeAuthoringProvider:
     calls: list[dict] = []
 
     def generate(
-        self, *, profile_id: str, description: str, contract: AuthoringContract
+        self,
+        *,
+        profile_id: str,
+        description: str,
+        contract: AuthoringContract,
+        server_context: dict | None = None,
     ) -> AuthoringResponse:
         self.calls.append(
             {
@@ -37,6 +42,7 @@ class FakeAuthoringProvider:
                 "description": description,
                 "artifact_type": contract.artifact_type,
                 "contract_checksum": contract.checksum,
+                "server_context": server_context,
             }
         )
         if contract.artifact_type in {"input_contract", "output_contract"}:
@@ -488,6 +494,61 @@ def test_ai_candidate_is_transient_then_explicitly_accepted(
     assert FakeAuthoringProvider.calls[0]["profile_id"].startswith("1111")
     assert WorkflowDraft.objects.count() == 1
     assert not ArtifactVersion.objects.exists()
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+)
+def test_studio_ai_uses_scoped_context_and_server_identifier(
+    client: Client, bf: BuilderFixture
+) -> None:
+    cache.clear()
+    scenario = Scenario.objects.create(
+        organization=bf.org,
+        project=bf.project,
+        slug="planner",
+        name="Planner",
+        type="workflow",
+    )
+    FakeAuthoringProvider.calls.clear()
+    FakeAuthoringProvider.response = AuthoringResponse(
+        json.dumps({"status": "workflow_candidate", "candidate": simple_workflow()})
+    )
+    client.force_login(bf.author)
+    before = WorkflowDraft.objects.count()
+    generated = _post(
+        client,
+        reverse("builder_api:ai_candidates"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": scenario.pk,
+            "description": "Akış oluştur",
+        },
+    )
+    assert generated.status_code == 200
+    assert generated.json()["status"] == "workflow_candidate"
+    assert WorkflowDraft.objects.count() == before
+    assert FakeAuthoringProvider.calls[0]["server_context"]["scenario"]["slug"] == "planner"
+
+    accepted = _post(
+        client,
+        reverse("builder_api:ai_candidate_accept"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": scenario.pk,
+            "name": "Planner akışı",
+            "candidate": generated.json()["candidate"],
+            "prompt_contract": generated.json()["prompt_contract"],
+            "authoring_context": generated.json()["authoring_context"],
+        },
+    )
+    assert accepted.status_code == 201
+    assert accepted.json()["logical_id"].startswith("planner-akisi-")
+    assert accepted.json()["scenario_id"] == scenario.pk
+    FakeAuthoringProvider.response = AuthoringResponse(json.dumps(simple_workflow()), 12, 8)
 
     accepted = _post(
         client,

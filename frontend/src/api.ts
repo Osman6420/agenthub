@@ -5,6 +5,7 @@
 import type {
   AcceptedCandidateDraft,
   AiCandidateResult,
+  CapabilityMissingResult,
   AiCandidateType,
   ArtifactDraft,
   Draft,
@@ -65,7 +66,8 @@ export class BuilderApi {
 
   generateCandidate(payload: {
     organization: string; project_id: number; description: string; artifact_type: AiCandidateType;
-  }): Promise<AiCandidateResult> {
+    scenario_id?: number;
+  }): Promise<AiCandidateResult | CapabilityMissingResult> {
     return request(this.url("/ai-candidates/"), {
       method: "POST",
       body: JSON.stringify(payload),
@@ -73,14 +75,22 @@ export class BuilderApi {
   }
 
   acceptCandidate(payload: {
-    organization: string; project_id: number; name: string; logical_id: string;
+    organization: string; project_id: number; name: string; logical_id?: string;
     scenario_id?: number;
     artifact_type: AiCandidateType; candidate: Record<string, unknown>;
     prompt_contract: AiCandidateResult["prompt_contract"];
+    authoring_context?: AiCandidateResult["authoring_context"];
+    draft_id?: number; revision?: number;
   }): Promise<AcceptedCandidateDraft> {
     return request(this.url("/ai-candidates/accept/"), {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  }
+
+  transientDiagnostics(payload: { organization: string; body: Record<string, unknown> }): Promise<DiagnosticsResult> {
+    return request(this.url("/transient-diagnostics/"), {
+      method: "POST", body: JSON.stringify(payload),
     });
   }
 

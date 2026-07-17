@@ -12,6 +12,7 @@ urlpatterns = [
     path("node-schema/", api.node_schema, name="node_schema"),
     path("ai-candidates/", api.ai_candidates, name="ai_candidates"),
     path("ai-candidates/accept/", api.ai_candidate_accept, name="ai_candidate_accept"),
+    path("transient-diagnostics/", api.transient_diagnostics, name="transient_diagnostics"),
     path("artifact-drafts/", api.artifact_drafts, name="artifact_drafts"),
     path(
         "artifact-drafts/<int:pk>/",

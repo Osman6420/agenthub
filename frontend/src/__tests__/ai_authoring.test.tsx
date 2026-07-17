@@ -1,81 +1,50 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AiAuthoringPanel } from "../AiAuthoringPanel";
 import { BuilderApi } from "../api";
 
-describe("AI authoring panel", () => {
-  it("previews a candidate and transfers it only after explicit acceptance", async () => {
-    const calls: string[] = [];
+describe("Studio AI authoring panel", () => {
+  it("returns a transient candidate without asking for a name or logical id", async () => {
     const bodies: Record<string, unknown>[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-      calls.push(String(url));
+    vi.stubGlobal("fetch", vi.fn((_url: string, options?: RequestInit) => {
       bodies.push(JSON.parse(String(options?.body ?? "{}")) as Record<string, unknown>);
-      const accepted = String(url).endsWith("/accept/");
-      return new Response(JSON.stringify(accepted ? {
-        id: 7, organization: "org", organization_id: 1, project_id: null,
-        scenario_id: null,
-        name: "AI", logical_id: "ai_flow", body: {}, last_published_version: 0,
-        last_published_at: null, revision: 1, can_write: true,
-      } : {
-        artifact_type: "workflow_definition", candidate: { kind: "Workflow" },
-        diagnostics: { ok: true, errors: [] },
+      return Promise.resolve(new Response(JSON.stringify({
+        status: "workflow_candidate",
+        artifact_type: "workflow_definition",
+        candidate: { api_version: "agenthub/v1", kind: "Workflow" },
+        diagnostics: { ok: false, errors: [{ code: "invalid_workflow", message: "incomplete" }] },
         prompt_contract: { id: "agenthub.workflow-authoring", revision: 1, checksum: "a".repeat(64) },
-      }),
-      { status: accepted ? 201 : 200, headers: { "Content-Type": "application/json" } });
+        authoring_context: { contract: "agenthub.studio-authoring-context/v1", checksum: "b".repeat(64) },
+      }), { status: 200 }));
     }));
-    const accepted = vi.fn();
+    const onGenerated = vi.fn();
     render(<AiAuthoringPanel api={new BuilderApi("/console/api/builder/")}
-      organization="org" projects={[{ id: 3, name: "Project" }]} lockedProjectId={3}
-      scenarioId={17} onAccepted={accepted} />);
+      organization="org" projects={[{ id: 3, name: "Project" }]}
+      lockedProjectId={3} scenarioId={7} onGenerated={onGenerated} />);
 
     fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "akış" } });
-    fireEvent.click(screen.getByText("Aday üret"));
-    await screen.findByText("Aday doğrulandı.");
-    expect(calls).toHaveLength(1);
-    fireEvent.change(screen.getByLabelText("AI taslak adı"), { target: { value: "AI" } });
-    fireEvent.change(screen.getByLabelText("AI logical id"), { target: { value: "ai_flow" } });
-    fireEvent.click(screen.getByText("Adayı taslağa aktar ve aç"));
-    await waitFor(() => expect(accepted).toHaveBeenCalled());
-    expect(calls).toHaveLength(2);
-    expect(bodies[1].project_id).toBe(3);
-    expect(bodies[1].scenario_id).toBe(17);
+    fireEvent.click(screen.getByText("Geçici aday üret"));
+
+    await vi.waitFor(() => expect(onGenerated).toHaveBeenCalledOnce());
+    expect(bodies[0]).toMatchObject({ project_id: 3, scenario_id: 7, description: "akış" });
+    expect(screen.queryByLabelText(/logical/i)).not.toBeInTheDocument();
   });
 
-  it("transfers a JSON contract to an artifact draft without opening the workflow editor", async () => {
-    const requests: { url: string; body: Record<string, unknown> }[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-      const body = JSON.parse(String(options?.body ?? "{}")) as Record<string, unknown>;
-      requests.push({ url: String(url), body });
-      const accepted = String(url).endsWith("/accept/");
-      return new Response(JSON.stringify(accepted ? {
-        id: 8, draft_kind: "artifact", artifact_type: "input_contract",
-        organization: "org", organization_id: 1, project_id: 3,
-        name: "Girdi", logical_id: "input_v1", body: { type: "object" },
-        updated_at: "2026-07-16T00:00:00Z", revision: 1, can_write: true,
-      } : {
-        artifact_type: "input_contract", candidate: { type: "object" },
-        diagnostics: { ok: true, errors: [], compiled_checksum: "b".repeat(64) },
-        prompt_contract: { id: "agenthub.input-contract-authoring", revision: 1, checksum: "c".repeat(64) },
-      }), { status: accepted ? 201 : 200, headers: { "Content-Type": "application/json" } });
-    }));
-    const accepted = vi.fn();
+  it("keeps capability-missing suggestions transient", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      status: "capability_missing",
+      required_capability: "number.multiply",
+      suggestion: { display_name: "Sayıyı çarp" },
+      authoring_context: { contract: "agenthub.studio-authoring-context/v1", checksum: "b".repeat(64) },
+    }), { status: 200 }))));
+    const onGenerated = vi.fn();
     render(<AiAuthoringPanel api={new BuilderApi("/console/api/builder/")}
-      organization="org" projects={[{ id: 3, name: "Project" }]} onAccepted={accepted} />);
-
-    fireEvent.change(screen.getByLabelText("taslak türü"), { target: { value: "input_contract" } });
-    fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "girdi" } });
-    fireEvent.click(screen.getByText("Aday üret"));
-    await screen.findByText("Aday doğrulandı.");
-    fireEvent.change(screen.getByLabelText("AI taslak adı"), { target: { value: "Girdi" } });
-    fireEvent.change(screen.getByLabelText("AI logical id"), { target: { value: "input_v1" } });
-    fireEvent.click(screen.getByText("Adayı sözleşme taslağına aktar"));
-
-    await waitFor(() => expect(accepted).toHaveBeenCalled());
-    expect(requests[0].body.artifact_type).toBe("input_contract");
-    expect(requests[1].body.artifact_type).toBe("input_contract");
-    expect(requests[1].body.prompt_contract).toEqual({
-      id: "agenthub.input-contract-authoring", revision: 1, checksum: "c".repeat(64),
-    });
+      organization="org" projects={[{ id: 3, name: "Project" }]}
+      scenarioId={7} onGenerated={onGenerated} />);
+    fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "çarp" } });
+    fireEvent.click(screen.getByText("Geçici aday üret"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Eksik yetenek: number.multiply");
+    expect(onGenerated).not.toHaveBeenCalled();
   });
 });
