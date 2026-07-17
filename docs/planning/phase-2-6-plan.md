@@ -647,11 +647,15 @@ Remaining decisions owned by later parts:
 
 ## Status
 
-**In progress; the first parallel wave is integrated and verified.** P2.6.1, P2.6.7, the P2.6.8
-isolation/review-contract spike, P2.6.9 context/transient-candidate work and P2.6.10 ingestion
-lifecycle are present on the Phase 2.6 integration baseline. P2.6.2, P2.6.3, P2.6.5 and the P2.6.8
-isolated-runtime integration form the next parallel wave. Their branches must start from that common
-baseline and merge only through the wave integration gate.
+**In progress; the second parallel wave is integrated and verified.** P2.6.1–P2.6.3, P2.6.5,
+P2.6.7, the P2.6.8 isolation contract and fail-closed runtime seam, P2.6.9 context/transient-candidate
+work and P2.6.10 ingestion lifecycle are present on the Phase 2.6 integration baseline. PostgreSQL
+migration apply/rollback/re-apply, RLS/cross-tenant proofs and the complete backend regression pass
+are recorded in the
+[`second-wave integration verification`](../tasks/phase-2-6-wave-2-integration/verification.md).
+P2.6.4 failure/retry/compensation is the next implementation part; activation closures remain
+separate and neither child composition nor scenario-authored Python execution is enabled by this
+gate.
 
 ## Completion criteria
 
