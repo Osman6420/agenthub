@@ -67,6 +67,10 @@
 - Platform-managed authoring model endpoint through existing SSRF-safe profile transport.
 - Optional source blob storage selected by ADR.
 
+ADR-0011 recommends a private content-addressed, KMS-encrypted object but does not authorize or
+implement it. The execution sandbox and runner control plane are separate trust zones: only the
+control plane may hold internal channel credentials, and they must never enter the sandbox.
+
 ## Abuse cases
 
 | Threat | Required mitigation |
@@ -78,7 +82,7 @@
 | Fork/resource/output bomb | CPU/wall/memory/PID/scratch/output/concurrency limits and forced termination |
 | Unsafe module requested/approved | Platform-owned closed module allowlist; requested set must be a subset; review cannot widen deployed policy |
 | Automated review misses unsafe behavior | Treat it as defense in depth, pair with human review and runtime isolation/limits, version the rules and maintain adversarial tests |
-| Critical finding bypassed by reviewer | Enforce block in service/database transition; warnings alone permit bounded platform-admin rationale |
+| Critical finding bypassed by reviewer | Enforce block in service/database transition; scanner error also blocks; warnings alone permit bounded platform-admin rationale |
 | Code/schema swapped after review | Immutable revision; decision binds canonical checksum; any edit creates new revision |
 | Self-approval or org-admin approval | Platform-admin-only decision and separation-of-duties policy; audited denial tests |
 | Disabled/foreign node pinned or run | Compile and runtime active/org/revision/checksum resolution; deny by default |
@@ -94,6 +98,10 @@
 | Review UI XSS from source/description | Contextual escaping, no HTML rendering, CSP review, bounded plain text/source viewer |
 | Runner request replay/substitution | One-time execution ID, request checksum, expiry/idempotency and response binding |
 | Ambiguous runner outcome retried | Classify `outcome_unknown`; Python node is pure/no side-effect by policy, but no blind duplicate if protocol cannot prove it |
+| Sandbox silently falls back to weaker runtime/seccomp | Pin runtime class/profile and image digest; admission/attestation fails closed; unconfined seccomp is prohibited |
+| Runner control-plane credential reaches tenant code | Separate execution workload and minimal environment; no service-account token/volume; environment/metadata corpus probes |
+| Disable races queued/started work | Transactionally block new/not-started dispatch; pin already-started attempt; late result cannot mutate terminal state; separate audited emergency kill |
+| Source retained or viewed too broadly | Purpose-specific reviewer predicate, author-own scope, metadata-only admin/auditor, fail-closed view audit, pin/legal-hold-aware purge |
 
 ## Failure cases
 
@@ -129,11 +137,17 @@ control; source/test/model content is not an audit field.
 - Deterministic bounded context projection and strict model result union.
 - Memory-only transient candidate and explicit atomic save/update/copy.
 - Independent kill switches for authoring, testing, execution and AI generation.
+- Per-execution OCI sandbox is the recommended minimum; the current local `runc` daemon's
+  unconfined seccomp posture is explicitly insufficient for production.
+- gVisor/Kata/microVM remains conditional until target-runtime evidence or policy requires it; no
+  silent fallback is permitted once a stronger runtime is selected.
 
 ## Residual risks
 
 - Container/kernel sandbox vulnerabilities cannot be eliminated; patch ownership and defense in depth
   are required.
+- The current spike proves configuration primitives, not kernel escape resistance or target
+  OpenShift enforcement. Shared-kernel residual risk needs explicit security/platform acceptance.
 - Human review may miss malicious logic even when isolation prevents platform compromise.
 - Source may encode sensitive literals; detection cannot guarantee absence.
 - Model context summaries may omit information and produce lower-quality or missing-capability results.
@@ -147,6 +161,8 @@ control; source/test/model content is not an audit field.
 - Checksum substitution, stale decision, edit-after-review, self-approval and disable race.
 - Runner escape corpus covering network, filesystem, env, process, reflection/import, serialization,
   infinite loop, memory/PID/scratch/output bombs and malformed results.
+- Runtime-class/seccomp/LSM attestation and denial of unconfined or silent-fallback workloads.
+- Source-view role, bulk/export denial, retention/legal-hold and fail-closed access-audit tests.
 - Runner protocol replay, expiry, idempotency, cancellation and response-checksum binding.
 - Protected-state overwrite and schema bypass tests.
 - Context foreign-row, secret/endpoint/source/document non-disclosure and size/depth exhaustion.
