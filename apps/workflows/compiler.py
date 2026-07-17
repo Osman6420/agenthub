@@ -30,7 +30,10 @@ MAX_DECISION_ROLES = 16
 # budgets and an ancestry/depth guard.
 MAX_CHILD_DEPTH = 3
 MAX_AGENT_CALL_DECISIONS = 20
-AGENT_CALL_ACTIONS = frozenset({"retrieve", "tool", "respond"})
+# The governed agent decision kinds a parent may authorize a child agent to take (P2.6.6).
+# A parent compiled before ``verify``/``escalate`` existed cannot list them, so the child
+# runtime denies those kinds by default (fail-closed composition attenuation).
+AGENT_CALL_ACTIONS = frozenset({"retrieve", "tool", "verify", "respond", "escalate"})
 COMPOSITION_NODE_TYPES = frozenset({"subworkflow", "agent_call"})
 
 # Compiled-contract version (ADR-0008). Bumped for the P2.6.1 typed-mapping semantics so a

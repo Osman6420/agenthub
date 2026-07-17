@@ -114,6 +114,7 @@ def compile_release(
     compiled_workflow_graph: dict[str, object] | None = None
     agent_checksum = ""
     agent_tools: list[str] = []
+    agent_verify_roles: list[str] = []
     for ref in refs:
         if ref.role in artifacts_manifest:
             raise CompileError(f"duplicate role in release: {ref.role}")
@@ -188,6 +189,9 @@ def compile_release(
                     raise CompileError(f"agent compilation failed: {exc}") from exc
                 agent_checksum = agent_version.checksum
                 agent_tools = list(agent_version.compiled_config.get("tools", []))
+                agent_verify_roles = list(
+                    (agent_version.compiled_config.get("actions") or {}).get("verify_roles", [])
+                )
 
     if agent_checksum:
         # Fail closed: every tool the agent may propose must resolve to a tool_binding
@@ -198,6 +202,20 @@ def compile_release(
         missing = sorted(t for t in agent_tools if t not in tool_roles)
         if missing:
             raise CompileError(f"agent declares tools with no pinned tool_binding role: {missing}")
+        # Fail closed (P2.6.6): a verification role must be a no-side-effect observation. A
+        # tool-backed verification role whose pinned definition is side-effecting or requires
+        # approval would let ``verify`` execute an unapproved effect, so it is rejected here
+        # where the pinned binding/definition metadata is known ("retrieval" has no side effect).
+        for role in agent_verify_roles:
+            if role == "retrieval":
+                continue
+            pinned = artifacts_manifest.get(role, {}).get("tool")
+            if not isinstance(pinned, dict):
+                raise CompileError(f"agent verification role has no pinned tool_binding: {role}")
+            if pinned.get("side_effecting") or pinned.get("approval_required"):
+                raise CompileError(
+                    f"agent verification role must be a no-side-effect action: {role}"
+                )
 
     if compiled_workflow_graph is not None:
         # Fail closed: every workflow ``transform`` node must reference a manifest role that pins

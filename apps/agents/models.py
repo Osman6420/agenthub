@@ -144,6 +144,50 @@ class AgentRun(TimeStampedModel):
             raise ValidationError("run consumer must match run organization")
 
 
+class AgentRuntimeControl(TimeStampedModel):
+    """Fail-closed durable kill switch for the agent runtime (P2.6.6).
+
+    A ``NULL`` ``organization`` is the platform-global switch; a set ``organization`` is a
+    per-tenant switch. Suspension is instantly effective without a deploy/restart: the
+    Celery task refuses to claim or resume a run whose global *or* organization switch is
+    set, and preserves the durable run state so it resumes once cleared. Flipping the
+    switch is a role-gated audited platform-operator action (management commands); it is
+    never a consumer action.
+
+    ``organization`` is nullable, so this table is provisioned with a *manual* RLS policy
+    (its migration) that additionally makes the global ``NULL`` row visible in every tenant
+    scope. Enforcement queries filter organization explicitly as well, so the check is
+    correct under both the RLS-bypassing owner (CI/local) and a non-owner production role.
+    """
+
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="agent_runtime_controls",
+        null=True,
+        blank=True,
+    )
+    suspended = models.BooleanField(default=False)
+    reason = models.CharField(max_length=200, blank=True)
+    updated_by = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        constraints = [
+            # Per-organization singleton. The global (NULL-organization) singleton is
+            # enforced by a partial unique index created in the migration (Postgres) and by
+            # ``get_or_create`` in the service (both backends).
+            models.UniqueConstraint(
+                fields=["organization"],
+                condition=models.Q(organization__isnull=False),
+                name="uniq_agent_runtime_control_org",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        scope = "global" if self.organization_id is None else f"org:{self.organization_id}"
+        return f"agent-runtime-control:{scope}:{'suspended' if self.suspended else 'active'}"
+
+
 class AgentRunEvent(models.Model):
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="agent_run_events"

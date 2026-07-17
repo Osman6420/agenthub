@@ -62,7 +62,12 @@ _BASE_CAP = {
 _ACTION_CAPS: dict[str, frozenset[str]] = {
     "retrieve": frozenset({Capability.QUERY.value}),
     "tool": frozenset({Capability.TOOL_CALL.value, Capability.TOOL_CALL_SIDE_EFFECT.value}),
+    # A verification observation re-runs retrieval or a pinned no-side-effect tool only
+    # (compiler-guaranteed), so it never needs the side-effecting tool capability (P2.6.6).
+    "verify": frozenset({Capability.QUERY.value, Capability.TOOL_CALL.value}),
     "respond": frozenset({Capability.QUERY.value}),
+    # ``escalate`` is a safe terminal decision; it grants no additional capability.
+    "escalate": frozenset(),
 }
 
 
@@ -273,6 +278,9 @@ def admit_child(
     }
     if kind == "agent":
         child_claim["max_decisions"] = int(config["max_decisions"])
+        # Attenuate the child agent's reachable decision kinds to exactly the call-site's
+        # authored allowlist (P2.6.6). The child runtime denies any kind outside this set.
+        child_claim["allowed_actions"] = sorted(config.get("allowed_actions", []))
 
     child_context = _issue_child_context(
         parent_run=parent_run,

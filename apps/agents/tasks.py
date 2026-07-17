@@ -22,8 +22,9 @@ from apps.agents.models import (
     AgentRunStatus,
 )
 from apps.agents.runtime import AgentPaused, AgentRuntimeError, execute_agent
-from apps.agents.services import _next_sequence
+from apps.agents.services import _next_sequence, runtime_suspended
 from apps.artifacts.validation import compute_checksum
+from apps.audit.services import record_event
 from apps.tenancy.context import set_tenant_context
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,28 @@ def execute_agent_run(run_id: int, organization_id: int | None = None) -> str:
                 return str(run.status)
             if run.status not in _CLAIMABLE:
                 return str(run.status)
+            # Fail-closed kill switch (P2.6.6): a suspended global/organization runtime
+            # refuses to claim or resume a run and preserves its durable state so it resumes
+            # once the switch is cleared. The denial is audited; no step executes.
+            if runtime_suspended(organization_id):
+                AgentRunEvent.objects.create(
+                    run=run,
+                    sequence=_next_sequence(run),
+                    event_type="run_suspended",
+                    outcome="denied",
+                    reason_code="AGENT_SUSPENDED",
+                )
+                record_event(
+                    actor_type="system",
+                    actor_id="runtime",
+                    action="agent.suspend_denied",
+                    outcome="deny",
+                    organization_id=organization_id,
+                    resource_type="agent_run",
+                    resource_id=str(run.public_id),
+                    reason="AGENT_SUSPENDED",
+                )
+                return "suspended"
             resuming = run.status == AgentRunStatus.WAITING_APPROVAL
             run.status = AgentRunStatus.RUNNING
             if run.started_at is None:
@@ -101,7 +124,13 @@ def execute_agent_run(run_id: int, organization_id: int | None = None) -> str:
         run.output_tokens = result.output_tokens
         run.awaiting_step = None
         run.awaiting_role = ""
-        run.status = AgentRunStatus.COMPLETED
+        # A governed ``escalate`` decision is a distinct, audited non-success terminal
+        # (P2.6.6): status=failed + the stable AGENT_ESCALATED code (migration-free; the
+        # /v1/runs/{id} shape is unchanged). Consumers and P2.6.4 error routes dispatch on
+        # the code, and a composed child propagates it as the child-link reason code.
+        escalated = result.escalation is not None
+        run.status = AgentRunStatus.FAILED if escalated else AgentRunStatus.COMPLETED
+        run.error_code = "AGENT_ESCALATED" if escalated else ""
         run.finished_at = timezone.now()
         run.save(
             update_fields=[
@@ -113,6 +142,7 @@ def execute_agent_run(run_id: int, organization_id: int | None = None) -> str:
                 "awaiting_step",
                 "awaiting_role",
                 "status",
+                "error_code",
                 "finished_at",
                 "updated_at",
             ]
@@ -120,11 +150,12 @@ def execute_agent_run(run_id: int, organization_id: int | None = None) -> str:
         AgentRunEvent.objects.create(
             run=run,
             sequence=_next_sequence(run),
-            event_type="run_completed",
-            outcome="completed",
+            event_type="run_escalated" if escalated else "run_completed",
+            outcome="escalated" if escalated else "completed",
+            reason_code="AGENT_ESCALATED" if escalated else "",
             state_checksum=compute_checksum(final_state),
         )
-    return str(AgentRunStatus.COMPLETED)
+    return str(run.status)
 
 
 def _finish_error(run_id: int, organization_id: int, code: str) -> str:

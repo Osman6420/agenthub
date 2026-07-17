@@ -172,6 +172,12 @@ Detailed P2.6.3 plan, threat model and verification:
 Detailed P2.6.5 plan and threat model:
 [`phase-2-6-part-5-child-composition`](../tasks/phase-2-6-part-5-child-composition/plan.md).
 
+Detailed P2.6.6 plan and threat model:
+[`phase-2-6-part-6-governed-agent-loop`](../tasks/phase-2-6-part-6-governed-agent-loop/plan.md).
+
+Detailed P2.6.11 plan and threat model:
+[`phase-2-6-part-11-product-operational-closure`](../tasks/phase-2-6-part-11-product-operational-closure/plan.md).
+
 | Part | Outcome | Depends on | Primary gates |
 | --- | --- | --- | --- |
 | P2.6.0 | Architecture contract, ADRs and executable scenario corpus | Phase 2.5 Parts 6–7 | Owner scope; DSL compatibility and threat-model approval |
@@ -670,8 +676,18 @@ inactive attested OpenShift fixed-pool runner (`PYTHON_NODE_RUNNER_ATTESTED` nev
 ADR-0011 target attestation outstanding), context-aware Studio AI activation, and the ingestion
 activation-closure drills. Wave evidence is recorded in the
 [`activation-wave integration verification`](../tasks/phase-2-6-wave-3-integration/verification.md).
-P2.6.6 is the next implementation part, followed by P2.6.11 final acceptance. Neither child
-composition nor scenario-authored Python execution is enabled by this status update.
+**P2.6.6 (advanced governed agent loop) is implemented and verified (2026-07-17):** decision schema
+v2, an additive `spec.actions` policy (verify roles, per-role call caps, repeat-retrieval and
+escalation opt-in), governed `verify`/`escalate`, repeated-action and no-progress guards, bounded
+redacted code/count observation summaries, composition attenuation for the new decision kinds, and a
+DB-backed fail-closed global/per-organization runtime kill switch enforced at Celery claim/resume with
+role-gated audited management commands. It is a compatibility-default increment (legacy compiled agents
+keep byte-identical configs/checksums; one additive migration `agents.0003`). Static gates, the full
+SQLite suite, the PostgreSQL affected-app profile and a PostgreSQL non-owner RLS proof of the
+kill-switch control table pass; see
+[`phase-2-6-part-6-governed-agent-loop/verification.md`](../tasks/phase-2-6-part-6-governed-agent-loop/verification.md).
+P2.6.11 final acceptance is the remaining part. Neither child composition nor scenario-authored Python
+execution is enabled by this status update.
 
 ## Completion criteria
 

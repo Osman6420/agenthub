@@ -14,11 +14,18 @@ from datetime import timedelta
 from typing import Any
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.agents.compiler import COMPILER_VERSION, AgentCompileError, compile_agent
 from apps.agents.limits import MAX_CHECKPOINT_BYTES, resolve_limits
-from apps.agents.models import AgentRun, AgentRunEvent, AgentRunStatus, AgentVersion
+from apps.agents.models import (
+    AgentRun,
+    AgentRunEvent,
+    AgentRunStatus,
+    AgentRuntimeControl,
+    AgentVersion,
+)
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
@@ -204,6 +211,50 @@ def _cancel_locked(locked: AgentRun) -> AgentRun:
             outcome="cancelled",
         )
     return locked
+
+
+def runtime_suspended(organization_id: int) -> bool:
+    """True when the global or this organization's agent-runtime kill switch is set.
+
+    Filters organization explicitly (global ``NULL`` row OR this org's row) so the check is
+    correct under both the RLS-bypassing owner role (CI/local) and a non-owner production
+    role where the manual RLS policy also exposes the global row.
+    """
+    return AgentRuntimeControl.objects.filter(
+        Q(organization__isnull=True) | Q(organization_id=organization_id),
+        suspended=True,
+    ).exists()
+
+
+@transaction.atomic
+def set_runtime_suspension(
+    *, organization_id: int | None, suspended: bool, actor: str, reason: str = ""
+) -> AgentRuntimeControl:
+    """Flip the global (``organization_id=None``) or per-organization kill switch.
+
+    A role-gated audited platform-operator action (invoked by the management commands),
+    never a consumer action. Idempotent and upsert-safe on the scope singleton.
+    """
+    lookup: dict[str, Any] = {"organization_id": organization_id}
+    control, _ = AgentRuntimeControl.objects.select_for_update().get_or_create(
+        defaults={"suspended": suspended, "updated_by": actor, "reason": reason[:200]},
+        **lookup,
+    )
+    control.suspended = suspended
+    control.updated_by = actor
+    control.reason = reason[:200]
+    control.save(update_fields=["suspended", "updated_by", "reason", "updated_at"])
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="agent.runtime_suspend" if suspended else "agent.runtime_resume",
+        outcome="success",
+        organization_id=organization_id,
+        resource_type="agent_runtime_control",
+        resource_id="global" if organization_id is None else str(organization_id),
+        reason=reason[:64] or ("suspended" if suspended else "resumed"),
+    )
+    return control
 
 
 def _redact(value: Any) -> Any:

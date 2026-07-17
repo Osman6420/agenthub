@@ -14,6 +14,7 @@ from typing import Any
 
 from apps.agents.agent_schema import AgentArtifactError, validate_agent_definition_body
 from apps.agents.limits import resolve_limits
+from apps.agents.planner import AGENT_DECISION_SCHEMA_VERSION
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
 
@@ -65,4 +66,26 @@ def compile_agent(body: dict[str, Any]) -> CompiledAgent:
         "tools": list(spec.get("tools", [])),
         "limits": limits.as_dict(),
     }
+    # Governed action policy (P2.6.6). Emitted *only when authored* so agents that do not
+    # opt in keep a byte-identical compiled config and a stable checksum. The decision
+    # schema version is a runtime constant carried on each proposal, not written here.
+    if "actions" in spec:
+        config["decision_schema_version"] = AGENT_DECISION_SCHEMA_VERSION
+        config["actions"] = _compile_actions(spec["actions"])
     return CompiledAgent(config=config, checksum=compute_checksum(config))
+
+
+def _compile_actions(actions: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the validated action policy into a deterministic compiled block.
+
+    Keys and ``verify_roles`` order are canonicalized so the compiled output — and thus
+    the release checksum — is stable regardless of authored key/element ordering.
+    """
+    return {
+        "verify_roles": sorted(actions.get("verify_roles", [])),
+        "repeat_retrieval": bool(actions.get("repeat_retrieval", False)),
+        "escalation_enabled": bool(actions.get("escalation_enabled", False)),
+        "role_call_caps": {
+            str(role): int(cap) for role, cap in sorted(actions.get("role_call_caps", {}).items())
+        },
+    }

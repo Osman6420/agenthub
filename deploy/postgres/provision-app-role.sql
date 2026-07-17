@@ -32,7 +32,7 @@ TO :"app_role";
 
 -- Every protected table is readable only through FORCE RLS.
 GRANT SELECT ON
-    agents_agentrun, agents_agentrunevent, agents_agentversion,
+    agents_agentrun, agents_agentrunevent, agents_agentruntimecontrol, agents_agentversion,
     artifacts_artifactversion,
     builder_artifactdraft, builder_workflowdraft,
     catalog_aiproject, catalog_scenario, catalog_scenarioalias,
@@ -70,7 +70,7 @@ TO :"app_role";
 
 -- Mutable state without application delete paths.
 GRANT INSERT, UPDATE ON
-    agents_agentrun,
+    agents_agentrun, agents_agentruntimecontrol,
     catalog_aiproject, catalog_scenario, catalog_scenarioalias,
     evaluations_evalrun,
     gateway_idempotencyrecord, identity_consumerbinding,

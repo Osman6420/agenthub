@@ -22,8 +22,22 @@ MAX_DEADLINE_SECONDS = 600
 MAX_CHECKPOINT_BYTES = 2 * 1024 * 1024
 
 # Bumped only when the persisted checkpoint shape changes. A run whose checkpoint was
-# written by a different schema version is never resumed on incompatible code.
-CHECKPOINT_SCHEMA_VERSION = 1
+# written by a different schema version is never resumed on incompatible code. Bumped to 2
+# for the P2.6.6 durable trail (per-role counters, action checksums, bounded observation
+# summaries, verification outcomes).
+CHECKPOINT_SCHEMA_VERSION = 2
+
+# P2.6.6 governed-agent-loop bounds (owner-accepted 2026-07-17).
+# Per-role tool/verify call ceiling; a per-role cap may only lower the global tool budget.
+MAX_ROLE_CALLS = MAX_TOOL_CALLS
+# Bounded planner-supplied tool arguments (structured decision schema v2).
+MAX_ARGUMENTS_BYTES = 4 * 1024
+# Bounded, redacted planner observation summaries: per-summary and total context ceilings.
+MAX_OBSERVATION_BYTES = 4 * 1024
+MAX_OBSERVATION_CONTEXT_BYTES = 32 * 1024
+# Consecutive soft-denied (repeated-action / role-budget) proposals before the loop
+# terminates deterministically rather than spinning against a non-converging planner.
+NO_PROGRESS_LIMIT = 3
 
 _FIELD_CAPS: dict[str, int] = {
     "max_steps": MAX_STEPS,

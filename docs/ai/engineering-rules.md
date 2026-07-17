@@ -340,6 +340,33 @@ duplicate/redelivery and reconciliation drills. Wave gate evidence (static + ful
 PostgreSQL + frontend runs) is in `docs/tasks/phase-2-6-wave-3-integration/verification.md`; the
 integrated head lands on `feat/foundation-sprint-0-1`.
 
+Phase 2.6 P2.6.6 (advanced governed agent loop) is implemented and verified. It adds agent decision
+schema v2 (`AGENT_DECISION_SCHEMA_VERSION = 2`: structured `kind`/`role`/bounded `arguments`/
+`reason_code`; kinds `retrieve`/`tool`/`verify`/`respond`/`escalate`) validated server-side as a
+proposal only; an additive `agent_definition` `spec.actions` policy (`verify_roles`,
+`repeat_retrieval`, `escalation_enabled`, `role_call_caps` bounded by `MAX_ROLE_CALLS = MAX_TOOL_CALLS`)
+compiled **only when authored** so legacy compiled agents keep byte-identical configs/checksums; a
+governed no-side-effect `verify` step (side-effecting/approval-requiring verification roles rejected at
+release compile); a closed platform-owned `escalate` terminal (`status=failed` + stable
+`AGENT_ESCALATED`, no free text); dual argument validation (runtime contract + protected namespaces,
+then the unchanged Sprint 9 proxy); per-role budgets, a repeated-action checksum guard and bounded
+`AGENT_NO_PROGRESS` termination; bounded redacted code/count planner observation summaries
+(`MAX_OBSERVATION_BYTES`/`MAX_OBSERVATION_CONTEXT_BYTES`); and `CHECKPOINT_SCHEMA_VERSION = 2` (v1
+checkpoints refused). Composition attenuation expands `AGENT_CALL_ACTIONS` to `verify`/`escalate` and
+carries the call-site `allowed_actions` into the child claim, so a parent compiled before P2.6.6 denies
+the new kinds by default. This delivers the previously-missing **global start/resume kill switch**: the
+DB-backed `AgentRuntimeControl` (`agents.0003`, global + per-organization, manual RLS with the global
+`NULL`-org row visible in every tenant scope and a global-singleton partial index) enforced fail-closed
+at Celery task claim/resume, flipped only by the role-gated audited `suspend_agent_runtime` /
+`resume_agent_runtime` platform-admin commands; the table is in the owner-approved application-role
+grant inventory (SELECT + INSERT/UPDATE, no DELETE). The default deterministic planner and the optional
+LangGraph adapter both emit schema v2; CI stays hermetic (no socket, no live egress, no new dependency).
+The console kill-switch button and checkpoint retention/purge remain P2.6.11/operational follow-ups, and
+no real-broker Celery restart smoke was run. Evidence: static gates, full SQLite (926 passed / 35
+skipped), the PostgreSQL affected-app profile (163 passed incl. composition FORCE RLS) and a PostgreSQL
+non-owner RLS proof of the control table, in
+`docs/tasks/phase-2-6-part-6-governed-agent-loop/verification.md`.
+
 Review the final diff for scope, layering, compatibility, authorization, privacy, failure modes, concurrency, operability, and accidental files. Record every executed command and result in task verification. State checks that could not run and the risk this leaves; never infer success from an agent assertion.
 
 ## Recommended enforcement (not implemented)
