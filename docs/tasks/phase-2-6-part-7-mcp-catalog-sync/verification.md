@@ -8,6 +8,17 @@ redacted audit and unchanged exact-pinned proxy behavior are verified. Productio
 authorization is not changed without approval, so the RLS provisioning gate remains intentionally
 red.
 
+## Activation-wave addendum (2026-07-17)
+
+The owner approved the scoped grant addition at the activation-wave integration gate:
+`tools_mcpcatalogsource` and `tools_mcpcatalogcandidate` were added to the protected FORCE-RLS
+SELECT list and the no-delete INSERT/UPDATE list in `deploy/postgres/provision-app-role.sql`
+(no DELETE granted). The prescribed unblock evidence — the non-owner PostgreSQL catalog-table
+cross-tenant proof (`apps/tools/tests/test_catalog_rls.py`) and both full profiles — is recorded in
+the [activation-wave integration verification](../phase-2-6-wave-3-integration/verification.md).
+Live MCP endpoints, production CA/DNS/firewall and credentials remain deployment-gated; applying
+the provisioning script to a live environment stays a rollout step.
+
 ## Automated evidence
 
 All Python checks used the manual guide's disposable Python 3.13 container fallback because the

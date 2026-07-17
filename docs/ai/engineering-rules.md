@@ -323,6 +323,23 @@ source persistence/control-plane model, dependency, Docker/OpenShift activation 
 Production remains blocked on ADR-0011 target-runtime isolation evidence and security/platform/SRE
 approval.
 
+The Phase 2.6 activation-closure wave (P2.6.7/P2.6.8/P2.6.9/P2.6.10) is merged and gate-verified on
+the Phase 2.6 integration head. P2.6.7 adds the governed MCP catalog quarantine registry
+(`tools.0003`: tenant-scoped `McpCatalogSource`/`McpCatalogCandidate` under FORCE RLS;
+quarantine → exact operator review → immutable registration; drift/disappearance audited; no live
+egress by default) and both catalog tables are in the owner-approved application-role grant
+inventory (SELECT + INSERT/UPDATE, no DELETE) in `deploy/postgres/provision-app-role.sql`; live MCP
+endpoints/credentials remain deployment-gated. P2.6.8 adds the fixed four-pod OpenShift runner
+adapter, credentials-free runner image and `deploy/openshift/` manifests behind a separate
+`PYTHON_NODE_RUNNER_ATTESTED` gate that the repository never sets — scenario-author Python execution
+stays disabled pending ADR-0011 target attestation. P2.6.9 activates context-aware Studio AI
+authoring over an exact, bounded, tenant/scenario-scoped capability snapshot with fail-closed
+reference validation and a transient capability-missing scaffold (no auto-persist, no lifecycle
+bypass). P2.6.10 closes ingestion activation with real-service preflight, worker-absence/restart,
+duplicate/redelivery and reconciliation drills. Wave gate evidence (static + full SQLite +
+PostgreSQL + frontend runs) is in `docs/tasks/phase-2-6-wave-3-integration/verification.md`; the
+integrated head lands on `feat/foundation-sprint-0-1`.
+
 Review the final diff for scope, layering, compatibility, authorization, privacy, failure modes, concurrency, operability, and accidental files. Record every executed command and result in task verification. State checks that could not run and the risk this leaves; never infer success from an agent assertion.
 
 ## Recommended enforcement (not implemented)

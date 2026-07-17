@@ -655,16 +655,23 @@ Remaining decisions owned by later parts:
 
 ## Status
 
-**In progress; the second parallel wave is integrated and verified.** P2.6.1–P2.6.3, P2.6.5,
-P2.6.7, the P2.6.8 isolation contract and fail-closed runtime seam, P2.6.9 context/transient-candidate
-work and P2.6.10 ingestion lifecycle are present on the Phase 2.6 integration baseline. PostgreSQL
-migration apply/rollback/re-apply, RLS/cross-tenant proofs and the complete backend regression pass
-are recorded in the
+**In progress; the second parallel wave and the activation-closure wave are integrated and
+verified.** P2.6.1–P2.6.3, P2.6.5, P2.6.7, the P2.6.8 isolation contract and fail-closed runtime
+seam, P2.6.9 context/transient-candidate work and P2.6.10 ingestion lifecycle are present on the
+Phase 2.6 integration baseline. PostgreSQL migration apply/rollback/re-apply, RLS/cross-tenant
+proofs and the complete backend regression pass are recorded in the
 [`second-wave integration verification`](../tasks/phase-2-6-wave-2-integration/verification.md).
 P2.6.4 failure/retry/compensation is implemented and verified with compiled-workflow v4, durable
 attempt/compensation/recovery state, PostgreSQL FORCE RLS and organization-scoped admin recovery.
-The P2.6.7/P2.6.8/P2.6.9/P2.6.10 activation-closure wave is next; neither child composition nor
-scenario-authored Python execution is enabled by this status update.
+The P2.6.7/P2.6.8/P2.6.9/P2.6.10 activation-closure wave is merged and gate-verified on the
+integration head: governed MCP catalog quarantine with the owner-approved catalog-table
+application-role grant inventory (live MCP endpoints/credentials remain deployment-gated), the
+inactive attested OpenShift fixed-pool runner (`PYTHON_NODE_RUNNER_ATTESTED` never set in-repo;
+ADR-0011 target attestation outstanding), context-aware Studio AI activation, and the ingestion
+activation-closure drills. Wave evidence is recorded in the
+[`activation-wave integration verification`](../tasks/phase-2-6-wave-3-integration/verification.md).
+P2.6.6 is the next implementation part, followed by P2.6.11 final acceptance. Neither child
+composition nor scenario-authored Python execution is enabled by this status update.
 
 ## Completion criteria
 
