@@ -201,15 +201,22 @@ def build_node_schema(*, organization_id: int) -> dict[str, Any]:
     Only public governance metadata is included. Tool endpoints/secrets are never
     exposed; only binding *role* names and their approval flag are returned.
     """
-    tool_binding_roles = [
-        {"role": logical_id, "approval_required": bool(approval_required)}
-        for logical_id, approval_required in ToolBinding.objects.filter(
-            organization_id=organization_id, status=ToolStatus.ACTIVE
-        )
+    tool_binding_roles = []
+    for binding in (
+        ToolBinding.objects.filter(organization_id=organization_id, status=ToolStatus.ACTIVE)
+        .select_related("tool_definition")
         .order_by("logical_id")
-        .values_list("logical_id", "approval_required")
-        .distinct()
-    ]
+    ):
+        description = binding.tool_definition.manifest.get("description", "")
+        tool_binding_roles.append(
+            {
+                "role": binding.logical_id,
+                "approval_required": bool(binding.approval_required),
+                "description": description[:500] if isinstance(description, str) else "",
+                "risk": binding.tool_definition.risk,
+                "side_effecting": bool(binding.tool_definition.side_effecting),
+            }
+        )
     custom_nodes = [
         {"node_ref": logical_id}
         for logical_id in CustomNodeDefinition.objects.filter(

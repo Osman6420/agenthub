@@ -192,6 +192,7 @@ RUNTIME_MODEL_PROVIDER = env("RUNTIME_MODEL_PROVIDER", default="")
 # platform profile. Tenant input cannot choose this profile or any destination.
 AI_AUTHORING_MODEL_PROFILE_ID = env("AI_AUTHORING_MODEL_PROFILE_ID", default="")
 AI_AUTHORING_PROVIDER = env("AI_AUTHORING_PROVIDER", default="")
+PYTHON_NODE_PUBLIC_CATALOG_PROVIDER = env("PYTHON_NODE_PUBLIC_CATALOG_PROVIDER", default="")
 AI_AUTHORING_CONTRACT_REVISION = env.int("AI_AUTHORING_CONTRACT_REVISION", default=1)
 AI_AUTHORING_MAX_DESCRIPTION_BYTES = env.int("AI_AUTHORING_MAX_DESCRIPTION_BYTES", default=8192)
 AI_AUTHORING_MAX_CANDIDATE_BYTES = env.int("AI_AUTHORING_MAX_CANDIDATE_BYTES", default=262144)
@@ -227,6 +228,10 @@ WORKFLOW_COMPOSITION_ENABLED = env.bool("WORKFLOW_COMPOSITION_ENABLED", default=
 PYTHON_NODE_RUNTIME_ENABLED = env.bool("PYTHON_NODE_RUNTIME_ENABLED", default=False)
 PYTHON_NODE_RESOLVER = env("PYTHON_NODE_RESOLVER", default="")
 PYTHON_NODE_RUNNER = env("PYTHON_NODE_RUNNER", default="")
+PYTHON_NODE_RUNNER_URL = env("PYTHON_NODE_RUNNER_URL", default="")
+# This is deliberately separate from feature enablement. Set true only after the exact OpenShift
+# overlay has passed ADR-0011 SCC, NetworkPolicy, mTLS and resource/recycle probes.
+PYTHON_NODE_RUNNER_ATTESTED = env.bool("PYTHON_NODE_RUNNER_ATTESTED", default=False)
 
 # --- Agent runtime (Sprint 10) ----------------------------------------------
 # Dotted path to an AgentPlanner implementation. Empty -> the deterministic built-in

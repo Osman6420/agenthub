@@ -28,6 +28,13 @@ metadata:
   name: agenthub-beat
   labels: {app.kubernetes.io/part-of: agenthub}
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agenthub-python-runner
+  labels: {app.kubernetes.io/part-of: agenthub}
+automountServiceAccountToken: false
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -188,6 +195,69 @@ spec:
   selector: {app.kubernetes.io/name: agenthub-web}
   ports:
     - {name: http, port: 8000, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agenthub-python-runner
+  labels: {app.kubernetes.io/name: agenthub-python-runner, app.kubernetes.io/part-of: agenthub}
+spec:
+  replicas: 4
+  selector:
+    matchLabels: {app.kubernetes.io/name: agenthub-python-runner}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: agenthub-python-runner, app.kubernetes.io/part-of: agenthub}
+    spec:
+      serviceAccountName: agenthub-python-runner
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: runner
+          image: agenthub-python-runner-image-must-be-pinned-by-environment-overlay
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: PYTHON_NODE_RUNNER_MAX_EXECUTIONS, value: "20"}
+            - {name: PYTHON_NODE_RUNNER_MAX_AGE_SECONDS, value: "900"}
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /live, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 1
+          resources:
+            requests: {cpu: 100m, memory: 96Mi, ephemeral-storage: 16Mi}
+            limits: {cpu: 500m, memory: 256Mi, ephemeral-storage: 32Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agenthub-python-runner
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels: {app.kubernetes.io/name: agenthub-python-runner}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agenthub-python-runner
+  labels: {app.kubernetes.io/name: agenthub-python-runner, app.kubernetes.io/part-of: agenthub}
+spec:
+  selector: {app.kubernetes.io/name: agenthub-python-runner}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
 ---
 apiVersion: route.openshift.io/v1
 kind: Route

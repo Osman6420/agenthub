@@ -1,5 +1,36 @@
 # Verification: P2.6.8 isolated-runtime integration
 
+## OpenShift fixed-pool update (2026-07-17)
+
+Implemented on `codex/p2-6-8-openshift-runner` from integration baseline `7f18a26`:
+
+- four-replica internal runner Deployment, ClusterIP Service and PDB;
+- dedicated tokenless ServiceAccount, no Secret/ConfigMap/volume, RuntimeDefault, non-root,
+  read-only root, dropped capabilities and bounded resources;
+- NetworkPolicy allowing only runtime-worker ingress, with runner excluded from DNS/general egress;
+- minimal credentials-free runner image and stdlib supervisor, concurrency one, fresh process per
+  call and supervisor recycle after 20 executions/15 minutes;
+- bounded no-redirect application adapter that maps saturation and transport ambiguity to stable
+  fail-closed outcomes;
+- separate `PYTHON_NODE_RUNNER_ATTESTED` gate. Repository manifests never set it or activate Python
+  execution.
+
+Target OpenShift restricted-v2 admission, service-mesh mTLS, effective NetworkPolicy, image
+signature/SBOM and live recycle/resource/escape probes are not available locally and remain the
+production activation gate. The earlier evidence below remains the authority for the original
+runtime seam.
+
+| Fixed-pool check | Result |
+| --- | --- |
+| Focused runner/seam/manifest tests | `39 passed` |
+| Full SQLite regression | `882 passed, 33 skipped` |
+| PostgreSQL workflow/tenancy regression | `197 passed, 3 SQLite-only skipped` |
+| Ruff lint and format | Passed; 399 files formatted |
+| mypy | `Success: no issues found in 399 source files` |
+| Django system check / migration drift | No issues / no changes detected |
+| Canonical infrastructure | PostgreSQL, Redis and MinIO healthy via Compose |
+| Minimal runner image | Built from digest-pinned `python:3.13-slim`; local image `agenthub-python-runner:p2-6-8` |
+
 This record is intentionally separate from the first-wave isolation-spike verification. It records
 commands and evidence for the runtime integration branch only.
 

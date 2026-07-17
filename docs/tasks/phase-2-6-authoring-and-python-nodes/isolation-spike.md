@@ -37,14 +37,17 @@ Scores are relative for the first release: 1 is weakest/highest cost, 5 is stron
 | --- | ---: | ---: | ---: | ---: | --- |
 | In-process/subinterpreter | 1 | 5 | 5 | 5 | Reject: shares application authority |
 | Long-lived privileged/shared worker | 2 | 4 | 4 | 3 | Reject: ambient credentials/queue blast radius |
-| Per-call locked-down OCI sandbox | 3 | 5 | 4 | 3 | Recommended minimum, conditional on target probes |
+| Fixed four-pod credentials-free pool, fresh process/call | 2 | 5 | 5 | 3 | Accepted reviewed-code tier for target OpenShift |
+| Per-call locked-down OCI sandbox | 3 | 2 | 3 | 3 | Deferred: target does not grant workload lifecycle authority |
 | gVisor | 4 | 3 | 3 | 1 | Evaluate if available; no default dependency |
 | Kata Containers | 5 | 2 | 2 | 1 | Evaluate for policy/high-risk tier |
 | Firecracker/microVM | 5 | 1 | 1 | 1 | Defer unless shared-kernel risk is rejected |
 
 ## Recommended minimum runner profile
 
-- Separate runner control plane and dedicated queue; one short-lived sandbox for one execution.
+- Four-replica internal OpenShift runner Deployment; one execution per pod at a time and one fresh
+  short-lived process per execution. Supervisor recycle after 20 executions/15 minutes or any
+  cleanup/resource-integrity failure; no application pod lifecycle permission.
 - Digest-pinned minimal image, numeric non-root user, `allowPrivilegeEscalation: false`, drop `ALL`,
   read-only root, RuntimeDefault or stricter seccomp and platform LSM.
 - No application anchor/environment, service account token, hostPath, repository, Docker socket,
@@ -59,7 +62,8 @@ Scores are relative for the first release: 1 is weakest/highest cost, 5 is stron
   be redelivered only when the protocol proves the prior execution never started or returns the
   exact idempotent committed result.
 
-These numeric limits require performance/product owner approval and target-runtime measurement.
+These numeric limits require target-runtime measurement. The fixed-pod choice was approved by the
+owner on 2026-07-17 for reviewed code only; it does not authorize arbitrary unreviewed Python.
 
 ## Runner protocol probe plan
 

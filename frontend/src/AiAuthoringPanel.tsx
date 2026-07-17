@@ -1,12 +1,13 @@
 import { useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
-import type { AiCandidateResult } from "./types";
+import type { AiCandidateResult, CapabilityMissingResult } from "./types";
 
-export function AiAuthoringPanel({ api, organization, projects, lockedProjectId, scenarioId, onGenerated }: {
+export function AiAuthoringPanel({ api, organization, projects, lockedProjectId, scenarioId, onGenerated, onCapabilityMissing }: {
   api: BuilderApi; organization: string; projects: { id: number; name: string }[];
   lockedProjectId?: number; scenarioId?: number;
   onGenerated: (result: AiCandidateResult, projectId: number) => void;
+  onCapabilityMissing: (result: CapabilityMissingResult) => void;
 }) {
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState("");
@@ -20,6 +21,7 @@ export function AiAuthoringPanel({ api, organization, projects, lockedProjectId,
       });
       if (generated.status === "capability_missing") {
         setStatus(`Eksik yetenek: ${generated.required_capability}. Custom node taslağı önerisi hazır; henüz kaydedilmedi.`);
+        onCapabilityMissing(generated);
         return;
       }
       setStatus("");

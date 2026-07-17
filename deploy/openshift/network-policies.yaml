@@ -31,7 +31,11 @@ kind: NetworkPolicy
 metadata:
   name: agenthub-allow-dns
 spec:
-  podSelector: {}
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: [agenthub-python-runner]
   policyTypes: [Egress]
   egress:
     - to:
@@ -44,3 +48,33 @@ spec:
 # Environment overlays must add explicit workload-specific egress policies for
 # Postgres, Redis, object storage, LDAP, model gateways, source endpoints, and OTel.
 # No catch-all egress rule is provided here.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agenthub-python-runner-ingress
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: agenthub-python-runner}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: agenthub-worker-runtime}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agenthub-runtime-to-python-runner
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: agenthub-worker-runtime}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: agenthub-python-runner}
+      ports:
+        - {protocol: TCP, port: 8080}

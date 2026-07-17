@@ -21,7 +21,8 @@ describe("Studio AI authoring panel", () => {
     const onGenerated = vi.fn();
     render(<AiAuthoringPanel api={new BuilderApi("/console/api/builder/")}
       organization="org" projects={[{ id: 3, name: "Project" }]}
-      lockedProjectId={3} scenarioId={7} onGenerated={onGenerated} />);
+      lockedProjectId={3} scenarioId={7} onGenerated={onGenerated}
+      onCapabilityMissing={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "akış" } });
     fireEvent.click(screen.getByText("Geçici aday üret"));
@@ -39,12 +40,16 @@ describe("Studio AI authoring panel", () => {
       authoring_context: { contract: "agenthub.studio-authoring-context/v1", checksum: "b".repeat(64) },
     }), { status: 200 }))));
     const onGenerated = vi.fn();
+    const onCapabilityMissing = vi.fn();
     render(<AiAuthoringPanel api={new BuilderApi("/console/api/builder/")}
       organization="org" projects={[{ id: 3, name: "Project" }]}
-      scenarioId={7} onGenerated={onGenerated} />);
+      scenarioId={7} onGenerated={onGenerated} onCapabilityMissing={onCapabilityMissing} />);
     fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "çarp" } });
     fireEvent.click(screen.getByText("Geçici aday üret"));
     expect(await screen.findByRole("alert")).toHaveTextContent("Eksik yetenek: number.multiply");
     expect(onGenerated).not.toHaveBeenCalled();
+    expect(onCapabilityMissing).toHaveBeenCalledWith(expect.objectContaining({
+      status: "capability_missing", required_capability: "number.multiply",
+    }));
   });
 });

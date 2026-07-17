@@ -17,10 +17,20 @@ not authorize tenant-code execution, a runner or
 production dependency, authentication/authorization changes, live model egress, database reset or
 production activation. The runtime stage implements a fail-closed runner/resolver contract, automated
 static review, exact-pin dispatch checks, schema/state-patch validation and a bounded separate-process
-test harness. Production activation remains disabled because the target seccomp/LSM/network boundary
-has not been proven and no production sandbox backend has been approved.
+test harness. Production activation remains disabled until the accepted fixed-pod OpenShift runner
+overlay passes target restricted-v2/seccomp/network/mTLS/resource/recycle evidence.
 
 ## Runtime integration stage (2026-07-17)
+
+### OpenShift fixed-pool implementation update
+
+The owner accepted the target operating model on 2026-07-17. This branch adds the production
+adapter, credentials-free stdlib supervisor/image and reviewable four-replica OpenShift
+Deployment/Service/NetworkPolicy/PDB. Each pod admits one call, starts a fresh worker process and
+recycles after 20 calls/15 minutes. AgentHub has no pod/job lifecycle permission. Activation still
+fails closed unless the environment explicitly attests the rendered restricted-v2, seccomp,
+default-deny network, service-mesh mTLS and resource/recycle evidence. No target-cluster claim is
+made by repository manifest tests.
 
 ### Approved scope
 
@@ -43,11 +53,12 @@ has not been proven and no production sandbox backend has been approved.
 ### Explicitly excluded / approval gates
 
 - No persistence/control-plane/source-storage implementation and no migration.
-- No Docker socket, container launch, privileged/host execution, network egress, secret injection,
-  production runner service or production activation.
+- No Docker socket, pod/job lifecycle permission, privileged/host execution, runner egress, secret
+  injection or production activation. The dedicated inactive runner Service/image is now in scope.
 - No production dependency, P2.6.9 Studio change, AI source context, or P2.6.2/P2.6.3/P2.6.5 model change.
-- The harness is evidence for the application seam, not proof of ADR-0011's production OCI/OpenShift
-  boundary. Production remains blocked pending target-runtime seccomp/LSM/network/resource evidence,
+- The harness is evidence for the application seam, not target OpenShift proof. ADR-0011 accepts a
+  four-replica credentials-free runner Deployment with fresh child processes and bounded recycle;
+  production remains blocked pending rendered restricted-v2/seccomp/network/mTLS/resource evidence,
   image/signing ownership and security/platform approval.
 
 ### Runtime-stage risks
@@ -132,8 +143,9 @@ AST filtering, restricted builtins, import hooks and Python subinterpreters are 
 not a complete runtime boundary. Before any source test or runtime implementation, run a focused
 spike and approve an ADR covering:
 
-- the minimum dedicated rootless/locked-down runner container/service with dropped capabilities,
-  read-only root filesystem, network deny and no platform credentials;
+- the minimum four-replica rootless/locked-down runner Deployment with concurrency one, fresh
+  execution processes, bounded recycling, dropped capabilities, read-only root filesystem, network
+  deny and no platform credentials or Kubernetes API authority;
 - operational fit, cold start, cancellation, resource accounting, image/stdlib governance, patching,
   queue isolation and evidence collection; and
 - whether stronger gVisor/Kata/microVM isolation materially reduces the measured risk enough to
