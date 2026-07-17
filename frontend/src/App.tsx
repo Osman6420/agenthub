@@ -4,7 +4,7 @@ import { ApiError, BuilderApi } from "./api";
 import { AiAuthoringPanel } from "./AiAuthoringPanel";
 import { ArtifactDraftEditor } from "./ArtifactDraftEditor";
 import { Editor } from "./Editor";
-import type { AiCandidateResult, ArtifactDraft, BuilderInitial, Draft, NodeSchema, OrgOption } from "./types";
+import type { AiCandidateResult, ArtifactDraft, BuilderInitial, CapabilityMissingResult, Draft, NodeSchema, OrgOption } from "./types";
 
 // Top-level bootstrap: pick an organization (from the server-rendered scope), load its
 // node-schema and drafts, then open or create a draft and hand off to the Editor. All
@@ -36,6 +36,21 @@ export function App({
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
   const [scenarioAutoHandled, setScenarioAutoHandled] = useState(false);
   const [transient, setTransient] = useState<{ result: AiCandidateResult; projectId: number } | null>(null);
+  const [capabilityScaffold, setCapabilityScaffold] = useState<{
+    requiredCapability: string; displayName: string; purpose: string;
+    inputSummary: string; configSummary: string; outputSummary: string;
+  } | null>(null);
+
+  const openCapabilityScaffold = useCallback((result: CapabilityMissingResult) => {
+    const suggestion = result.suggestion;
+    const text = (key: string) => typeof suggestion[key] === "string" ? suggestion[key] as string : "";
+    setCapabilityScaffold({
+      requiredCapability: result.required_capability,
+      displayName: text("display_name"), purpose: text("purpose"),
+      inputSummary: text("input_summary"), configSummary: text("config_summary"),
+      outputSummary: text("output_summary"),
+    });
+  }, []);
 
   const org = orgs.find((o) => o.slug === orgSlug);
   const canWrite = !!org?.can_write;
@@ -277,7 +292,9 @@ export function App({
 
       {canWrite && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
         lockedProjectId={initial?.project_id} scenarioId={initial?.scenario_id}
+        onCapabilityMissing={openCapabilityScaffold}
         onGenerated={(result, projectId) => {
+          setCapabilityScaffold(null);
           setTransient({ result, projectId });
           setActive({
             id: 0, organization: orgSlug, organization_id: 0,
@@ -287,6 +304,27 @@ export function App({
             last_published_version: 0, last_published_at: null, revision: 1, can_write: true,
           });
         }} />}
+
+      {capabilityScaffold && <section aria-label="Python node geçici taslağı"
+        style={{ marginTop: 16, padding: 12, border: "1px solid #a16207", borderRadius: 8 }}>
+        <strong>Review bekleyecek Python node önerisi</strong>
+        <div>Eksik yetenek: <code>{capabilityScaffold.requiredCapability}</code></div>
+        <label>Görünen ad<input aria-label="Python node görünen adı"
+          value={capabilityScaffold.displayName}
+          onChange={(event) => setCapabilityScaffold({ ...capabilityScaffold, displayName: event.target.value })} /></label>
+        <label>Amaç<textarea aria-label="Python node amacı" value={capabilityScaffold.purpose}
+          onChange={(event) => setCapabilityScaffold({ ...capabilityScaffold, purpose: event.target.value })} /></label>
+        <label>Input özeti<textarea aria-label="Python node input özeti" value={capabilityScaffold.inputSummary}
+          onChange={(event) => setCapabilityScaffold({ ...capabilityScaffold, inputSummary: event.target.value })} /></label>
+        <label>Config özeti<textarea aria-label="Python node config özeti" value={capabilityScaffold.configSummary}
+          onChange={(event) => setCapabilityScaffold({ ...capabilityScaffold, configSummary: event.target.value })} /></label>
+        <label>Output özeti<textarea aria-label="Python node output özeti" value={capabilityScaffold.outputSummary}
+          onChange={(event) => setCapabilityScaffold({ ...capabilityScaffold, outputSummary: event.target.value })} /></label>
+        <p>Bu yalnız tarayıcı belleğindeki geçici scaffold’dur. Kod üretmez, DB kaydı oluşturmaz,
+          review istemez ve node’u aktive etmez. P2.6.8 author draft API açıldığında normal
+          draft → test → admin review yaşam döngüsüne aktarılacaktır.</p>
+        <button type="button" onClick={() => setCapabilityScaffold(null)}>Öneriyi kapat</button>
+      </section>}
 
       {canWrite && (
         <div className="ah-builder-create" style={{ marginTop: 20, borderTop: "1px solid #262b36", paddingTop: 16 }}>
