@@ -221,6 +221,10 @@ def cancel_workflow_run(*, run: WorkflowRun, consumer: Consumer) -> WorkflowRun:
             consumed_at=timezone.now(),
             updated_at=timezone.now(),
         )
+        # Propagate cancellation to any pending pinned children (P2.6.5, bounded + idempotent).
+        from apps.workflows.composition import cancel_children
+
+        cancel_children(locked)
     return locked
 
 

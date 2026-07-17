@@ -10,3 +10,5 @@ class WorkflowsConfig(AppConfig):
 
     def ready(self) -> None:
         from apps.workflows import signals  # noqa: F401  (connect signal receivers)
+
+        signals._connect_child_resume_receivers()

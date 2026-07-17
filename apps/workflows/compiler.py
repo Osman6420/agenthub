@@ -6,6 +6,8 @@ import ast
 from dataclasses import dataclass
 from typing import Any
 
+from django.conf import settings
+
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
 from apps.workflows.state_mapping import MappingError, compile_mappings
@@ -21,6 +23,15 @@ MAX_BRANCH_STATE_BYTES = 262_144
 MAX_PARALLEL_STATE_BYTES = 1_048_576
 MAX_WAIT_SECONDS = 2_592_000
 MAX_DECISION_ROLES = 16
+
+# Pinned child-composition bounds (P2.6.5 / ADR-0009). A call-site may only *lower* the
+# nesting depth; the closed agent-call action vocabulary maps to attenuated capabilities at
+# admission. These are compile-time bounds; the runtime re-enforces them plus cumulative
+# budgets and an ancestry/depth guard.
+MAX_CHILD_DEPTH = 3
+MAX_AGENT_CALL_DECISIONS = 20
+AGENT_CALL_ACTIONS = frozenset({"retrieve", "tool", "respond"})
+COMPOSITION_NODE_TYPES = frozenset({"subworkflow", "agent_call"})
 
 # Compiled-contract version (ADR-0008). Bumped for the P2.6.1 typed-mapping semantics so a
 # stale v1 compiled graph or checkpoint can never be resumed under the new runtime.
@@ -45,13 +56,26 @@ BUILTIN_NODE_TYPES = frozenset(
         "event_wait",
         "human_task",
         "timer",
+        "subworkflow",
+        "agent_call",
     }
 )
 
 # Nodes that may declare typed ``input_mapping``/``output_mapping`` (P2.6.1). Control/IO nodes
-# never carry mappings so they cannot silently reshape state.
+# never carry mappings so they cannot silently reshape state. Composition nodes require both
+# mappings so a child receives only the mapped minimum input and writes only mapped output.
 MAPPING_ELIGIBLE_NODE_TYPES = frozenset(
-    {"retrieve", "generate", "tool", "custom", "transform", "event_wait", "human_task"}
+    {
+        "retrieve",
+        "generate",
+        "tool",
+        "custom",
+        "transform",
+        "event_wait",
+        "human_task",
+        "subworkflow",
+        "agent_call",
+    }
 )
 
 
@@ -73,9 +97,19 @@ def validate_artifact_body(artifact_type: str, body: dict[str, Any]) -> None:
         _validate_custom_node(body)
 
 
+def _composition_enabled(explicit: bool | None) -> bool:
+    if explicit is not None:
+        return explicit
+    return bool(getattr(settings, "WORKFLOW_COMPOSITION_ENABLED", False))
+
+
 def compile_workflow(
-    body: dict[str, Any], *, allowed_custom_nodes: frozenset[str] | None = None
+    body: dict[str, Any],
+    *,
+    allowed_custom_nodes: frozenset[str] | None = None,
+    allow_composition: bool | None = None,
 ) -> CompiledWorkflow:
+    composition_enabled = _composition_enabled(allow_composition)
     _require_exact_keys(body, {"api_version", "kind", "metadata", "spec"}, "workflow")
     if body.get("api_version") != "agenthub/v1" or body.get("kind") != "Workflow":
         raise WorkflowCompileError("unsupported workflow api_version or kind")
@@ -94,7 +128,7 @@ def compile_workflow(
 
     nodes: dict[str, dict[str, Any]] = {}
     for raw in raw_nodes:
-        node = _validate_node(raw, allowed_custom_nodes)
+        node = _validate_node(raw, allowed_custom_nodes, composition_enabled)
         node_id = node["id"]
         if node_id in nodes:
             raise WorkflowCompileError("node ids must be unique")
@@ -132,7 +166,9 @@ def compile_workflow(
     return CompiledWorkflow(graph=graph, checksum=compute_checksum(graph))
 
 
-def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dict[str, Any]:
+def _validate_node(
+    raw: Any, allowed_custom_nodes: frozenset[str] | None, composition_enabled: bool
+) -> dict[str, Any]:
     node = _mapping(raw, "node")
     _require_exact_keys(
         node,
@@ -144,6 +180,10 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
     node_type = node.get("type")
     if node_type not in BUILTIN_NODE_TYPES:
         raise WorkflowCompileError("unknown node type")
+    if node_type in COMPOSITION_NODE_TYPES and not composition_enabled:
+        # Disabled-by-default: composition is rejected fail-closed until a deployment enables
+        # it after the authorization/RLS/recovery gates pass.
+        raise WorkflowCompileError("composition nodes are not enabled")
     config = node.get("config", {})
     if not isinstance(config, dict):
         raise WorkflowCompileError("node config must be an object")
@@ -253,6 +293,23 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
     elif node_type == "timer":
         _require_exact_keys(config, {"delay_seconds"}, "timer config")
         _wait_seconds(config.get("delay_seconds"), "timer delay_seconds")
+    elif node_type == "subworkflow":
+        # Names a release-manifest child role only (ADR-0009); never an artifact id, url or
+        # latest reference. The release compiler pins the exact child revision/checksum/lineage.
+        _require_exact_keys(config, {"workflow_role", "max_depth"}, "subworkflow config")
+        _identifier(config.get("workflow_role"), "subworkflow workflow_role")
+        _validate_child_depth(config.get("max_depth"))
+        if input_mapping is None or output_mapping is None:
+            raise WorkflowCompileError("subworkflow node requires input_mapping and output_mapping")
+    elif node_type == "agent_call":
+        _require_exact_keys(
+            config, {"agent_role", "max_decisions", "allowed_actions"}, "agent_call config"
+        )
+        _identifier(config.get("agent_role"), "agent_call agent_role")
+        _validate_agent_call_decisions(config.get("max_decisions"))
+        config = {**config, "allowed_actions": _validate_agent_call_actions(config)}
+        if input_mapping is None or output_mapping is None:
+            raise WorkflowCompileError("agent_call node requires input_mapping and output_mapping")
     elif node_type == "retrieve" and config:
         raise WorkflowCompileError("retrieve node does not accept config")
     elif node_type == "parallel":
@@ -502,6 +559,39 @@ def _validate_condition(expression: Any) -> None:
         raise WorkflowCompileError("condition uses a forbidden operation")
     if any(isinstance(node, ast.Name) and node.id.startswith("_") for node in ast.walk(tree)):
         raise WorkflowCompileError("condition uses a forbidden field")
+
+
+def _validate_child_depth(value: Any) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= MAX_CHILD_DEPTH:
+        raise WorkflowCompileError(f"subworkflow max_depth must be 1..{MAX_CHILD_DEPTH}")
+
+
+def _validate_agent_call_decisions(value: Any) -> None:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not 1 <= value <= MAX_AGENT_CALL_DECISIONS
+    ):
+        raise WorkflowCompileError(
+            f"agent_call max_decisions must be 1..{MAX_AGENT_CALL_DECISIONS}"
+        )
+
+
+def _validate_agent_call_actions(config: dict[str, Any]) -> list[str]:
+    actions = config.get("allowed_actions")
+    if not isinstance(actions, list) or not actions:
+        raise WorkflowCompileError("agent_call allowed_actions must be a non-empty list")
+    if any(not isinstance(item, str) for item in actions):
+        raise WorkflowCompileError("agent_call allowed_actions must be strings")
+    unique = set(actions)
+    if len(unique) != len(actions):
+        raise WorkflowCompileError("agent_call allowed_actions must be unique")
+    if not unique <= AGENT_CALL_ACTIONS:
+        raise WorkflowCompileError("agent_call allowed_actions contains an unknown action")
+    if "respond" not in unique:
+        # A call must be able to produce output the parent can map back.
+        raise WorkflowCompileError("agent_call allowed_actions must include respond")
+    return sorted(unique)
 
 
 def _validate_custom_node(body: dict[str, Any]) -> None:

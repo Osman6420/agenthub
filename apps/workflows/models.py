@@ -96,10 +96,22 @@ class WorkflowRunStatus(models.TextChoices):
     WAITING_EVENT = "waiting_event", "Waiting event"
     WAITING_HUMAN = "waiting_human", "Waiting human"
     WAITING_TIMER = "waiting_timer", "Waiting timer"
+    # Paused while a pinned child sub-workflow/agent-call executes as a separate run (P2.6.5).
+    WAITING_CHILD = "waiting_child", "Waiting child"
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
     TIMED_OUT = "timed_out", "Timed out"
     CANCELLED = "cancelled", "Cancelled"
+
+
+WORKFLOW_TERMINAL_STATUSES = frozenset(
+    {
+        WorkflowRunStatus.COMPLETED,
+        WorkflowRunStatus.FAILED,
+        WorkflowRunStatus.TIMED_OUT,
+        WorkflowRunStatus.CANCELLED,
+    }
+)
 
 
 class WorkflowRun(TimeStampedModel):
@@ -154,6 +166,95 @@ class WorkflowRun(TimeStampedModel):
             raise ValidationError("run workflow must match run scenario")
         if self.consumer_id and self.consumer.organization_id != organization_id:
             raise ValidationError("run consumer must match run organization")
+
+
+class ChildLinkStatus(models.TextChoices):
+    ADMITTED = "admitted", "Admitted"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+CHILD_LINK_TERMINAL_STATUSES = frozenset(
+    {ChildLinkStatus.COMPLETED, ChildLinkStatus.FAILED, ChildLinkStatus.CANCELLED}
+)
+
+
+class WorkflowChildLink(TimeStampedModel):
+    """Immutable tenant-scoped parent/child composition link (P2.6.5 / ADR-0009).
+
+    Records the exact server-owned lineage of one ``subworkflow``/``agent_call`` call site: the
+    parent run, the pinned child kind/scenario/release/checksums, the separate child run, the
+    depth, the effective-capability *checksum* (never raw capabilities) and a safe status/reason.
+    It carries direct organization lineage and is provisioned with FORCE RLS. The unique
+    ``(parent_run, call_site)`` constraint makes child admission idempotent; the status guards
+    prevent a late/duplicate child result from mutating a terminal parent.
+    """
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="workflow_child_links"
+    )
+    parent_run = models.ForeignKey(
+        WorkflowRun, on_delete=models.CASCADE, related_name="child_links"
+    )
+    call_site = models.CharField(max_length=64)
+    child_kind = models.CharField(max_length=16)
+    child_scenario = models.ForeignKey(
+        "catalog.Scenario", on_delete=models.PROTECT, related_name="as_child_links"
+    )
+    child_release = models.ForeignKey(
+        "releases.ScenarioRelease", on_delete=models.PROTECT, related_name="as_child_links"
+    )
+    child_release_checksum = models.CharField(max_length=64)
+    child_artifact_checksum = models.CharField(max_length=64)
+    child_workflow_run = models.ForeignKey(
+        WorkflowRun,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="as_child_workflow_link",
+    )
+    child_agent_run = models.ForeignKey(
+        "agents.AgentRun",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="child_link",
+    )
+    child_public_ref = models.CharField(max_length=64, blank=True)
+    effective_capability_checksum = models.CharField(max_length=64)
+    depth = models.PositiveSmallIntegerField()
+    status = models.CharField(
+        max_length=16, choices=ChildLinkStatus.choices, default=ChildLinkStatus.ADMITTED
+    )
+    reason_code = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["parent_run", "call_site"], name="uniq_child_link_parent_call_site"
+            )
+        ]
+        indexes = [models.Index(fields=["organization", "status"])]
+
+    def __str__(self) -> str:
+        return f"child-link:{self.parent_run_id}:{self.call_site}:{self.status}"
+
+    def clean(self) -> None:
+        if self.parent_run_id and self.organization_id != self.parent_run.organization_id:
+            raise ValidationError("child link organization must match parent run organization")
+        if self.child_scenario_id and self.child_scenario.project.organization_id != (
+            self.organization_id
+        ):
+            raise ValidationError("child scenario must belong to the parent organization")
+        if self.child_release_id and self.child_release.organization_id != self.organization_id:
+            raise ValidationError("child release must belong to the parent organization")
+        wf_run = self.child_workflow_run if self.child_workflow_run_id else None
+        if wf_run is not None and wf_run.organization_id != self.organization_id:
+            raise ValidationError("child run must belong to the parent organization")
+        agent_run = self.child_agent_run if self.child_agent_run_id else None
+        if agent_run is not None and agent_run.organization_id != self.organization_id:
+            raise ValidationError("child run must belong to the parent organization")
 
 
 class WorkflowRunEvent(models.Model):

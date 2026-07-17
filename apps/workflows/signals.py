@@ -46,3 +46,55 @@ def _run_id_from_invocation_key(approval: ApprovalRequest) -> int | None:
         return int(parts[1])
     except ValueError:
         return None
+
+
+# --- Child composition resume (P2.6.5) ------------------------------------------------------------
+# A parent workflow node parks in ``waiting_child`` while a pinned child sub-workflow/agent runs
+# as a separate durable run. When that child reaches a terminal state, re-dispatch the parent so it
+# can validate the untrusted child output and resume. Enqueue only after commit, so a rolled-back
+# child transition never resumes the parent. The parent task's terminal guards make a late/duplicate
+# child result a safe no-op against an already-terminal parent.
+def _resume_parent_for_child_link(link: Any) -> None:
+    from apps.workflows.tasks import execute_workflow_run
+
+    parent_run_id = link.parent_run_id
+    organization_id = link.organization_id
+    transaction.on_commit(lambda: execute_workflow_run.delay(parent_run_id, organization_id))
+
+
+def _connect_child_resume_receivers() -> None:
+    """Connect terminal-child → parent-resume receivers (called from ``ready()``)."""
+    from apps.agents.models import TERMINAL_RUN_STATUSES, AgentRun
+    from apps.workflows.models import (
+        WORKFLOW_TERMINAL_STATUSES,
+        WorkflowChildLink,
+        WorkflowRun,
+    )
+
+    def _on_child_workflow(sender: Any, instance: Any, **kwargs: Any) -> None:
+        if instance.status not in WORKFLOW_TERMINAL_STATUSES:
+            return
+        link = WorkflowChildLink.objects.filter(child_workflow_run=instance).first()
+        if link is not None:
+            _resume_parent_for_child_link(link)
+
+    def _on_child_agent(sender: Any, instance: Any, **kwargs: Any) -> None:
+        if instance.status not in TERMINAL_RUN_STATUSES:
+            return
+        link = WorkflowChildLink.objects.filter(child_agent_run=instance).first()
+        if link is not None:
+            _resume_parent_for_child_link(link)
+
+    # weak=False: the receivers are module-scoped closures, so keep a strong reference.
+    post_save.connect(
+        _on_child_workflow,
+        sender=WorkflowRun,
+        dispatch_uid="workflows.child_workflow_resume",
+        weak=False,
+    )
+    post_save.connect(
+        _on_child_agent,
+        sender=AgentRun,
+        dispatch_uid="workflows.child_agent_resume",
+        weak=False,
+    )

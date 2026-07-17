@@ -40,6 +40,7 @@ def issue_execution_context(
     request_id: str,
     allowed_tool_ids: list[int] | None = None,
     ttl_seconds: int | None = None,
+    composition: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = timezone.now()
     ttl = ttl_seconds if ttl_seconds is not None else settings.EXECUTION_CONTEXT_TTL_SECONDS
@@ -56,6 +57,11 @@ def issue_execution_context(
         "issued_at": now.isoformat(),
         "expires_at": (now + timedelta(seconds=ttl)).isoformat(),
     }
+    if composition is not None:
+        # Server-owned attenuated child lineage/budget claim (P2.6.5). Only present for a child
+        # run's fresh context; it is part of the signed payload so it cannot be forged or copied
+        # from the parent. It is never authorization by itself — the child boundary re-authorizes.
+        payload["composition"] = composition
     return {**payload, "signature": _sign(payload)}
 
 

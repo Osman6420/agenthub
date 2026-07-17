@@ -63,6 +63,7 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
                 WorkflowRunStatus.WAITING_EVENT,
                 WorkflowRunStatus.WAITING_HUMAN,
                 WorkflowRunStatus.WAITING_TIMER,
+                WorkflowRunStatus.WAITING_CHILD,
             } and not (run.status == WorkflowRunStatus.RUNNING and run.awaiting_node):
                 return str(run.status)
             resuming = run.status in {
@@ -70,6 +71,7 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
                 WorkflowRunStatus.WAITING_EVENT,
                 WorkflowRunStatus.WAITING_HUMAN,
                 WorkflowRunStatus.WAITING_TIMER,
+                WorkflowRunStatus.WAITING_CHILD,
             }
             run.status = WorkflowRunStatus.RUNNING
             if run.started_at is None:
@@ -94,7 +96,7 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
                 result = execute_graph(run=run)
             except WorkflowPaused:
                 # Commit the durable waiting checkpoint before acknowledging the task.
-                return str(WorkflowRunStatus.WAITING_APPROVAL)
+                return str(run.status)
             except WorkflowParallelPending as pending:
                 if pending.branch_ids:
                     branch_ids = tuple(pending.branch_ids)
@@ -146,7 +148,8 @@ def _finish_error(run_id: int, organization_id: int, code: str) -> str:
             return str(run.status)
         status = (
             WorkflowRunStatus.TIMED_OUT
-            if code in {"WORKFLOW_TIMED_OUT", "WORKFLOW_NODE_TIMED_OUT"}
+            if code
+            in {"WORKFLOW_TIMED_OUT", "WORKFLOW_NODE_TIMED_OUT", "COMPOSITION_CHILD_TIMED_OUT"}
             else WorkflowRunStatus.FAILED
         )
         run.status = status
