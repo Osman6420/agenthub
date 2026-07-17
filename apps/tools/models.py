@@ -32,6 +32,102 @@ class ToolRisk(models.TextChoices):
     HIGH = "high", "High"
 
 
+class McpCatalogSourceStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DISABLED = "disabled", "Disabled"
+
+
+class McpCatalogCandidateStatus(models.TextChoices):
+    QUARANTINED = "quarantined", "Quarantined"
+    REGISTERED = "registered", "Registered"
+    DRIFTED = "drifted", "Drifted"
+    MISSING = "missing", "Missing"
+    REJECTED = "rejected", "Rejected"
+
+
+class McpCatalogSource(TimeStampedModel):
+    """Tenant-owned approved discovery destination; never runtime authority."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="mcp_catalog_sources"
+    )
+    name = models.CharField(max_length=128)
+    destination = models.JSONField()
+    secret_ref = models.CharField(max_length=200, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=McpCatalogSourceStatus.choices,
+        default=McpCatalogSourceStatus.ACTIVE,
+    )
+    generation = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name"], name="uniq_mcp_catalog_source_org_name"
+            )
+        ]
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        mutable = {"status", "generation", "updated_at"}
+        if self.pk is not None:
+            update_fields = set(kwargs.get("update_fields") or [])
+            if not update_fields or not update_fields <= mutable:
+                raise ValueError("MCP catalog source body is immutable; create a new source")
+        super().save(*args, **kwargs)
+
+
+class McpCatalogCandidate(TimeStampedModel):
+    """Bounded immutable discovery metadata held in quarantine until exact review."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="mcp_catalog_candidates"
+    )
+    source = models.ForeignKey(
+        McpCatalogSource, on_delete=models.CASCADE, related_name="candidates"
+    )
+    remote_name = models.CharField(max_length=128)
+    description = models.CharField(max_length=1000, blank=True)
+    input_schema = models.JSONField()
+    metadata_checksum = models.CharField(max_length=64)
+    source_destination_checksum = models.CharField(max_length=64)
+    generation = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=McpCatalogCandidateStatus.choices,
+        default=McpCatalogCandidateStatus.QUARANTINED,
+    )
+    registered_definition = models.ForeignKey(
+        "tools.ToolDefinition",
+        on_delete=models.PROTECT,
+        related_name="catalog_candidates",
+        null=True,
+        blank=True,
+    )
+    reviewed_by = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "remote_name", "metadata_checksum"],
+                name="uniq_mcp_candidate_source_name_checksum",
+            )
+        ]
+        indexes = [models.Index(fields=["organization", "source", "status"])]
+
+    def clean(self) -> None:
+        if self.source_id and self.organization_id != self.source.organization_id:
+            raise ValidationError("catalog candidate organization must match its source")
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        mutable = {"status", "registered_definition", "reviewed_by", "updated_at"}
+        if self.pk is not None:
+            update_fields = set(kwargs.get("update_fields") or [])
+            if not update_fields or not update_fields <= mutable:
+                raise ValueError("MCP catalog candidate metadata is immutable")
+        super().save(*args, **kwargs)
+
+
 class _ImmutableBodyModel(TimeStampedModel):
     """Base enforcing write-once body with a status-only mutation path."""
 
