@@ -164,7 +164,7 @@ def generate_candidate(
     )
     try:
         try:
-            context = (
+            context: dict[str, Any] = (
                 build_authoring_context(project=project, scenario=scenario)
                 if scenario
                 else {"snapshot": {}, "checksum": "", "bytes": 0, "token_estimate": 0}
@@ -178,7 +178,9 @@ def generate_candidate(
             )
         else:
             response = provider.generate(
-                profile_id=profile_id, description=description, contract=contract,
+                profile_id=profile_id,
+                description=description,
+                contract=contract,
                 server_context=context["snapshot"],
             )
         structured = parse_candidate(response.text)
@@ -238,15 +240,15 @@ def generate_candidate(
             }
         if status != "workflow_candidate" or set(structured) != {"status", "candidate"}:
             raise services.BuilderError("model_response_invalid")
-        candidate = structured.get("candidate")
-        if not isinstance(candidate, dict):
+        workflow_candidate = structured.get("candidate")
+        if not isinstance(workflow_candidate, dict):
             raise services.BuilderError("model_response_invalid")
-        services._validated_body(candidate)
+        services._validated_body(workflow_candidate)
         try:
-            validate_workflow_references(candidate, context)
+            validate_workflow_references(workflow_candidate, context)
         except ValueError as exc:
             raise services.BuilderError(str(exc)) from exc
-        diagnostics = services.diagnose_artifact(artifact_type, candidate)
+        diagnostics = services.diagnose_artifact(artifact_type, workflow_candidate)
         _audit(
             actor=actor,
             org=organization,
@@ -266,7 +268,7 @@ def generate_candidate(
         return {
             "status": "workflow_candidate",
             "artifact_type": artifact_type,
-            "candidate": candidate,
+            "candidate": workflow_candidate,
             "diagnostics": diagnostics,
             "prompt_contract": _contract_metadata(contract),
             "authoring_context": {
@@ -388,6 +390,8 @@ def accept_candidate(
         raise services.BuilderError("draft_not_found")
     if scenario is None or draft.scenario_id != scenario.id:
         raise services.BuilderError("scenario_mismatch")
+    if project is None:
+        raise services.BuilderError("project_required")
     live_context = build_authoring_context(project=project, scenario=scenario)
     if authoring_context is not None and (
         not isinstance(authoring_context, dict)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 from django.core.cache import cache
@@ -36,15 +37,15 @@ class FakeAuthoringProvider:
         contract: AuthoringContract,
         server_context: dict | None = None,
     ) -> AuthoringResponse:
-        self.calls.append(
-            {
-                "profile_id": profile_id,
-                "description": description,
-                "artifact_type": contract.artifact_type,
-                "contract_checksum": contract.checksum,
-                "server_context": server_context,
-            }
-        )
+        call: dict[str, Any] = {
+            "profile_id": profile_id,
+            "description": description,
+            "artifact_type": contract.artifact_type,
+            "contract_checksum": contract.checksum,
+        }
+        if server_context is not None:
+            call["server_context"] = server_context
+        self.calls.append(call)
         if contract.artifact_type in {"input_contract", "output_contract"}:
             return AuthoringResponse(
                 json.dumps(

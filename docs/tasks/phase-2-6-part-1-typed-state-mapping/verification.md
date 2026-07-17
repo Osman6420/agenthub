@@ -3,7 +3,9 @@
 ## Status
 
 Implemented and verified on branch `phase-2-6/p2-6-1-state-mapping` (from baseline
-`feat/foundation-sprint-0-1` @ `88fc203`). Not merged to any integration branch.
+`feat/foundation-sprint-0-1` @ `88fc203`) and integrated through merge commit `176a152`.
+Combined evidence is recorded in the
+[first-wave integration verification](../phase-2-6-wave-1-integration/verification.md).
 
 ## Dependencies / decisions closed
 

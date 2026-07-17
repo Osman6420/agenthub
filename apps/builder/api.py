@@ -74,7 +74,9 @@ def _actor_id(request: HttpRequest) -> int:
 @require_http_methods(["POST"])
 def ai_candidates(request: HttpRequest) -> HttpResponse:
     payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=False))
-    _reject_unknown_fields(payload, {"organization", "project_id", "scenario_id", "description", "artifact_type"})
+    _reject_unknown_fields(
+        payload, {"organization", "project_id", "scenario_id", "description", "artifact_type"}
+    )
     org = _resolve_org_in_scope(request, payload.get("organization"))
     _require_author(request, org.id)
     project = _resolve_project(org, payload.get("project_id"))

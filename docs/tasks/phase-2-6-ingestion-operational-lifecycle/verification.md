@@ -3,8 +3,10 @@
 ## Result
 
 P2.6.10 is implemented and verified on branch
-`phase-2-6/p2-6-10-ingestion-lifecycle`, based exactly on commit `88fc203`. It is not merged or
-pushed. The implementation adds no dependency, changes no workflow grammar/public readiness
+`phase-2-6/p2-6-10-ingestion-lifecycle`, based exactly on commit `88fc203`, and integrated through
+merge commit `fd49568`. Combined evidence is recorded in the
+[first-wave integration verification](../phase-2-6-wave-1-integration/verification.md). The
+implementation adds no dependency, changes no workflow grammar/public readiness
 contract/deployment role, performs no database reset and makes no live provider call.
 
 ## Implemented contract

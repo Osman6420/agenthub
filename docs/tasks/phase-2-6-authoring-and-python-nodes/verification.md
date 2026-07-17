@@ -1,7 +1,9 @@
 # Verification: phase-2-6-authoring-and-python-nodes
 
-This record covers only the first P2.6.8 parallel-wave isolation spike, ADR and inert contracts.
-P2.6.8 runtime execution and P2.6.9 are not implemented or verified.
+This record covers only the first P2.6.8 parallel-wave isolation spike, ADR and inert contracts,
+integrated through merge commit `dbc53ef`. P2.6.8 runtime execution is not implemented or verified.
+P2.6.9 is implemented and verified in its separate task and the
+[first-wave integration record](../phase-2-6-wave-1-integration/verification.md).
 
 | Check | Command | Result | Evidence | Notes |
 | --- | --- | --- | --- | --- |

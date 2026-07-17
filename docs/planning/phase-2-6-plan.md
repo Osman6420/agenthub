@@ -431,8 +431,7 @@ Detailed P2.6.10 plan and threat model:
 
 ## P2.6.10 — Durable ingestion job lifecycle and worker/config readiness
 
-**Branch status (2026-07-16): implemented and verified on
-`phase-2-6/p2-6-10-ingestion-lifecycle`; pending ordered integration.** See the
+**Integration status (2026-07-17): implemented, merged and verified through `fd49568`.** See the
 [task verification](../tasks/phase-2-6-ingestion-operational-lifecycle/verification.md) and
 [ADR 0012](../adr/0012-durable-ingestion-build-jobs-and-worker-readiness.md).
 
