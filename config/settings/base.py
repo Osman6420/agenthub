@@ -208,6 +208,14 @@ RUNTIME_EMBEDDING_PROVIDER = env("RUNTIME_EMBEDDING_PROVIDER", default="")
 # real HTTPS adapter. Egress remains gated by the release-pinned destination allowlist.
 TOOL_ADAPTER = env("TOOL_ADAPTER", default="deterministic")
 
+# --- Reviewed Python nodes (P2.6.8) -----------------------------------------
+# Production execution remains disabled until ADR-0011 target-runtime isolation evidence and
+# security/platform approval exist. Enabling the flag without explicit resolver/runner adapters
+# still fails closed; there is no in-process or subprocess production fallback.
+PYTHON_NODE_RUNTIME_ENABLED = env.bool("PYTHON_NODE_RUNTIME_ENABLED", default=False)
+PYTHON_NODE_RESOLVER = env("PYTHON_NODE_RESOLVER", default="")
+PYTHON_NODE_RUNNER = env("PYTHON_NODE_RUNNER", default="")
+
 # --- Agent runtime (Sprint 10) ----------------------------------------------
 # Dotted path to an AgentPlanner implementation. Empty -> the deterministic built-in
 # planner, so tests/CI stay hermetic and no graph code runs. Set to

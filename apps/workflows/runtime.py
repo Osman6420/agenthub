@@ -255,6 +255,18 @@ def _execute_eligible_node(
             "sources": retrieval.get("chunks", []) if isinstance(retrieval, dict) else [],
         }
     if node_type == "custom":
+        if config.get("execution_class", "managed") == "python":
+            from apps.workflows.python_nodes import PythonNodeError, execute_configured_python_node
+
+            try:
+                return execute_configured_python_node(
+                    config=config,
+                    input_payload=input_env if input_env is not None else state,
+                    run=run,
+                    node_id=str(node["id"]),
+                )
+            except PythonNodeError as exc:
+                raise WorkflowRuntimeError(exc.code) from None
         node_ref = str(config["node_ref"])
         custom_config = {key: value for key, value in config.items() if key != "node_ref"}
         # With input_mapping the node sees only its declared envelope, not ambient state.

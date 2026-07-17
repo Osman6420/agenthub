@@ -314,6 +314,15 @@ and CI whenever implementation is added.
 
 ## Review and evidence
 
+Phase 2.6 P2.6.8 isolated-runtime integration adds a dependency-free AST/static policy, exact
+tenant/revision/source/schema/module checksum runner contract, compiler/runtime seam, double
+active-pin resolution, schema plus P2.6.1 safe-patch validation and a bounded separate-process test
+harness. `PYTHON_NODE_RUNTIME_ENABLED` defaults false; empty resolver/runner settings fail closed and
+the bundled subprocess harness is rejected as a production adapter. No production sandbox backend,
+source persistence/control-plane model, dependency, Docker/OpenShift activation or egress was added.
+Production remains blocked on ADR-0011 target-runtime isolation evidence and security/platform/SRE
+approval.
+
 Review the final diff for scope, layering, compatibility, authorization, privacy, failure modes, concurrency, operability, and accidental files. Record every executed command and result in task verification. State checks that could not run and the risk this leaves; never infer success from an agent assertion.
 
 ## Recommended enforcement (not implemented)

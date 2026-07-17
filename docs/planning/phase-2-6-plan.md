@@ -332,6 +332,14 @@ Detailed P2.6.10 plan and threat model:
 
 ## P2.6.8 — Reviewed scenario-author Python nodes
 
+**Runtime integration status (2026-07-17): implemented behind a disabled flag; production
+activation blocked.** The integration branch adds the dependency-free static review, exact
+tenant/revision/source/schema/module checksum pin, separate-process bounded test harness,
+compiler/runtime dispatch seam, double resolution around dispatch, schema and P2.6.1 safe-patch
+validation, and content-free workflow audit outcome. The bundled harness is explicitly rejected as
+a production adapter. Persistence/source storage and a production-isolated runner remain absent;
+activation requires the ADR-0011 target-runtime and owner approvals below.
+
 - Keep the current preinstalled package-backed node as the **managed node** execution class. Preserve
   its existing artifact/registry/runtime compatibility and label it clearly in Studio.
 - Add a distinct **Python node** authoring class for scenario authors. Drafts contain display name,
