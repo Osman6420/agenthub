@@ -26,6 +26,7 @@ def test_only_web_has_external_route_and_all_workloads_are_restricted() -> None:
         "agenthub-worker-ingestion",
         "agenthub-worker-eval",
         "agenthub-beat",
+        "agenthub-python-runner",
     }
     for deployment in deployments:
         pod = deployment["spec"]["template"]["spec"]

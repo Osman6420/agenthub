@@ -11,6 +11,10 @@ import hashlib
 import json
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +32,7 @@ MAX_SOURCE_BYTES = 32_768
 MAX_OUTPUT_BYTES = 262_144
 MAX_MEMORY_BYTES = 64 * 1024 * 1024
 MAX_WALL_SECONDS = 5.0
+MAX_RUNNER_RESPONSE_BYTES = MAX_OUTPUT_BYTES + 4096
 
 _FORBIDDEN_CALLS = frozenset(
     {
@@ -192,6 +197,112 @@ class SubprocessTestRunner:
         if not isinstance(output, dict):
             raise PythonNodeError("PYTHON_NODE_OUTPUT_INVALID")
         return output
+
+
+class OpenShiftPythonNodeRunner:
+    """Bounded client for the dedicated, credentials-free OpenShift runner Service.
+
+    Deployment isolation is an environment attestation, not a property Python can infer. The
+    adapter therefore remains non-production until an operator explicitly attests the target SCC,
+    NetworkPolicy, service-mesh transport and resource-limit evidence.
+    """
+
+    def __init__(self) -> None:
+        self.endpoint = str(settings.PYTHON_NODE_RUNNER_URL).rstrip("/")
+        self.is_production_isolated = bool(settings.PYTHON_NODE_RUNNER_ATTESTED)
+        parsed = urllib.parse.urlsplit(self.endpoint)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            self.endpoint = ""
+
+    def execute(
+        self,
+        *,
+        source: str,
+        config: dict[str, Any],
+        input_payload: dict[str, Any],
+        wall_seconds: float,
+        memory_bytes: int,
+        output_bytes: int,
+        idempotency_key: str,
+        requested_modules: frozenset[str],
+    ) -> dict[str, Any]:
+        if not self.endpoint or not self.is_production_isolated:
+            raise PythonNodeError("PYTHON_NODE_RUNNER_NOT_ATTESTED")
+        idempotency_checksum = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+        body = json.dumps(
+            {
+                "protocol_version": "python-node-runner/v1",
+                "idempotency_key": idempotency_key,
+                "expires_at_unix_ms": int((time.time() + wall_seconds + 2.0) * 1000),
+                "source": source,
+                "config": config,
+                "input": input_payload,
+                "wall_milliseconds": max(1, int(wall_seconds * 1000)),
+                "memory_bytes": memory_bytes,
+                "output_bytes": output_bytes,
+                "requested_modules": sorted(requested_modules),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(body) > MAX_SOURCE_BYTES + MAX_OUTPUT_BYTES:
+            raise PythonNodeError("PYTHON_NODE_REQUEST_TOO_LARGE")
+        request = urllib.request.Request(  # noqa: S310 - operator-owned internal Service URL
+            f"{self.endpoint}/v1/execute",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}), _NoRedirectHandler()
+            )
+            with opener.open(request, timeout=wall_seconds + 1.0) as response:
+                raw = response.read(MAX_RUNNER_RESPONSE_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                raise PythonNodeError("PYTHON_NODE_RUNNER_CAPACITY") from None
+            raise PythonNodeError("PYTHON_NODE_RUNNER_FAILED") from None
+        except (urllib.error.URLError, TimeoutError):
+            raise PythonNodeError("PYTHON_NODE_OUTCOME_UNKNOWN") from None
+        if len(raw) > MAX_RUNNER_RESPONSE_BYTES:
+            raise PythonNodeError("PYTHON_NODE_OUTPUT_LIMIT")
+        try:
+            response_body = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise PythonNodeError("PYTHON_NODE_PROTOCOL_INVALID") from None
+        if not isinstance(response_body, dict):
+            raise PythonNodeError("PYTHON_NODE_PROTOCOL_INVALID")
+        if response_body.get("idempotency_checksum") != idempotency_checksum:
+            raise PythonNodeError("PYTHON_NODE_RESPONSE_BINDING_INVALID")
+        if response_body.get("status") != "ok":
+            code = response_body.get("code")
+            allowed = {
+                "PYTHON_NODE_ENTRYPOINT_INVALID",
+                "PYTHON_NODE_EXECUTION_FAILED",
+                "PYTHON_NODE_MEMORY_LIMIT",
+                "PYTHON_NODE_OUTPUT_LIMIT",
+                "PYTHON_NODE_TIMEOUT",
+            }
+            raise PythonNodeError(code if code in allowed else "PYTHON_NODE_RUNNER_FAILED")
+        output = response_body.get("output")
+        if not isinstance(output, dict):
+            raise PythonNodeError("PYTHON_NODE_OUTPUT_INVALID")
+        return output
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        return None
 
 
 def review_source(source: str, requested_modules: frozenset[str]) -> SecurityReview:

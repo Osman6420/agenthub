@@ -353,9 +353,10 @@ Detailed implementation plan and threat model:
 activation blocked.** The integration branch adds the dependency-free static review, exact
 tenant/revision/source/schema/module checksum pin, separate-process bounded test harness,
 compiler/runtime dispatch seam, double resolution around dispatch, schema and P2.6.1 safe-patch
-validation, and content-free workflow audit outcome. The bundled harness is explicitly rejected as
-a production adapter. Persistence/source storage and a production-isolated runner remain absent;
-activation requires the ADR-0011 target-runtime and owner approvals below.
+validation, and content-free workflow audit outcome. The bundled local harness remains test-only.
+The fixed-pool OpenShift adapter, credentials-free image and four-replica manifests are present but
+inactive; persistence/source storage remains absent and activation requires ADR-0011 target-runtime
+attestation plus the owner approvals below.
 
 - Keep the current preinstalled package-backed node as the **managed node** execution class. Preserve
   its existing artifact/registry/runtime compatibility and label it clearly in Studio.
@@ -379,11 +380,12 @@ activation requires the ADR-0011 target-runtime and owner approvals below.
   runner container/service. Stronger gVisor/Kata/microVM isolation is optional hardening selected
   only if the spike, deployment platform or risk review justifies its operational cost. Python
   AST/import filtering alone is not an isolation boundary.
-- First-wave spike outcome: recommend a separate runner control plane with a per-execution,
-  non-root, credentials-free, network-denied, resource-limited OCI sandbox. Local Docker proves
-  basic namespace/cgroup flags but reports default `runc` with unconfined seccomp, so production
-  acceptance requires target OpenShift RuntimeDefault-or-stricter seccomp/LSM/network/resource
-  evidence. gVisor/Kata/microVM remains conditional; no production dependency is selected here.
+- Owner decision (2026-07-17): use a fixed four-replica, credentials-free OpenShift runner
+  Deployment. Each pod admits one reviewed execution at a time in a fresh child process and recycles
+  its supervisor after 20 executions/15 minutes or integrity failure. AgentHub receives no pod/job
+  lifecycle permission. This reviewed-code tier is weaker than per-execution OCI isolation and stays
+  disabled until target restricted-v2, RuntimeDefault seccomp, default-deny network, authenticated
+  mTLS transport and resource/recycle probes pass. gVisor/Kata/microVM remains conditional.
 - Run mandatory automated security review before human review: syntax/AST and closed-import checks,
   forbidden builtin/reflection checks, source/schema bounds, static security rules, schema fixtures,
   timeout/memory/output probes and a versioned rule-set report. Critical findings block submission or
@@ -639,8 +641,9 @@ Additional owner decisions closed on 2026-07-16 in P2.6.0:
 
 Remaining decisions owned by later parts:
 
-1. Accept ADR-0011's recommended minimum runner after target OpenShift evidence; decide whether
-   shared-kernel residual risk requires gVisor/Kata/microVM.
+1. Render and accept the ADR-0011 fixed four-pod runner on target OpenShift; production activation
+   still requires restricted-v2/seccomp/network/mTLS/resource/recycle evidence. Escalate to
+   per-execution OCI or gVisor/Kata/microVM if the reviewed-code/shared-pod residual risk is rejected.
 2. Approve recommended private content-addressed KMS-encrypted source storage, retention/legal hold
    periods and assigned source-review role.
 3. Approve proposed disable/new-dispatch/in-flight/emergency-kill semantics.

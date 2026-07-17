@@ -1,7 +1,7 @@
 # ADR 0011: Reviewed Python Node Isolation and Lifecycle Boundary
 
-- **Status:** Proposed
-- **Date:** 2026-07-16
+- **Status:** Accepted
+- **Date:** 2026-07-17
 
 ## Context
 
@@ -28,8 +28,9 @@ authorization, or deploy a sandbox.
 | Option | Isolation | Operational fit | Decision |
 | --- | --- | --- | --- |
 | Execute in web/runtime/Celery or a Python subinterpreter | Shared process, credentials and kernel authority | Simple but catastrophic blast radius | Rejected |
-| Long-lived generic runner container sharing application queues/credentials | Process/container separation but ambient authority remains | Easy to operate, unsafe boundary | Rejected |
-| Per-execution locked-down OCI sandbox behind a separate runner control plane | Namespace/cgroup/seccomp boundary; no tenant-facing API or platform credentials in execution workload | Fits Docker/OpenShift primitives; kernel remains shared | Recommended minimum |
+| Long-lived generic runner sharing application queues/credentials | Process separation but ambient authority remains | Easy to operate, unsafe boundary | Rejected |
+| Fixed credentials-free OpenShift runner pool; fresh process per execution | Dedicated pod boundary from AgentHub; reviewed executions share a recycled pod sequentially | Fits target OpenShift permissions and avoids per-call pod scheduling | Accepted first release |
+| Per-execution locked-down OCI pod/job | Stronger namespace/cgroup/seccomp reset for every call | Requires workload-create/delete authority and scheduling latency unavailable in the target operating model | Deferred hardening |
 | gVisor sandboxed OCI runtime | Additional syscall mediation | Not installed or measured in the current environment | Conditional hardening |
 | Kata Containers | Lightweight VM boundary | Requires runtime/node-pool and operational changes | Conditional hardening |
 | Firecracker or other microVM per execution | Strongest evaluated tenant/kernel separation | Highest image, scheduling and observability cost | Conditional high-risk tier |
@@ -47,8 +48,20 @@ authorization, or deploy a sandbox.
 
 ### Minimum runner
 
-Choose a separate runner control plane that creates one short-lived OCI sandbox per execution.
-The sandbox workload, not merely its Python process, must have all of these properties:
+Use a dedicated OpenShift Deployment with four long-lived runner pods behind an internal ClusterIP
+Service. AgentHub receives no Kubernetes workload-create/delete permission. Each pod accepts at most
+one execution at a time and launches a fresh short-lived Python process. The supervisor exits after
+20 executions or 15 minutes, and immediately after cleanup/resource-integrity failure; OpenShift's
+normal container restart supplies a clean writable layer. Full pod replacement remains an operator
+rollout, not application authority.
+
+This is an explicitly reviewed-code execution tier, not a general untrusted-Python service. Sharing
+one recycled pod sequentially is weaker than per-execution OCI isolation. The accepted first-release
+boundary relies on mandatory automated review, exact platform-admin review, a credentials-free pod,
+fresh processes and aggressive recycling. A separate pod/job or stronger runtime is required if
+arbitrary unreviewed code, native extensions or a stronger tenant/kernel boundary is later admitted.
+
+Every runner pod and execution process must have all of these properties:
 
 - fixed digest-pinned minimal image and interpreter/rule-set identity;
 - numeric non-root UID/GID, no privilege escalation, all Linux capabilities dropped;
@@ -62,13 +75,17 @@ The sandbox workload, not merely its Python process, must have all of these prop
 - `RuntimeDefault` or stricter versioned seccomp, default AppArmor/SELinux confinement where the
   platform supports it, and no unconfined fallback;
 - unique execution identity, bounded request/response, expiry, request checksum, idempotency and
-  response binding; the tenant cannot address the runner directly;
+  response binding; the tenant cannot address the runner directly; no automatic retry after a
+  transport timeout or other `outcome_unknown`;
 - image admission, signature/SBOM/vulnerability policy and a named patch/rollback owner before
   production enablement.
 
-The runner control plane may authenticate to an internal dispatch/result channel, but those
-credentials never enter the execution sandbox. It stores or logs no source, raw input/output or
-stderr. Source and input are delivered only for the one execution and removed when it terminates.
+The base runner has no ServiceAccount token, Secret, ConfigMap containing platform coordinates,
+database/broker/object-store access, DNS or egress. Only the runtime-worker pod selector may reach
+its Service. Authenticated encrypted transport must be supplied and attested by the target
+OpenShift service-mesh overlay without mounting its private identity into the runner container.
+The supervisor stores or logs no source, raw input/output or stderr. Source and input exist only in
+bounded request/child-process memory for the execution and are released before the next request.
 
 The local Docker spike proved that non-root UID, read-only root, isolated bounded scratch,
 `--network none`, and CPU/memory/PID flags are available. It did not prove production network
@@ -161,10 +178,11 @@ Required audit evidence commits with the lifecycle transition or the action fail
 
 ## Operational consequences
 
-A dedicated runner queue/control plane, image lifecycle, capacity limits, reconciliation and kill
-switch are required later. Queue state is not execution authority. Metrics use bounded reason codes
-for starts, terminations, saturation and resource-limit breaches; source and raw payloads are never
-labels or telemetry fields.
+A dedicated four-replica Deployment, image lifecycle, concurrency-one admission, capacity limits,
+recycling, reconciliation and kill switch are required. The application does not manage pods.
+Service availability is not execution authority. Metrics use bounded reason codes for starts,
+terminations, saturation and resource-limit breaches; source and raw payloads are never labels or
+telemetry fields.
 
 ## Data and privacy consequences
 
@@ -182,7 +200,8 @@ Checksums are safe metadata but remain tenant-scoped.
 ## Negative consequences
 
 - Shared-kernel OCI isolation retains kernel-escape risk.
-- Per-execution sandboxes add latency, capacity and reconciliation work.
+- Sequential pod reuse retains more cross-execution residual risk than per-execution OCI workloads.
+- A saturated four-pod pool returns a bounded capacity error instead of queueing unbounded work.
 - Two explicit admin decisions add lifecycle friction.
 - KMS/object-store and source-view details remain deployment/authorization approval gates.
 

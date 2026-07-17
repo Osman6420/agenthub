@@ -68,14 +68,17 @@
 - Optional source blob storage selected by ADR.
 
 ADR-0011 recommends a private content-addressed, KMS-encrypted object but does not authorize or
-implement it. The execution sandbox and runner control plane are separate trust zones: only the
-control plane may hold internal channel credentials, and they must never enter the sandbox.
+implement it. The fixed runner pod and its execution process are not separate container trust
+zones. The runner container therefore holds no application/channel credential; target service-mesh
+mTLS terminates outside it. Sequential reuse is accepted only for reviewed code with fresh
+processes, concurrency one and bounded supervisor recycling.
 
 ## Abuse cases
 
 | Threat | Required mitigation |
 | --- | --- |
 | Isolation escape via Python/reflection/runtime behavior | No in-process execution; minimum separate non-root credentials-free/network-denied resource-limited runner, patched image, capability denial and escape tests; stronger gVisor/Kata/microVM only if spike/policy requires |
+| One execution contaminates a later tenant execution | One request per pod, fresh child process, no writable persistent volume, scrubbed environment, supervisor recycle after 20 calls/15 minutes and immediate recycle on integrity failure; cross-execution residue corpus |
 | Source reads DB credentials/env/service token | Runner contains none; minimal one-time request, clean env, no service-account token |
 | Network exfiltration/SSRF | Default-deny runner network at infrastructure layer; no proxy/DNS; egress probes in verification |
 | Filesystem/host escape | Read-only minimal root, isolated bounded scratch, no host mounts/devices, non-root UID |
@@ -99,7 +102,7 @@ control plane may hold internal channel credentials, and they must never enter t
 | Runner request replay/substitution | One-time execution ID, request checksum, expiry/idempotency and response binding |
 | Ambiguous runner outcome retried | Classify `outcome_unknown`; Python node is pure/no side-effect by policy, but no blind duplicate if protocol cannot prove it |
 | Sandbox silently falls back to weaker runtime/seccomp | Pin runtime class/profile and image digest; admission/attestation fails closed; unconfined seccomp is prohibited |
-| Runner control-plane credential reaches tenant code | Separate execution workload and minimal environment; no service-account token/volume; environment/metadata corpus probes |
+| Runner transport identity reaches tenant code | No credential in runner container; service-mesh sidecar/ambient mTLS evidence; no service-account token/Secret/ConfigMap/volume; environment/metadata corpus probes |
 | Disable races queued/started work | Transactionally block new/not-started dispatch; pin already-started attempt; late result cannot mutate terminal state; separate audited emergency kill |
 | Source retained or viewed too broadly | Purpose-specific reviewer predicate, author-own scope, metadata-only admin/auditor, fail-closed view audit, pin/legal-hold-aware purge |
 
@@ -137,8 +140,9 @@ control; source/test/model content is not an audit field.
 - Deterministic bounded context projection and strict model result union.
 - Memory-only transient candidate and explicit atomic save/update/copy.
 - Independent kill switches for authoring, testing, execution and AI generation.
-- Per-execution OCI sandbox is the recommended minimum; the current local `runc` daemon's
-  unconfined seccomp posture is explicitly insufficient for production.
+- The accepted first release is a fixed four-pod reviewed-code tier with a fresh process per call.
+  It is not equivalent to per-execution OCI isolation; unconfined seccomp or missing
+  restricted-v2/network/mTLS/recycle evidence remains insufficient for production.
 - gVisor/Kata/microVM remains conditional until target-runtime evidence or policy requires it; no
   silent fallback is permitted once a stronger runtime is selected.
 
@@ -149,6 +153,8 @@ control; source/test/model content is not an audit field.
 - The current spike proves configuration primitives, not kernel escape resistance or target
   OpenShift enforcement. Shared-kernel residual risk needs explicit security/platform acceptance.
 - Human review may miss malicious logic even when isolation prevents platform compromise.
+- Sequential pod reuse retains cross-execution compromise/residue risk; native extensions and
+  arbitrary unreviewed Python remain prohibited and trigger per-execution OCI/stronger isolation.
 - Source may encode sensitive literals; detection cannot guarantee absence.
 - Model context summaries may omit information and produce lower-quality or missing-capability results.
 - Memory-only candidates are lost on refresh/crash by design.
@@ -164,6 +170,8 @@ control; source/test/model content is not an audit field.
 - Runtime-class/seccomp/LSM attestation and denial of unconfined or silent-fallback workloads.
 - Source-view role, bulk/export denial, retention/legal-hold and fail-closed access-audit tests.
 - Runner protocol replay, expiry, idempotency, cancellation and response-checksum binding.
+- Cross-execution process/filesystem/environment residue, concurrency-one admission, saturation and
+  20-execution/15-minute supervisor recycle behavior.
 - Protected-state overwrite and schema bypass tests.
 - Context foreign-row, secret/endpoint/source/document non-disclosure and size/depth exhaustion.
 - Prompt injection, invented/stale refs and user-supplied tenant/authority attempts.
