@@ -227,6 +227,10 @@ WORKFLOW_COMPOSITION_ENABLED = env.bool("WORKFLOW_COMPOSITION_ENABLED", default=
 PYTHON_NODE_RUNTIME_ENABLED = env.bool("PYTHON_NODE_RUNTIME_ENABLED", default=False)
 PYTHON_NODE_RESOLVER = env("PYTHON_NODE_RESOLVER", default="")
 PYTHON_NODE_RUNNER = env("PYTHON_NODE_RUNNER", default="")
+PYTHON_NODE_RUNNER_URL = env("PYTHON_NODE_RUNNER_URL", default="")
+# This is deliberately separate from feature enablement. Set true only after the exact OpenShift
+# overlay has passed ADR-0011 SCC, NetworkPolicy, mTLS and resource/recycle probes.
+PYTHON_NODE_RUNNER_ATTESTED = env.bool("PYTHON_NODE_RUNNER_ATTESTED", default=False)
 
 # --- Agent runtime (Sprint 10) ----------------------------------------------
 # Dotted path to an AgentPlanner implementation. Empty -> the deterministic built-in
