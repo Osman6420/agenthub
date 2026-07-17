@@ -51,7 +51,8 @@ GRANT SELECT ON
     ingestion_stagedindexbuildoutbox,
     releases_releasecanary, releases_scenariorelease,
     tools_approvalrequest, tools_toolbinding, tools_tooldefinition, tools_toolinvocation,
-    workflows_customnodedefinition, workflows_workflowrun, workflows_workflowrunevent,
+    workflows_customnodedefinition, workflows_workflowbranch, workflows_workflowjoin,
+    workflows_workflowrun, workflows_workflowrunevent,
     workflows_workflowversion
 TO :"app_role";
 
@@ -80,7 +81,7 @@ GRANT INSERT, UPDATE ON
     ingestion_stagedindexbuildoutbox,
     releases_releasecanary, releases_scenariorelease,
     tools_approvalrequest, tools_toolinvocation,
-    workflows_workflowrun
+    workflows_workflowbranch, workflows_workflowjoin, workflows_workflowrun
 TO :"app_role";
 
 -- Explicitly deletable operator-owned drafts and document-plane lifecycle rows.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 
 from celery import shared_task
 from django.db import transaction
@@ -10,11 +11,22 @@ from django.utils import timezone
 
 from apps.artifacts.validation import compute_checksum
 from apps.tenancy.context import set_tenant_context
-from apps.workflows.models import WorkflowRun, WorkflowRunEvent, WorkflowRunStatus
-from apps.workflows.runtime import WorkflowPaused, WorkflowRuntimeError, execute_graph
+from apps.workflows.models import WorkflowBranch, WorkflowRun, WorkflowRunEvent, WorkflowRunStatus
+from apps.workflows.runtime import (
+    WorkflowParallelPending,
+    WorkflowPaused,
+    WorkflowRuntimeError,
+    execute_branch_path,
+    execute_graph,
+)
 from apps.workflows.services import _next_sequence
 
 logger = logging.getLogger(__name__)
+
+
+def _dispatch_branches(branch_ids: tuple[int, ...], organization_id: int) -> None:
+    for branch_id in branch_ids:
+        execute_workflow_branch.delay(branch_id, organization_id)
 
 
 @shared_task(queue="runtime", acks_late=True)
@@ -47,7 +59,7 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
                 WorkflowRunStatus.QUEUED,
                 WorkflowRunStatus.REQUESTED,
                 WorkflowRunStatus.WAITING_APPROVAL,
-            }:
+            } and not (run.status == WorkflowRunStatus.RUNNING and run.awaiting_node):
                 return str(run.status)
             resuming = run.status == WorkflowRunStatus.WAITING_APPROVAL
             run.status = WorkflowRunStatus.RUNNING
@@ -74,6 +86,11 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
             except WorkflowPaused:
                 # Commit the durable waiting checkpoint before acknowledging the task.
                 return str(WorkflowRunStatus.WAITING_APPROVAL)
+            except WorkflowParallelPending as pending:
+                if pending.branch_ids:
+                    branch_ids = tuple(pending.branch_ids)
+                    transaction.on_commit(partial(_dispatch_branches, branch_ids, organization_id))
+                return "parallel_pending"
     except WorkflowRuntimeError as exc:
         return _finish_error(run_id, organization_id, exc.code)
 
@@ -135,3 +152,38 @@ def _finish_error(run_id: int, organization_id: int, code: str) -> str:
             reason_code=code,
         )
     return str(status)
+
+
+@shared_task(queue="runtime", acks_late=True)
+def execute_workflow_branch(branch_id: int, organization_id: int) -> str:
+    """Execute a server-owned branch locator under freshly installed tenant context."""
+    from apps.workflows.parallel import claim_branch, complete_branch
+
+    try:
+        claim = claim_branch(organization_id=organization_id, branch_id=branch_id)
+        if claim != "claimed":
+            return claim
+        with transaction.atomic():
+            set_tenant_context(organization_id)
+            branch = WorkflowBranch.objects.select_related(
+                "run__workflow_version", "run__release", "run__consumer"
+            ).get(pk=branch_id, organization_id=organization_id)
+            result = execute_branch_path(branch=branch)
+        transition = complete_branch(
+            organization_id=organization_id,
+            branch_id=branch_id,
+            idempotency_key=f"branch:{branch_id}:attempt:{branch.attempt_count}",
+            result_state=result,
+        )
+    except (WorkflowBranch.DoesNotExist, WorkflowRun.DoesNotExist):
+        return "missing"
+    except WorkflowRuntimeError as exc:
+        transition = complete_branch(
+            organization_id=organization_id,
+            branch_id=branch_id,
+            idempotency_key=f"branch:{branch_id}:failed",
+            reason_code=exc.code,
+        )
+    if transition.join_status in {"succeeded", "failed"}:
+        execute_workflow_run.delay(branch.run_id, organization_id)
+    return transition.outcome

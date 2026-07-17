@@ -180,3 +180,84 @@ class WorkflowRunEvent(models.Model):
                 raise ValueError("workflow event organization must match run organization")
             self.organization_id = run_org_id
         super().save(*args, **kwargs)  # type: ignore[arg-type]
+
+
+class WorkflowBranchStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    SUCCEEDED = "succeeded", "Succeeded"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class WorkflowBranch(TimeStampedModel):
+    """Tenant-owned durable branch/item and PostgreSQL dispatch intent."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="branches")
+    region_node_id = models.CharField(max_length=64)
+    branch_name = models.CharField(max_length=64)
+    item_ordinal = models.PositiveIntegerField(default=0)
+    workflow_checksum = models.CharField(max_length=64)
+    transition_version = models.CharField(max_length=32)
+    status = models.CharField(
+        max_length=16, choices=WorkflowBranchStatus.choices, default=WorkflowBranchStatus.PENDING
+    )
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    input_state = models.JSONField(default=dict)
+    result_state = models.JSONField(default=dict)
+    result_checksum = models.CharField(max_length=64, blank=True)
+    idempotency_key = models.CharField(max_length=128, blank=True)
+    reason_code = models.CharField(max_length=64, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "region_node_id", "branch_name", "item_ordinal"],
+                name="uniq_workflow_branch_identity",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(attempt_count__lte=3), name="workflow_branch_attempt_lte_3"
+            ),
+        ]
+        indexes = [models.Index(fields=["organization", "status", "created_at"])]
+
+
+class WorkflowJoinStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    SUCCEEDED = "succeeded", "Succeeded"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class WorkflowJoin(TimeStampedModel):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="joins")
+    region_node_id = models.CharField(max_length=64)
+    join_node_id = models.CharField(max_length=64)
+    workflow_checksum = models.CharField(max_length=64)
+    transition_version = models.CharField(max_length=32)
+    mode = models.CharField(max_length=16)
+    required_count = models.PositiveIntegerField()
+    branch_count = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16, choices=WorkflowJoinStatus.choices, default=WorkflowJoinStatus.OPEN
+    )
+    merged_state = models.JSONField(default=dict)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "region_node_id"], name="uniq_workflow_join_region"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(required_count__gte=1), name="workflow_join_required_gte_1"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(branch_count__gte=1), name="workflow_join_branch_count_gte_1"
+            ),
+        ]
+        indexes = [models.Index(fields=["organization", "status", "created_at"])]

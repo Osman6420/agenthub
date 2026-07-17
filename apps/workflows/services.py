@@ -210,6 +210,11 @@ def cancel_workflow_run(*, run: WorkflowRun, consumer: Consumer) -> WorkflowRun:
             event_type="run_cancelled",
             outcome="cancelled",
         )
+        # Typed branch/join records are durable work admission state. Cancellation closes them
+        # in the same transaction; late worker results then observe terminal guards.
+        from apps.workflows.parallel import cancel_parallel_work
+
+        cancel_parallel_work(organization_id=locked.organization_id, run_id=locked.id)
     return locked
 
 
