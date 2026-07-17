@@ -31,6 +31,8 @@ def test_inventory_classifies_direct_tenant_tables() -> None:
     assert inventory["catalog.scenario"].classification == TenantTableClass.PROTECTED
     assert inventory["catalog.scenario"].tenant_column == "organization_id"
     assert inventory["identity.consumertoken"].classification == TenantTableClass.BOOTSTRAP
+    assert inventory["workflows.workflowbranch"].classification == TenantTableClass.PROTECTED
+    assert inventory["workflows.workflowjoin"].classification == TenantTableClass.PROTECTED
     assert "tenancy.organization" not in inventory
 
 

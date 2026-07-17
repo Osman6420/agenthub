@@ -45,7 +45,7 @@ def test_compile_is_deterministic_and_canonical() -> None:
     second = compile_workflow(workflow_body())
     assert first.checksum == second.checksum
     assert first.graph == second.graph
-    assert first.graph["api_version"] == "agenthub/compiled-workflow/v2"
+    assert first.graph["api_version"] == "agenthub/compiled-workflow/v3"
 
 
 @pytest.mark.parametrize(

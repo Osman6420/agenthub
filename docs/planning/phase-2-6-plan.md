@@ -252,6 +252,12 @@ Detailed P2.6.10 plan and threat model:
   only after an all/threshold/fail-fast join policy completes.
 - Redelivery and worker loss tests prove exactly-once state transitions over at-least-once tasks.
 
+Implementation evidence (P2.6.2 branch, 2026-07-17): compiled-workflow/v3 adds closed single-level
+parallel/for_each regions, explicit deterministic joins and conservative hard caps. Additive
+`WorkflowBranch`/`WorkflowJoin` records provide tenant-scoped durable intent, idempotent locked
+transitions, cancellation and terminal/late-result guards. Detailed verification remains in the
+P2.6.2 task record and is accepted only after integration-owner review.
+
 ## P2.6.3 — Durable human, timer and event waits
 
 - Generalize the existing tool-approval checkpoint without weakening its invariants.

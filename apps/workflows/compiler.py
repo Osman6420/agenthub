@@ -13,11 +13,17 @@ from apps.workflows.state_mapping import MappingError, compile_mappings
 MAX_NODES = 50
 MAX_EDGES = 100
 MAX_IDENTIFIER_LENGTH = 64
+MAX_PARALLEL_BRANCHES = 16
+MAX_FOR_EACH_ITEMS = 100
+MAX_PARALLEL_CONCURRENCY = 16
+MAX_PARALLEL_DURATION_SECONDS = 300
+MAX_BRANCH_STATE_BYTES = 262_144
+MAX_PARALLEL_STATE_BYTES = 1_048_576
 
 # Compiled-contract version (ADR-0008). Bumped for the P2.6.1 typed-mapping semantics so a
 # stale v1 compiled graph or checkpoint can never be resumed under the new runtime.
-COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v2"
-COMPILER_VERSION = "workflow-compiler/v2"
+COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v3"
+COMPILER_VERSION = "workflow-compiler/v3"
 
 BUILTIN_NODE_TYPES = frozenset(
     {
@@ -31,6 +37,9 @@ BUILTIN_NODE_TYPES = frozenset(
         "custom",
         "tool",
         "transform",
+        "parallel",
+        "join",
+        "for_each",
     }
 )
 
@@ -93,6 +102,7 @@ def compile_workflow(
     for edge in edges:
         adjacency[edge["from"]].append(edge["to"])
     _assert_acyclic(adjacency)
+    _validate_parallel_regions(nodes, edges, adjacency)
     reachable = _reachable(input_node, adjacency)
     if reachable != set(nodes):
         raise WorkflowCompileError("workflow contains unreachable nodes")
@@ -185,6 +195,46 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
             _identifier(config.get("model_profile_ref"), "generate model_profile_ref")
     elif node_type == "retrieve" and config:
         raise WorkflowCompileError("retrieve node does not accept config")
+    elif node_type == "parallel":
+        _require_exact_keys(
+            config,
+            {"join", "max_concurrency", "max_duration_seconds", "max_state_bytes"},
+            "parallel config",
+            optional={"max_duration_seconds", "max_state_bytes"},
+        )
+        _identifier(config.get("join"), "parallel join")
+        _bounded_int(config.get("max_concurrency"), 1, MAX_PARALLEL_CONCURRENCY)
+        _bounded_int(
+            config.get("max_duration_seconds", MAX_PARALLEL_DURATION_SECONDS),
+            1,
+            MAX_PARALLEL_DURATION_SECONDS,
+        )
+        _bounded_int(
+            config.get("max_state_bytes", MAX_PARALLEL_STATE_BYTES),
+            1,
+            MAX_PARALLEL_STATE_BYTES,
+        )
+    elif node_type == "for_each":
+        _require_exact_keys(
+            config,
+            {"items_path", "item_path", "max_items", "max_concurrency", "body_entry", "join"},
+            "for_each config",
+        )
+        from apps.workflows.state_mapping import parse_pointer
+
+        try:
+            parse_pointer(config.get("items_path"))
+            parse_pointer(config.get("item_path"))
+        except MappingError as exc:
+            raise WorkflowCompileError(exc.code) from None
+        _bounded_int(config.get("max_items"), 1, MAX_FOR_EACH_ITEMS)
+        _bounded_int(config.get("max_concurrency"), 1, MAX_PARALLEL_CONCURRENCY)
+        if config["max_concurrency"] > config["max_items"]:
+            raise WorkflowCompileError("WORKFLOW_BUDGET_EXCEEDED")
+        _identifier(config.get("body_entry"), "for_each body_entry")
+        _identifier(config.get("join"), "for_each join")
+    elif node_type == "join":
+        _validate_join_config(config)
     elif node_type in {"input", "validate_contract", "end"} and config:
         raise WorkflowCompileError(f"{node_type} node does not accept config")
 
@@ -229,19 +279,122 @@ def _compile_one_mapping(
 
 def _validate_edge(raw: Any, nodes: dict[str, dict[str, Any]]) -> dict[str, Any]:
     edge = _mapping(raw, "edge")
-    _require_exact_keys(edge, {"from", "to", "when"}, "edge", optional={"when"})
+    _require_exact_keys(edge, {"from", "to", "when", "branch"}, "edge", optional={"when", "branch"})
     source = _identifier(edge.get("from"), "edge from")
     target = _identifier(edge.get("to"), "edge to")
     if source not in nodes or target not in nodes:
         raise WorkflowCompileError("edge references an unknown node")
     result: dict[str, Any] = {"from": source, "to": target}
+    if "when" in edge and "branch" in edge:
+        raise WorkflowCompileError("WORKFLOW_ROUTE_INVALID")
     if "when" in edge:
         if not isinstance(edge["when"], bool):
             raise WorkflowCompileError("edge when must be boolean")
         if nodes[source]["type"] != "condition":
             raise WorkflowCompileError("only condition edges may define when")
         result["when"] = edge["when"]
+    if "branch" in edge:
+        if (
+            nodes[source]["type"] not in {"parallel", "for_each"}
+            and nodes[target]["type"] != "join"
+        ):
+            raise WorkflowCompileError("WORKFLOW_ROUTE_INVALID")
+        result["branch"] = _identifier(edge["branch"], "edge branch")
     return result
+
+
+def _validate_join_config(config: dict[str, Any]) -> None:
+    _require_exact_keys(
+        config, {"mode", "branches", "merge", "required"}, "join config", optional={"required"}
+    )
+    mode = config.get("mode")
+    if mode not in {"all", "threshold", "fail_fast"}:
+        raise WorkflowCompileError("WORKFLOW_JOIN_POLICY_INVALID")
+    branches = config.get("branches")
+    if not isinstance(branches, list) or not 1 <= len(branches) <= MAX_PARALLEL_BRANCHES:
+        raise WorkflowCompileError("WORKFLOW_JOIN_POLICY_INVALID")
+    canonical = [_identifier(item, "join branch") for item in branches]
+    if len(set(canonical)) != len(canonical):
+        raise WorkflowCompileError("WORKFLOW_JOIN_POLICY_INVALID")
+    required = config.get("required")
+    if mode == "threshold":
+        if (
+            not isinstance(required, int)
+            or isinstance(required, bool)
+            or not 1 <= required <= len(canonical)
+        ):
+            raise WorkflowCompileError("WORKFLOW_JOIN_POLICY_INVALID")
+    elif "required" in config:
+        raise WorkflowCompileError("WORKFLOW_JOIN_POLICY_INVALID")
+    try:
+        merge = compile_mappings(config.get("merge"), restrict_destination=True)
+    except MappingError as exc:
+        raise WorkflowCompileError(exc.code) from None
+    owned = tuple(f"/branches/{name}/" for name in canonical)
+    if any(not entry["from"].startswith(owned) for entry in merge):
+        raise WorkflowCompileError("WORKFLOW_JOIN_POLICY_INVALID")
+    config["branches"] = canonical
+    config["merge"] = [dict(item) for item in merge]
+
+
+def _validate_parallel_regions(
+    nodes: dict[str, dict[str, Any]], edges: list[dict[str, Any]], adjacency: dict[str, list[str]]
+) -> None:
+    owners = [node for node in nodes.values() if node["type"] in {"parallel", "for_each"}]
+    branch_edges = [edge for edge in edges if "branch" in edge]
+    for owner in owners:
+        join_id = owner["config"]["join"]
+        join = nodes.get(join_id)
+        if join is None or join["type"] != "join":
+            raise WorkflowCompileError("WORKFLOW_PARALLEL_REGION_INVALID")
+        outgoing = [edge for edge in branch_edges if edge["from"] == owner["id"]]
+        names = [edge["branch"] for edge in outgoing]
+        expected = join["config"]["branches"]
+        if owner["type"] == "for_each":
+            if (
+                names != ["for_each_items"]
+                or expected != ["for_each_items"]
+                or outgoing[0]["to"] != owner["config"]["body_entry"]
+            ):
+                raise WorkflowCompileError("WORKFLOW_PARALLEL_REGION_INVALID")
+        elif (
+            not names
+            or len(names) > MAX_PARALLEL_BRANCHES
+            or names != expected
+            or len(set(names)) != len(names)
+        ):
+            raise WorkflowCompileError("WORKFLOW_PARALLEL_REGION_INVALID")
+        for edge in outgoing:
+            current = edge["to"]
+            seen: set[str] = set()
+            while current != join_id:
+                if current in seen or nodes[current]["type"] in {"parallel", "for_each", "join"}:
+                    raise WorkflowCompileError("WORKFLOW_PARALLEL_REGION_INVALID")
+                seen.add(current)
+                output_mapping = nodes[current].get("output_mapping")
+                if owner["type"] == "parallel" and (
+                    output_mapping is None
+                    or any(
+                        not item["to"].startswith(f"/branches/{edge['branch']}/")
+                        for item in output_mapping
+                    )
+                ):
+                    raise WorkflowCompileError("WORKFLOW_PARALLEL_REGION_INVALID")
+                next_edges = [item for item in edges if item["from"] == current]
+                if len(next_edges) != 1:
+                    raise WorkflowCompileError("WORKFLOW_PARALLEL_REGION_INVALID")
+                nxt = next_edges[0]
+                if nxt.get("branch") != edge["branch"]:
+                    raise WorkflowCompileError("WORKFLOW_PARALLEL_REGION_INVALID")
+                current = nxt["to"]
+    if branch_edges and not owners:
+        raise WorkflowCompileError("WORKFLOW_PARALLEL_REGION_INVALID")
+
+
+def _bounded_int(value: Any, minimum: int, maximum: int) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
+        raise WorkflowCompileError("WORKFLOW_BUDGET_EXCEEDED")
+    return value
 
 
 def _validate_condition(expression: Any) -> None:

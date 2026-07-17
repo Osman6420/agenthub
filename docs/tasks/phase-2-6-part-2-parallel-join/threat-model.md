@@ -115,6 +115,14 @@ closure or recovery can obscure who/what changed the run.
 - No generic retry of side effects or `outcome_unknown`
 - Redacted stable events, bounded metrics, no state values or business IDs in labels
 - Matching compiler/worker contract checks and disabled-by-default rollout
+- Initial nested regions are rejected; authored limits can only reduce the hard caps of 16 static
+  branches, 100 items, concurrency 16, 300 seconds, three attempts, 256 KiB per result and 1 MiB
+  aggregate branch state.
+- `WorkflowBranch` is the durable dispatch intent. Broker messages contain only organization and
+  row locators; every claim/result transaction reinstalls tenant context and re-resolves immutable
+  run/release/checksum/region ownership under a row lock.
+- Early join closure cancels remaining work. Duplicate and late completion commands are stable
+  no-ops and never apply merge mappings or mutate terminal run state.
 
 ## Residual risks
 

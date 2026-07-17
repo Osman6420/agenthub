@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
 from types import SimpleNamespace
@@ -29,6 +30,8 @@ from apps.workflows.state_mapping import (
     MappingError,
     apply_output_mapping,
     build_input_envelope,
+    parse_pointer,
+    resolve_pointer,
 )
 
 MAX_NODE_SECONDS = 30
@@ -42,6 +45,14 @@ class WorkflowRuntimeError(RuntimeError):
 
 class WorkflowPaused(Exception):
     """Signals that a run is suspended awaiting a tool approval decision."""
+
+
+class WorkflowParallelPending(Exception):
+    """Signals that durable branch intents replaced the current worker execution."""
+
+    def __init__(self, branch_ids: list[int]) -> None:
+        self.branch_ids = branch_ids
+        super().__init__("parallel_pending")
 
 
 @dataclass(frozen=True)
@@ -104,6 +115,39 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
         if time.time() > run.deadline_at.timestamp():
             raise WorkflowRuntimeError("WORKFLOW_TIMED_OUT")
         node = nodes[current]
+        if node["type"] in {"parallel", "for_each"}:
+            from apps.workflows.models import WorkflowBranch
+            from apps.workflows.parallel import open_parallel_region
+
+            join = open_parallel_region(
+                organization_id=run.organization_id, run_id=run.id, region_node_id=current
+            )
+            run.awaiting_node = join.join_node_id
+            run.save(update_fields=["awaiting_node", "updated_at"])
+            branch_ids = list(
+                WorkflowBranch.objects.filter(run_id=run.id, region_node_id=current)
+                .order_by("branch_name", "item_ordinal")
+                .values_list("id", flat=True)
+            )
+            raise WorkflowParallelPending(branch_ids)
+        if node["type"] == "join" and resuming:
+            from apps.workflows.models import WorkflowJoin, WorkflowJoinStatus
+
+            join = WorkflowJoin.objects.get(run_id=run.id, join_node_id=current)
+            if join.status == WorkflowJoinStatus.FAILED:
+                raise WorkflowRuntimeError("WORKFLOW_JOIN_FAILED")
+            if join.status != WorkflowJoinStatus.SUCCEEDED:
+                raise WorkflowParallelPending([])
+            state = deepcopy(join.merged_state)
+            run.awaiting_node = ""
+            run.save(update_fields=["awaiting_node", "updated_at"])
+            resuming = False
+            executed.append(current)
+            outgoing = edges[current]
+            if len(outgoing) != 1:
+                raise WorkflowRuntimeError("WORKFLOW_EDGE_INVALID")
+            current = outgoing[0]["to"]
+            continue
         if node["type"] in MAPPING_ELIGIBLE_NODE_TYPES:
             # May raise WorkflowPaused (tool approval pending). Applies typed mappings or the
             # legacy default write, atomically (copy-on-success) on the returned state.
@@ -152,6 +196,44 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
             raise WorkflowRuntimeError("OUTPUT_CONTRACT_VIOLATION") from None
     _validate_output_policy(run.release, output)
     return WorkflowResult(output=output, state=state, executed_nodes=tuple(executed))
+
+
+def execute_branch_path(*, branch: Any) -> Any:
+    """Execute only the immutable graph path owned by a durable branch/item."""
+    run = branch.run
+    graph = run.workflow_version.compiled_graph
+    nodes = {item["id"]: item for item in graph["nodes"]}
+    region = nodes[branch.region_node_id]
+    branch_name = branch.branch_name
+    edge = next(
+        item
+        for item in graph["edges"]
+        if item["from"] == branch.region_node_id and item.get("branch") == branch_name
+    )
+    current = edge["to"]
+    state = deepcopy(branch.input_state)
+    while current != region["config"]["join"]:
+        run.refresh_from_db(fields=["status", "deadline_at"])
+        if run.status == WorkflowRunStatus.CANCELLED:
+            raise WorkflowRuntimeError("WORKFLOW_CANCELLED")
+        node = nodes[current]
+        if node["type"] not in MAPPING_ELIGIBLE_NODE_TYPES:
+            raise WorkflowRuntimeError("WORKFLOW_PARALLEL_REGION_INVALID")
+        state = _run_eligible_node(node=node, state=state, run=run, resuming=False)
+        outgoing = [
+            item
+            for item in graph["edges"]
+            if item["from"] == current and item.get("branch") == branch_name
+        ]
+        if len(outgoing) != 1:
+            raise WorkflowRuntimeError("WORKFLOW_PARALLEL_REGION_INVALID")
+        current = outgoing[0]["to"]
+    if region["type"] == "parallel":
+        try:
+            return resolve_pointer(state, parse_pointer(f"/branches/{branch_name}/output"))
+        except MappingError as exc:
+            raise WorkflowRuntimeError(exc.code) from None
+    return state.get("result", state.get("output", state))
 
 
 def _validate_output_policy(release: Any, output: dict[str, Any]) -> None:

@@ -257,10 +257,31 @@ migration or implicit reset is authorized.
 7. Which operator reconciliation actions are necessary in P2.6.2, and do any require separate
    authorization/public-interface approval?
 
+## Implementation decisions (2026-07-17)
+
+- Use workflow-specific `WorkflowBranch` and `WorkflowJoin` durable records. A branch row is also
+  the PostgreSQL-authoritative dispatch intent; `pending` means committed but not yet claimed and
+  the bounded reconciler republishes only those server-owned row identifiers. This avoids a shared
+  outbox contract owned by another lane.
+- Hard maxima are 16 static branches, 100 `for_each` items, concurrency 16, duration 300 seconds,
+  three delivery attempts, 256 KiB per branch result and 1 MiB aggregate result state. Authored
+  values may reduce but never raise these limits; runtime transitions enforce them again.
+- Nested `parallel`/`for_each` regions are rejected in this first increment. Region ownership is
+  therefore single-level and statically provable without redefining the shared state machine.
+- `fail_fast` closes on the first failed, timed-out or cancelled branch. `threshold` closes after
+  the compiled success count is reached or fails when the remaining branch count makes it
+  impossible. `all` requires every branch to succeed.
+- Early closure marks pending/running non-required rows cancelled. A late/duplicate completion is a
+  stable no-op (`late`/`duplicate`) and cannot change the join or terminal run.
+- Branch result payload follows the owning run retention in this increment. No purge interface is
+  added; changing retention remains an integration/operations decision.
+- Reconciliation is an internal bounded service/task only. No new operator/public recovery action
+  or authorization surface is introduced.
+
 ## Status
 
-Planned. Implementation is blocked on the merged/verified P2.6.1 mapping seam and closure of the
-durable dispatch, numeric budget, nested-region and early-join lifecycle decisions.
+In progress. P2.6.1 is present on base commit `c4d47b1`; dispatch, numeric budget, nesting and
+early-join lifecycle decisions are closed above before implementation.
 
 ## Completion criteria
 

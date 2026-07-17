@@ -706,12 +706,31 @@ Mapping yalnız veri taşır; hiçbir zaman yetki taşımaz ve expression/templa
   Unicode-confusable farkı gözetmeksizin — reddedilir (`WORKFLOW_PATH_PROTECTED`).
 - İki giriş aynı veya çakışan (ata/alt) hedefe yazamaz (`WORKFLOW_MAPPING_CONFLICT`).
 - Runtime output mapping’i copy-on-success uygular: bir giriş çözülmez/tip uyuşmazsa state kısmen
-  değişmez. Compiled workflow contract versiyonu `agenthub/compiled-workflow/v2`’dir; eski compiled
+  değişmez. Compiled workflow contract versiyonu `agenthub/compiled-workflow/v3`’dir; eski compiled
   graph/checkpoint yeni semantikle çalıştırılamaz.
 
 Stabil diagnostic kodları: `WORKFLOW_PATH_INVALID`, `WORKFLOW_PATH_PROTECTED`,
 `WORKFLOW_MAPPING_CONFLICT`, `WORKFLOW_MAPPING_INVALID`, `WORKFLOW_MAPPING_MISSING`,
 `WORKFLOW_MAPPING_TYPE_MISMATCH`.
+
+### 8.4.2 Parallel, join ve bounded `for_each`
+
+`parallel` bir named `branch` edge seti ve tek bir `join` sahibi olur. Branch sırası join
+`config.branches` listesinde explicit’tir; branch output mapping yalnız kendi
+`/branches/<branch>/...` namespace’ine yazabilir. `join.merge` zorunludur; aynı/ata-alt hedef
+çakışmaları compile-time `WORKFLOW_MAPPING_CONFLICT` verir. Completion order state’i etkilemez ve
+implicit last-writer-wins yoktur.
+
+`join.mode` yalnız `all`, `threshold` veya `fail_fast`; `threshold` için `required` zorunludur.
+`for_each` restricted `items_path`/`item_path`, `body_entry`, `join`, `max_items` ve
+`max_concurrency` ister. Hard cap’ler: 16 static branch, 100 item, concurrency 16, 300 saniye,
+branch başına 256 KiB ve aggregate 1 MiB state, en fazla üç delivery attempt. İlk increment nested
+parallel/for_each kabul etmez.
+
+Branch/item state PostgreSQL’de ayrı tenant-owned kayıtlardır. Celery mesajı yalnız server-owned row
+locator taşır; worker her claim/result transaction’ında tenant context’i yeniden kurar.
+Duplicate/late result closed join veya terminal run’ı değiştiremez; cancellation pending/running
+branch’leri kapatır.
 
 ### 8.5 Tam RAG workflow örneği
 
