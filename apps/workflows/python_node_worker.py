@@ -77,7 +77,11 @@ def _apply_posix_memory_limit(memory_bytes: int) -> None:
         import resource
     except ImportError:
         return
-    resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+    setrlimit = getattr(resource, "setrlimit", None)
+    address_space_limit = getattr(resource, "RLIMIT_AS", None)
+    if not callable(setrlimit) or address_space_limit is None:
+        return
+    setrlimit(address_space_limit, (memory_bytes, memory_bytes))
 
 
 def _emit(code: str) -> int:
