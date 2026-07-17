@@ -225,6 +225,24 @@ def cancel_workflow_run(*, run: WorkflowRun, consumer: Consumer) -> WorkflowRun:
         from apps.workflows.composition import cancel_children
 
         cancel_children(locked)
+        from apps.workflows.models import (
+            WorkflowCompensationStatus,
+            WorkflowNodeAttemptStatus,
+            WorkflowRecoveryStatus,
+        )
+
+        locked.node_attempts.filter(
+            status__in=[WorkflowNodeAttemptStatus.RUNNING, WorkflowNodeAttemptStatus.RETRY_WAIT]
+        ).update(status=WorkflowNodeAttemptStatus.CANCELLED, finished_at=timezone.now())
+        locked.compensation_entries.filter(
+            status__in=[WorkflowCompensationStatus.PENDING, WorkflowCompensationStatus.RUNNING]
+        ).update(status=WorkflowCompensationStatus.CANCELLED, finished_at=timezone.now())
+        locked.recovery_cases.filter(
+            status__in=[
+                WorkflowRecoveryStatus.OPEN,
+                WorkflowRecoveryStatus.AWAITING_SECOND_APPROVAL,
+            ]
+        ).update(status=WorkflowRecoveryStatus.CANCELLED)
     return locked
 
 

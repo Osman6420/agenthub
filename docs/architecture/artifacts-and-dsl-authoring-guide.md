@@ -708,7 +708,7 @@ Mapping yalnız veri taşır; hiçbir zaman yetki taşımaz ve expression/templa
 - Runtime output mapping’i copy-on-success uygular: bir giriş çözülmez/tip uyuşmazsa state kısmen
   değişmez. Durable wait düğümleri `event_wait`, `human_task` ve `timer` olarak kapalı şemalarla
   tanımlanır; event ve insan girdileri yalnız açık `output_mapping` üzerinden state'e girer. Compiled
-  workflow contract versiyonu `agenthub/compiled-workflow/v3`’tür; eski compiled
+  workflow contract versiyonu `agenthub/compiled-workflow/v4`’tür; eski compiled
   graph/checkpoint yeni semantikle çalıştırılamaz.
 
 Stabil diagnostic kodları: `WORKFLOW_PATH_INVALID`, `WORKFLOW_PATH_PROTECTED`,
@@ -733,6 +733,29 @@ Branch/item state PostgreSQL’de ayrı tenant-owned kayıtlardır. Celery mesaj
 locator taşır; worker her claim/result transaction’ında tenant context’i yeniden kurar.
 Duplicate/late result closed join veya terminal run’ı değiştiremez; cancellation pending/running
 branch’leri kapatır.
+
+### 8.4.3 Failure route, retry ve compensation
+
+Compiled workflow sözleşmesi `agenthub/compiled-workflow/v4` ile server-owned failure taxonomy
+kullanır: `validation`, `authorization`, `permanent`, `transient`, `outcome_unknown`. Bilinmeyen
+kodlar fail-closed biçimde `permanent` sınıfındadır. Edge üzerindeki `on_error` exact sınıf veya
+`any` olabilir; exact route önceliklidir ve aynı kaynak/sınıf için iki route compile edilmez.
+
+Node `retry_policy` alanı yalnız `max_attempts: 1..3`, `backoff_seconds: 0..300`,
+`retry_on: ["transient"]` ve `idempotent: true` kapalı sözleşmesini kabul eder. İlk sürüm tool
+node retry’sini tamamen reddeder: bir author beyanı dış yan etkinin idempotent/reconciled olduğunu
+kanıtlamaz. `outcome_unknown`, authorization, validation ve permanent hata otomatik retry edilmez.
+
+Side-effecting tool node optional `compensation` ile aynı compiled graph içindeki governed
+tool/transform node’unu pinler. Target explicit input mapping taşır. Başarılı yan etkiler durable
+stack’e yazılır; terminal failure’da ters sırayla ve idempotent locator’larla çalışır. Compensation
+belirsiz/başarısız olursa otomasyon durur ve sistem recovery kaydı açar.
+
+Recovery kaydını kullanıcı oluşturamaz. Organization admin yalnız kendi organizasyonunda,
+platform admin tüm organizasyonlarda exact revision/checksum’a bağlı sabit bir karar verebilir;
+scenario author karar veremez, auditor salt okunurdur. Hiçbir admin state düzenleyemez, node
+seçemez, yeni tool çağrısı başlatamaz veya “retry anyway” isteyemez. Yüksek riskli compensation
+devamı iki farklı admin onayı gerektirir.
 
 ### 8.5 Tam RAG workflow örneği
 

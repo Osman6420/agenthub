@@ -59,6 +59,14 @@ class WorkflowParallelPending(Exception):
         super().__init__("parallel_pending")
 
 
+class WorkflowRetryPending(Exception):
+    """Signals that a durable node attempt must be redelivered after bounded backoff."""
+
+    def __init__(self, countdown_seconds: int) -> None:
+        self.countdown_seconds = countdown_seconds
+        super().__init__("retry_pending")
+
+
 @dataclass(frozen=True)
 class WorkflowResult:
     output: dict[str, Any]
@@ -119,12 +127,23 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
         if time.time() > run.deadline_at.timestamp():
             raise WorkflowRuntimeError("WORKFLOW_TIMED_OUT")
         node = nodes[current]
+        if resuming and bool(getattr(run, "id", 0)):
+            recovery_target = _consume_recovery_decision(
+                run=run, node=node, nodes=nodes, edges=graph["edges"], state=state
+            )
+            if recovery_target is not None:
+                run.awaiting_node = ""
+                run.save(update_fields=["awaiting_node", "updated_at"])
+                resuming = False
+                executed.append(current)
+                current = recovery_target
+                continue
         if resuming and node["type"] in {"event_wait", "human_task", "timer"}:
             run.awaiting_node = ""
             run.save(update_fields=["awaiting_node", "updated_at"])
             resuming = False
             executed.append(current)
-            outgoing = edges[current]
+            outgoing = [edge for edge in edges[current] if "on_error" not in edge]
             if len(outgoing) != 1:
                 raise WorkflowRuntimeError("WORKFLOW_EDGE_INVALID")
             current = outgoing[0]["to"]
@@ -157,7 +176,7 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
             run.save(update_fields=["awaiting_node", "updated_at"])
             resuming = False
             executed.append(current)
-            outgoing = edges[current]
+            outgoing = [edge for edge in edges[current] if "on_error" not in edge]
             if len(outgoing) != 1:
                 raise WorkflowRuntimeError("WORKFLOW_EDGE_INVALID")
             current = outgoing[0]["to"]
@@ -165,14 +184,75 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
         if node["type"] in MAPPING_ELIGIBLE_NODE_TYPES:
             # May raise WorkflowPaused (tool approval pending). Applies typed mappings or the
             # legacy default write, atomically (copy-on-success) on the returned state.
-            state = _run_eligible_node(node=node, state=state, run=run, resuming=resuming)
+            attempt = None
+            if bool(getattr(run, "id", 0)) and node["type"] not in {
+                "event_wait",
+                "human_task",
+            }:
+                from apps.workflows.recovery_services import start_node_attempt
+
+                attempt = start_node_attempt(run=run, node_id=current)
+            try:
+                state = _run_eligible_node(node=node, state=state, run=run, resuming=resuming)
+            except WorkflowRuntimeError as exc:
+                failure_class, retry_allowed, countdown = _record_node_failure(
+                    run=run, node=node, state=state, attempt=attempt, code=exc.code
+                )
+                if retry_allowed:
+                    run.awaiting_node = current
+                    run.redacted_state = state
+                    run.save(update_fields=["awaiting_node", "redacted_state", "updated_at"])
+                    raise WorkflowRetryPending(countdown) from None
+                route = _error_route(
+                    edges=graph["edges"], node_id=current, failure_class=failure_class
+                )
+                if route is not None:
+                    state["_recovery"] = {
+                        "failure_class": failure_class,
+                        "reason_code": exc.code,
+                        "failed_node": current,
+                    }
+                    current = route
+                    resuming = False
+                    continue
+                if failure_class == "outcome_unknown" and bool(getattr(run, "id", 0)):
+                    from apps.workflows.recovery_services import open_recovery_case
+
+                    open_recovery_case(
+                        run=run,
+                        node_id=current,
+                        failure_class=failure_class,
+                        reason_code=exc.code,
+                        high_risk=node["type"] == "tool",
+                    )
+                    raise WorkflowPaused() from None
+                _run_compensations(run=run, nodes=nodes, state=state)
+                raise
+            if attempt is not None:
+                from apps.workflows.recovery_services import (
+                    complete_node_attempt,
+                    push_compensation,
+                )
+
+                run.redacted_state = state
+                run.save(update_fields=["redacted_state", "updated_at"])
+                complete_node_attempt(attempt=attempt)
+                if "compensation" in node:
+                    push_compensation(
+                        run=run,
+                        source_node_id=current,
+                        compensation_node_id=str(node["compensation"]),
+                    )
+            if resuming and getattr(run, "awaiting_node", "") == current:
+                run.awaiting_node = ""
+                run.save(update_fields=["awaiting_node", "updated_at"])
             resuming = False
             try:
                 _assert_state_size(state)
             except WorkflowRequestError:
                 raise WorkflowRuntimeError("WORKFLOW_STATE_TOO_LARGE") from None
             executed.append(current)
-            outgoing = edges[current]
+            outgoing = [edge for edge in edges[current] if "on_error" not in edge]
             if len(outgoing) != 1:
                 raise WorkflowRuntimeError("WORKFLOW_EDGE_INVALID")
             current = outgoing[0]["to"]
@@ -188,7 +268,7 @@ def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:
         executed.append(current)
         if node["type"] == "end":
             break
-        outgoing = edges[current]
+        outgoing = [edge for edge in edges[current] if "on_error" not in edge]
         if node["type"] == "condition":
             matching = [edge for edge in outgoing if edge.get("when") is decision]
             if len(matching) != 1:
@@ -248,6 +328,133 @@ def execute_branch_path(*, branch: Any) -> Any:
         except MappingError as exc:
             raise WorkflowRuntimeError(exc.code) from None
     return state.get("result", state.get("output", state))
+
+
+def _record_node_failure(
+    *, run: Any, node: dict[str, Any], state: dict[str, Any], attempt: Any, code: str
+) -> tuple[str, bool, int]:
+    from apps.workflows.recovery import classify_failure
+
+    failure_class = classify_failure(code)
+    if attempt is None:
+        return failure_class, False, 0
+    from apps.workflows.recovery_services import fail_node_attempt
+
+    # Tool calls are never automatically retried in v1. Their durable invocation may represent a
+    # dispatched side effect; a future verified reconciliation contract can explicitly widen this.
+    policy = node.get("retry_policy") if node["type"] != "tool" else None
+    durable_class, allowed, countdown = fail_node_attempt(
+        attempt=attempt, code=code, retry_policy=policy
+    )
+    run.redacted_state = state
+    run.save(update_fields=["redacted_state", "updated_at"])
+    return durable_class, allowed, countdown
+
+
+def _consume_recovery_decision(
+    *,
+    run: Any,
+    node: dict[str, Any],
+    nodes: dict[str, dict[str, Any]],
+    edges: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> str | None:
+    from apps.workflows.models import WorkflowRecoveryCase, WorkflowRecoveryStatus
+
+    case = (
+        WorkflowRecoveryCase.objects.filter(
+            run=run,
+            node_id=node["id"],
+            status=WorkflowRecoveryStatus.RESOLVED,
+        )
+        .order_by("-revision")
+        .first()
+    )
+    if case is None:
+        return None
+    if case.resolved_action == "reconcile_confirmed_success":
+        outgoing = [edge for edge in edges if edge["from"] == node["id"] and "on_error" not in edge]
+        if len(outgoing) != 1:
+            raise WorkflowRuntimeError("WORKFLOW_EDGE_INVALID")
+        return str(outgoing[0]["to"])
+    if case.resolved_action == "reconcile_confirmed_failure":
+        route = _error_route(edges=edges, node_id=str(node["id"]), failure_class=case.failure_class)
+        if route is None:
+            _run_compensations(run=run, nodes=nodes, state=state)
+            raise WorkflowRuntimeError(case.reason_code)
+        state["_recovery"] = {
+            "failure_class": case.failure_class,
+            "reason_code": case.reason_code,
+            "failed_node": node["id"],
+        }
+        return route
+    if case.resolved_action == "resume_compensation":
+        _run_compensations(run=run, nodes=nodes, state=state)
+        raise WorkflowRuntimeError(case.reason_code)
+    return None
+
+
+def _error_route(*, edges: list[dict[str, Any]], node_id: str, failure_class: str) -> str | None:
+    from apps.workflows.recovery import select_error_route
+
+    return select_error_route(
+        edges=edges,
+        node_id=node_id,
+        failure_class=failure_class,  # type: ignore[arg-type]
+    )
+
+
+def _run_compensations(
+    *, run: Any, nodes: dict[str, dict[str, Any]], state: dict[str, Any]
+) -> None:
+    if not bool(getattr(run, "id", 0)):
+        return
+    from apps.workflows.models import WorkflowCompensationEntry, WorkflowCompensationStatus
+    from apps.workflows.recovery import classify_failure
+    from apps.workflows.recovery_services import mark_compensation, open_recovery_case
+
+    entries = WorkflowCompensationEntry.objects.filter(
+        run=run,
+        status__in=[WorkflowCompensationStatus.PENDING, WorkflowCompensationStatus.BLOCKED],
+    ).order_by("-sequence")
+    for entry in entries:
+        node = nodes.get(entry.compensation_node_id)
+        if node is None:
+            mark_compensation(
+                entry=entry,
+                status=WorkflowCompensationStatus.BLOCKED,
+                reason_code="WORKFLOW_COMPENSATION_INVALID",
+            )
+            open_recovery_case(
+                run=run,
+                node_id=entry.compensation_node_id,
+                failure_class="permanent",
+                reason_code="WORKFLOW_COMPENSATION_INVALID",
+                high_risk=True,
+            )
+            raise WorkflowPaused()
+        try:
+            mark_compensation(entry=entry, status=WorkflowCompensationStatus.RUNNING)
+            updated = _run_eligible_node(node=node, state=state, run=run, resuming=False)
+            if updated is not state:
+                state.clear()
+                state.update(updated)
+        except WorkflowRuntimeError as exc:
+            failure_class = classify_failure(exc.code)
+            mark_compensation(
+                entry=entry,
+                status=WorkflowCompensationStatus.BLOCKED,
+                reason_code=exc.code,
+            )
+            open_recovery_case(
+                run=run,
+                node_id=entry.compensation_node_id,
+                failure_class=failure_class,
+                reason_code=exc.code,
+                high_risk=True,
+            )
+            raise WorkflowPaused() from None
+        mark_compensation(entry=entry, status=WorkflowCompensationStatus.SUCCEEDED)
 
 
 def _validate_output_policy(release: Any, output: dict[str, Any]) -> None:

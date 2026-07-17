@@ -35,8 +35,14 @@ COMPOSITION_NODE_TYPES = frozenset({"subworkflow", "agent_call"})
 
 # Compiled-contract version (ADR-0008). Bumped for the P2.6.1 typed-mapping semantics so a
 # stale v1 compiled graph or checkpoint can never be resumed under the new runtime.
-COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v3"
-COMPILER_VERSION = "workflow-compiler/v3"
+COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v4"
+COMPILER_VERSION = "workflow-compiler/v4"
+
+FAILURE_CLASSES = frozenset(
+    {"validation", "authorization", "permanent", "transient", "outcome_unknown"}
+)
+MAX_RETRY_ATTEMPTS = 3
+MAX_RETRY_BACKOFF_SECONDS = 300
 
 BUILTIN_NODE_TYPES = frozenset(
     {
@@ -139,20 +145,25 @@ def compile_workflow(
         raise WorkflowCompileError("input_node must reference an input node")
 
     edges = [_validate_edge(item, nodes) for item in raw_edges]
+    _validate_error_routes(edges)
+    compensation_targets = _validate_compensations(nodes, edges)
     adjacency: dict[str, list[str]] = {node_id: [] for node_id in nodes}
     for edge in edges:
         adjacency[edge["from"]].append(edge["to"])
     _assert_acyclic(adjacency)
     _validate_parallel_regions(nodes, edges, adjacency)
     reachable = _reachable(input_node, adjacency)
-    if reachable != set(nodes):
+    if reachable | compensation_targets != set(nodes):
         raise WorkflowCompileError("workflow contains unreachable nodes")
     if not any(nodes[node_id]["type"] == "end" for node_id in reachable):
         raise WorkflowCompileError("workflow requires a reachable end node")
     for node_id, node in nodes.items():
-        if node["type"] != "end" and not adjacency[node_id]:
+        success_edges = [
+            edge for edge in edges if edge["from"] == node_id and "on_error" not in edge
+        ]
+        if node["type"] != "end" and not success_edges:
             raise WorkflowCompileError("every non-end node requires an outgoing edge")
-        if node["type"] == "end" and adjacency[node_id]:
+        if node["type"] == "end" and success_edges:
             raise WorkflowCompileError("end nodes cannot have outgoing edges")
 
     graph = {
@@ -172,9 +183,9 @@ def _validate_node(
     node = _mapping(raw, "node")
     _require_exact_keys(
         node,
-        {"id", "type", "config", "input_mapping", "output_mapping"},
+        {"id", "type", "config", "input_mapping", "output_mapping", "retry_policy", "compensation"},
         "node",
-        optional={"config", "input_mapping", "output_mapping"},
+        optional={"config", "input_mapping", "output_mapping", "retry_policy", "compensation"},
     )
     node_id = _identifier(node.get("id"), "node id")
     node_type = node.get("type")
@@ -402,6 +413,14 @@ def _validate_node(
         compiled_node["input_mapping"] = input_mapping
     if output_mapping is not None:
         compiled_node["output_mapping"] = output_mapping
+    if "retry_policy" in node:
+        compiled_node["retry_policy"] = _validate_retry_policy(node["retry_policy"], node_type)
+    if "compensation" in node:
+        if node_type != "tool":
+            raise WorkflowCompileError("only tool nodes may declare compensation")
+        compiled_node["compensation"] = _identifier(
+            node["compensation"], "compensation node reference"
+        )
     return compiled_node
 
 
@@ -455,13 +474,19 @@ def _compile_one_mapping(
 
 def _validate_edge(raw: Any, nodes: dict[str, dict[str, Any]]) -> dict[str, Any]:
     edge = _mapping(raw, "edge")
-    _require_exact_keys(edge, {"from", "to", "when", "branch"}, "edge", optional={"when", "branch"})
+    _require_exact_keys(
+        edge,
+        {"from", "to", "when", "branch", "on_error"},
+        "edge",
+        optional={"when", "branch", "on_error"},
+    )
     source = _identifier(edge.get("from"), "edge from")
     target = _identifier(edge.get("to"), "edge to")
     if source not in nodes or target not in nodes:
         raise WorkflowCompileError("edge references an unknown node")
     result: dict[str, Any] = {"from": source, "to": target}
-    if "when" in edge and "branch" in edge:
+    selectors = {key for key in ("when", "branch", "on_error") if key in edge}
+    if len(selectors) > 1:
         raise WorkflowCompileError("WORKFLOW_ROUTE_INVALID")
     if "when" in edge:
         if not isinstance(edge["when"], bool):
@@ -476,7 +501,89 @@ def _validate_edge(raw: Any, nodes: dict[str, dict[str, Any]]) -> dict[str, Any]
         ):
             raise WorkflowCompileError("WORKFLOW_ROUTE_INVALID")
         result["branch"] = _identifier(edge["branch"], "edge branch")
+    if "on_error" in edge:
+        failure_class = edge["on_error"]
+        if failure_class not in FAILURE_CLASSES | {"any"}:
+            raise WorkflowCompileError("WORKFLOW_ERROR_ROUTE_INVALID")
+        if nodes[source]["type"] in {"input", "end", "condition", "parallel", "for_each", "join"}:
+            raise WorkflowCompileError("WORKFLOW_ERROR_ROUTE_INVALID")
+        result["on_error"] = failure_class
     return result
+
+
+def _validate_error_routes(edges: list[dict[str, Any]]) -> None:
+    seen: set[tuple[str, str]] = set()
+    for edge in edges:
+        if "on_error" not in edge:
+            continue
+        key = (edge["from"], edge["on_error"])
+        if key in seen:
+            raise WorkflowCompileError("WORKFLOW_ERROR_ROUTE_AMBIGUOUS")
+        seen.add(key)
+
+
+def _validate_compensations(
+    nodes: dict[str, dict[str, Any]], edges: list[dict[str, Any]]
+) -> set[str]:
+    targets: set[str] = set()
+    for node in nodes.values():
+        target_id = node.get("compensation")
+        if target_id is None:
+            continue
+        target = nodes.get(target_id)
+        if target is None or target_id == node["id"] or target["type"] not in {"tool", "transform"}:
+            raise WorkflowCompileError("WORKFLOW_COMPENSATION_INVALID")
+        if target.get("input_mapping") is None:
+            raise WorkflowCompileError("WORKFLOW_COMPENSATION_INVALID")
+        if target.get("compensation") is not None or any(edge["to"] == target_id for edge in edges):
+            raise WorkflowCompileError("WORKFLOW_COMPENSATION_INVALID")
+        targets.add(str(target_id))
+    return targets
+
+
+def _validate_retry_policy(value: Any, node_type: str) -> dict[str, Any]:
+    if node_type in {
+        "input",
+        "end",
+        "condition",
+        "parallel",
+        "for_each",
+        "join",
+        "event_wait",
+        "human_task",
+        "timer",
+        "tool",
+    }:
+        raise WorkflowCompileError("WORKFLOW_RETRY_POLICY_INVALID")
+    policy = _mapping(value, "retry_policy")
+    _require_exact_keys(
+        policy,
+        {"max_attempts", "backoff_seconds", "retry_on", "idempotent"},
+        "retry_policy",
+    )
+    max_attempts = policy.get("max_attempts")
+    backoff_seconds = policy.get("backoff_seconds")
+    retry_on = policy.get("retry_on")
+    if (
+        isinstance(max_attempts, bool)
+        or not isinstance(max_attempts, int)
+        or not 1 <= max_attempts <= MAX_RETRY_ATTEMPTS
+    ):
+        raise WorkflowCompileError("WORKFLOW_RETRY_POLICY_INVALID")
+    if (
+        isinstance(backoff_seconds, bool)
+        or not isinstance(backoff_seconds, int)
+        or not 0 <= backoff_seconds <= MAX_RETRY_BACKOFF_SECONDS
+    ):
+        raise WorkflowCompileError("WORKFLOW_RETRY_POLICY_INVALID")
+    if retry_on != ["transient"] or policy.get("idempotent") is not True:
+        raise WorkflowCompileError("WORKFLOW_RETRY_POLICY_INVALID")
+    return {
+        "max_attempts": max_attempts,
+        "backoff_seconds": backoff_seconds,
+        "retry_on": ["transient"],
+        "idempotent": True,
+    }
 
 
 def _validate_join_config(config: dict[str, Any]) -> None:

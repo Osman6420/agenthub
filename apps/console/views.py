@@ -146,7 +146,14 @@ from apps.tenancy.services import (
 from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_approval
 from apps.tools.authz import resolve_actor_roles
 from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
-from apps.workflows.models import WorkflowWait, WorkflowWaitKind, WorkflowWaitStatus
+from apps.workflows.models import (
+    WorkflowRecoveryCase,
+    WorkflowRecoveryStatus,
+    WorkflowWait,
+    WorkflowWaitKind,
+    WorkflowWaitStatus,
+)
+from apps.workflows.recovery_services import WorkflowRecoveryError, decide_recovery_case
 from apps.workflows.tasks import execute_workflow_run
 from apps.workflows.waits import WorkflowWaitError, decide_human_task
 
@@ -1453,6 +1460,77 @@ def workflow_human_task_decide(request: HttpRequest, wait_id: uuid.UUID) -> Http
         )
         messages.success(request, "İnsan görevi kararı kaydedildi.")
     return redirect("console:tool_approvals")
+
+
+@login_required
+def workflow_recoveries(request: HttpRequest) -> HttpResponse:
+    allowed = allowed_organization_ids(request.user)
+    cases = WorkflowRecoveryCase.objects.filter(
+        status__in=[
+            WorkflowRecoveryStatus.OPEN,
+            WorkflowRecoveryStatus.AWAITING_SECOND_APPROVAL,
+        ]
+    ).select_related("organization", "run")
+    if allowed is not None:
+        cases = cases.filter(organization_id__in=allowed)
+    rows = [
+        {
+            "public_id": case.public_id,
+            "org": case.organization.slug,
+            "node_id": case.node_id,
+            "failure_class": case.failure_class,
+            "reason_code": case.reason_code,
+            "revision": case.revision,
+            "state_checksum": case.state_checksum,
+            "approval_count": case.approvals.count(),
+            "required_approvals": case.required_approvals,
+            "can_decide": can_admin_org(request.user, case.organization_id),
+        }
+        for case in cases.order_by("created_at")
+    ]
+    return render(
+        request,
+        "console/workflow_recoveries.html",
+        {"title": "Workflow recovery", "rows": rows},
+    )
+
+
+@login_required
+@require_POST
+def workflow_recovery_decide(request: HttpRequest, recovery_id: uuid.UUID) -> HttpResponse:
+    allowed = allowed_organization_ids(request.user)
+    cases = WorkflowRecoveryCase.objects.filter(public_id=recovery_id)
+    if allowed is not None:
+        cases = cases.filter(organization_id__in=allowed)
+    case = cases.first()
+    if case is None:
+        raise Http404
+    if not can_admin_org(request.user, case.organization_id):
+        raise PermissionDenied
+    try:
+        revision = int(request.POST.get("revision", ""))
+    except ValueError:
+        messages.error(request, "Recovery kararı reddedildi: RECOVERY_STALE")
+        return redirect("console:workflow_recoveries")
+    set_tenant_context(case.organization_id)
+    try:
+        decided = decide_recovery_case(
+            recovery_public_id=case.public_id,
+            actor=request.user,
+            action=request.POST.get("action", ""),
+            reason=request.POST.get("reason", ""),
+            expected_revision=revision,
+            expected_state_checksum=request.POST.get("state_checksum", ""),
+        )
+    except WorkflowRecoveryError as exc:
+        messages.error(request, f"Recovery kararı reddedildi: {exc.code}")
+    else:
+        if decided.status == WorkflowRecoveryStatus.RESOLVED and decided.run.status == "queued":
+            transaction.on_commit(
+                lambda: execute_workflow_run.delay(decided.run_id, decided.organization_id)
+            )
+        messages.success(request, "Recovery kararı kaydedildi.")
+    return redirect("console:workflow_recoveries")
 
 
 @login_required

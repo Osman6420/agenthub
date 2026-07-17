@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -58,7 +59,7 @@ class WorkflowVersion(models.Model):
     compiled_graph = models.JSONField()
     checksum = models.CharField(max_length=64)
     # The active compiled-contract version is set explicitly by ``compile_workflow_version``
-    # (``apps.workflows.compiler.COMPILER_VERSION``, currently ``workflow-compiler/v3``). This
+    # (``apps.workflows.compiler.COMPILER_VERSION``, currently ``workflow-compiler/v4``). This
     # column default is only a legacy fallback and is never used by the service path.
     compiler_version = models.CharField(max_length=32, default="workflow-compiler/v1")
     created_by = models.CharField(max_length=200)
@@ -98,6 +99,7 @@ class WorkflowRunStatus(models.TextChoices):
     WAITING_TIMER = "waiting_timer", "Waiting timer"
     # Paused while a pinned child sub-workflow/agent-call executes as a separate run (P2.6.5).
     WAITING_CHILD = "waiting_child", "Waiting child"
+    RECOVERY_REQUIRED = "recovery_required", "Recovery required"
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
     TIMED_OUT = "timed_out", "Timed out"
@@ -424,3 +426,163 @@ class WorkflowWait(TimeStampedModel):
             raise ValidationError("wait organization must match run organization")
         if self.run_id and self.release_id_snapshot != self.run.release_id:
             raise ValidationError("wait release must match run release")
+
+
+class WorkflowNodeAttemptStatus(models.TextChoices):
+    RUNNING = "running", "Running"
+    RETRY_WAIT = "retry_wait", "Retry waiting"
+    SUCCEEDED = "succeeded", "Succeeded"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class WorkflowNodeAttempt(TimeStampedModel):
+    """Durable tenant-owned record for one bounded workflow-node attempt."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="workflow_node_attempts"
+    )
+    run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="node_attempts")
+    node_id = models.CharField(max_length=64)
+    ordinal = models.PositiveSmallIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=WorkflowNodeAttemptStatus.choices,
+        default=WorkflowNodeAttemptStatus.RUNNING,
+    )
+    failure_class = models.CharField(max_length=24, blank=True)
+    reason_code = models.CharField(max_length=64, blank=True)
+    state_checksum = models.CharField(max_length=64, blank=True)
+    retry_not_before = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "node_id", "ordinal"], name="uniq_workflow_attempt_run_node_ordinal"
+            )
+        ]
+        indexes = [models.Index(fields=["organization", "status", "retry_not_before"])]
+
+    def clean(self) -> None:
+        if self.run_id and self.organization_id != self.run.organization_id:
+            raise ValidationError("attempt organization must match run organization")
+
+
+class WorkflowCompensationStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    SUCCEEDED = "succeeded", "Succeeded"
+    BLOCKED = "blocked", "Blocked"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class WorkflowCompensationEntry(TimeStampedModel):
+    """One release-pinned reverse-order compensation intent."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="workflow_compensation_entries"
+    )
+    run = models.ForeignKey(
+        WorkflowRun, on_delete=models.CASCADE, related_name="compensation_entries"
+    )
+    sequence = models.PositiveSmallIntegerField()
+    source_node_id = models.CharField(max_length=64)
+    compensation_node_id = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=16,
+        choices=WorkflowCompensationStatus.choices,
+        default=WorkflowCompensationStatus.PENDING,
+    )
+    input_checksum = models.CharField(max_length=64)
+    reason_code = models.CharField(max_length=64, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "sequence"], name="uniq_workflow_compensation_run_sequence"
+            )
+        ]
+        indexes = [models.Index(fields=["organization", "status", "created_at"])]
+
+    def clean(self) -> None:
+        if self.run_id and self.organization_id != self.run.organization_id:
+            raise ValidationError("compensation organization must match run organization")
+
+
+class WorkflowRecoveryStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    AWAITING_SECOND_APPROVAL = "awaiting_second_approval", "Awaiting second approval"
+    RESOLVED = "resolved", "Resolved"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class WorkflowRecoveryCase(TimeStampedModel):
+    """A system-created ambiguity/blocked-compensation case; users cannot create one."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="workflow_recovery_cases"
+    )
+    run = models.ForeignKey(WorkflowRun, on_delete=models.CASCADE, related_name="recovery_cases")
+    node_id = models.CharField(max_length=64)
+    failure_class = models.CharField(max_length=24)
+    reason_code = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=32, choices=WorkflowRecoveryStatus.choices, default=WorkflowRecoveryStatus.OPEN
+    )
+    revision = models.PositiveIntegerField(default=1)
+    state_checksum = models.CharField(max_length=64)
+    high_risk = models.BooleanField(default=False)
+    required_approvals = models.PositiveSmallIntegerField(default=1)
+    resolved_action = models.CharField(max_length=40, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "node_id", "revision"], name="uniq_recovery_run_node_revision"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(required_approvals__in=[1, 2]),
+                name="workflow_recovery_required_approvals_valid",
+            ),
+        ]
+        indexes = [models.Index(fields=["organization", "status", "created_at"])]
+
+    def clean(self) -> None:
+        if self.run_id and self.organization_id != self.run.organization_id:
+            raise ValidationError("recovery organization must match run organization")
+
+
+class WorkflowRecoveryApproval(TimeStampedModel):
+    """One distinct admin's decision on an exact recovery-case revision."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="workflow_recovery_approvals"
+    )
+    recovery_case = models.ForeignKey(
+        WorkflowRecoveryCase, on_delete=models.CASCADE, related_name="approvals"
+    )
+    actor_id = models.PositiveBigIntegerField()
+    action = models.CharField(max_length=40)
+    reason = models.CharField(max_length=200)
+    revision = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["recovery_case", "actor_id"], name="uniq_recovery_case_actor"
+            )
+        ]
+
+    def clean(self) -> None:
+        if self.recovery_case_id and self.organization_id != self.recovery_case.organization_id:
+            raise ValidationError("approval organization must match recovery organization")
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            raise ValueError("workflow recovery approvals are append-only")
+        super().save(*args, **kwargs)
