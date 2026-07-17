@@ -166,6 +166,9 @@ Detailed P2.6.1 plan and threat model:
 Detailed P2.6.2 plan and threat model:
 [`phase-2-6-part-2-parallel-join`](../tasks/phase-2-6-part-2-parallel-join/plan.md).
 
+Detailed P2.6.5 plan and threat model:
+[`phase-2-6-part-5-child-composition`](../tasks/phase-2-6-part-5-child-composition/plan.md).
+
 | Part | Outcome | Depends on | Primary gates |
 | --- | --- | --- | --- |
 | P2.6.0 | Architecture contract, ADRs and executable scenario corpus | Phase 2.5 Parts 6–7 | Owner scope; DSL compatibility and threat-model approval |
@@ -627,10 +630,11 @@ Remaining decisions owned by later parts:
 
 ## Status
 
-**In progress; P2.6.0 completed and committed.** The contract inventory, Accepted ADR-0008/0009/0010,
-target DSL contract, migration/ownership/merge matrix and seven inert enterprise target workflows
-are verified in the P2.6.0 task record. No runtime behavior or database was changed. The first
-parallel implementation wave opens only from the committed/merged P2.6.0 integration baseline.
+**In progress; the first parallel wave is integrated and verified.** P2.6.1, P2.6.7, the P2.6.8
+isolation/review-contract spike, P2.6.9 context/transient-candidate work and P2.6.10 ingestion
+lifecycle are present on the Phase 2.6 integration baseline. P2.6.2, P2.6.3, P2.6.5 and the P2.6.8
+isolated-runtime integration form the next parallel wave. Their branches must start from that common
+baseline and merge only through the wave integration gate.
 
 ## Completion criteria
 

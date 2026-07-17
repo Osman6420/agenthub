@@ -208,6 +208,13 @@ RUNTIME_EMBEDDING_PROVIDER = env("RUNTIME_EMBEDDING_PROVIDER", default="")
 # real HTTPS adapter. Egress remains gated by the release-pinned destination allowlist.
 TOOL_ADAPTER = env("TOOL_ADAPTER", default="deterministic")
 
+# --- Child composition (P2.6.5) ---------------------------------------------
+# Pinned sub-workflow / single agent-call composition (ADR-0009). Disabled by default:
+# the compiler rejects ``subworkflow``/``agent_call`` nodes and the runtime denies child
+# admission until a deployment explicitly enables it after the authorization/RLS/recovery
+# gates pass. No new public endpoint or production dependency is introduced.
+WORKFLOW_COMPOSITION_ENABLED = env.bool("WORKFLOW_COMPOSITION_ENABLED", default=False)
+
 # --- Agent runtime (Sprint 10) ----------------------------------------------
 # Dotted path to an AgentPlanner implementation. Empty -> the deterministic built-in
 # planner, so tests/CI stay hermetic and no graph code runs. Set to

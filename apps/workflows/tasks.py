@@ -47,9 +47,13 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
                 WorkflowRunStatus.QUEUED,
                 WorkflowRunStatus.REQUESTED,
                 WorkflowRunStatus.WAITING_APPROVAL,
+                WorkflowRunStatus.WAITING_CHILD,
             }:
                 return str(run.status)
-            resuming = run.status == WorkflowRunStatus.WAITING_APPROVAL
+            resuming = run.status in {
+                WorkflowRunStatus.WAITING_APPROVAL,
+                WorkflowRunStatus.WAITING_CHILD,
+            }
             run.status = WorkflowRunStatus.RUNNING
             if run.started_at is None:
                 run.started_at = timezone.now()
@@ -72,8 +76,8 @@ def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str
             try:
                 result = execute_graph(run=run)
             except WorkflowPaused:
-                # Commit the durable waiting checkpoint before acknowledging the task.
-                return str(WorkflowRunStatus.WAITING_APPROVAL)
+                # Commit the durable waiting checkpoint (approval or child) before acknowledging.
+                return str(run.status)
     except WorkflowRuntimeError as exc:
         return _finish_error(run_id, organization_id, exc.code)
 
@@ -120,7 +124,8 @@ def _finish_error(run_id: int, organization_id: int, code: str) -> str:
             return str(run.status)
         status = (
             WorkflowRunStatus.TIMED_OUT
-            if code in {"WORKFLOW_TIMED_OUT", "WORKFLOW_NODE_TIMED_OUT"}
+            if code
+            in {"WORKFLOW_TIMED_OUT", "WORKFLOW_NODE_TIMED_OUT", "COMPOSITION_CHILD_TIMED_OUT"}
             else WorkflowRunStatus.FAILED
         )
         run.status = status

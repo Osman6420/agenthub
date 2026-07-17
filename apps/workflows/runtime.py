@@ -15,7 +15,11 @@ from django.utils import timezone
 from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
 from apps.orchestration.runtime import RunResult
 from apps.releases.services import get_artifact_body_for_role
-from apps.workflows.compiler import COMPILED_WORKFLOW_API_VERSION, MAPPING_ELIGIBLE_NODE_TYPES
+from apps.workflows.compiler import (
+    COMPILED_WORKFLOW_API_VERSION,
+    COMPOSITION_NODE_TYPES,
+    MAPPING_ELIGIBLE_NODE_TYPES,
+)
 from apps.workflows.custom_nodes import CustomNodeError, execute_custom_node
 from apps.workflows.models import WorkflowRunEvent, WorkflowRunStatus
 from apps.workflows.services import (
@@ -185,7 +189,9 @@ def _run_eligible_node(
     except MappingError as exc:
         raise WorkflowRuntimeError(exc.code) from None
 
-    if node["type"] == "tool":
+    if node["type"] in COMPOSITION_NODE_TYPES:
+        envelope = _run_composition_node(node=node, state=state, input_env=input_env, run=run)
+    elif node["type"] == "tool":
         envelope = _run_tool_node(
             node=node, state=state, input_env=input_env, run=run, resuming=resuming
         )
@@ -374,6 +380,61 @@ def _run_tool_node(
             run.save(update_fields=["awaiting_node", "updated_at"])
         return output
     raise WorkflowRuntimeError(f"TOOL_{str(invocation.status).upper()}")
+
+
+def _run_composition_node(
+    *, node: dict[str, Any], state: dict[str, Any], input_env: dict[str, Any] | None, run: Any
+) -> dict[str, Any]:
+    """Admit or resume a pinned child (``subworkflow``/``agent_call``), pausing the parent.
+
+    On first entry the child is admitted (authority-attenuated, budget-checked) and the parent
+    pauses (``waiting_child``) until the child's terminal transition re-dispatches the parent. On
+    resume the untrusted child output is validated and returned so the caller applies
+    ``output_mapping``. A required-authority or budget denial fails the parent closed.
+    """
+    from apps.workflows.composition import (
+        CompositionError,
+        CompositionPending,
+        admit_child,
+        finalize_child,
+    )
+    from apps.workflows.models import WorkflowChildLink
+
+    node_id = str(node["id"])
+    link = (
+        WorkflowChildLink.objects.select_for_update()
+        .filter(parent_run=run, call_site=node_id)
+        .first()
+    )
+    try:
+        if link is None:
+            admit_child(parent_run=run, node=node, input_env=input_env or {})
+            _pause_for_child(run, node_id, state)
+            raise WorkflowPaused()
+        output_env = finalize_child(link=link)
+    except CompositionPending:
+        _pause_for_child(run, node_id, state)
+        raise WorkflowPaused() from None
+    except CompositionError as exc:
+        raise WorkflowRuntimeError(exc.code) from None
+    if getattr(run, "awaiting_node", "") == node_id:
+        run.awaiting_node = ""
+        run.save(update_fields=["awaiting_node", "updated_at"])
+    return output_env
+
+
+def _pause_for_child(run: Any, node_id: str, state: dict[str, Any]) -> None:
+    run.status = WorkflowRunStatus.WAITING_CHILD
+    run.awaiting_node = node_id
+    run.redacted_state = _redact(state)
+    run.save(update_fields=["status", "awaiting_node", "redacted_state", "updated_at"])
+    WorkflowRunEvent.objects.create(
+        run=run,
+        sequence=_next_sequence(run),
+        event_type="run_waiting_child",
+        node_id=node_id,
+        outcome="waiting_child",
+    )
 
 
 def _pause_for_approval(run: Any, node_id: str, state: dict[str, Any]) -> None:

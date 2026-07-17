@@ -126,6 +126,17 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
 
     config = run.agent_version.compiled_config
     limits = config["limits"]
+    # Child-composition attenuation (P2.6.5): when this agent runs as a pinned ``agent_call`` child,
+    # the parent call-site's ``max_decisions`` further lowers the step budget. The claim is part of
+    # the server-signed, already-verified execution context; it can only *lower* the compiled cap.
+    max_steps = int(limits["max_steps"])
+    composition = (
+        run.execution_context.get("composition")
+        if isinstance(run.execution_context, dict)
+        else None
+    )
+    if isinstance(composition, dict) and isinstance(composition.get("max_decisions"), int):
+        max_steps = min(max_steps, int(composition["max_decisions"]))
     objective_key = config["objective_key"]
     output_key = config["output_key"]
     planner = get_configured_planner()
@@ -148,7 +159,7 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
             raise AgentRuntimeError("AGENT_CANCELLED")
         if time.time() > run.deadline_at.timestamp():
             raise AgentRuntimeError("AGENT_TIMED_OUT")
-        if step_index >= limits["max_steps"]:
+        if step_index >= max_steps:
             raise AgentRuntimeError("AGENT_MAX_STEPS")
 
         observation = AgentObservation(objective, retrieved, tools_called)

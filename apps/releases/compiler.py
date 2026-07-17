@@ -54,6 +54,13 @@ def role_accepts_artifact_type(role: str, artifact_type: str) -> bool:
         or not all(character.isalnum() or character in "._-" for character in role)
     ):
         return False
+    # P2.6.5 child-composition pins reuse the type-prefixed namespace: a parent release may pin
+    # exact child runtimes under ``child_workflow.<name>``/``child_agent.<name>`` without a second
+    # binding mechanism. The parent's own runtime keeps the singleton workflow/agent role.
+    if role.startswith("child_workflow."):
+        return artifact_type == ArtifactType.WORKFLOW_DEFINITION
+    if role.startswith("child_agent."):
+        return artifact_type == ArtifactType.AGENT_DEFINITION
     reserved = {value for value, _label in ArtifactType.choices}
     prefix = role.split(".", 1)[0]
     if role in reserved or prefix in reserved:
@@ -138,37 +145,49 @@ def compile_release(
             except ToolRegistryError as exc:
                 raise CompileError(f"role '{ref.role}' tool binding failed: {exc}") from exc
         if artifact.type == "workflow_definition":
-            if ref.role != "workflow_definition":
-                raise CompileError("workflow definition must use the workflow_definition role")
-            from apps.workflows.compiler import WorkflowCompileError
-            from apps.workflows.services import compile_workflow_version
-
-            try:
-                workflow_version = compile_workflow_version(
-                    scenario=scenario,
-                    source_artifact=artifact,
-                    created_by=created_by,
+            if ref.role.startswith("child_workflow."):
+                # A pinned child runtime (P2.6.5). It is not the parent's own workflow; the
+                # composition pinner below derives its released scenario/release from this pin.
+                pass
+            elif ref.role != "workflow_definition":
+                raise CompileError(
+                    "workflow definition must use the workflow_definition or child_workflow.* role"
                 )
-            except WorkflowCompileError as exc:
-                raise CompileError(f"workflow compilation failed: {exc}") from exc
-            workflow_checksum = workflow_version.checksum
-            compiled_workflow_graph = workflow_version.compiled_graph
+            else:
+                from apps.workflows.compiler import WorkflowCompileError
+                from apps.workflows.services import compile_workflow_version
+
+                try:
+                    workflow_version = compile_workflow_version(
+                        scenario=scenario,
+                        source_artifact=artifact,
+                        created_by=created_by,
+                    )
+                except WorkflowCompileError as exc:
+                    raise CompileError(f"workflow compilation failed: {exc}") from exc
+                workflow_checksum = workflow_version.checksum
+                compiled_workflow_graph = workflow_version.compiled_graph
         if artifact.type == "agent_definition":
-            if ref.role != "agent_definition":
-                raise CompileError("agent definition must use the agent_definition role")
-            from apps.agents.compiler import AgentCompileError
-            from apps.agents.services import compile_agent_version
-
-            try:
-                agent_version = compile_agent_version(
-                    scenario=scenario,
-                    source_artifact=artifact,
-                    created_by=created_by,
+            if ref.role.startswith("child_agent."):
+                pass
+            elif ref.role != "agent_definition":
+                raise CompileError(
+                    "agent definition must use the agent_definition or child_agent.* role"
                 )
-            except AgentCompileError as exc:
-                raise CompileError(f"agent compilation failed: {exc}") from exc
-            agent_checksum = agent_version.checksum
-            agent_tools = list(agent_version.compiled_config.get("tools", []))
+            else:
+                from apps.agents.compiler import AgentCompileError
+                from apps.agents.services import compile_agent_version
+
+                try:
+                    agent_version = compile_agent_version(
+                        scenario=scenario,
+                        source_artifact=artifact,
+                        created_by=created_by,
+                    )
+                except AgentCompileError as exc:
+                    raise CompileError(f"agent compilation failed: {exc}") from exc
+                agent_checksum = agent_version.checksum
+                agent_tools = list(agent_version.compiled_config.get("tools", []))
 
     if agent_checksum:
         # Fail closed: every tool the agent may propose must resolve to a tool_binding
@@ -185,6 +204,23 @@ def compile_release(
         # an immutable ``transform_profile`` in this same release (P2.6.1 D1), so the runtime can
         # never resolve an unpinned, foreign, mutable or ``latest`` transform profile.
         _assert_transform_profiles_pinned(compiled_workflow_graph, artifacts_manifest)
+        # Fail closed: every ``subworkflow``/``agent_call`` node must reference a pinned child role
+        # that resolves to an exact same-organization released child scenario (P2.6.5 / ADR-0009).
+        # The pin records the child kind/scenario/release/checksum so the runtime can never resolve
+        # a newer, mutable, foreign or cyclic child.
+        from apps.workflows.composition import (
+            CompositionCompileError,
+            pin_composition_children,
+        )
+
+        try:
+            pin_composition_children(
+                scenario=scenario,
+                graph=compiled_workflow_graph,
+                artifacts_manifest=artifacts_manifest,
+            )
+        except CompositionCompileError as exc:
+            raise CompileError(str(exc)) from exc
 
     # Deny-by-default document-ACL pins (P4.2): compile the scenario's mandatory
     # ``ScenarioDocumentSetBinding``s to published document-set-version ids. A scenario with no
