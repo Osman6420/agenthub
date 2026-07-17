@@ -48,7 +48,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='workflowrun',
             name='status',
-            field=models.CharField(choices=[('requested', 'Requested'), ('queued', 'Queued'), ('running', 'Running'), ('waiting_approval', 'Waiting approval'), ('waiting_child', 'Waiting child'), ('completed', 'Completed'), ('failed', 'Failed'), ('timed_out', 'Timed out'), ('cancelled', 'Cancelled')], default='requested', max_length=20),
+            field=models.CharField(choices=[('requested', 'Requested'), ('queued', 'Queued'), ('running', 'Running'), ('waiting_approval', 'Waiting approval'), ('waiting_event', 'Waiting event'), ('waiting_human', 'Waiting human'), ('waiting_timer', 'Waiting timer'), ('waiting_child', 'Waiting child'), ('completed', 'Completed'), ('failed', 'Failed'), ('timed_out', 'Timed out'), ('cancelled', 'Cancelled')], default='requested', max_length=20),
         ),
         migrations.CreateModel(
             name='WorkflowChildLink',

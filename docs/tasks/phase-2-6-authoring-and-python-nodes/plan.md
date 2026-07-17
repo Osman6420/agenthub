@@ -10,12 +10,55 @@ Plan two related but independently deliverable Phase 2.6 capabilities:
    graph/JSON candidates from server-owned capability context without requiring user-supplied system
    identifiers.
 
-This record plans implementation only. The first P2.6.8 parallel-wave isolation spike and inert
+This record now owns the P2.6.8 isolated-runtime integration stage. The first P2.6.8 parallel-wave isolation spike and inert
 contracts are documented in [ADR-0011](../../adr/0011-reviewed-python-node-isolation-and-lifecycle.md),
 [the spike record](isolation-spike.md) and [the contract record](python-node-contracts.md). They do
 not authorize tenant-code execution, a runner or
 production dependency, authentication/authorization changes, live model egress, database reset or
-production activation.
+production activation. The runtime stage implements a fail-closed runner/resolver contract, automated
+static review, exact-pin dispatch checks, schema/state-patch validation and a bounded separate-process
+test harness. Production activation remains disabled because the target seccomp/LSM/network boundary
+has not been proven and no production sandbox backend has been approved.
+
+## Runtime integration stage (2026-07-17)
+
+### Approved scope
+
+- Add a dependency-free AST/static policy with a closed standard-library module allowlist and stable,
+  source-free findings.
+- Add immutable execution-request and resolver contracts that bind organization, opaque node ref,
+  revision, source checksum, schema checksum and active/approved state.
+- Re-resolve immediately before dispatch and after runner return; disable, tenant, revision or checksum
+  drift fails closed and returned data is never applied.
+- Validate configuration/input before dispatch and output/state patch after return; use the P2.6.1
+  copy-on-success protected-namespace mapping seam for state mutation.
+- Provide a separate-process, no-network-by-contract, bounded harness for automated tests only, plus a
+  disabled production adapter. Enforce wall-clock and output bounds in the parent and memory bounds in
+  the child where the host exposes `resource`; otherwise fail closed when production-grade enforcement
+  is requested.
+- Emit only stable outcome/reason/checksum metadata to an injectable audit sink. Never emit source,
+  raw input/config/output, environment or exception text.
+- Preserve existing managed custom-node compilation and execution without reinterpretation.
+
+### Explicitly excluded / approval gates
+
+- No persistence/control-plane/source-storage implementation and no migration.
+- No Docker socket, container launch, privileged/host execution, network egress, secret injection,
+  production runner service or production activation.
+- No production dependency, P2.6.9 Studio change, AI source context, or P2.6.2/P2.6.3/P2.6.5 model change.
+- The harness is evidence for the application seam, not proof of ADR-0011's production OCI/OpenShift
+  boundary. Production remains blocked pending target-runtime seccomp/LSM/network/resource evidence,
+  image/signing ownership and security/platform approval.
+
+### Runtime-stage risks
+
+- Static review and restricted builtins are defense in depth, not a sandbox.
+- A shared-kernel subprocess does not provide the required production tenant/kernel boundary.
+- Windows lacks the stdlib POSIX `resource` controls; memory enforcement therefore remains an explicit
+  unavailable-backend failure for production mode, while deterministic allocation/output probes cover
+  the harness contract.
+- Runner termination can produce an unknown outcome; the contract returns a stable failure and never
+  applies a patch or retries an execution under a different idempotency key.
 
 ## Background
 

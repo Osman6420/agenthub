@@ -195,8 +195,50 @@ def _validate_node(
         _require_exact_keys(config, {"expression"}, "condition config")
         _validate_condition(config.get("expression"))
     elif node_type == "custom":
-        _require_exact_keys(config, {"node_ref", "fields"}, "custom config", optional={"fields"})
-        node_ref = _identifier(config.get("node_ref"), "custom node_ref")
+        execution_class = config.get("execution_class", "managed")
+        if execution_class == "python":
+            _require_exact_keys(
+                config,
+                {
+                    "execution_class",
+                    "node_ref",
+                    "revision",
+                    "source_checksum",
+                    "contract_checksum",
+                    "parameters",
+                },
+                "python custom config",
+            )
+            node_ref = config.get("node_ref")
+            if not isinstance(node_ref, str) or ":r" not in node_ref or len(node_ref) > 128:
+                raise WorkflowCompileError("python custom node_ref is invalid")
+            revision = config.get("revision")
+            if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+                raise WorkflowCompileError("python custom revision is invalid")
+            if not node_ref.endswith(f":r{revision}"):
+                raise WorkflowCompileError("python custom revision does not match node_ref")
+            for checksum_key in ("source_checksum", "contract_checksum"):
+                checksum = config.get(checksum_key)
+                if (
+                    not isinstance(checksum, str)
+                    or len(checksum) != 64
+                    or any(character not in "0123456789abcdef" for character in checksum)
+                ):
+                    raise WorkflowCompileError(f"python custom {checksum_key} is invalid")
+            if not isinstance(config.get("parameters"), dict):
+                raise WorkflowCompileError("python custom parameters must be an object")
+            if output_mapping is None:
+                raise WorkflowCompileError("python custom node requires output_mapping")
+        elif execution_class == "managed":
+            _require_exact_keys(
+                config,
+                {"execution_class", "node_ref", "fields"},
+                "custom config",
+                optional={"execution_class", "fields"},
+            )
+            node_ref = _identifier(config.get("node_ref"), "custom node_ref")
+        else:
+            raise WorkflowCompileError("custom execution_class is invalid")
         if allowed_custom_nodes is not None and node_ref not in allowed_custom_nodes:
             raise WorkflowCompileError("custom node is not allowed for this workflow")
     elif node_type == "transform":
