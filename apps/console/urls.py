@@ -316,4 +316,9 @@ urlpatterns = [
         views.tool_invocation_cancel,
         name="tool_invocation_cancel",
     ),
+    path(
+        "workflow-human-tasks/<uuid:wait_id>/decide/",
+        views.workflow_human_task_decide,
+        name="workflow_human_task_decide",
+    ),
 ]

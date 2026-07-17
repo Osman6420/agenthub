@@ -138,6 +138,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 30.0,
         "options": {"queue": "ingestion"},
     },
+    "reconcile-durable-workflow-waits": {
+        "task": "apps.workflows.tasks.reconcile_workflow_waits",
+        "schedule": 15.0,
+        "options": {"queue": "runtime"},
+    },
 }
 
 # --- Gateway / DRF ----------------------------------------------------------

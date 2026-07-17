@@ -25,6 +25,7 @@ from apps.workflows.models import (
     WorkflowRunEvent,
     WorkflowRunStatus,
     WorkflowVersion,
+    WorkflowWaitStatus,
 )
 
 MAX_STATE_BYTES = 1_048_576
@@ -209,6 +210,11 @@ def cancel_workflow_run(*, run: WorkflowRun, consumer: Consumer) -> WorkflowRun:
             sequence=_next_sequence(locked),
             event_type="run_cancelled",
             outcome="cancelled",
+        )
+        locked.waits.filter(status=WorkflowWaitStatus.PENDING).update(
+            status=WorkflowWaitStatus.CANCELLED,
+            consumed_at=timezone.now(),
+            updated_at=timezone.now(),
         )
     return locked
 

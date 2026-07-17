@@ -13,11 +13,13 @@ from apps.workflows.state_mapping import MappingError, compile_mappings
 MAX_NODES = 50
 MAX_EDGES = 100
 MAX_IDENTIFIER_LENGTH = 64
+MAX_WAIT_SECONDS = 2_592_000
+MAX_DECISION_ROLES = 16
 
 # Compiled-contract version (ADR-0008). Bumped for the P2.6.1 typed-mapping semantics so a
 # stale v1 compiled graph or checkpoint can never be resumed under the new runtime.
-COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v2"
-COMPILER_VERSION = "workflow-compiler/v2"
+COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v3"
+COMPILER_VERSION = "workflow-compiler/v3"
 
 BUILTIN_NODE_TYPES = frozenset(
     {
@@ -31,12 +33,17 @@ BUILTIN_NODE_TYPES = frozenset(
         "custom",
         "tool",
         "transform",
+        "event_wait",
+        "human_task",
+        "timer",
     }
 )
 
 # Nodes that may declare typed ``input_mapping``/``output_mapping`` (P2.6.1). Control/IO nodes
 # never carry mappings so they cannot silently reshape state.
-MAPPING_ELIGIBLE_NODE_TYPES = frozenset({"retrieve", "generate", "tool", "custom", "transform"})
+MAPPING_ELIGIBLE_NODE_TYPES = frozenset(
+    {"retrieve", "generate", "tool", "custom", "transform", "event_wait", "human_task"}
+)
 
 
 class WorkflowCompileError(ValueError):
@@ -183,6 +190,59 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
             _identifier(config.get("prompt_ref"), "generate prompt_ref")
         if "model_profile_ref" in config:
             _identifier(config.get("model_profile_ref"), "generate model_profile_ref")
+    elif node_type == "event_wait":
+        _require_exact_keys(
+            config, {"event_role", "payload_schema", "timeout_seconds"}, "event_wait config"
+        )
+        _identifier(config.get("event_role"), "event_wait event_role")
+        _validate_wait_schema(config.get("payload_schema"), "event_wait payload_schema")
+        _wait_seconds(config.get("timeout_seconds"), "event_wait timeout_seconds")
+        if output_mapping is None:
+            raise WorkflowCompileError("event_wait requires output_mapping")
+    elif node_type == "human_task":
+        _require_exact_keys(
+            config,
+            {
+                "allowed_decision_roles",
+                "decision_schema",
+                "timeout_seconds",
+                "deny_self_decision",
+                "escalation_role",
+                "escalation_timeout_seconds",
+            },
+            "human_task config",
+            optional={
+                "deny_self_decision",
+                "escalation_role",
+                "escalation_timeout_seconds",
+            },
+        )
+        roles = config.get("allowed_decision_roles")
+        if not isinstance(roles, list) or not roles or len(roles) > MAX_DECISION_ROLES:
+            raise WorkflowCompileError("human_task decision roles are invalid")
+        canonical_roles = [_identifier(role, "human_task decision role") for role in roles]
+        if len(set(canonical_roles)) != len(canonical_roles):
+            raise WorkflowCompileError("human_task decision roles must be unique")
+        config["allowed_decision_roles"] = canonical_roles
+        _validate_wait_schema(config.get("decision_schema"), "human_task decision_schema")
+        _wait_seconds(config.get("timeout_seconds"), "human_task timeout_seconds")
+        if "deny_self_decision" in config and not isinstance(config["deny_self_decision"], bool):
+            raise WorkflowCompileError("human_task deny_self_decision must be boolean")
+        if "escalation_role" in config:
+            _identifier(config["escalation_role"], "human_task escalation_role")
+            if "escalation_timeout_seconds" not in config:
+                raise WorkflowCompileError("human_task escalation timeout is required")
+            _wait_seconds(
+                config["escalation_timeout_seconds"],
+                "human_task escalation_timeout_seconds",
+            )
+        elif "escalation_timeout_seconds" in config:
+            raise WorkflowCompileError("human_task escalation role is required")
+        if output_mapping is None:
+            raise WorkflowCompileError("human_task requires output_mapping")
+    elif node_type == "timer":
+        _require_exact_keys(config, {"delay_seconds"}, "timer config")
+        _wait_seconds(config.get("delay_seconds"), "timer delay_seconds")
     elif node_type == "retrieve" and config:
         raise WorkflowCompileError("retrieve node does not accept config")
     elif node_type in {"input", "validate_contract", "end"} and config:
@@ -194,6 +254,23 @@ def _validate_node(raw: Any, allowed_custom_nodes: frozenset[str] | None) -> dic
     if output_mapping is not None:
         compiled_node["output_mapping"] = output_mapping
     return compiled_node
+
+
+def _wait_seconds(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_WAIT_SECONDS:
+        raise WorkflowCompileError(f"{label} must be between 1 and {MAX_WAIT_SECONDS}")
+    return value
+
+
+def _validate_wait_schema(value: Any, label: str) -> None:
+    if not isinstance(value, dict) or value.get("type") != "object":
+        raise WorkflowCompileError(f"{label} must be an object JSON Schema")
+    if value.get("additionalProperties") is not False or not isinstance(
+        value.get("properties"), dict
+    ):
+        raise WorkflowCompileError(f"{label} must define properties and deny additionalProperties")
+    if len(str(value)) > 16_384:
+        raise WorkflowCompileError(f"{label} is too large")
 
 
 def _validate_node_mappings(
