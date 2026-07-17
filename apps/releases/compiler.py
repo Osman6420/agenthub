@@ -104,6 +104,7 @@ def compile_release(
 
     artifacts_manifest: dict[str, dict[str, object]] = {}
     workflow_checksum = ""
+    compiled_workflow_graph: dict[str, object] | None = None
     agent_checksum = ""
     agent_tools: list[str] = []
     for ref in refs:
@@ -151,6 +152,7 @@ def compile_release(
             except WorkflowCompileError as exc:
                 raise CompileError(f"workflow compilation failed: {exc}") from exc
             workflow_checksum = workflow_version.checksum
+            compiled_workflow_graph = workflow_version.compiled_graph
         if artifact.type == "agent_definition":
             if ref.role != "agent_definition":
                 raise CompileError("agent definition must use the agent_definition role")
@@ -177,6 +179,12 @@ def compile_release(
         missing = sorted(t for t in agent_tools if t not in tool_roles)
         if missing:
             raise CompileError(f"agent declares tools with no pinned tool_binding role: {missing}")
+
+    if compiled_workflow_graph is not None:
+        # Fail closed: every workflow ``transform`` node must reference a manifest role that pins
+        # an immutable ``transform_profile`` in this same release (P2.6.1 D1), so the runtime can
+        # never resolve an unpinned, foreign, mutable or ``latest`` transform profile.
+        _assert_transform_profiles_pinned(compiled_workflow_graph, artifacts_manifest)
 
     # Deny-by-default document-ACL pins (P4.2): compile the scenario's mandatory
     # ``ScenarioDocumentSetBinding``s to published document-set-version ids. A scenario with no
@@ -232,6 +240,24 @@ def promote_release(release: ScenarioRelease) -> ScenarioRelease:
     release.promoted_at = timezone.now()
     release.save(update_fields=["status", "promoted_at"])
     return release
+
+
+def _assert_transform_profiles_pinned(
+    graph: dict[str, object], manifest: dict[str, dict[str, object]]
+) -> None:
+    nodes = graph.get("nodes", [])
+    if not isinstance(nodes, list):
+        return
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "transform":
+            continue
+        config = node.get("config", {})
+        role = config.get("transform_profile_ref") if isinstance(config, dict) else None
+        entry = manifest.get(role) if isinstance(role, str) else None
+        if not isinstance(entry, dict) or entry.get("type") != ArtifactType.TRANSFORM_PROFILE:
+            raise CompileError(
+                f"transform node references an unpinned transform_profile role: {role!r}"
+            )
 
 
 def canonical_manifest(release: ScenarioRelease) -> str:

@@ -370,6 +370,31 @@ def test_node_schema_exposes_roles_never_endpoints_or_secrets(
     assert "endpoint" not in raw
 
 
+def test_node_schema_includes_transform_and_mapping_metadata(
+    client: Client, bf: BuilderFixture
+) -> None:
+    client.force_login(bf.author)
+    data = client.get(reverse("builder_api:node_schema") + "?organization=b-org").json()
+    by_type = {node["type"]: node for node in data["node_types"]}
+    # The transform node is exposed with its pinned-profile reference field.
+    assert "transform" in by_type
+    assert [field["name"] for field in by_type["transform"]["fields"]] == ["transform_profile_ref"]
+    # Mapping-eligible nodes advertise the capability; control/IO nodes do not.
+    assert by_type["transform"]["supports_mapping"] is True
+    assert by_type["tool"]["supports_mapping"] is True
+    assert "supports_mapping" not in by_type["condition"]
+    # The mapping metadata mirrors the backend contract (non-authoritative UI hint).
+    assert data["mapping"]["entry_keys"] == ["from", "to"]
+    assert set(data["mapping"]["writable_roots"]) == {
+        "input",
+        "retrieval",
+        "branches",
+        "evidence",
+        "decisions",
+        "output",
+    }
+
+
 def test_node_schema_excludes_other_tenant_bindings(client: Client, bf: BuilderFixture) -> None:
     other_def = ToolDefinition.objects.create(
         organization=bf.other_org,

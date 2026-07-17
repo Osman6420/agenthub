@@ -17,7 +17,7 @@ from apps.gateway.execution_context import verify_execution_context
 from apps.identity.models import Consumer
 from apps.releases.models import ScenarioRelease
 from apps.releases.services import get_artifact_body_for_role, get_manifest_role
-from apps.workflows.compiler import WorkflowCompileError, compile_workflow
+from apps.workflows.compiler import COMPILER_VERSION, WorkflowCompileError, compile_workflow
 from apps.workflows.models import (
     CustomNodeDefinition,
     CustomNodeStatus,
@@ -58,7 +58,7 @@ def compile_workflow_version(
     existing = WorkflowVersion.objects.filter(
         scenario=scenario,
         source_artifact=source_artifact,
-        compiler_version="workflow-compiler/v1",
+        compiler_version=COMPILER_VERSION,
     ).first()
     if existing is not None:
         if existing.checksum != compiled.checksum:
@@ -70,7 +70,7 @@ def compile_workflow_version(
         source_artifact=source_artifact,
         compiled_graph=compiled.graph,
         checksum=compiled.checksum,
-        compiler_version="workflow-compiler/v1",
+        compiler_version=COMPILER_VERSION,
         created_by=created_by,
     )
 

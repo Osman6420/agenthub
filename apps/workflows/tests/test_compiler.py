@@ -45,7 +45,7 @@ def test_compile_is_deterministic_and_canonical() -> None:
     second = compile_workflow(workflow_body())
     assert first.checksum == second.checksum
     assert first.graph == second.graph
-    assert first.graph["api_version"] == "agenthub/compiled-workflow/v1"
+    assert first.graph["api_version"] == "agenthub/compiled-workflow/v2"
 
 
 @pytest.mark.parametrize(
@@ -100,6 +100,149 @@ def test_custom_node_requires_explicit_compiler_allowlist() -> None:
         compile_workflow(body, allowed_custom_nodes=frozenset())
     compiled = compile_workflow(body, allowed_custom_nodes=frozenset({"redact.v1"}))
     assert any(node["type"] == "custom" for node in compiled.graph["nodes"])
+
+
+def _mapping_workflow() -> dict:
+    """A minimal input -> retrieve -> transform -> end graph used for mapping tests."""
+    return {
+        "api_version": "agenthub/v1",
+        "kind": "Workflow",
+        "metadata": {"id": "mapping_flow.v1"},
+        "spec": {
+            "input_node": "request",
+            "nodes": [
+                {"id": "request", "type": "input"},
+                {
+                    "id": "search",
+                    "type": "retrieve",
+                    "input_mapping": [{"from": "/input/query", "to": "/query"}],
+                    "output_mapping": [{"from": "/chunks", "to": "/evidence/chunks"}],
+                },
+                {
+                    "id": "shape",
+                    "type": "transform",
+                    "config": {"transform_profile_ref": "transform_profile.normalize"},
+                    "input_mapping": [{"from": "/evidence/chunks", "to": "/rows"}],
+                    "output_mapping": [{"from": "/result", "to": "/output"}],
+                },
+                {"id": "done", "type": "end"},
+            ],
+            "edges": [
+                {"from": "request", "to": "search"},
+                {"from": "search", "to": "shape"},
+                {"from": "shape", "to": "done"},
+            ],
+        },
+    }
+
+
+def test_compile_accepts_eligible_node_mappings_and_transform() -> None:
+    compiled = compile_workflow(_mapping_workflow())
+    nodes = {node["id"]: node for node in compiled.graph["nodes"]}
+    assert nodes["search"]["input_mapping"] == [{"from": "/input/query", "to": "/query"}]
+    assert nodes["search"]["output_mapping"] == [{"from": "/chunks", "to": "/evidence/chunks"}]
+    assert nodes["shape"]["type"] == "transform"
+    assert nodes["shape"]["config"] == {"transform_profile_ref": "transform_profile.normalize"}
+    # Deterministic checksum with mappings present.
+    assert compile_workflow(_mapping_workflow()).checksum == compiled.checksum
+
+
+def test_compile_rejects_mappings_on_ineligible_node() -> None:
+    body = workflow_body()
+    body["spec"]["nodes"][1]["input_mapping"] = [{"from": "/input/x", "to": "/y"}]
+    with pytest.raises(WorkflowCompileError, match="does not accept mappings"):
+        compile_workflow(body)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda body: body["spec"]["nodes"][1]["output_mapping"].__setitem__(
+                0, {"from": "/chunks", "to": "/secret/key"}
+            ),
+            "WORKFLOW_PATH_PROTECTED",
+        ),
+        (
+            lambda body: body["spec"]["nodes"][1]["output_mapping"].__setitem__(
+                0, {"from": "/chunks", "to": "/evidence/x*"}
+            ),
+            "WORKFLOW_PATH_INVALID",
+        ),
+        (
+            lambda body: body["spec"]["nodes"][1]["output_mapping"].append(
+                {"from": "/chunks", "to": "/evidence/chunks"}
+            ),
+            "WORKFLOW_MAPPING_CONFLICT",
+        ),
+    ],
+)
+def test_compile_rejects_unsafe_mappings(mutate, message: str) -> None:
+    body = _mapping_workflow()
+    mutate(body)
+    with pytest.raises(WorkflowCompileError, match=message):
+        compile_workflow(body)
+
+
+def test_transform_node_requires_profile_and_both_mappings() -> None:
+    body = _mapping_workflow()
+    del body["spec"]["nodes"][2]["output_mapping"]
+    with pytest.raises(WorkflowCompileError, match="requires input_mapping and output_mapping"):
+        compile_workflow(body)
+    body = _mapping_workflow()
+    body["spec"]["nodes"][2]["config"] = {}
+    with pytest.raises(WorkflowCompileError, match="transform config is missing"):
+        compile_workflow(body)
+
+
+def test_tool_node_requires_exactly_one_output_sink() -> None:
+    def tool_body(config: dict, **extra) -> dict:
+        return {
+            "api_version": "agenthub/v1",
+            "kind": "Workflow",
+            "metadata": {"id": "tool_flow.v1"},
+            "spec": {
+                "input_node": "request",
+                "nodes": [
+                    {"id": "request", "type": "input"},
+                    {"id": "call", "type": "tool", "config": config, **extra},
+                    {"id": "done", "type": "end"},
+                ],
+                "edges": [
+                    {"from": "request", "to": "call"},
+                    {"from": "call", "to": "done"},
+                ],
+            },
+        }
+
+    # Neither output_key nor output_mapping -> rejected.
+    with pytest.raises(WorkflowCompileError, match="exactly one of output_key/output_mapping"):
+        compile_workflow(tool_body({"binding_role": "tool_binding.search"}))
+    # Both an output_key and an output_mapping -> rejected.
+    with pytest.raises(WorkflowCompileError, match="exactly one of output_key/output_mapping"):
+        compile_workflow(
+            tool_body(
+                {"binding_role": "tool_binding.search", "output_key": "out"},
+                output_mapping=[{"from": "/status", "to": "/evidence/status"}],
+            )
+        )
+    # input_key and input_mapping together -> rejected.
+    with pytest.raises(WorkflowCompileError, match="both input_key and input_mapping"):
+        compile_workflow(
+            tool_body(
+                {"binding_role": "tool_binding.search", "input_key": "in", "output_key": "out"},
+                input_mapping=[{"from": "/input/q", "to": "/query"}],
+            )
+        )
+    # A typed mapping-only tool node compiles.
+    compiled = compile_workflow(
+        tool_body(
+            {"binding_role": "tool_binding.search"},
+            input_mapping=[{"from": "/input/q", "to": "/query"}],
+            output_mapping=[{"from": "/status", "to": "/evidence/status"}],
+        )
+    )
+    assert any(node["type"] == "tool" for node in compiled.graph["nodes"])
 
 
 @pytest.mark.django_db

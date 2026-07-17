@@ -15,7 +15,8 @@ explanation, endpoint, URL, credential, secret, executable code, Python, package
 ```
 
 - Use exactly the keys shown. Maximum 50 nodes, 100 edges, and 64 characters per identifier.
-- Node: `{"id":"...","type":"...","config":{...}}`; empty `config` may be omitted.
+- Node: `{"id":"...","type":"...","config":{...}}`; empty `config` may be omitted. Mapping-eligible
+  nodes may add optional `input_mapping`/`output_mapping` (see "Typed state mapping").
 - Edge: `{"from":"...","to":"..."}`. Only condition edges may add boolean `when`.
 - Node IDs are unique. `input_node` references an `input` node.
 - The graph is acyclic; every node is reachable from input; at least one `end` is reachable.
@@ -31,13 +32,34 @@ explanation, endpoint, URL, credential, secret, executable code, Python, package
   `not`, subscripts, calls, arithmetic, or private names. Provide boolean `when: true` and
   `when: false` outgoing branches.
 - `format_output`: `template_ref` is currently literal output text, not an artifact reference.
-- `tool`: exactly `binding_role`, `input_key`, `output_key`; all are identifiers. `binding_role` is
-  a release-pinned tool-binding role.
+- `tool`: required `binding_role` (a release-pinned tool-binding role). Provide the input as either a
+  legacy `input_key` **or** an `input_mapping` (never both), and the output as exactly one of a legacy
+  `output_key` **or** an `output_mapping`.
 - `custom`: required `node_ref`, optional `fields`. Use only platform-registered node refs supplied
   by the operator; never invent packages or executable code.
+- `transform`: exactly `{"transform_profile_ref":"..."}`, a release manifest role that pins an
+  immutable `transform_profile` artifact (the closed governed operation registry). It carries no
+  inline operations, expressions or templates and **requires** both `input_mapping` and
+  `output_mapping`.
 
 Allowed types: `input`, `retrieve`, `generate`, `condition`, `format_output`,
-`validate_contract`, `tool`, `custom`, `end`.
+`validate_contract`, `tool`, `custom`, `transform`, `end`.
+
+## Typed state mapping
+
+`retrieve`, `generate`, `tool`, `custom` and `transform` nodes may declare typed mappings that move
+data between run-state locations. There is no expression, template or code — only explicit copies.
+
+- `input_mapping`/`output_mapping` are lists of `{"from":"<pointer>","to":"<pointer>"}` (max 24 each).
+- Pointers are restricted absolute JSON Pointers, e.g. `/input/customer_id`. Root/empty pointers,
+  URI fragments, wildcards (`*`), recursive descent (`**`), filters, array append (`-`) and negative
+  indexes are forbidden; escapes are only `~0` (`~`) and `~1` (`/`); max 256 chars and 12 segments.
+- When `input_mapping` is present the node sees **only** the fields it maps (a node-local envelope),
+  not ambient state.
+- `output_mapping` destinations may only write the business namespaces `/input`, `/retrieval`,
+  `/branches`, `/evidence`, `/decisions`, `/output`. Writing any server-owned namespace (tenant,
+  actor, authorization, capability, release, execution, secret, budget, audit, …) is rejected.
+- Two entries may not target the same or an overlapping destination.
 
 ## Example
 

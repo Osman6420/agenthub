@@ -14,6 +14,11 @@ from typing import Any
 from apps.tools.models import ToolBinding, ToolStatus
 from apps.workflows.compiler import MAX_EDGES, MAX_NODES
 from apps.workflows.models import CustomNodeDefinition, CustomNodeStatus
+from apps.workflows.state_mapping import (
+    ALLOWED_WRITE_ROOTS,
+    MAX_MAPPING_ENTRIES,
+    MAX_POINTER_LENGTH,
+)
 
 # Field descriptors are data the frontend uses to render inputs. ``kind`` is a UI hint,
 # not an authoritative validator — the backend compiler remains the source of truth.
@@ -26,11 +31,18 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
         "is_entry": True,
         "fields": [],
     },
-    {"type": "retrieve", "label": "Retrieve", "category": "rag", "fields": []},
+    {
+        "type": "retrieve",
+        "label": "Retrieve",
+        "category": "rag",
+        "supports_mapping": True,
+        "fields": [],
+    },
     {
         "type": "generate",
         "label": "Generate",
         "category": "rag",
+        "supports_mapping": True,
         "fields": [
             {
                 "name": "prompt_ref",
@@ -83,6 +95,7 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
         "type": "tool",
         "label": "Tool",
         "category": "tool",
+        "supports_mapping": True,
         "fields": [
             {
                 "name": "binding_role",
@@ -91,14 +104,42 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
                 "options_ref": "tool_binding_roles",
                 "help": "A tool binding role pinned into the release at compile time.",
             },
-            {"name": "input_key", "kind": "identifier", "required": True},
-            {"name": "output_key", "kind": "identifier", "required": True},
+            {
+                "name": "input_key",
+                "kind": "identifier",
+                "required": False,
+                "help": "Legacy input state key; use input_mapping instead for typed selection.",
+            },
+            {
+                "name": "output_key",
+                "kind": "identifier",
+                "required": False,
+                "help": "Legacy output state key; provide exactly one of output_key/output_mapping",
+            },
+        ],
+    },
+    {
+        "type": "transform",
+        "label": "Transform",
+        "category": "governance",
+        "supports_mapping": True,
+        "fields": [
+            {
+                "name": "transform_profile_ref",
+                "kind": "identifier",
+                "required": True,
+                "help": (
+                    "Release rolü olarak sabitlenmiş governed transform profili; "
+                    "input_mapping ve output_mapping zorunludur."
+                ),
+            }
         ],
     },
     {
         "type": "custom",
         "label": "Custom node",
         "category": "custom",
+        "supports_mapping": True,
         "fields": [
             {
                 "name": "node_ref",
@@ -112,6 +153,15 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
     },
     {"type": "end", "label": "End", "category": "io", "is_terminal": True, "fields": []},
 ]
+
+# Restricted JSON Pointer mapping metadata surfaced to the builder (non-authoritative UI hint;
+# the backend compiler and apps.workflows.state_mapping remain the source of truth).
+_MAPPING_SCHEMA: dict[str, Any] = {
+    "entry_keys": ["from", "to"],
+    "max_entries": MAX_MAPPING_ENTRIES,
+    "max_pointer_length": MAX_POINTER_LENGTH,
+    "writable_roots": sorted(ALLOWED_WRITE_ROOTS),
+}
 
 
 def build_node_schema(*, organization_id: int) -> dict[str, Any]:
@@ -142,6 +192,7 @@ def build_node_schema(*, organization_id: int) -> dict[str, Any]:
         "dsl": {"api_version": "agenthub/v1", "kind": "Workflow"},
         "limits": {"max_nodes": MAX_NODES, "max_edges": MAX_EDGES},
         "node_types": _BUILTIN_NODES,
+        "mapping": _MAPPING_SCHEMA,
         "tool_binding_roles": tool_binding_roles,
         "custom_nodes": custom_nodes,
     }
