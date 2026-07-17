@@ -195,6 +195,8 @@ Dedicated P2.6.9 implementation plan and threat model:
 
 Detailed P2.6.10 plan and threat model:
 [`phase-2-6-ingestion-operational-lifecycle`](../tasks/phase-2-6-ingestion-operational-lifecycle/plan.md).
+Activation-closure plan:
+[`phase-2-6-part-10-activation-closure`](../tasks/phase-2-6-part-10-activation-closure/plan.md).
 
 ## P2.6.0 — Contract and scenario foundation
 

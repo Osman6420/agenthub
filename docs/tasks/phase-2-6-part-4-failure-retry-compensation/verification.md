@@ -2,7 +2,8 @@
 
 ## Result
 
-Implemented and verified on `codex/phase-2-6-p2-6-4-recovery` on 2026-07-17.
+Implemented and verified on `codex/phase-2-6-p2-6-4-recovery` on 2026-07-17, then integrated into
+`feat/foundation-sprint-0-1` through merge commit `b3f641d`.
 
 ## Evidence
 
@@ -23,6 +24,9 @@ Implemented and verified on `codex/phase-2-6-p2-6-4-recovery` on 2026-07-17.
 | Ruff lint/format | Passed; 394 files formatted |
 | mypy | `Success: no issues found in 393 source files` |
 | Django system check and migration drift | No issues; no changes detected |
+| Post-merge full SQLite regression | `874 passed, 33 skipped` |
+| Post-merge PostgreSQL workflow/tenancy regression | `189 passed, 3 SQLite-only skips` |
+| Post-merge canonical infrastructure | PostgreSQL, Redis and MinIO reported healthy by Compose |
 
 ## Status
 
