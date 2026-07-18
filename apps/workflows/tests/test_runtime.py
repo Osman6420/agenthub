@@ -116,10 +116,13 @@ def test_candidate_workflow_uses_isolated_eval_seam(workflow_fixture: WorkflowFi
     )
     assert result.status == "completed"
     assert result.output == {"answer": "ok", "sources": []}
-    assert result.metadata == {
-        "workload_type": "workflow",
-        "executed_nodes": ["request", "format", "done"],
-    }
+    assert result.metadata["workload_type"] == "workflow"
+    assert result.metadata["executed_nodes"] == ["request", "format", "done"]
+    # P2.6.11 adds redacted structure-evidence keys; the synchronous candidate seam (run_id=0)
+    # cannot run async structures, so they are empty (owning-part route-back).
+    assert result.metadata["branches_completed"] == []
+    assert result.metadata["joins_completed"] == []
+    assert result.metadata["max_retry_attempts"] == 0
 
 
 def test_workflow_output_policy_is_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:

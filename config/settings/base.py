@@ -143,6 +143,12 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 15.0,
         "options": {"queue": "runtime"},
     },
+    # Report-mode only (no deletion); deletion is a separate operator-gated action.
+    "report-retention-backlog": {
+        "task": "apps.observability.tasks.report_retention_backlog",
+        "schedule": 86400.0,
+        "options": {"queue": "runtime"},
+    },
 }
 
 # --- Gateway / DRF ----------------------------------------------------------

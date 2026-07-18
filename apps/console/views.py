@@ -120,6 +120,7 @@ from apps.ingestion.rest_services import (
 from apps.ingestion.staged_build import StagedBuildError, promote_staged_index
 from apps.ingestion.tasks import sync_confluence_source, sync_rest_source
 from apps.ingestion.vector_store import set_tenant_context
+from apps.observability.retention import RETENTION_DAYS, run_retention
 from apps.orchestration.authoring_guide import workflow_authoring_guide
 from apps.releases.compiler import (
     ArtifactRef,
@@ -147,8 +148,10 @@ from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_ap
 from apps.tools.authz import resolve_actor_roles
 from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
 from apps.workflows.models import (
+    WorkflowChildLink,
     WorkflowRecoveryCase,
     WorkflowRecoveryStatus,
+    WorkflowRun,
     WorkflowWait,
     WorkflowWaitKind,
     WorkflowWaitStatus,
@@ -1593,6 +1596,191 @@ def agent_run_detail(request: HttpRequest, public_id: str) -> HttpResponse:
         "console/agent_run_detail.html",
         {"title": f"Agent çalıştırması {public[:8]}", "run": summary, "events": events},
     )
+
+
+@login_required
+def workflow_runs(request: HttpRequest) -> HttpResponse:
+    rows = [
+        {
+            "id": run.pk,
+            "org": run.organization.slug,
+            "scenario": run.scenario.slug,
+            "status": run.status,
+            "error": run.error_code,
+            "awaiting_node": run.awaiting_node,
+            "created": run.created_at,
+        }
+        for run in scoping.scoped_workflow_runs(request.user).order_by("-created_at")[:200]
+    ]
+    return render(
+        request, "console/workflow_runs.html", {"title": "Workflow çalıştırmaları", "rows": rows}
+    )
+
+
+@login_required
+def workflow_run_detail(request: HttpRequest, run_id: int) -> HttpResponse:
+    """Render a redacted, tenant-scoped workflow run trace (P2.6.11).
+
+    Only bounded metadata reaches the template — statuses, reason codes, failure classes,
+    counts, truncated checksums/correlation hashes and timestamps. Payload-bearing columns
+    (branch input/result state, join merged_state, wait payloads, redacted_state,
+    execution_context) are never read here, so no tenant content or secret can leak onto an
+    operator screen.
+    """
+    run = _scoped_workflow_run(request.user, run_id)
+    branches = [
+        {
+            "region": b.region_node_id,
+            "branch": b.branch_name,
+            "ordinal": b.item_ordinal,
+            "status": b.status,
+            "attempts": b.attempt_count,
+            "reason": b.reason_code,
+            "checksum": b.result_checksum[:12],
+            "started": b.started_at,
+            "finished": b.finished_at,
+        }
+        for b in run.branches.order_by("region_node_id", "branch_name", "item_ordinal")
+    ]
+    joins = [
+        {
+            "region": j.region_node_id,
+            "join": j.join_node_id,
+            "mode": j.mode,
+            "required": j.required_count,
+            "branches": j.branch_count,
+            "status": j.status,
+            "closed": j.closed_at,
+        }
+        for j in run.joins.order_by("region_node_id")
+    ]
+    waits = [
+        {
+            "kind": w.kind,
+            "node": w.node_id,
+            "status": w.status,
+            "correlation": w.correlation_hash[:12],
+            "deadline": w.deadline_at,
+            "escalated": w.escalated_at,
+            "consumed": w.consumed_at,
+        }
+        for w in run.waits.order_by("created_at")
+    ]
+    attempts = [
+        {
+            "node": a.node_id,
+            "ordinal": a.ordinal,
+            "status": a.status,
+            "failure_class": a.failure_class,
+            "reason": a.reason_code,
+            "retry_not_before": a.retry_not_before,
+            "finished": a.finished_at,
+        }
+        for a in run.node_attempts.order_by("node_id", "ordinal")
+    ]
+    compensations = [
+        {
+            "sequence": c.sequence,
+            "source": c.source_node_id,
+            "compensation": c.compensation_node_id,
+            "status": c.status,
+            "attempts": c.attempt_count,
+            "reason": c.reason_code,
+            "finished": c.finished_at,
+        }
+        for c in run.compensation_entries.order_by("sequence")
+    ]
+    children = [
+        {
+            "call_site": link.call_site,
+            "depth": link.depth,
+            "status": link.status,
+            "reason": link.reason_code,
+            "kind": link.child_kind,
+        }
+        for link in WorkflowChildLink.objects.filter(parent_run=run).order_by("call_site")
+    ]
+    events = [
+        {
+            "sequence": e.sequence,
+            "event_type": e.event_type,
+            "node": e.node_id,
+        }
+        for e in run.events.order_by("sequence")
+    ]
+    summary = {
+        "id": run.pk,
+        "org": run.organization.slug,
+        "scenario": run.scenario.slug,
+        "status": run.status,
+        "error": run.error_code,
+        "awaiting_node": run.awaiting_node,
+        "created": run.created_at,
+        "started": run.started_at,
+        "finished": run.finished_at,
+    }
+    return render(
+        request,
+        "console/workflow_run_detail.html",
+        {
+            "title": f"Workflow çalıştırması {run.pk}",
+            "run": summary,
+            "branches": branches,
+            "joins": joins,
+            "waits": waits,
+            "attempts": attempts,
+            "compensations": compensations,
+            "children": children,
+            "events": events,
+        },
+    )
+
+
+@login_required
+def retention_operations(request: HttpRequest) -> HttpResponse:
+    """Platform-admin retention/purge operations surface (P2.6.11).
+
+    GET reports eligible bulky-state counts per class (no mutation). POST with an explicit
+    confirmation performs the owner-approved, audited, fail-closed purge. Restricted to a
+    platform admin; the purge itself re-audits every batch server-side.
+    """
+    if not is_platform_admin(request.user):
+        raise PermissionDenied
+    committed = False
+    if request.method == "POST":
+        if request.POST.get("confirm") != "purge":
+            messages.error(request, "Silme işlemi için onay kutusunu işaretleyin.")
+            return redirect("console:retention_operations")
+        reports = run_retention(commit=True, actor=request.user.get_username())
+        committed = True
+        total = sum(r.purged for r in reports)
+        messages.success(request, f"Retention purhe tamamlandı: {total} kayıt temizlendi.")
+    else:
+        reports = run_retention(commit=False)
+    rows = [
+        {"retention_class": r.retention_class, "eligible": r.eligible, "purged": r.purged}
+        for r in reports
+    ]
+    return render(
+        request,
+        "console/retention_operations.html",
+        {
+            "title": "Saklama / temizleme",
+            "rows": rows,
+            "window_days": RETENTION_DAYS,
+            "committed": committed,
+        },
+    )
+
+
+def _scoped_workflow_run(user: UserLike, run_id: int) -> WorkflowRun:
+    run = WorkflowRun.objects.select_related("organization", "scenario").filter(pk=run_id).first()
+    if run is None:
+        raise Http404
+    if not _operator_can_access_org(user, run.organization_id):
+        raise PermissionDenied
+    set_tenant_context(run.organization_id)
+    return run
 
 
 @login_required

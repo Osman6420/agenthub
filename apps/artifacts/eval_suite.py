@@ -23,7 +23,21 @@ MAX_MIN_SOURCES = 100
 
 # Assertions requiring a non-empty string ``value``.
 _VALUE_ASSERTIONS = frozenset(
-    {"answer_contains", "answer_not_contains", "node_executed", "agent_tool_invoked"}
+    {
+        "answer_contains",
+        "answer_not_contains",
+        "node_executed",
+        "agent_tool_invoked",
+        # P2.6.11 durable workflow-structure evidence (value = region/branch/node/child id).
+        "workflow_branch_completed",
+        "workflow_join_completed",
+        "workflow_wait_created",
+        "workflow_wait_resumed",
+        "workflow_wait_expired",
+        "workflow_compensation_executed",
+        "workflow_compensation_skipped",
+        "workflow_child_completed",
+    }
 )
 # Assertions taking no parameters.
 _NULLARY_ASSERTIONS = frozenset(
@@ -34,10 +48,14 @@ _NULLARY_ASSERTIONS = frozenset(
         "workflow_completed",
         "agent_completed",
         "agent_no_tools",
+        # P2.6.11 agent trajectory evidence (P2.6.6 schema-v2 verify/escalate/arguments).
+        "agent_verified",
+        "agent_arguments_valid",
+        "agent_escalated",
     }
 )
 # Assertions requiring an integer ``count`` >= 1.
-_COUNT_ASSERTIONS = frozenset({"min_sources", "agent_max_steps"})
+_COUNT_ASSERTIONS = frozenset({"min_sources", "agent_max_steps", "workflow_retry_within"})
 
 ASSERTION_TYPES: frozenset[str] = _VALUE_ASSERTIONS | _NULLARY_ASSERTIONS | _COUNT_ASSERTIONS
 

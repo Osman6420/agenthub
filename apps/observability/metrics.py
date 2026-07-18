@@ -125,6 +125,44 @@ TOOL_APPROVALS = Counter(
     registry=REGISTRY,
 )
 
+# --- P2.6.11 orchestration-structure telemetry (bounded labels only) ----------------------
+WORKFLOW_BRANCHES = Counter(
+    "agenthub_workflow_branches_total",
+    "Parallel/for_each branch terminal outcomes.",
+    ("outcome",),
+    registry=REGISTRY,
+)
+WORKFLOW_JOINS = Counter(
+    "agenthub_workflow_joins_total",
+    "Join terminal outcomes by policy mode.",
+    ("mode", "outcome"),
+    registry=REGISTRY,
+)
+WORKFLOW_WAITS = Counter(
+    "agenthub_workflow_waits_total",
+    "Durable wait lifecycle phases by kind.",
+    ("kind", "phase"),
+    registry=REGISTRY,
+)
+WORKFLOW_RETRIES = Counter(
+    "agenthub_workflow_retries_total",
+    "Scheduled workflow node retries by failure class.",
+    ("failure_class",),
+    registry=REGISTRY,
+)
+WORKFLOW_COMPENSATIONS = Counter(
+    "agenthub_workflow_compensations_total",
+    "Compensation entry terminal outcomes.",
+    ("outcome",),
+    registry=REGISTRY,
+)
+WORKFLOW_CHILDREN = Counter(
+    "agenthub_workflow_children_total",
+    "Child (sub-workflow/agent) link terminal outcomes.",
+    ("kind", "status"),
+    registry=REGISTRY,
+)
+
 
 def render_metrics() -> bytes:
     return generate_latest(REGISTRY)

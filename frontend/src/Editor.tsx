@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Palette } from "./components/Palette";
 import { NodeConfigPanel } from "./components/NodeConfigPanel";
+import { EdgeConfigPanel } from "./components/EdgeConfigPanel";
 import { Toolbar } from "./components/Toolbar";
 import { WorkflowNode } from "./components/WorkflowNode";
 import { ApiError, type BuilderApi } from "./api";
@@ -50,6 +51,10 @@ export function Editor({
   const selectedNode = useMemo(
     () => builder.nodes.find((n) => n.id === builder.selectedNodeId) ?? null,
     [builder.nodes, builder.selectedNodeId],
+  );
+  const selectedEdge = useMemo(
+    () => builder.edges.find((e) => e.id === builder.selectedEdgeId) ?? null,
+    [builder.edges, builder.selectedEdgeId],
   );
 
   useEffect(() => {
@@ -186,7 +191,11 @@ export function Editor({
               onConnect={onConnect}
               isValidConnection={isValidConnection}
               onNodeClick={(_, node) => builder.selectNode(node.id)}
-              onPaneClick={() => builder.selectNode(null)}
+              onEdgeClick={(_, edge) => builder.selectEdge(edge.id)}
+              onPaneClick={() => {
+                builder.selectNode(null);
+                builder.selectEdge(null);
+              }}
               nodesDraggable={!builder.readOnly}
               nodesConnectable={!builder.readOnly}
               edgesReconnectable={!builder.readOnly}
@@ -197,13 +206,23 @@ export function Editor({
             </ReactFlow>
           </ReactFlowProvider>
         </div>
-        <NodeConfigPanel
-          schema={schema}
-          node={selectedNode}
-          disabled={builder.readOnly}
-          onChange={builder.updateNodeConfig}
-          onRemove={builder.removeSelected}
-        />
+        {selectedEdge ? (
+          <EdgeConfigPanel
+            edge={selectedEdge}
+            nodes={builder.nodes}
+            disabled={builder.readOnly}
+            onChange={builder.updateEdgeSelector}
+          />
+        ) : (
+          <NodeConfigPanel
+            schema={schema}
+            node={selectedNode}
+            disabled={builder.readOnly}
+            onChange={builder.updateNodeConfig}
+            onPatchData={builder.updateNodeData}
+            onRemove={builder.removeSelected}
+          />
+        )}
       </div>}
     </div>
   );

@@ -305,6 +305,9 @@ urlpatterns = [
         views.agent_run_cancel,
         name="agent_run_cancel",
     ),
+    path("retention/", views.retention_operations, name="retention_operations"),
+    path("workflow-runs/", views.workflow_runs, name="workflow_runs"),
+    path("workflow-runs/<int:run_id>/", views.workflow_run_detail, name="workflow_run_detail"),
     path("tool-approvals/", views.tool_approvals, name="tool_approvals"),
     path(
         "tool-approvals/<int:approval_id>/decide/",

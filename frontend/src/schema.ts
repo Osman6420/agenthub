@@ -7,7 +7,7 @@ export function nodeTypeSchema(schema: NodeSchema, type: string): NodeTypeSchema
   return schema.node_types.find((n) => n.type === type);
 }
 
-/** Resolve the selectable options for an enum field from the schema's shared lists. */
+/** Resolve the selectable options for an enum/list field from the schema or inline list. */
 export function fieldOptions(schema: NodeSchema, field: NodeFieldSchema): string[] {
   if (field.options_ref === "tool_binding_roles") {
     return schema.tool_binding_roles.map((r) => r.role);
@@ -15,6 +15,7 @@ export function fieldOptions(schema: NodeSchema, field: NodeFieldSchema): string
   if (field.options_ref === "custom_nodes") {
     return schema.custom_nodes.map((c) => c.node_ref);
   }
+  if (Array.isArray(field.options)) return field.options;
   return [];
 }
 
@@ -23,7 +24,11 @@ export function defaultConfig(nodeType: NodeTypeSchema | undefined): NodeConfig 
   const config: NodeConfig = {};
   if (!nodeType) return config;
   for (const field of nodeType.fields) {
-    if (field.required) config[field.name] = field.kind === "object" ? {} : "";
+    if (!field.required) continue;
+    if (field.kind === "object") config[field.name] = {};
+    else if (field.kind === "list" || field.kind === "mapping") config[field.name] = [];
+    else if (field.kind === "boolean") config[field.name] = false;
+    else config[field.name] = "";
   }
   return config;
 }

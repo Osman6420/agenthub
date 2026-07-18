@@ -91,13 +91,88 @@ def run_workflow_candidate(*, release: Any, input_payload: dict[str, Any]) -> Ru
         refresh_from_db=lambda **kwargs: None,
     )
     result = execute_graph(run=run, verify_context=False)
+    metadata: dict[str, Any] = {
+        "workload_type": "workflow",
+        "executed_nodes": list(result.executed_nodes),
+    }
+    metadata.update(_workflow_structure_evidence(run.id))
     return RunResult(
         status="completed",
         output=result.output,
         usage={"input_tokens": 0, "output_tokens": 0},
         fallback_used=False,
-        metadata={"workload_type": "workflow", "executed_nodes": list(result.executed_nodes)},
+        metadata=metadata,
     )
+
+
+def _workflow_structure_evidence(run_id: int) -> dict[str, Any]:
+    """Redacted branch/join/wait/retry/compensation/child summary for eval assertions.
+
+    Content-free identifiers and counts only — never state, merged output or payloads. The
+    synchronous candidate seam cannot yet execute async branch/wait structures (they require
+    a persisted run with dispatched branches), so for a candidate run (``run_id == 0``) these
+    lists are empty. Populating async candidate evidence end-to-end is an owning-part
+    follow-up (P2.6.2–P2.6.5); the assertion vocabulary and this contract are in place so a
+    later async candidate seam needs no eval change. See the P2.6.11 plan route-back note.
+    """
+    if not run_id:
+        return {
+            "branches_completed": [],
+            "joins_completed": [],
+            "waits_created": [],
+            "waits_resumed": [],
+            "waits_expired": [],
+            "max_retry_attempts": 0,
+            "compensations_executed": [],
+            "compensations_skipped": [],
+            "children_completed": [],
+        }
+    from apps.workflows.models import (
+        WorkflowBranch,
+        WorkflowBranchStatus,
+        WorkflowChildLink,
+        WorkflowCompensationEntry,
+        WorkflowCompensationStatus,
+        WorkflowJoin,
+        WorkflowJoinStatus,
+        WorkflowNodeAttempt,
+        WorkflowWait,
+        WorkflowWaitStatus,
+    )
+
+    branches = [
+        f"{b.region_node_id}/{b.branch_name}"
+        for b in WorkflowBranch.objects.filter(run_id=run_id, status=WorkflowBranchStatus.SUCCEEDED)
+    ]
+    joins = [
+        j.join_node_id
+        for j in WorkflowJoin.objects.filter(run_id=run_id, status=WorkflowJoinStatus.SUCCEEDED)
+    ]
+    waits = list(WorkflowWait.objects.filter(run_id=run_id))
+    resumed = [w.node_id for w in waits if w.status == WorkflowWaitStatus.RESUMED]
+    expired = [w.node_id for w in waits if w.status == WorkflowWaitStatus.EXPIRED]
+    max_attempts = max(
+        (a.ordinal for a in WorkflowNodeAttempt.objects.filter(run_id=run_id)), default=0
+    )
+    comps = list(WorkflowCompensationEntry.objects.filter(run_id=run_id))
+    return {
+        "branches_completed": branches,
+        "joins_completed": joins,
+        "waits_created": [w.node_id for w in waits],
+        "waits_resumed": resumed,
+        "waits_expired": expired,
+        "max_retry_attempts": max_attempts,
+        "compensations_executed": [
+            c.source_node_id for c in comps if c.status == WorkflowCompensationStatus.SUCCEEDED
+        ],
+        "compensations_skipped": [
+            c.source_node_id for c in comps if c.status == WorkflowCompensationStatus.CANCELLED
+        ],
+        "children_completed": [
+            link.call_site
+            for link in WorkflowChildLink.objects.filter(parent_run_id=run_id, status="completed")
+        ],
+    }
 
 
 def execute_graph(*, run: Any, verify_context: bool = True) -> WorkflowResult:

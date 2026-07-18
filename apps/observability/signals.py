@@ -21,8 +21,14 @@ from apps.observability.metrics import (
     TOKENS,
     TOOL_APPROVALS,
     TOOL_INVOCATIONS,
+    WORKFLOW_BRANCHES,
+    WORKFLOW_CHILDREN,
+    WORKFLOW_COMPENSATIONS,
+    WORKFLOW_JOINS,
     WORKFLOW_NODES,
+    WORKFLOW_RETRIES,
     WORKFLOW_RUNS,
+    WORKFLOW_WAITS,
 )
 from apps.observability.models import UsageEvent
 from apps.tools.models import (
@@ -32,7 +38,33 @@ from apps.tools.models import (
     ToolInvocation,
 )
 from apps.workflows.compiler import BUILTIN_NODE_TYPES
-from apps.workflows.models import WorkflowRun, WorkflowRunEvent
+from apps.workflows.models import (
+    WorkflowBranch,
+    WorkflowChildLink,
+    WorkflowCompensationEntry,
+    WorkflowJoin,
+    WorkflowNodeAttempt,
+    WorkflowRun,
+    WorkflowRunEvent,
+    WorkflowWait,
+)
+
+_BRANCH_OUTCOMES = frozenset({"succeeded", "failed", "cancelled"})
+_JOIN_MODES = frozenset({"all", "threshold", "fail_fast"})
+_JOIN_OUTCOMES = frozenset({"succeeded", "failed", "cancelled"})
+_WAIT_KINDS = frozenset({"event", "timer", "human"})
+_WAIT_RESOLVED = frozenset({"resumed", "expired", "cancelled"})
+_FAILURE_CLASSES = frozenset(
+    {"validation", "authorization", "permanent", "transient", "outcome_unknown"}
+)
+_COMPENSATION_OUTCOMES = frozenset({"succeeded", "blocked", "cancelled"})
+_CHILD_KINDS = frozenset({"workflow", "agent"})
+_CHILD_TERMINAL = frozenset({"completed", "failed", "cancelled"})
+
+
+def _bounded(value: str, allowed: frozenset[str]) -> str:
+    return value if value in allowed else "other"
+
 
 _DECIDED_APPROVAL_STATUSES = frozenset(
     {
@@ -128,6 +160,58 @@ def agent_event_saved(sender: Any, instance: AgentRunEvent, created: bool, **kwa
         instance.decision if instance.decision in {"retrieve", "tool", "respond"} else "other"
     )
     AGENT_STEPS.labels(decision=decision).inc()
+
+
+@receiver(post_save, sender=WorkflowBranch, dispatch_uid="observability.workflow_branch")
+def workflow_branch_saved(sender: Any, instance: WorkflowBranch, **kwargs: Any) -> None:
+    if str(instance.status) in _BRANCH_OUTCOMES:
+        WORKFLOW_BRANCHES.labels(outcome=str(instance.status)).inc()
+
+
+@receiver(post_save, sender=WorkflowJoin, dispatch_uid="observability.workflow_join")
+def workflow_join_saved(sender: Any, instance: WorkflowJoin, **kwargs: Any) -> None:
+    if str(instance.status) in _JOIN_OUTCOMES:
+        WORKFLOW_JOINS.labels(
+            mode=_bounded(str(instance.mode), _JOIN_MODES),
+            outcome=str(instance.status),
+        ).inc()
+
+
+@receiver(post_save, sender=WorkflowWait, dispatch_uid="observability.workflow_wait")
+def workflow_wait_saved(sender: Any, instance: WorkflowWait, created: bool, **kwargs: Any) -> None:
+    kind = _bounded(str(instance.kind), _WAIT_KINDS)
+    if created:
+        WORKFLOW_WAITS.labels(kind=kind, phase="created").inc()
+    elif str(instance.status) in _WAIT_RESOLVED:
+        WORKFLOW_WAITS.labels(kind=kind, phase=str(instance.status)).inc()
+
+
+@receiver(post_save, sender=WorkflowNodeAttempt, dispatch_uid="observability.workflow_retry")
+def workflow_attempt_saved(sender: Any, instance: WorkflowNodeAttempt, **kwargs: Any) -> None:
+    # A scheduled retry is the retry-storm signal; count when an attempt enters retry_wait.
+    if str(instance.status) == "retry_wait":
+        WORKFLOW_RETRIES.labels(
+            failure_class=_bounded(str(instance.failure_class), _FAILURE_CLASSES)
+        ).inc()
+
+
+@receiver(
+    post_save, sender=WorkflowCompensationEntry, dispatch_uid="observability.workflow_compensation"
+)
+def workflow_compensation_saved(
+    sender: Any, instance: WorkflowCompensationEntry, **kwargs: Any
+) -> None:
+    if str(instance.status) in _COMPENSATION_OUTCOMES:
+        WORKFLOW_COMPENSATIONS.labels(outcome=str(instance.status)).inc()
+
+
+@receiver(post_save, sender=WorkflowChildLink, dispatch_uid="observability.workflow_child")
+def workflow_child_saved(sender: Any, instance: WorkflowChildLink, **kwargs: Any) -> None:
+    if str(instance.status) in _CHILD_TERMINAL:
+        WORKFLOW_CHILDREN.labels(
+            kind=_bounded(str(instance.child_kind), _CHILD_KINDS),
+            status=str(instance.status),
+        ).inc()
 
 
 @receiver(post_save, sender=ToolInvocation, dispatch_uid="observability.tool_invocation")

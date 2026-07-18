@@ -19,11 +19,18 @@ import type {
   WorkflowDsl,
 } from "./types";
 
+export type EdgeSelector =
+  | { kind: "none" }
+  | { kind: "when"; value: boolean }
+  | { kind: "branch"; value: string }
+  | { kind: "on_error"; value: string };
+
 export interface BuilderController {
   nodes: Node<BuilderNodeData>[];
   edges: Edge[];
   workflowId: string;
   selectedNodeId: string | null;
+  selectedEdgeId: string | null;
   diagnostics: DiagnosticsResult | null;
   status: string;
   readOnly: boolean;
@@ -36,7 +43,10 @@ export interface BuilderController {
   onConnect: (connection: Connection, when?: boolean) => void;
   addNode: (type: string) => void;
   selectNode: (id: string | null) => void;
+  selectEdge: (id: string | null) => void;
   updateNodeConfig: (id: string, config: NodeConfig) => void;
+  updateNodeData: (id: string, patch: Partial<BuilderNodeData>) => void;
+  updateEdgeSelector: (id: string, selector: EdgeSelector) => void;
   removeSelected: () => void;
   runDiagnostics: () => Promise<void>;
   save: () => Promise<number | undefined>;
@@ -56,6 +66,7 @@ export function useBuilder(
   const [workflowId, setWorkflowId] = useState<string>(initial.workflowId || draft.logical_id);
   const [inputNodeId, setInputNodeId] = useState<string>(initial.inputNodeId);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(initialDiagnostics);
   const [status, setStatus] = useState<string>("");
   const [revision, setRevision] = useState<number>(draft.revision);
@@ -147,6 +158,48 @@ export function useBuilder(
     [readOnly],
   );
 
+  // Patch node-level DSL siblings (input/output mappings, retry_policy, compensation). An
+  // empty mapping array or undefined value drops the key on serialization (see dsl.ts).
+  const updateNodeData = useCallback(
+    (id: string, patch: Partial<BuilderNodeData>) => {
+      if (readOnly) return;
+      setNodes((current) =>
+        current.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
+      );
+    },
+    [readOnly],
+  );
+
+  // Set an edge's routing selector. when/branch/on_error are mutually exclusive (compiler
+  // contract), so setting one clears the others; the visible label mirrors the selector.
+  const updateEdgeSelector = useCallback(
+    (id: string, selector: EdgeSelector) => {
+      if (readOnly) return;
+      setEdges((current) =>
+        current.map((e) => {
+          if (e.id !== id) return e;
+          if (selector.kind === "when") {
+            return { ...e, data: { when: selector.value }, label: String(selector.value) };
+          }
+          if (selector.kind === "branch") {
+            const branch = selector.value.trim();
+            return {
+              ...e,
+              data: branch ? { branch } : {},
+              label: branch ? `⑃ ${branch}` : undefined,
+            };
+          }
+          if (selector.kind === "on_error") {
+            const cls = selector.value.trim();
+            return { ...e, data: cls ? { on_error: cls } : {}, label: cls ? `⚠ ${cls}` : undefined };
+          }
+          return { ...e, data: {}, label: undefined };
+        }),
+      );
+    },
+    [readOnly],
+  );
+
   const removeSelected = useCallback(() => {
     if (readOnly || !selectedNodeId) return;
     setNodes((current) => current.filter((n) => n.id !== selectedNodeId));
@@ -227,11 +280,22 @@ export function useBuilder(
     return true;
   }, [api, draft.id, draft.logical_id, readOnly]);
 
+  const selectNode = useCallback((id: string | null) => {
+    setSelectedNodeId(id);
+    if (id !== null) setSelectedEdgeId(null);
+  }, []);
+
+  const selectEdge = useCallback((id: string | null) => {
+    setSelectedEdgeId(id);
+    if (id !== null) setSelectedNodeId(null);
+  }, []);
+
   return {
     nodes,
     edges,
     workflowId,
     selectedNodeId,
+    selectedEdgeId,
     diagnostics,
     status,
     readOnly,
@@ -243,8 +307,11 @@ export function useBuilder(
     onEdgesChange,
     onConnect,
     addNode,
-    selectNode: setSelectedNodeId,
+    selectNode,
+    selectEdge,
     updateNodeConfig,
+    updateNodeData,
+    updateEdgeSelector,
     removeSelected,
     runDiagnostics,
     save,

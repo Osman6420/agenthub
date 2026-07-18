@@ -32,6 +32,39 @@ def test_valid_suite_passes() -> None:
     validate_eval_suite_body(_valid_suite())  # no raise
 
 
+def test_p2611_workflow_and_agent_assertion_vocabulary_is_allowlisted() -> None:
+    suite = _valid_suite()
+    suite["cases"][0]["assertions"] = [
+        {"type": "workflow_branch_completed", "value": "fan/left"},
+        {"type": "workflow_join_completed", "value": "join"},
+        {"type": "workflow_wait_created", "value": "approve"},
+        {"type": "workflow_wait_resumed", "value": "approve"},
+        {"type": "workflow_wait_expired", "value": "approve"},
+        {"type": "workflow_retry_within", "count": 3},
+        {"type": "workflow_compensation_executed", "value": "charge"},
+        {"type": "workflow_compensation_skipped", "value": "charge"},
+        {"type": "workflow_child_completed", "value": "review_call"},
+        {"type": "agent_verified"},
+        {"type": "agent_arguments_valid"},
+        {"type": "agent_escalated"},
+    ]
+    validate_eval_suite_body(suite)  # no raise
+
+
+def test_p2611_value_kind_rejects_missing_value() -> None:
+    suite = _valid_suite()
+    suite["cases"][0]["assertions"] = [{"type": "workflow_branch_completed"}]
+    with pytest.raises(EvalSuiteError, match="requires a 'value'"):
+        validate_eval_suite_body(suite)
+
+
+def test_p2611_retry_within_requires_count() -> None:
+    suite = _valid_suite()
+    suite["cases"][0]["assertions"] = [{"type": "workflow_retry_within", "value": "x"}]
+    with pytest.raises(EvalSuiteError):
+        validate_eval_suite_body(suite)
+
+
 def test_unknown_assertion_type_is_rejected() -> None:
     suite = _valid_suite()
     suite["cases"][0]["assertions"] = [{"type": "sql_injection", "value": "x"}]

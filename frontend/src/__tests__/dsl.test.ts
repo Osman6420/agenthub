@@ -52,6 +52,71 @@ describe("graphToDsl", () => {
     expect(canonicalJson(build(1))).toBe(canonicalJson(build(2)));
   });
 
+  it("emits node mappings, retry_policy and compensation only when set", () => {
+    const parallel: Node<BuilderNodeData> = {
+      id: "child",
+      type: "builderNode",
+      position: { x: 0, y: 0 },
+      data: {
+        nodeType: "subworkflow",
+        config: { workflow_role: "reviewer", max_depth: 2 },
+        input_mapping: [{ from: "/input/doc", to: "/input/doc" }],
+        output_mapping: [{ from: "/output/verdict", to: "/output/verdict" }],
+        retry_policy: {
+          max_attempts: 2,
+          backoff_seconds: 5,
+          retry_on: ["transient"],
+          idempotent: true,
+        },
+      },
+    };
+    const plain = node("request", "input");
+    const dsl = graphToDsl({
+      workflowId: "wf.v1",
+      inputNodeId: "request",
+      nodes: [parallel, plain],
+      edges: [],
+    });
+    const child = dsl.spec.nodes.find((n) => n.id === "child");
+    expect(child?.input_mapping).toEqual([{ from: "/input/doc", to: "/input/doc" }]);
+    expect(child?.retry_policy?.max_attempts).toBe(2);
+    // A node with no mappings/retry/compensation stays byte-identical to before.
+    const req = dsl.spec.nodes.find((n) => n.id === "request");
+    expect(req).toEqual({ id: "request", type: "input" });
+  });
+
+  it("emits at most one mutually-exclusive edge selector (branch over on_error)", () => {
+    const dsl = graphToDsl({
+      workflowId: "wf.v1",
+      inputNodeId: "fan",
+      nodes: [node("fan", "parallel"), node("j", "join")],
+      edges: [
+        { id: "e1", source: "fan", target: "j", data: { branch: "left", on_error: "any" } } as Edge,
+      ],
+    });
+    expect(dsl.spec.edges).toEqual([{ from: "fan", to: "j", branch: "left" }]);
+  });
+
+  it("round-trips branch and on_error edges", () => {
+    const body = graphToDsl({
+      workflowId: "wf.v1",
+      inputNodeId: "fan",
+      nodes: [node("fan", "parallel"), node("work", "tool"), node("j", "join")],
+      edges: [
+        { id: "e1", source: "fan", target: "work", data: { branch: "left" } } as Edge,
+        { id: "e2", source: "work", target: "j", data: { on_error: "transient" } } as Edge,
+      ],
+    });
+    const parsed = dslToGraph(body);
+    const reserialized = graphToDsl({
+      workflowId: parsed.workflowId,
+      inputNodeId: parsed.inputNodeId,
+      nodes: parsed.nodes,
+      edges: parsed.edges,
+    });
+    expect(canonicalJson(reserialized)).toBe(canonicalJson(body));
+  });
+
   it("carries the typed 'when' flag on condition edges only", () => {
     const dsl = graphToDsl({
       workflowId: "wf.v1",

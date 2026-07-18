@@ -367,6 +367,35 @@ skipped), the PostgreSQL affected-app profile (163 passed incl. composition FORC
 non-owner RLS proof of the control table, in
 `docs/tasks/phase-2-6-part-6-governed-agent-loop/verification.md`.
 
+Phase 2.6 P2.6.11 (product/operational closure) increments A–D are implemented and verified;
+E/F remain environment/owner-gated. A: Scenario Studio now exposes every verified workflow node
+family — `parallel`/`for_each`/`join`/`subworkflow`/`agent_call` plus node-level `retry_policy`/
+`compensation` — via the backend-authoritative `apps/builder/node_schema.py` (Turkish-first
+labels, compiler-accurate bounds, `branch_owner`/`composition`/gate metadata) and additive
+React authoring (new field kinds, node input/output mappings, retry/compensation editors,
+`branch`/`on_error` edges; frontend stays non-authoritative); and a role-gated, tenant-scoped
+redacted **workflow run trace** view (`console:workflow_run_detail`) renders branches/joins/
+waits/retries/compensation/child links at code/checksum/count level only (cross-tenant + payload
+redaction tested). B: the closed eval assertion allowlist gains 12 data-only kinds
+(`workflow_branch_completed`/`join_completed`/`wait_*`/`retry_within`/`compensation_*`/
+`child_completed`, `agent_verified`/`arguments_valid`/`escalated`) with a redacted candidate
+evidence-metadata contract — agent trajectory assertions run today, but the async
+workflow-structure candidate exercise is **routed back** to P2.6.2–P2.6.5 (the isolated
+`run_workflow_candidate` seam cannot execute async parallel/wait structures). C: six
+bounded-label Prometheus series (`agenthub_workflow_branches/joins/waits/retries/compensations/
+children_total`) via `post_save` receivers plus five alert rules (queue saturation, stuck waits,
+retry storm, compensation failure, budget/kill-switch) and runbook sections. D: an owner-approved
+**90-day, report-mode-default, fail-closed, audited, idempotent** retention/purge for bulky
+working state only (`agent_checkpoint`/`branch_state`/`wait_correlation`; rows, lineage, audit and
+eval evidence retained) via `apps/observability/retention.py`, the platform-admin
+`purge_retention` command + console page, and a report-only Celery-beat entry. Additive only — no
+migration, no new dependency, no public API change. Evidence (full SQLite 940 passed/37 skipped;
+PostgreSQL affected 93 + workflows/agents FORCE-RLS 290; frontend tsc/24 vitest/build; static +
+mypy clean) in `docs/tasks/phase-2-6-part-11-product-operational-closure/verification.md`.
+Remaining for phase completion: publish the owner-reviewed S01–S07 GitOps pack + approved
+demo-seed reset (E), and real-broker recovery drills, live Grafana/Prometheus verification, the
+recorded Turkish browser journey and owner sign-off (F).
+
 Review the final diff for scope, layering, compatibility, authorization, privacy, failure modes, concurrency, operability, and accidental files. Record every executed command and result in task verification. State checks that could not run and the risk this leaves; never infer success from an agent assertion.
 
 ## Recommended enforcement (not implemented)

@@ -146,6 +146,7 @@
       <div class="nav-label">Operasyon</div>
       <nav aria-label="Operasyon menüsü">
         <a href="{% url 'console:agent_runs' %}">Çalıştırmalar</a>
+        <a href="{% url 'console:workflow_runs' %}">Workflow izleri</a>
         <a href="{% url 'console:workflow_recoveries' %}">Recovery kararları</a>
         <a href="{% url 'console:consumers' %}">İstemciler</a>
         <a href="{% url 'console:builder' %}">DSL / grafik</a>
@@ -154,6 +155,7 @@
       <nav aria-label="Gelişmiş menü">
         <a href="{% url 'console:artifacts' %}">Artifact’ler</a>
         <a href="{% url 'console:releases' %}">Release’ler</a>
+        {% if user.is_superuser %}<a href="{% url 'console:retention_operations' %}">Saklama / temizleme</a>{% endif %}
       </nav>
       <div class="user-box"><strong>{{ user.get_username }}</strong><span>Oturum açık</span><form method="post" action="{% url 'console:logout' %}">{% csrf_token %}<button class="link" type="submit">Çıkış yap</button></form></div>
     </aside>

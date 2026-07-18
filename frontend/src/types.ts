@@ -25,10 +25,24 @@ export interface BuilderInitial {
 
 export interface NodeFieldSchema {
   name: string;
-  kind: "expression" | "identifier" | "text" | "enum" | "object";
+  kind:
+    | "expression"
+    | "identifier"
+    | "text"
+    | "enum"
+    | "object"
+    | "integer"
+    | "boolean"
+    | "list"
+    | "pointer"
+    | "mapping";
   required?: boolean;
   help?: string;
   options_ref?: "tool_binding_roles" | "custom_nodes";
+  options?: string[];
+  min?: number;
+  max?: number;
+  max_items?: number;
 }
 
 export interface NodeTypeSchema {
@@ -40,6 +54,12 @@ export interface NodeTypeSchema {
   is_entry?: boolean;
   is_terminal?: boolean;
   has_conditional_edges?: boolean;
+  supports_mapping?: boolean;
+  mapping_required?: boolean;
+  supports_retry?: boolean;
+  supports_compensation?: boolean;
+  branch_owner?: boolean;
+  composition?: boolean;
 }
 
 export interface ToolBindingRole {
@@ -47,12 +67,21 @@ export interface ToolBindingRole {
   approval_required: boolean;
 }
 
+export interface RetryPolicySchema {
+  max_attempts: { min: number; max: number };
+  backoff_seconds: { min: number; max: number };
+  retry_on: string[];
+  idempotent_required: boolean;
+}
+
 export interface NodeSchema {
   organization: string;
   can_write: boolean;
   dsl: { api_version: string; kind: string };
-  limits: { max_nodes: number; max_edges: number };
+  limits: { max_nodes: number; max_edges: number; max_parallel_branches?: number };
   node_types: NodeTypeSchema[];
+  retry_policy?: RetryPolicySchema;
+  gates?: { composition_enabled: boolean };
   tool_binding_roles: ToolBindingRole[];
   custom_nodes: { node_ref: string }[];
   projects: { id: number; slug: string; name: string }[];
@@ -60,16 +89,34 @@ export interface NodeSchema {
 
 export type NodeConfig = Record<string, unknown>;
 
+export interface MappingEntry {
+  from: string;
+  to: string;
+}
+
+export interface RetryPolicy {
+  max_attempts: number;
+  backoff_seconds: number;
+  retry_on: string[];
+  idempotent: boolean;
+}
+
 export interface DslNode {
   id: string;
   type: string;
   config?: NodeConfig;
+  input_mapping?: MappingEntry[];
+  output_mapping?: MappingEntry[];
+  retry_policy?: RetryPolicy;
+  compensation?: string;
 }
 
 export interface DslEdge {
   from: string;
   to: string;
   when?: boolean;
+  branch?: string;
+  on_error?: string;
 }
 
 export interface WorkflowDsl {
@@ -139,10 +186,16 @@ export interface ArtifactDraft {
 
 export type AcceptedCandidateDraft = Draft | ArtifactDraft;
 
-// Node data carried inside a React Flow node.
+// Node data carried inside a React Flow node. Beyond ``config``, mapping-eligible nodes
+// carry input/output mappings, retry-eligible nodes carry a retry_policy, and tool nodes
+// may carry a compensation reference — all DSL-shaped and non-authoritative.
 export interface BuilderNodeData {
   nodeType: string;
   config: NodeConfig;
+  input_mapping?: MappingEntry[];
+  output_mapping?: MappingEntry[];
+  retry_policy?: RetryPolicy;
+  compensation?: string;
   hasError?: boolean;
   [key: string]: unknown;
 }

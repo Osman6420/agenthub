@@ -17,6 +17,7 @@ from apps.ingestion.models import ConnectorType, Source
 from apps.releases.models import ScenarioRelease
 from apps.tenancy.models import Organization
 from apps.tenancy.services import allowed_organization_ids
+from apps.workflows.models import WorkflowRun
 
 UserLike = object
 
@@ -64,6 +65,12 @@ def scoped_agent_runs(user: UserLike) -> QuerySet[AgentRun]:
     qs = AgentRun.objects.select_related(
         "organization", "scenario", "scenario__project", "consumer"
     )
+    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+
+
+def scoped_workflow_runs(user: UserLike) -> QuerySet[WorkflowRun]:
+    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
+    qs = WorkflowRun.objects.select_related("organization", "scenario", "scenario__project")
     return qs if allowed is None else qs.filter(organization_id__in=allowed)
 
 

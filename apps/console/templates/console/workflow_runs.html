@@ -1,0 +1,33 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ title }}</h1>
+  {% if rows %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Workflow çalıştırmaları</caption>
+    <thead>
+      <tr>
+        <th>Çalıştırma</th><th>Organizasyon</th><th>Senaryo</th><th>Durum</th>
+        <th>Beklenen düğüm</th><th>Hata</th><th>Oluşturulma</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="{% url 'console:workflow_run_detail' r.id %}">#{{ r.id }}</a></td>
+        <td>{{ r.org }}</td>
+        <td>{{ r.scenario }}</td>
+        <td><span class="badge">{{ r.status }}</span></td>
+        <td>{{ r.awaiting_node|default:"-" }}</td>
+        <td>{{ r.error|default:"-" }}</td>
+        <td>{{ r.created }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">Yetki kapsamınızda workflow çalıştırması yok.</p>
+  {% endif %}
+</div>
+{% endblock %}

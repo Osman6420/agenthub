@@ -402,6 +402,40 @@ def test_node_schema_includes_transform_and_mapping_metadata(
     }
 
 
+def test_node_schema_exposes_all_verified_node_families(client: Client, bf: BuilderFixture) -> None:
+    client.force_login(bf.author)
+    data = client.get(reverse("builder_api:node_schema") + "?organization=b-org").json()
+    by_type = {node["type"]: node for node in data["node_types"]}
+    # Every verified runtime builtin family is authorable in Studio (P2.6.11).
+    assert {
+        "parallel",
+        "for_each",
+        "join",
+        "subworkflow",
+        "agent_call",
+    } <= set(by_type)
+    # Branch-region owners are flagged so the client can render their region/edges.
+    assert by_type["parallel"]["branch_owner"] is True
+    assert by_type["for_each"]["branch_owner"] is True
+    # Join advertises its policy modes as a closed enum.
+    mode_field = next(f for f in by_type["join"]["fields"] if f["name"] == "mode")
+    assert mode_field["options"] == ["all", "threshold", "fail_fast"]
+    # Composition families require mappings and are marked as composition (deployment-gated).
+    for comp in ("subworkflow", "agent_call"):
+        assert by_type[comp]["composition"] is True
+        assert by_type[comp]["mapping_required"] is True
+    # agent_call exposes the closed action allowlist.
+    actions = next(f for f in by_type["agent_call"]["fields"] if f["name"] == "allowed_actions")
+    assert actions["options"] == ["escalate", "respond", "retrieve", "tool", "verify"]
+    # Retry/compensation affordances are surfaced as UI hints.
+    assert by_type["transform"]["supports_retry"] is True
+    assert by_type["tool"]["supports_compensation"] is True
+    assert "supports_retry" not in by_type["condition"]
+    assert data["retry_policy"]["retry_on"] == ["transient"]
+    # Composition gate is reported so the UI can render gated families as unavailable.
+    assert data["gates"]["composition_enabled"] is False
+
+
 def test_node_schema_excludes_other_tenant_bindings(client: Client, bf: BuilderFixture) -> None:
     other_def = ToolDefinition.objects.create(
         organization=bf.other_org,

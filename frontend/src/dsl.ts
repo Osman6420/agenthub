@@ -48,6 +48,10 @@ export interface GraphToDslParams {
  * input/validate_contract/end nodes). Node positions are intentionally excluded — layout
  * is not part of the versioned DSL.
  */
+function isEmptyMapping(entries: unknown): boolean {
+  return !Array.isArray(entries) || entries.length === 0;
+}
+
 export function graphToDsl(params: GraphToDslParams): WorkflowDsl {
   const dslNodes: DslNode[] = params.nodes
     .map((node) => {
@@ -56,6 +60,14 @@ export function graphToDsl(params: GraphToDslParams): WorkflowDsl {
       if (!isEmptyConfig(data.config)) {
         base.config = data.config;
       }
+      // Node-level DSL siblings (mappings/retry/compensation) are emitted only when set,
+      // so an untouched node stays byte-identical to the pre-P2.6.11 serialization.
+      if (!isEmptyMapping(data.input_mapping)) base.input_mapping = data.input_mapping;
+      if (!isEmptyMapping(data.output_mapping)) base.output_mapping = data.output_mapping;
+      if (data.retry_policy) base.retry_policy = data.retry_policy;
+      if (typeof data.compensation === "string" && data.compensation !== "") {
+        base.compensation = data.compensation;
+      }
       return base;
     })
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -63,9 +75,13 @@ export function graphToDsl(params: GraphToDslParams): WorkflowDsl {
   const dslEdges: DslEdge[] = params.edges
     .map((edge) => {
       const out: DslEdge = { from: edge.source, to: edge.target };
-      const when = (edge.data as { when?: boolean } | undefined)?.when;
-      if (typeof when === "boolean") {
-        out.when = when;
+      const data = edge.data as { when?: boolean; branch?: string; on_error?: string } | undefined;
+      // The compiler treats when/branch/on_error as mutually exclusive selectors; emit at
+      // most one, matching that contract.
+      if (typeof data?.when === "boolean") out.when = data.when;
+      else if (typeof data?.branch === "string" && data.branch !== "") out.branch = data.branch;
+      else if (typeof data?.on_error === "string" && data.on_error !== "") {
+        out.on_error = data.on_error;
       }
       return out;
     })
@@ -73,6 +89,8 @@ export function graphToDsl(params: GraphToDslParams): WorkflowDsl {
       (a, b) =>
         a.from.localeCompare(b.from) ||
         String(a.when).localeCompare(String(b.when)) ||
+        String(a.branch).localeCompare(String(b.branch)) ||
+        String(a.on_error).localeCompare(String(b.on_error)) ||
         a.to.localeCompare(b.to),
     );
 
@@ -107,20 +125,33 @@ export function dslToGraph(body: unknown): ParsedGraph {
   const spec = dsl.spec;
   if (!spec || !Array.isArray(spec.nodes)) return empty;
 
-  const nodes: Node<BuilderNodeData>[] = spec.nodes.map((n, index) => ({
-    id: n.id,
-    type: "builderNode",
-    position: layoutPosition(index),
-    data: { nodeType: n.type, config: (n.config as Record<string, unknown>) ?? {} },
-  }));
+  const nodes: Node<BuilderNodeData>[] = spec.nodes.map((n, index) => {
+    const data: BuilderNodeData = {
+      nodeType: n.type,
+      config: (n.config as Record<string, unknown>) ?? {},
+    };
+    if (Array.isArray(n.input_mapping)) data.input_mapping = n.input_mapping;
+    if (Array.isArray(n.output_mapping)) data.output_mapping = n.output_mapping;
+    if (n.retry_policy) data.retry_policy = n.retry_policy;
+    if (typeof n.compensation === "string") data.compensation = n.compensation;
+    return { id: n.id, type: "builderNode", position: layoutPosition(index), data };
+  });
 
-  const edges: Edge[] = (spec.edges ?? []).map((e, index) => ({
-    id: `e-${e.from}-${e.to}-${index}`,
-    source: e.from,
-    target: e.to,
-    data: typeof e.when === "boolean" ? { when: e.when } : {},
-    label: typeof e.when === "boolean" ? String(e.when) : undefined,
-  }));
+  const edges: Edge[] = (spec.edges ?? []).map((e, index) => {
+    const data: { when?: boolean; branch?: string; on_error?: string } = {};
+    let label: string | undefined;
+    if (typeof e.when === "boolean") {
+      data.when = e.when;
+      label = String(e.when);
+    } else if (typeof e.branch === "string") {
+      data.branch = e.branch;
+      label = `⑃ ${e.branch}`;
+    } else if (typeof e.on_error === "string") {
+      data.on_error = e.on_error;
+      label = `⚠ ${e.on_error}`;
+    }
+    return { id: `e-${e.from}-${e.to}-${index}`, source: e.from, target: e.to, data, label };
+  });
 
   return {
     workflowId: dsl.metadata?.id ?? "",

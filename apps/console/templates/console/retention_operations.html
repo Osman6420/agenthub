@@ -1,0 +1,37 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ title }}</h1>
+  <p class="muted" style="font-size:13px">
+    Saklama ilkesi: tüm izlenebilirlik, denetim, değerlendirme ve soy-kaydı verileri süresiz
+    saklanır. Yalnız hacimli çalışma durumu (ajan checkpoint'leri, dal çalışma state'i,
+    bekleme korelasyon materyali) {{ window_days }} günlük pencerenin dışında temizlenir.
+    Temizleme satır silmez; yalnız adlandırılmış sütunları boşaltır ve her yığın denetlenir.
+  </p>
+  {% if committed %}
+  <div class="badge">Rapor: son POST bir temizleme çalıştırdı.</div>
+  {% else %}
+  <div class="muted" style="font-size:13px">Rapor modu — aşağıdaki sayımlar mutasyon yapmaz.</div>
+  {% endif %}
+
+  <div class="table-scroll" style="margin-top:12px"><table>
+    <caption class="sr-only">Saklama sınıfları</caption>
+    <thead><tr><th>Sınıf</th><th>Uygun (pencereyi aşan)</th><th>Temizlenen</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr><td>{{ r.retention_class }}</td><td>{{ r.eligible }}</td><td>{{ r.purged }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+
+  <form method="post" action="{% url 'console:retention_operations' %}" style="margin-top:16px">
+    {% csrf_token %}
+    <label style="display:block;margin-bottom:8px">
+      <input type="checkbox" name="confirm" value="purge"> Onaylıyorum: pencereyi aşan hacimli
+      state'i kalıcı olarak temizle (geri alınamaz).
+    </label>
+    <button class="link" type="submit">Temizlemeyi çalıştır</button>
+  </form>
+</div>
+{% endblock %}
