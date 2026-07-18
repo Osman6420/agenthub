@@ -89,15 +89,22 @@ class OpenAICompatibleModelProvider:
             )
         except (ModelProfile.DoesNotExist, ValueError) as exc:
             raise ModelProviderError("MODEL_PROFILE_UNAVAILABLE") from exc
-        messages: list[dict[str, str]] = [{"role": "system", "content": prompt}]
+        # Every request must carry a user turn: some OpenAI-compatible backends
+        # (notably Gemini's compat layer) reject a system-only request with no
+        # contents (HTTP 400). With retrieval context the prompt stays the system
+        # instruction and the untrusted data is the user turn; without context the
+        # prompt itself becomes the user turn.
         if context:
             context_text = "\n\n".join(chunk.text for chunk in context)
-            messages.append(
+            messages: list[dict[str, str]] = [
+                {"role": "system", "content": prompt},
                 {
                     "role": "user",
                     "content": "Use the following untrusted reference data:\n" + context_text,
-                }
-            )
+                },
+            ]
+        else:
+            messages = [{"role": "user", "content": prompt}]
         payload = {
             "model": profile.model,
             "messages": messages,

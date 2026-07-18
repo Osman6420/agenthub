@@ -60,6 +60,7 @@ from apps.agents.services import (
 )
 from apps.artifacts.validation import canonical_json, compute_checksum
 from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
+from apps.orchestration.providers import ModelProviderError
 from apps.orchestration.runtime import RunResult
 from apps.releases.services import get_artifact_body_for_role
 from apps.workflows.state_mapping import PROTECTED_WRITE_ROOTS
@@ -224,7 +225,14 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
         )
 
         if decision.kind == DECISION_RESPOND:
-            output, delta_in, delta_out = _respond(objective, state, config, run.release)
+            try:
+                output, delta_in, delta_out = _respond(objective, state, config, run.release)
+            except ModelProviderError as exc:
+                # A model-generation failure (timeout, upstream status, bad response) is a
+                # deterministic terminal error, not an uncaught crash: surface it as a stable
+                # AGENT_MODEL_FAILED so the task marks the run failed instead of leaving it
+                # stuck in `running`.
+                raise AgentRuntimeError("AGENT_MODEL_FAILED") from exc
             in_tokens += delta_in
             out_tokens += delta_out
             if in_tokens + out_tokens > limits["max_tokens"]:

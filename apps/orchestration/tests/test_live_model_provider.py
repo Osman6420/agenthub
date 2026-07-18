@@ -138,6 +138,37 @@ def test_openai_provider_uses_catalog_and_separates_system_from_untrusted_contex
 
 
 @pytest.mark.django_db
+def test_openai_provider_sends_user_turn_when_context_is_empty() -> None:
+    # Gemini's OpenAI-compat layer rejects a system-only request (HTTP 400,
+    # "contents is not specified"). Without retrieval context the prompt must be
+    # sent as the user turn so every request carries contents.
+    admin = get_user_model().objects.create_superuser(username="platform", password=None)
+    profile = _profile(admin)
+    response = _Response(
+        {
+            "choices": [{"message": {"content": "answer"}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+        }
+    )
+    connection = _Connection(response)
+    client = JsonModelEgressClient(
+        resolver=_public_dns,
+        connection_factory=lambda ip, port, timeout, hostname: connection,
+        secret_resolver=_SecretResolver(),
+    )
+    provider = OpenAICompatibleModelProvider(egress_client=client)
+    result = provider.generate(
+        prompt="Answer the question.",
+        context=[],
+        model_profile={"profile_id": str(profile.public_id)},
+    )
+    assert result.text == "answer"
+    payload = json.loads(connection.request_body)
+    assert payload["messages"] == [{"role": "user", "content": "Answer the question."}]
+    assert all(message["role"] != "system" for message in payload["messages"])
+
+
+@pytest.mark.django_db
 def test_private_dns_is_denied_before_transport() -> None:
     admin = get_user_model().objects.create_superuser(username="platform", password=None)
     profile = _profile(admin)

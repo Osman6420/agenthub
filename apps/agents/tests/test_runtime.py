@@ -75,6 +75,26 @@ def test_step_cap_fails_closed() -> None:
     assert run.error_code == "AGENT_MAX_STEPS"
 
 
+def test_model_provider_failure_marks_run_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A model-generation failure must terminate the run as FAILED with a stable code,
+    # never leave it stuck in `running` (the ModelProviderError previously escaped the
+    # task's AgentRuntimeError handler).
+    from apps.orchestration import rag_steps
+    from apps.orchestration.providers import ModelProviderError
+
+    class _FailingProvider:
+        def generate(self, **_: object) -> object:
+            raise ModelProviderError("UPSTREAM_STATUS")
+
+    monkeypatch.setattr(rag_steps, "get_model_provider", lambda: _FailingProvider())
+    fixture = build_agent()
+    run = make_run(fixture)
+    execute_agent_run(run.id)
+    run.refresh_from_db()
+    assert run.status == AgentRunStatus.FAILED
+    assert run.error_code == "AGENT_MODEL_FAILED"
+
+
 def test_incompatible_checkpoint_never_resumes() -> None:
     fixture = build_agent()
     run = make_run(fixture)
