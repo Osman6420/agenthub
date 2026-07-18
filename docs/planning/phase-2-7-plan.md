@@ -47,32 +47,28 @@ for a later part.
 
 ## Part 2 — External MCP tool transport: Streamable HTTP / SSE (PLANNED)
 
-**Motivation / current gap.** AgentHub can call an external server as a governed tool only over
-the `McpToolAdapter`, which today is **HTTPS-only, single-shot JSON-RPC**: one `POST` of
-`tools/call`, expecting a single `application/json` body (`apps/tools/mcp_adapter.py` +
-`apps/tools/http_adapter.perform_https_post`). It does **not** support:
+Full plan: [`docs/tasks/phase-2-7-part-2-mcp-streamable-transport/`](../tasks/phase-2-7-part-2-mcp-streamable-transport/plan.md).
 
-- the **MCP Streamable HTTP** transport when the server answers with `text/event-stream` (SSE),
-- the MCP **session lifecycle** (`initialize` handshake, `Mcp-Session-Id` header,
-  `notifications/initialized`),
-- the legacy **HTTP+SSE** two-endpoint transport, or
-- **stdio** transport (network-only by design).
+**Current gap.** `McpToolAdapter` is **HTTPS-only, single-shot JSON-RPC** (one `POST` of
+`tools/call`, single `application/json` body). It does not support the **Streamable HTTP / SSE**
+responses, the **session lifecycle** (`initialize` → `Mcp-Session-Id` → `notifications/initialized`),
+the legacy HTTP+SSE transport, or stdio — so most off-the-shelf MCP servers can't be attached as a
+tool without a plain-JSON shim.
 
-Egress also remains **public-unicast HTTPS only** (`apps/tools/egress.validate_destination`), so
-loopback/private MCP servers are denied — a deliberate SSRF control that Part 2 keeps.
+**Hard constraint.** The SSRF-safe egress (pinned resolved-IP + TLS SNI + no redirects + bounded
+size/timeout + public-IP-only, defeating DNS rebinding) must be preserved by whatever transport we
+adopt. This decides the library question.
 
-**Planned scope (design first; no implementation until approved):**
+**Ready-made library decision (owner asked to prefer one if practical).** Evaluated the official
+`mcp` Python SDK. Its default transport (httpx/anyio) opens its own connections and would **bypass
+our pinned-IP egress** → rejected. Using the SDK only for protocol + a custom SSRF-safe httpx
+transport is a viable *later* alternative but adds new production deps (approval + supply-chain
+review) and an async→sync bridge, gated on a spike proving the transport can pin to the validated
+IP. **Recommendation: hand-roll a bounded SSE reader + minimal session handshake on the existing
+stdlib SSRF-safe transport** — for this narrow scope it is both more secure (egress unchanged, zero
+new dependency) and small. Full trade-off table and design in the task plan.
 
-1. Add an SSE-aware response reader to the bounded transport: parse `text/event-stream`, enforce
-   the same byte cap / timeout / redirect controls, and extract the single JSON-RPC result for a
-   `tools/call`. Reject unbounded/streaming tool results.
-2. Add optional MCP session handling (initialize → `Mcp-Session-Id` → call → close) behind the
-   same pinned-destination, TLS-verified, SSRF-safe egress.
-3. Keep HTTPS + public-IP enforcement; keep the tool contract, field allowlist, risk/approval,
-   and audit unchanged. No stdio. No new production dependency without approval + review.
-4. Tests: SSE framing, session handshake, oversized/streaming rejection, timeout→outcome-unknown,
-   and offline-only (no live egress in CI).
-
-**Open questions:** whether to reuse the existing `perform_bounded_https_request` seam or add a
-streaming-aware sibling; how to bound an SSE stream deterministically; whether session state
-belongs in the adapter (stateless per call preferred).
+**Scope (design first; no implementation until change-boundary approval):** SSE-aware bounded
+reader beside `perform_bounded_https_request`; optional author-pinned session handshake; HTTPS +
+public-IP enforcement, tool contract, field allowlist, risk/approval, and audit all unchanged; no
+stdio; offline SSE/handshake tests (injected connection factory) + one deployment-gated live smoke.
