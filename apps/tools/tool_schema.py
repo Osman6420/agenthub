@@ -157,13 +157,18 @@ def validate_tool_binding_body(body: dict[str, Any]) -> None:
 def _validate_destination(value: Any) -> None:
     destination = _mapping(value, "destination")
     _require_exact_keys(
-        destination, {"scheme", "host"}, "destination", optional={"port", "path_prefix"}
+        destination,
+        {"scheme", "host"},
+        "destination",
+        optional={"port", "path_prefix", "session"},
     )
     if destination.get("scheme") not in ALLOWED_SCHEMES:
         raise ToolArtifactError("destination scheme must be https")
     _validate_public_hostname(destination.get("host"))
     if "port" in destination:
         _bounded_int(destination.get("port"), 1, 65535, "destination port")
+    if "session" in destination and not isinstance(destination.get("session"), bool):
+        raise ToolArtifactError("destination session must be a boolean")
     if "path_prefix" in destination:
         prefix = destination.get("path_prefix")
         if (

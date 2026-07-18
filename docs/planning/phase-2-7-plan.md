@@ -45,9 +45,15 @@ intended signal; letting the runtime use the unredacted input while keeping dura
 redacted is a **data-protection-sensitive** change that needs its own design + approval. Tracked
 for a later part.
 
-## Part 2 — External MCP tool transport: Streamable HTTP / SSE (PLANNED)
+## Part 2 — External MCP tool transport: Streamable HTTP / SSE (IMPLEMENTED + VERIFIED)
 
-Full plan: [`docs/tasks/phase-2-7-part-2-mcp-streamable-transport/`](../tasks/phase-2-7-part-2-mcp-streamable-transport/plan.md).
+Full plan + evidence: [`docs/tasks/phase-2-7-part-2-mcp-streamable-transport/`](../tasks/phase-2-7-part-2-mcp-streamable-transport/plan.md).
+Delivered via **Option A** (hand-rolled SSE reader + author-pinned session handshake on the existing
+SSRF-safe stdlib transport): the `tools/call` response is parsed from `application/json` **or**
+`text/event-stream`; `destination.session: true` triggers `initialize` → `Mcp-Session-Id` →
+`notifications/initialized` → `tools/call`. No new dependency, no egress-policy change, no migration;
+`pytest` 947 passed / 37 skipped, plus a live socket-level SSE+session end-to-end check. The `mcp`
+SDK (Option C) remains the documented fallback if the broad protocol surface is ever needed.
 
 **Current gap.** `McpToolAdapter` is **HTTPS-only, single-shot JSON-RPC** (one `POST` of
 `tools/call`, single `application/json` body). It does not support the **Streamable HTTP / SSE**

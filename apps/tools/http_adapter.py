@@ -53,6 +53,8 @@ class BoundedHttpResponse:
     status: int
     body: bytes
     content_type: str
+    # Captured for MCP Streamable HTTP session support; empty for every other response.
+    session_id: str = ""
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
@@ -124,6 +126,7 @@ def perform_bounded_https_request(
         raw = response.read(request.max_response_bytes + 1)
         getheader = getattr(response, "getheader", None)
         content_type = str(getheader("Content-Type", "") or "") if getheader else ""
+        session_id = str(getheader("Mcp-Session-Id", "") or "") if getheader else ""
     except TimeoutError as exc:
         # Dispatched, but the outcome cannot be confirmed: never a false success.
         raise ToolAdapterUncertain() from exc
@@ -136,7 +139,9 @@ def perform_bounded_https_request(
         raise ToolAdapterError("REDIRECT_NOT_ALLOWED")
     if len(raw) > request.max_response_bytes:
         raise ToolAdapterError("RESPONSE_TOO_LARGE")
-    return BoundedHttpResponse(status=status, body=raw, content_type=content_type)
+    return BoundedHttpResponse(
+        status=status, body=raw, content_type=content_type, session_id=session_id
+    )
 
 
 class HttpToolAdapter:

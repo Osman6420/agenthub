@@ -46,6 +46,10 @@ class ValidatedDestination:
     port: int
     path_prefix: str
     ip_addresses: tuple[str, ...]
+    # MCP Streamable HTTP: when the author pins ``destination.session: true`` the MCP adapter
+    # performs the initialize/session handshake before ``tools/call``. Default off keeps the
+    # single-shot behavior for every other destination; it never affects the egress policy.
+    session_required: bool = False
 
 
 def _default_resolver(host: str, port: int) -> list[tuple[Any, ...]]:
@@ -89,6 +93,7 @@ def validate_destination(
         port=port,
         path_prefix=str(path_prefix),
         ip_addresses=tuple(sorted(addresses)),
+        session_required=bool(destination.get("session", False)),
     )
 
 

@@ -1,7 +1,8 @@
 # Phase 2.7 Part 2 — External MCP tool transport: Streamable HTTP / SSE
 
-Status: **Planned** (design only; no implementation until the change-boundary approvals below
-are granted). Parent: [`docs/planning/phase-2-7-plan.md`](../../planning/phase-2-7-plan.md).
+Status: **Implemented + Verified** via Option A (see [`verification.md`](verification.md)). No new
+dependency, no egress-policy change, no migration. Parent:
+[`docs/planning/phase-2-7-plan.md`](../../planning/phase-2-7-plan.md).
 
 ## 1. Problem & current gap
 

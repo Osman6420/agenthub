@@ -68,6 +68,17 @@ def test_valid_definition_and_binding_pass() -> None:
     validate_tool_definition_body(mcp)
 
 
+def test_mcp_destination_session_flag_is_optional_and_must_be_boolean() -> None:
+    mcp = _definition()
+    mcp["spec"]["protocol"] = "mcp"
+    del mcp["spec"]["method"]
+    mcp["spec"]["destination"]["session"] = True
+    validate_tool_definition_body(mcp)  # accepted
+    mcp["spec"]["destination"]["session"] = "yes"
+    with pytest.raises(ToolArtifactError):
+        validate_tool_definition_body(mcp)
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

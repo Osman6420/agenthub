@@ -217,6 +217,7 @@ def _passthrough_destination(destination: dict[str, Any]) -> ValidatedDestinatio
         port=int(destination.get("port", 443)),
         path_prefix=str(destination.get("path_prefix", "")),
         ip_addresses=(),
+        session_required=bool(destination.get("session", False)),
     )
 
 
