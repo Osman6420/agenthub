@@ -181,21 +181,23 @@ Open `http://127.0.0.1:8000/console/`.
 | # | Test | Expected |
 | --- | --- | --- |
 | 1.1 | Visit `/console/` while logged out | Redirect to `/console/login/` |
-| 1.2 | Log in as `admin` / `<PASSWORD>` | Dashboard with scoped counts |
-| 1.3 | Browse Organizations / Projects / Scenarios / Artifacts / Releases | `demo` data appears |
+| 1.2 | Log in as `admin` / `<PASSWORD>` | **Ana Sayfa** opens with scoped health KPIs only; each KPI opens a dedicated exact-record list; username/logout are top-right |
+| 1.3 | Use Ana Sayfa / Projeler / Dokümanlar / İstemciler / Çalıştırmalar, then open a project and scenario | Sidebar exposes these five tasks; scenario, artifact, release and DSL details remain contextual |
 | 1.4 | Log out (top-right, POST) then log in as `auditor` | Read-only: no "New …" create links |
 | 1.5 | Log in as `editor` | Can open Scenario/Builder authoring; cannot promote |
-| 1.6 | Log in as `releaser`, open Releases | Eval / Promote / Rollback / Canary actions visible |
+| 1.6 | Log in as `releaser`, open a project → scenario → Release'ler | Eval / Promote / Rollback / Canary detail actions remain visible |
 | 1.7 | (multi-tenant) All lists show only `demo` | No cross-tenant rows |
 | 1.8 | Open **Doküman setleri**, then a set | Primary journey shows bulk upload, lifecycle blockers, set versions, sources, scenarios and consumers; no standalone inventory is in primary navigation |
 | 1.9 | As `editor`, open a document inside a set and upload a replacement | A new immutable document version is shown and the manual draft pins the new version |
 | 1.10 | Remove a document from a draft, then inspect an already published version | Only the draft membership changes; published version lineage remains unchanged |
 | 1.11 | Tombstone a set document | New replacement is disabled; historical pins remain visible and the UI states bytes are retained |
-| 1.12 | As `admin`, open **Gelişmiş saklama yönetimi** | Admin-only inventory is available; purge requires tombstone, exact ID confirmation and no set-version pins |
+| 1.12 | Open **Doküman setleri** as an admin | No standalone saklama yönetimi link appears; document work begins from a set |
 | 1.13 | As `editor`, open a document set's **Kaynakları yönet** page | Guided upload/Confluence/REST steps explain profile, immutable mapping, no-egress preview, binding and sync; endpoint/credential/input values remain hidden |
 | 1.14 | Open a connected source detail | Last sync time, safe failure code/counts and source → draft → published → staged → active progression appear; sync is not presented as direct activation |
 | 1.15 | Repeat source detail as `auditor`, then with a foreign-tenant account | Auditor sees no **Şimdi çalıştır** mutation; foreign source ID returns 404 |
 | 1.13 | As `editor` or `auditor`, request `/console/documents/advanced/` | HTTP 403; standalone storage inventory is not disclosed |
+| 1.16 | Request legacy GET lists `/console/organizations/`, `/console/scenarios/`, `/console/artifacts/`, `/console/releases/` | Internal redirect reaches Ana Sayfa or Projeler; POST to a removed catalogue is not redirected |
+| 1.17 | At 390, 900 and 1440 px, scroll a long scenario/document page and use keyboard-only navigation | Sidebar stays dark/readable, tables scroll, focus remains visible and task tabs reach real sections |
 
 Tip: `admin` is a superuser (sees everything); the others are role-scoped to `demo`.
 

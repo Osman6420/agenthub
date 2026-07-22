@@ -63,7 +63,9 @@ def test_dashboard_lists_authorized_active_and_disabled_organizations(client: Cl
     assert foreign.slug not in body
 
 
-def test_organization_overview_is_tenant_scoped_and_cross_links_inventory(client: Client) -> None:
+def test_organization_workspace_redirects_to_tenant_scoped_home_and_contextual_details(
+    client: Client,
+) -> None:
     organization = Organization.objects.create(slug="kurum", name="Kurum")
     foreign = Organization.objects.create(slug="gizli", name="Gizli Kurum")
     scenario = _scenario(organization)
@@ -71,7 +73,7 @@ def test_organization_overview_is_tenant_scoped_and_cross_links_inventory(client
     document_set = DocumentSet.objects.create(
         organization=organization, logical_id="bilgi", name="Bilgi Seti"
     )
-    consumer = Consumer.objects.create(
+    Consumer.objects.create(
         organization=organization,
         subject="portal",
         name="Portal İstemcisi",
@@ -106,27 +108,23 @@ def test_organization_overview_is_tenant_scoped_and_cross_links_inventory(client
     client.force_login(user)
 
     response = client.get(reverse("console:organization_detail", args=[organization.slug]))
-    body = response.content.decode()
 
-    assert response.status_code == 200
-    for name in [
-        scenario.project.name,
-        scenario.name,
-        document_set.name,
-        consumer.name,
-        artifact.ref,
-    ]:
-        assert name in body
-    assert reverse("console:project_detail_public", args=[scenario.project.public_id]) in body
-    assert reverse("console:scenario_detail_public", args=[scenario.public_id]) in body
-    assert reverse("console:document_set_detail_public", args=[document_set.public_id]) in body
-    assert reverse("console:consumer_detail_public", args=[consumer.public_id]) in body
-    assert reverse("console:artifact_detail", args=[artifact.id]) in body
-    assert reverse("console:release_detail", args=[release.id]) in body
-    assert "auditor" in body
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("console:dashboard")
+    assert client.session["active_organization_id"] == organization.id
+    project_body = client.get(
+        reverse("console:project_detail_public", args=[scenario.project.public_id])
+    ).content.decode()
+    scenario_body = client.get(
+        reverse("console:scenario_detail_public", args=[scenario.public_id])
+    ).content.decode()
+    document_body = client.get(reverse("console:documents")).content.decode()
+    assert scenario.name in project_body
+    assert document_set.name in document_body
+    assert reverse("console:release_detail", args=[release.id]) in scenario_body
     release_body = client.get(reverse("console:release_detail", args=[release.id])).content.decode()
     assert reverse("console:artifact_detail", args=[artifact.id]) in release_body
-    assert foreign_scenario.name not in body
+    assert foreign_scenario.name not in project_body
     assert (
         client.get(reverse("console:organization_detail", args=[foreign.slug])).status_code == 404
     )
@@ -149,8 +147,10 @@ def test_disabled_organization_is_readable_but_rejects_direct_mutation(client: C
         {"document_set_id": document_set.id},
     )
 
-    assert detail.status_code == 200
-    assert "salt okunur" in detail.content.decode().lower()
+    assert detail.status_code == 302
+    assert detail.headers["Location"] == reverse("console:dashboard")
+    home = client.get(reverse("console:dashboard")).content.decode()
+    assert "Pasif" in home
     assert mutation.status_code == 403
     assert can_admin_org(editor, organization.id) is False
     assert can_author_scenarios(editor, organization.id) is False
@@ -240,7 +240,7 @@ def test_organization_and_target_details_narrow_transaction_scope(
 
     assert (
         client.get(reverse("console:organization_detail", args=[organization.slug])).status_code
-        == 200
+        == 302
     )
     assert client.get(reverse("console:scenario_detail", args=[scenario.id])).status_code == 200
 

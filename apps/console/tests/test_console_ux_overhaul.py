@@ -104,10 +104,10 @@ def test_forged_active_org_in_session_is_cleared(client: Client) -> None:
     assert response.status_code == 200
     # The forged id is cleared, then the single-membership default is applied.
     assert client.session.get(SESSION_KEY) == own.id
-    assert "Kapsam: Own" in response.content.decode()
+    assert "Own" in response.content.decode()
 
 
-def test_active_org_narrows_scenario_list(client: Client) -> None:
+def test_active_org_narrows_project_list_and_scenarios_live_under_project(client: Client) -> None:
     org_a = _org("a")
     org_b = _org("b")
     _scenario(org_a, "alpha")
@@ -117,16 +117,19 @@ def test_active_org_narrows_scenario_list(client: Client) -> None:
     session = client.session
     session[SESSION_KEY] = org_a.id
     session.save()
-    scoped = client.get(reverse("console:scenarios")).content.decode()
-    assert "alpha" in scoped
-    assert "beta" not in scoped
+    scoped = client.get(reverse("console:projects")).content.decode()
+    assert "P alpha" in scoped
+    assert "P beta" not in scoped
 
     # Clearing the active org restores the full, tenant-scoped view.
     session[SESSION_KEY] = None
     session.save()
-    everything = client.get(reverse("console:scenarios")).content.decode()
-    assert "alpha" in everything
-    assert "beta" in everything
+    everything = client.get(reverse("console:projects")).content.decode()
+    assert "P alpha" in everything
+    assert "P beta" in everything
+    assert client.get(reverse("console:scenarios")).headers["Location"] == reverse(
+        "console:projects"
+    )
 
 
 def test_single_org_user_gets_static_label_not_dropdown(client: Client) -> None:
@@ -148,15 +151,16 @@ def test_platform_admin_with_one_org_defaults_to_all_organizations(client: Clien
 
     assert response.status_code == 200
     assert client.session.get(SESSION_KEY) is None
-    assert "Kapsam: Tüm organizasyonlar" in response.content.decode()
+    assert "Tüm organizasyonlar" in response.content.decode()
 
 
-def test_multi_org_user_gets_dropdown(client: Client) -> None:
+def test_multi_org_user_gets_server_post_organization_menu(client: Client) -> None:
     org_a = _org("a")
     org_b = _org("b")
     client.force_login(_member("u", org_a, Role.AUDITOR, org_b))
     body = client.get(reverse("console:dashboard")).content.decode()
-    assert 'id="org-switch"' in body
+    assert '<details class="org-menu">' in body
+    assert body.count('name="organization_id"') == 3
 
 
 # ----------------------------------------------------------------------------- C
@@ -214,9 +218,10 @@ def test_scenario_rows_are_row_clickable_with_anchor(client: Client) -> None:
     org = _org("org")
     scenario = _scenario(org, "clickable")
     client.force_login(_member("u", org))
-    body = client.get(reverse("console:scenarios")).content.decode()
+    body = client.get(
+        reverse("console:project_detail_public", args=[scenario.project.public_id])
+    ).content.decode()
     detail = reverse("console:scenario_detail_public", args=[scenario.public_id])
-    assert f'data-href="{detail}"' in body  # whole row opens
     assert f'href="{detail}"' in body  # keyboard/no-JS anchor kept in the primary cell
 
 
@@ -231,10 +236,7 @@ def test_documents_list_has_no_advanced_card_but_org_admin_gets_relocated_entry(
     client.force_login(admin)
     docs = client.get(reverse("console:documents")).content.decode()
     assert "Gelişmiş saklama yönetimi" not in docs
-    org_detail = client.get(
-        reverse("console:organization_detail", args=[org.slug])
-    ).content.decode()
-    assert reverse("console:advanced_document_inventory") in org_detail
+    assert reverse("console:advanced_document_inventory") not in docs
 
 
 def _document_in_set(org: Organization) -> tuple[DocumentSet, Document]:

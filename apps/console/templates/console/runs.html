@@ -1,0 +1,16 @@
+{% extends "console/base.html" %}
+{% block title %}Çalıştırmalar · AgentHub{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">Operasyon</p>
+    <h1>Çalıştırmalar</h1>
+    <p class="muted">Senaryo ve otomasyon çalışmalarını mevcut yetkili görünümlerinde inceleyin.</p>
+  </div>
+</div>
+<div class="relationship-grid">
+  <section class="card"><h2>Agent çalıştırmaları</h2><p class="muted">Agent çalışmalarının durumunu ve güvenli özetini görün.</p><a class="button secondary" href="{% url 'console:agent_runs' %}">Agent çalışmalarını aç</a></section>
+  <section class="card"><h2>Workflow çalıştırmaları</h2><p class="muted">Workflow adımlarını, beklemeleri ve çalışma izlerini inceleyin.</p><a class="button secondary" href="{% url 'console:workflow_runs' %}">Workflow çalışmalarını aç</a></section>
+  <section class="card"><h2>Kurtarma kararları</h2><p class="muted">Başarısız workflow çalışmaları için yetkili operatör kararlarını yönetin.</p><a class="button secondary" href="{% url 'console:workflow_recoveries' %}">Karar bekleyenleri aç</a></section>
+</div>
+{% endblock %}

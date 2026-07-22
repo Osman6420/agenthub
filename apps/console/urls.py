@@ -17,6 +17,7 @@ urlpatterns = [
     ),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("", views.dashboard, name="dashboard"),
+    path("health/<slug:category>/", views.health_issues, name="health_issues"),
     path("switch-organization/", views.switch_organization, name="switch_organization"),
     path("o/<slug:slug>/", views.organization_detail, name="organization_detail"),
     path("organizations/", views.organizations, name="organizations"),
@@ -299,6 +300,7 @@ urlpatterns = [
         views.document_set_revoke_grant,
         name="document_set_revoke_grant",
     ),
+    path("runs/", views.runs, name="runs"),
     path("agent-runs/", views.agent_runs, name="agent_runs"),
     path("agent-runs/<str:public_id>/", views.agent_run_detail, name="agent_run_detail"),
     path(

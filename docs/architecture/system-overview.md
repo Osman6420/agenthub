@@ -43,13 +43,14 @@ binding/capability, active/canary release, input/output contract, idempotency, a
 governance. History is bounded, text-only and request-scoped; streaming, multimodal input, client
 tools/functions and request-side governance overrides are intentionally unsupported.
 
-Phase 2.5 Part 1 implements an authorized organization inventory on `/console/`, an organization
-overview on `/console/o/<slug>/`, and tenant-scoped project, client-application and release detail
-navigation while preserving the existing canonical domain URLs. Authorized disabled organizations
-are readable but operationally immutable. Offline application checks pass; PostgreSQL non-owner
-execution and the Turkish manual browser journey remain open verification items, so the
-[Part 1 verification record](../tasks/phase-2-5-part-1-workspace-navigation/verification.md) is the
-status authority.
+Phase 2.8 Part 1 makes `/console/` the selected organization home and reduces primary navigation to
+Ana Sayfa, Projeler, Dokümanlar, İstemciler and Çalıştırmalar. Scenarios live under projects; artifact, release,
+DSL and run-subtype details remain reachable from their owning context. Legacy global catalogue GET
+routes redirect to authorized contextual destinations while canonical detail and mutation routes
+retain their contracts. Active organization remains a presentation filter derived from allowed
+scope, never an authorization input. The
+[Part 1 verification record](../planning/archive/phase-2-8-part-1-console-information-architecture-2026-07-22/verification.md)
+is the status authority for automated and remaining manual/PostgreSQL evidence.
 
 ## Target architecture
 

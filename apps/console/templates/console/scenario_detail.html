@@ -3,7 +3,7 @@
 {% block title %}{{ scenario.name }} · AgentHub{% endblock %}
 {% block content %}
 <nav class="breadcrumbs" aria-label="İçerik yolu">
-  <a href="{% url 'console:organization_detail' scenario.project.organization.slug %}">{{ scenario.project.organization.name }}</a><span>›</span>
+  <a href="{% url 'console:dashboard' %}">{{ scenario.project.organization.name }}</a><span>›</span>
   <a href="{% url 'console:project_detail_public' scenario.project.public_id %}">{{ scenario.project.name }}</a><span>›</span>
   <span aria-current="page">{{ scenario.name }}</span>
 </nav>
@@ -21,7 +21,14 @@
   {% if can_write %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ scenario.organization.slug }}&amp;scenario={{ scenario.public_id }}">Scenario Studio'yu aç</a>{% else %}<button type="button" class="button secondary" disabled aria-disabled="true" title="{{ author_reason }}">Scenario Studio'yu aç</button>{% endif %}
 </div>
 
-<div class="summary-grid">
+<nav class="task-tabs" role="tablist" aria-label="Senaryo bölümleri">
+  <a role="tab" href="#overview" aria-current="page">Genel</a>
+  <a role="tab" href="#documents">Dokümanlar</a>
+  <a role="tab" href="#configuration">Yapılandırma</a>
+  <a role="tab" href="#releases">Release’ler</a>
+</nav>
+
+<div class="summary-grid" id="overview">
   <div class="summary-card"><span>Doküman seti</span><strong>{{ relationship_rows|length }}</strong></div>
   <div class="summary-card"><span>İstemci bağı</span><strong>{{ consumer_bindings|length }}</strong></div>
   <div class="summary-card"><span>Aktif release</span><strong>{% if active_release %}#{{ active_release.id }}{% else %}Yok{% endif %}</strong></div>
@@ -48,12 +55,12 @@
   {% else %}<div class="empty">Aktif release yok; artifact seçimi henüz runtime'a çıkmamış.</div>{% endif %}
 </section>
 
-<section class="card">
-  <div class="section-heading"><div><p class="eyebrow">Sürüm geçmişi</p><h2>Release'ler</h2></div><a href="{% url 'console:releases' %}">Tüm release operasyonları →</a></div>
+<section class="card" id="releases">
+  <div class="section-heading"><div><p class="eyebrow">Sürüm geçmişi</p><h2>Release'ler</h2><p class="muted">Bu senaryonun immutable sürümleri ve exact artifact pinleri.</p></div></div>
   {% if release_rows %}<div class="table-scroll"><table><caption class="sr-only">Senaryonun release geçmişi</caption><thead><tr><th>Release</th><th>Durum</th><th>Runtime</th><th>Artifact rolleri</th><th>Oluşturulma</th></tr></thead><tbody>{% for item in release_rows %}<tr><td><a href="{% url 'console:release_detail' item.release.id %}">#{{ item.release.id }}</a></td><td><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></td><td>{{ item.release.runtime_version }}</td><td>{{ item.artifacts|length }}</td><td>{{ item.release.created_at }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">Bu senaryo için release yok.</p>{% endif %}
 </section>
 
-<section class="card">
+<section class="card" id="configuration">
   <div class="section-heading"><div><p class="eyebrow">Scenario Studio</p><h2>Workflow draft'ları</h2><p class="muted">Yalnız bu senaryoya bağlı mutable authoring state gösterilir; aktif release pini değildir.</p></div>{% if can_write %}<a href="{% url 'console:builder' %}?organization={{ scenario.organization.slug }}&amp;scenario={{ scenario.public_id }}">Yeni draft</a>{% else %}<button type="button" class="button" disabled aria-disabled="true" title="{{ author_reason }}">Yeni draft</button>{% endif %}</div>
   {% for draft in project_drafts %}<div class="access-row"><div><strong>{{ draft.name }}</strong><p class="muted mono">{{ draft.logical_id }} · revision {{ draft.revision }} · son publish v{{ draft.last_published_version }}</p></div>{% if can_write %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ draft.id }}">Grafikte aç</a>{% else %}<button type="button" class="button secondary" disabled aria-disabled="true" title="{{ author_reason }}">Grafikte aç</button>{% endif %}</div>{% empty %}<p class="muted">Bu senaryoya bağlı workflow draft'ı yok.</p>{% endfor %}
 </section>
@@ -73,7 +80,7 @@
   <summary><strong>LLM için workflow DSL kurallarını al</strong></summary><p class="muted">Bu yardımcı prompt metni artifact oluşturmaz; LLM çıktısı canonical backend compiler'dan geçmelidir.</p><button class="button secondary" type="button" data-copy-target="scenario-dsl-guide">Rehberi kopyala</button><textarea id="scenario-dsl-guide" class="mono code-field" rows="15" readonly>{{ dsl_guide }}</textarea>
 </details>
 
-<section class="card">
+<section class="card" id="documents">
   <div class="section-heading">
     <div><p class="eyebrow">Erişim haritası</p><h2>Doküman setleri ve istemci erişimi</h2></div>
     {% if can_write and candidate_document_sets %}

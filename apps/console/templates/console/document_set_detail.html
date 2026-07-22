@@ -8,24 +8,26 @@
   <span class="badge {{ set.status }}">{{ set.status }}</span>
 </div>
 
-<div class="summary-grid">
+<nav class="task-tabs" role="tablist" aria-label="Doküman seti bölümleri">
+  <a role="tab" href="#overview" aria-current="page">Genel</a>
+  <a role="tab" href="#documents">Dokümanlar</a>
+  <a role="tab" href="#versions">Sürümler ve indeks</a>
+  <a role="tab" href="#sources">Kaynaklar</a>
+</nav>
+
+<div class="summary-grid" id="overview">
   <div class="summary-card"><span>Son set sürümü</span><strong>{% if latest_version %}v{{ latest_version.version }}{% else %}—{% endif %}</strong><small class="muted">{% if latest_version %}{{ latest_version.status }}{% else %}Henüz taslak yok{% endif %}</small></div>
   <div class="summary-card"><span>Aktif indeks</span><strong>{% if active_index %}v{{ active_index.version }}{% else %}—{% endif %}</strong><small class="muted">{% if active_index %}Set v{{ active_index.document_set_version.version }} · {{ active_index.chunk_count }} parça{% else %}Henüz serve edilmiyor{% endif %}</small></div>
   <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Release derlemesinde pinlenir</small></div>
 </div>
 
-<div class="card">
+<div class="card" id="documents">
   <div class="section-heading"><div><h2>Uçtan uca yaşam döngüsü</h2><p class="muted">Her aşama mevcut durumu, engeli ve yetkiniz varsa yapılacak işlemi gösterir.</p></div></div>
   {% for step in lifecycle_steps %}<div class="access-row"><div><strong>{{ forloop.counter }}. {{ step.label }}</strong><p class="muted">{{ step.detail }}</p></div>{% if step.complete %}<span class="access-ok">Hazır</span>{% else %}<span class="access-missing">Bekliyor</span>{% endif %}{% if step.action %}{% if step.action.type == 'post' %}<form class="inline" method="post" action="{{ step.action.url }}">{% csrf_token %}<button class="button primary" type="submit">{{ step.action.label }}</button></form>{% else %}<a class="button secondary" href="{{ step.action.href }}">{{ step.action.label }}</a>{% endif %}{% else %}<span></span>{% endif %}</div>{% endfor %}
 </div>
 
-<div class="card action-card">
-  <div><h2>Bağlı kaynaklar ve periyodik yenileme</h2><p class="muted">Confluence veya generic REST kaynaklarını, mapping sözleşmelerini ve değişiklik sonrası otomasyonu bu set için yönetin.</p></div>
-  <a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynakları yönet</a>
-</div>
-
 {% if can_write %}
-<div class="card" id="uploads">
+<div class="card">
   <div class="section-heading"><div><h2>Toplu doküman yükle</h2><p class="muted">Dosya adından başlık ve stabil ID üretilir; yükleme son taslağı günceller, yayına çıkmaz.</p></div></div>
   <form class="form-card" method="post" action="{% url 'console:document_set_bulk_upload_public' set.public_id %}" enctype="multipart/form-data">
     {% csrf_token %}
@@ -36,7 +38,7 @@
 </div>
 {% endif %}
 
-<div class="card">
+<div class="card" id="versions">
   <div class="section-heading">
     <div><h2>İçerik ve indeks yaşam döngüsü</h2><p class="muted">Yükleme → taslak → yayımlanmış set → staged indeks → aktif indeks.</p></div>
     {% if can_write %}<form method="post" action="{% url 'console:document_set_version_create_public' set.public_id %}">{% csrf_token %}<button class="button secondary" type="submit">Boş taslak aç</button></form>{% endif %}
@@ -89,7 +91,7 @@
   {% endif %}
 </div>
 
-<div class="card">
+<div class="card" id="sources">
   <div class="section-heading"><div><h2>Kaynaklar</h2><p class="muted">Bu sete içerik sağlayan manuel yüklemeler ve yönetilen connector kaynakları.</p></div><a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynakları yönet</a></div>
   <p><span class="badge active">Manuel yükleme</span> Set çalışma alanındaki toplu yükleme ve replacement işlemleri</p>
   {% for source in sources %}<p><strong><a href="{% url 'console:connector_source_detail' source.id %}">{{ source.name }}</a></strong> <span class="badge">{{ source.connector_type }}</span> <span class="badge {{ source.status }}">{{ source.status }}</span></p>{% empty %}<p class="muted">Bağlı connector kaynağı yok.</p>{% endfor %}

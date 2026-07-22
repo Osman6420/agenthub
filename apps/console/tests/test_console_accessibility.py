@@ -39,27 +39,21 @@ def test_authenticated_shell_has_keyboard_and_semantic_landmarks(client: Client)
     assert '<main id="main-content" tabindex="-1">' in body
     assert ":focus-visible" in body
     assert "prefers-reduced-motion" in body
-    assert "Genel bakış" in body
+    assert "Ana Sayfa" in body
     assert "Sprint 1" not in body
 
     organization = OrganizationMembership.objects.get(user=user).organization
     AIProject.objects.create(organization=organization, slug="alpha", name="Alpha")
     table_body = client.get(reverse("console:projects")).content.decode()
     assert 'class="table-scroll"' in table_body
-    assert '<caption class="sr-only">AI projeleri tablosu</caption>' in table_body
+    assert '<caption class="sr-only">Projeler tablosu</caption>' in table_body
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("route", "heading", "empty_state", "caption"),
     [
-        ("console:projects", "AI projeleri", "Yetki kapsamınızda kayıt yok", "tablosu"),
-        (
-            "console:releases",
-            "Release&#x27;ler",
-            "Yetki kapsamınızda release yok",
-            "release'ler",
-        ),
+        ("console:projects", "Projeler", "Yetki kapsamınızda kayıt yok", "tablosu"),
         (
             "console:agent_runs",
             "Agent çalıştırmaları",

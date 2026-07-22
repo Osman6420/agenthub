@@ -1,32 +1,17 @@
 /*
  * Console progressive enhancement.
  *
- * The console is fully usable without JavaScript: the organization selector has a
- * visible submit button and every openable row keeps a real <a> in its primary cell.
- * This script only *enhances* those flows — it never becomes the access boundary
+ * Every openable row keeps a real <a> in its primary cell. Organization switching uses
+ * ordinary server-authorized POST buttons and does not depend on JavaScript.
  * (the server re-authorizes and re-scopes every request regardless).
  */
 (function () {
   "use strict";
 
-  // Marker class lets CSS hide the now-redundant submit button and enable row hover
-  // only when JS is active, so the no-JS experience stays complete.
+  // Marker class enables row hover only when JavaScript is active.
   document.documentElement.classList.add("js-on");
 
-  // 1) Auto-submit the active-organization selector on change.
-  document.querySelectorAll("form[data-autosubmit] select").forEach(function (select) {
-    select.addEventListener("change", function () {
-      var form = select.form;
-      if (!form) return;
-      if (typeof form.requestSubmit === "function") {
-        form.requestSubmit();
-      } else {
-        form.submit();
-      }
-    });
-  });
-
-  // 2) Row-level "click to open". A <tr data-href="..."> opens its target on click,
+  // Row-level "click to open". A <tr data-href="..."> opens its target on click,
   //    but only for plain clicks that are not on a nested interactive control and not
   //    the end of a text selection. Keyboard and screen-reader users use the real
   //    anchor in the primary cell; this is a mouse convenience layer.

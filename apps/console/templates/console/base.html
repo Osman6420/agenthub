@@ -22,7 +22,7 @@
     .skip-link:focus { transform: translateY(0); }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
-    .sidebar { background: var(--nav); color: #e6f4f3; padding: 24px 16px; display: flex; flex-direction: column; min-height: 100vh; position: sticky; top: 0; height: 100vh; }
+    .sidebar { background: var(--nav); color: #e6f4f3; padding: 24px 16px; display: flex; flex-direction: column; min-height: 100vh; position: sticky; top: 0; height: 100vh; overflow-y: auto; overscroll-behavior: contain; }
     .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 24px; font-size: 19px; font-weight: 750; letter-spacing: -.3px; }
     .brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: #54d3c6; color: var(--nav); font-weight: 900; }
     .nav-label { margin: 18px 10px 7px; color: #88aaa8; text-transform: uppercase; font-size: 10px; font-weight: 800; letter-spacing: 1.2px; }
@@ -31,16 +31,20 @@
     .sidebar nav a:hover { color: #fff; background: var(--nav-soft); text-decoration: none; }
     .org-switch-box { margin: 4px 0 8px; padding: 0 10px; }
     .org-switch-label { margin: 0 0 5px; padding: 0; }
-    .org-switch select { width: 100%; padding: 8px 9px; border-radius: 8px; border: 1px solid #315158; background: var(--nav-soft); color: #e6f4f3; font: inherit; font-size: 13px; }
-    .org-switch select:hover { border-color: #4a7b80; }
-    .org-switch-go { width: 100%; margin-top: 7px; }
-    .js-on .org-switch-go { display: none; }
+    .org-menu { position: relative; }
+    .org-menu summary { cursor: pointer; list-style: none; padding: 9px 10px; border: 1px solid #315158; border-radius: 8px; background: var(--nav-soft); color: #e6f4f3; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .org-menu summary::-webkit-details-marker { display: none; }
+    .org-menu summary::after { content: "▾"; float: right; color: #9eb8b7; }
+    .org-menu[open] summary::after { content: "▴"; }
+    .org-menu-options { display: grid; gap: 3px; margin-top: 5px; padding: 5px; border: 1px solid #315158; border-radius: 8px; background: var(--nav-soft); }
+    .org-menu-options form { margin: 0; }
+    .org-menu-item { width: 100%; min-height: 36px; padding: 7px 8px; border: 0; border-radius: 6px; background: transparent; color: #cbe1df; text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
+    .org-menu-item:hover, .org-menu-item[aria-current="true"] { color: #fff; background: #315158; }
     .org-static { color: #e6f4f3; font-size: 14px; font-weight: 650; }
     tr[data-href] { cursor: pointer; }
     .js-on tr[data-href]:hover { background: var(--surface-soft); }
-    .user-box { margin-top: auto; border-top: 1px solid #315158; padding: 16px 10px 0; }
-    .user-box strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
-    .user-box span { color: #9eb8b7; font-size: 12px; }
+    .topbar-user { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+    .topbar-user strong { overflow-wrap: anywhere; }
     .workspace { min-width: 0; }
     .topbar { min-height: 64px; background: rgba(255,255,255,.92); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 32px; position: sticky; top: 0; z-index: 5; backdrop-filter: blur(8px); }
     .topbar-title { font-weight: 700; }
@@ -96,7 +100,7 @@
     .pagination { display: flex; gap: 14px; align-items: center; justify-content: center; padding: 16px; color: var(--muted); font-size: 13px; }
     .filter-note { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; color: var(--muted); font-size: 13px; }
     button.link { min-height: 38px; background: none; border: none; color: var(--brand-dark); cursor: pointer; padding: 7px 4px; font: inherit; font-size: 12px; font-weight: 700; }
-    .user-box button.link { color: #d5e8e6; padding-inline: 0; }
+    .topbar-user button.link { padding-inline: 0; }
     form.inline { display: inline; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
     .form-card input, .form-card select, .form-card textarea, .compact-form select { width: 100%; max-width: 760px; padding: 9px 10px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); }
@@ -119,6 +123,10 @@
     .access-ok { color: var(--success); }
     .access-missing { color: var(--warning); }
     .meta-line { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; color: var(--muted); }
+    .task-tabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 18px; padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+    .task-tabs a { flex: 0 0 auto; padding: 9px 12px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 700; }
+    .task-tabs a:hover, .task-tabs a[aria-current="page"] { color: var(--brand-dark); background: #eaf7f5; text-decoration: none; }
+    .summary-grid[id], .card[id], section[id] { scroll-margin-top: 84px; }
     .empty { padding: 38px 20px; text-align: center; color: var(--muted); }
     .msg { padding: 11px 14px; border-radius: 9px; margin-bottom: 10px; border: 1px solid; }
     .msg.error { background: var(--danger-bg); color: var(--danger); border-color: #efc3bf; }
@@ -132,7 +140,7 @@
       .brand { padding-bottom: 10px; }
       .sidebar nav { display: flex; overflow-x: auto; padding-bottom: 5px; }
       .sidebar nav a { white-space: nowrap; }
-      .nav-label, .user-box { display: none; }
+      .nav-label { display: none; }
       .topbar { padding: 0 18px; }
       main { padding: 22px 16px; }
     }
@@ -156,16 +164,14 @@
       <a class="brand" href="{% url 'console:dashboard' %}"><span class="brand-mark">A</span><span>AgentHub</span></a>
       <div class="org-switch-box">
         {% if workspace_multi_org %}
-        <form class="org-switch" method="post" action="{% url 'console:switch_organization' %}" data-autosubmit>
-          {% csrf_token %}
-          <input type="hidden" name="next" value="{{ request.get_full_path }}">
-          <label class="nav-label org-switch-label" for="org-switch">Aktif organizasyon</label>
-          <select id="org-switch" name="organization_id">
-            <option value="">Tüm organizasyonlar</option>
-            {% for org in available_organizations %}<option value="{{ org.id }}"{% if active_organization and active_organization.id == org.id %} selected{% endif %}>{{ org.name }}</option>{% endfor %}
-          </select>
-          <button class="button secondary org-switch-go" type="submit">Değiştir</button>
-        </form>
+        <div class="nav-label org-switch-label">Aktif organizasyon</div>
+        <details class="org-menu">
+          <summary>{% if active_organization %}{{ active_organization.name }}{% else %}Tüm organizasyonlar{% endif %}</summary>
+          <div class="org-menu-options">
+            <form method="post" action="{% url 'console:switch_organization' %}">{% csrf_token %}<button class="org-menu-item" type="submit" name="organization_id" value=""{% if not active_organization %} aria-current="true"{% endif %}>Tüm organizasyonlar</button></form>
+            {% for org in available_organizations %}<form method="post" action="{% url 'console:switch_organization' %}">{% csrf_token %}<button class="org-menu-item" type="submit" name="organization_id" value="{{ org.id }}"{% if active_organization and active_organization.id == org.id %} aria-current="true"{% endif %}>{{ org.name }}</button></form>{% endfor %}
+          </div>
+        </details>
         {% elif available_organizations %}
         <div class="nav-label org-switch-label">Organizasyon</div>
         <div class="org-static">{{ available_organizations.0.name }}</div>
@@ -173,30 +179,15 @@
       </div>
       <div class="nav-label">Çalışma alanı</div>
       <nav aria-label="Ana menü">
-        <a href="{% url 'console:dashboard' %}">Genel bakış</a>
-        <a href="{% url 'console:organizations' %}">Organizasyonlar</a>
+        <a href="{% url 'console:dashboard' %}">Ana Sayfa</a>
         <a href="{% url 'console:projects' %}">Projeler</a>
-        <a href="{% url 'console:scenarios' %}">Senaryolar</a>
-        <a href="{% url 'console:documents' %}">Doküman setleri</a>
-      </nav>
-      <div class="nav-label">Operasyon</div>
-      <nav aria-label="Operasyon menüsü">
-        <a href="{% url 'console:agent_runs' %}">Çalıştırmalar</a>
-        <a href="{% url 'console:workflow_runs' %}">Workflow izleri</a>
-        <a href="{% url 'console:workflow_recoveries' %}">Recovery kararları</a>
+        <a href="{% url 'console:documents' %}">Dokümanlar</a>
         <a href="{% url 'console:consumers' %}">İstemciler</a>
-        <a href="{% url 'console:builder' %}">DSL / grafik</a>
+        <a href="{% url 'console:runs' %}">Çalıştırmalar</a>
       </nav>
-      <div class="nav-label">Gelişmiş</div>
-      <nav aria-label="Gelişmiş menü">
-        <a href="{% url 'console:artifacts' %}">Artifact’ler</a>
-        <a href="{% url 'console:releases' %}">Release’ler</a>
-        {% if user.is_superuser %}<a href="{% url 'console:retention_operations' %}">Saklama / temizleme</a>{% endif %}
-      </nav>
-      <div class="user-box"><strong>{{ user.get_username }}</strong><span>Oturum açık</span><form method="post" action="{% url 'console:logout' %}">{% csrf_token %}<button class="link" type="submit">Çıkış yap</button></form></div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><span class="topbar-title">Operasyon konsolu</span><span class="topbar-scope muted">{% if active_organization %}Kapsam: {{ active_organization.name }}{% else %}Kapsam: Tüm organizasyonlar{% endif %}</span></header>
+      <header class="topbar"><div><span class="topbar-title">Operasyon konsolu</span><span class="topbar-scope muted"> · {% if active_organization %}{{ active_organization.name }}{% else %}Tüm organizasyonlar{% endif %}</span></div><div class="topbar-user"><strong>{{ user.get_username }}</strong><form method="post" action="{% url 'console:logout' %}">{% csrf_token %}<button class="link" type="submit">Çıkış yap</button></form></div></header>
       <main id="main-content" tabindex="-1">
   {% else %}
       <main id="main-content" tabindex="-1">
@@ -207,7 +198,7 @@
   {% if user.is_authenticated %}
     </div>
   </div>
-  <script src="{% static 'console/console.js' %}" defer></script>
+  <script src="{% static 'console/console.js' %}?v=phase-2-8-part-1-2" defer></script>
   {% endif %}
 </body>
 </html>

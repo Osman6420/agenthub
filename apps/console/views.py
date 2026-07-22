@@ -30,7 +30,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_variables
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.agents.models import AgentRun, AgentRunStatus, AgentRuntimeControl
 from apps.agents.services import AgentRequestError, operator_cancel_agent_run, runtime_suspended
@@ -140,7 +140,7 @@ from apps.releases.compiler import (
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.tenancy.identifiers import IdentifierAllocationError
-from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
+from apps.tenancy.models import Organization, OrganizationStatus
 from apps.tenancy.services import (
     UserLike,
     admin_organization_ids,
@@ -492,24 +492,26 @@ def _dashboard_metrics(
     scenarios_qs = scoping.narrow_to_active_organization(
         scoping.scoped_scenarios(user), active_organization, field="project__organization_id"
     )
-    no_active_release = scenarios_qs.exclude(
+    no_active_release_qs = scenarios_qs.exclude(
         id__in=ScenarioRelease.objects.filter(status=ReleaseStatus.ACTIVE).values("scenario_id")
-    ).count()
-    promotable_indexes = _org_scope(
-        IndexVersion.objects.filter(status=IndexStatus.PROMOTABLE)
-    ).count()
-    failed_builds = _org_scope(
+    )
+    no_active_release = no_active_release_qs.count()
+    promotable_indexes_qs = _org_scope(IndexVersion.objects.filter(status=IndexStatus.PROMOTABLE))
+    promotable_indexes = promotable_indexes_qs.count()
+    failed_builds_qs = _org_scope(
         StagedIndexBuildJob.objects.filter(
             status__in=[
                 StagedIndexBuildJobStatus.FAILED,
                 StagedIndexBuildJobStatus.RECONCILIATION_REQUIRED,
             ]
         )
-    ).count()
-    active_canaries = _org_scope(
+    )
+    failed_builds = failed_builds_qs.count()
+    active_canaries_qs = _org_scope(
         ReleaseCanary.objects.filter(status=CanaryStatus.ACTIVE),
         field="scenario__project__organization_id",
-    ).count()
+    )
+    active_canaries = active_canaries_qs.count()
 
     return {
         "runs": runs,
@@ -564,6 +566,157 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     return render(request, "console/dashboard.html", context)
 
 
+@login_required
+@require_GET
+def health_issues(request: HttpRequest, category: str) -> HttpResponse:
+    """List the exact tenant-scoped objects represented by a dashboard health KPI."""
+    active_org = console_context.resolve_active_organization(request)
+    scenarios_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_scenarios(request.user).select_related("project__organization"),
+        active_org,
+        field="project__organization_id",
+    )
+    document_sets_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_document_sets(request.user).select_related("organization"),
+        active_org,
+        field="organization_id",
+    )
+
+    if category == "no-active-release":
+        scenarios = list(
+            scenarios_qs.exclude(
+                id__in=ScenarioRelease.objects.filter(status=ReleaseStatus.ACTIVE).values(
+                    "scenario_id"
+                )
+            ).order_by("project__name", "name")[:201]
+        )
+        title = "Aktif release'i olmayan senaryolar"
+        headers = ["Senaryo", "Proje", "Organizasyon", "Durum"]
+        rows = [
+            {
+                "href": reverse("console:scenario_detail_public", args=[scenario.public_id]),
+                "cols": [
+                    {
+                        "text": scenario.name,
+                        "url": "console:scenario_detail_public",
+                        "arg": scenario.public_id,
+                    },
+                    scenario.project.name,
+                    scenario.project.organization.name,
+                    scenario.status,
+                ],
+            }
+            for scenario in scenarios
+        ]
+    elif category == "active-canary":
+        canaries = list(
+            ReleaseCanary.objects.filter(scenario__in=scenarios_qs, status=CanaryStatus.ACTIVE)
+            .select_related("scenario__project__organization", "release")
+            .order_by("expires_at", "pk")[:201]
+        )
+        title = "Aktif canary'ler"
+        headers = ["Senaryo", "Proje", "Organizasyon", "Release", "Bitiş"]
+        rows = [
+            {
+                "href": reverse("console:scenario_detail_public", args=[canary.scenario.public_id]),
+                "cols": [
+                    {
+                        "text": canary.scenario.name,
+                        "url": "console:scenario_detail_public",
+                        "arg": canary.scenario.public_id,
+                    },
+                    canary.scenario.project.name,
+                    canary.scenario.project.organization.name,
+                    f"#{canary.release_id}",
+                    canary.expires_at,
+                ],
+            }
+            for canary in canaries
+        ]
+    elif category == "promotable-index":
+        indexes = list(
+            IndexVersion.objects.filter(
+                document_set_version__document_set__in=document_sets_qs,
+                status=IndexStatus.PROMOTABLE,
+            )
+            .select_related("document_set_version__document_set__organization")
+            .order_by("document_set_version__document_set__name", "version")[:201]
+        )
+        title = "Aktive edilmeyi bekleyen indeksler"
+        headers = ["Doküman seti", "Organizasyon", "Set sürümü", "İndeks"]
+        rows = []
+        for index in indexes:
+            set_version = index.document_set_version
+            if set_version is None:
+                continue
+            document_set = set_version.document_set
+            rows.append(
+                {
+                    "href": reverse(
+                        "console:document_set_detail_public",
+                        args=[document_set.public_id],
+                    ),
+                    "cols": [
+                        {
+                            "text": document_set.name,
+                            "url": "console:document_set_detail_public",
+                            "arg": document_set.public_id,
+                        },
+                        document_set.organization.name,
+                        f"v{set_version.version}",
+                        f"v{index.version}",
+                    ],
+                }
+            )
+    elif category == "failed-index-build":
+        jobs = list(
+            StagedIndexBuildJob.objects.filter(
+                document_set_version__document_set__in=document_sets_qs,
+                status__in=[
+                    StagedIndexBuildJobStatus.FAILED,
+                    StagedIndexBuildJobStatus.RECONCILIATION_REQUIRED,
+                ],
+            )
+            .select_related("document_set_version__document_set__organization")
+            .order_by("-updated_at", "-pk")[:201]
+        )
+        title = "Başarısız indeks işleri"
+        headers = ["Doküman seti", "Organizasyon", "Durum", "Hata kodu"]
+        rows = [
+            {
+                "href": reverse(
+                    "console:document_set_detail_public",
+                    args=[job.document_set_version.document_set.public_id],
+                ),
+                "cols": [
+                    {
+                        "text": job.document_set_version.document_set.name,
+                        "url": "console:document_set_detail_public",
+                        "arg": job.document_set_version.document_set.public_id,
+                    },
+                    job.document_set_version.document_set.organization.name,
+                    job.status,
+                    job.error_code or "—",
+                ],
+            }
+            for job in jobs
+        ]
+    else:
+        raise Http404
+
+    return render(
+        request,
+        "console/list.html",
+        {
+            "title": title,
+            "description": "Ana Sayfa sağlık göstergesinin kapsamındaki kesin kayıtlar.",
+            "headers": headers,
+            "rows": rows[:200],
+            "rows_limited": len(rows) > 200,
+        },
+    )
+
+
 def _scoped_organization(user: UserLike, slug: str) -> Organization:
     try:
         organization = scoping.scoped_organizations(user).get(slug=slug)
@@ -574,92 +727,18 @@ def _scoped_organization(user: UserLike, slug: str) -> Organization:
 
 
 @login_required
+@require_GET
 def organization_detail(request: HttpRequest, slug: str) -> HttpResponse:
     organization = _scoped_organization(request.user, slug)
-    projects_qs = AIProject.objects.filter(organization=organization).order_by("name", "slug")
-    scenarios_qs = Scenario.objects.filter(organization=organization).select_related("project")
-    document_sets_qs = DocumentSet.objects.filter(organization=organization).order_by(
-        "name", "logical_id"
-    )
-    consumers_qs = Consumer.objects.filter(organization=organization).order_by("name", "subject")
-    artifacts_qs = ArtifactVersion.objects.filter(organization=organization).order_by(
-        "type", "logical_id", "-version"
-    )
-    releases_qs = ScenarioRelease.objects.filter(organization=organization).select_related(
-        "scenario", "scenario__project"
-    )
-    memberships_qs = OrganizationMembership.objects.filter(
-        organization=organization
-    ).select_related("user")
-    runs_qs = AgentRun.objects.filter(organization=organization).select_related(
-        "scenario", "consumer"
-    )
-    list_limit = 100
-    inventories = {
-        "projects": list(projects_qs[:list_limit]),
-        "scenarios": list(scenarios_qs.order_by("project__name", "name")[:list_limit]),
-        "document_sets": list(document_sets_qs[:list_limit]),
-        "consumers": list(consumers_qs[:list_limit]),
-        "artifacts": list(artifacts_qs[:list_limit]),
-        "releases": list(releases_qs.order_by("-created_at", "-pk")[:list_limit]),
-        "memberships": list(memberships_qs.order_by("user__username")[:list_limit]),
-        "runs": list(runs_qs.order_by("-created_at")[:50]),
-    }
-    counts = {
-        "projects": projects_qs.count(),
-        "scenarios": scenarios_qs.count(),
-        "document_sets": document_sets_qs.count(),
-        "consumers": consumers_qs.count(),
-        "artifacts": artifacts_qs.count(),
-        "releases": releases_qs.count(),
-        "memberships": memberships_qs.count(),
-        "runs": runs_qs.count(),
-    }
-    return render(
-        request,
-        "console/organization_detail.html",
-        {
-            "organization": organization,
-            "is_disabled": organization.status == OrganizationStatus.DISABLED,
-            "inventories": inventories,
-            "counts": counts,
-            "list_limit": list_limit,
-            # Relocated advanced retention/purge entry (Scope F): org admins only.
-            "can_admin": can_admin_org(request.user, organization.pk),
-        },
-    )
+    request.session[console_context.SESSION_KEY] = organization.pk
+    return redirect("console:dashboard")
 
 
 @login_required
+@require_GET
 def organizations(request: HttpRequest) -> HttpResponse:
-    rows = [
-        {
-            "href": reverse("console:organization_detail", args=[o.slug]),
-            "cols": [
-                o.slug,
-                {"text": o.name, "url": "console:organization_detail", "arg": o.slug},
-                "Aktif" if o.status == OrganizationStatus.ACTIVE else "Pasif",
-            ],
-        }
-        for o in scoping.scoped_organizations(request.user)
-    ]
-    return render(
-        request,
-        "console/list.html",
-        {
-            "title": "Organizasyonlar",
-            "headers": ["Slug", "Ad", "Durum"],
-            "rows": rows,
-            "create_links": [
-                {
-                    "url": "console:organization_create",
-                    "label": "Yeni organizasyon",
-                    "disabled": not can_create_organization(request.user),
-                    "reason": _CREATE_ORG_REASON,
-                }
-            ],
-        },
-    )
+    console_context.resolve_active_organization(request)
+    return redirect("console:dashboard")
 
 
 @login_required
@@ -672,9 +751,9 @@ def projects(request: HttpRequest) -> HttpResponse:
         {
             "href": reverse("console:project_detail_public", args=[p.public_id]),
             "cols": [
-                p.organization.slug,
-                p.slug,
                 {"text": p.name, "url": "console:project_detail_public", "arg": p.public_id},
+                p.organization.name,
+                p.slug,
                 p.risk_level,
                 p.status,
             ],
@@ -685,8 +764,9 @@ def projects(request: HttpRequest) -> HttpResponse:
         request,
         "console/list.html",
         {
-            "title": "AI projeleri",
-            "headers": ["Organizasyon", "Slug", "Ad", "Risk", "Durum"],
+            "title": "Projeler",
+            "description": "Senaryolar projeler içinde hazırlanır ve yönetilir.",
+            "headers": ["Proje", "Organizasyon", "Slug", "Risk", "Durum"],
             "rows": rows,
             "create_links": [
                 {
@@ -727,28 +807,18 @@ def project_detail(
             "scenarios": scenario_candidates[:200],
             "scenarios_limited": len(scenario_candidates) > 200,
             "is_disabled": project.organization.status == OrganizationStatus.DISABLED,
+            "can_create_scenario": project.organization.status == OrganizationStatus.ACTIVE
+            and can_author_scenarios(request.user, project.organization_id),
+            "create_scenario_reason": _CREATE_SCENARIO_REASON,
         },
     )
 
 
 @login_required
+@require_GET
 def scenarios(request: HttpRequest) -> HttpResponse:
-    active_org = console_context.resolve_active_organization(request)
-    scenarios_qs = scoping.narrow_to_active_organization(
-        scoping.scoped_scenarios(request.user), active_org, field="project__organization_id"
-    ).order_by("project__organization__name", "project__name", "name")
-    can_create = author_organization_ids(request.user) != set()
-    return render(
-        request,
-        "console/scenarios.html",
-        {
-            "title": "Senaryolar",
-            "scenarios": scenarios_qs,
-            "can_create": can_create,
-            # Role-honest affordance (Scope D): when the create button is disabled, say why.
-            "create_reason": "" if can_create else _CREATE_SCENARIO_REASON,
-        },
-    )
+    console_context.resolve_active_organization(request)
+    return redirect("console:projects")
 
 
 def _scoped_scenario(user: UserLike, pk: int | None = None, public_id: object = None) -> Scenario:
@@ -1388,21 +1458,10 @@ def consumer_token_revoke(request: HttpRequest, public_id: object, token_id: int
 
 
 @login_required
+@require_GET
 def artifacts(request: HttpRequest) -> HttpResponse:
-    active_org = console_context.resolve_active_organization(request)
-    rows = list(
-        scoping.narrow_to_active_organization(
-            scoping.scoped_artifacts(request.user), active_org, field="organization_id"
-        ).order_by("organization__slug", "type", "logical_id", "-version")
-    )
-    return render(
-        request,
-        "console/artifacts.html",
-        {
-            "title": "Artifact'ler",
-            "rows": rows,
-        },
-    )
+    console_context.resolve_active_organization(request)
+    return redirect("console:projects")
 
 
 def _scoped_artifact(user: UserLike, pk: int) -> ArtifactVersion:
@@ -1464,61 +1523,18 @@ def artifact_detail(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 @login_required
+@require_GET
 def releases(request: HttpRequest) -> HttpResponse:
-    user = request.user
-    active_org = console_context.resolve_active_organization(request)
-    rows = []
-    releases_qs = scoping.narrow_to_active_organization(
-        scoping.scoped_releases(user).select_related("scenario__project__organization"),
-        active_org,
-        field="scenario__project__organization_id",
-    )
-    for r in releases_qs:
-        manageable = can_manage_releases(user, r.scenario.project.organization_id)
-        pre_active = r.status in (ReleaseStatus.CANDIDATE, ReleaseStatus.CANARY)
-        rows.append(
-            {
-                "id": r.pk,
-                "scenario_id": r.scenario_id,
-                "scenario_public_id": r.scenario.public_id,
-                "org_slug": r.scenario.project.organization.slug,
-                "org": r.scenario.project.organization.slug,
-                "scenario": r.scenario.slug,
-                "status": r.status,
-                "runtime": r.runtime_version,
-                "manifest": r.artifact_manifest_sha256[:12],
-                "can_eval": manageable and pre_active,
-                "can_promote": manageable and pre_active,
-                "can_canary": manageable and pre_active,
-                "can_rollback": manageable and r.status == ReleaseStatus.SUPERSEDED,
-            }
-        )
+    console_context.resolve_active_organization(request)
+    return redirect("console:projects")
 
-    allowed = allowed_organization_ids(user)
-    canary_qs = ReleaseCanary.objects.filter(status=CanaryStatus.ACTIVE).select_related(
-        "scenario__project__organization", "consumer"
-    )
-    if allowed is not None:
-        canary_qs = canary_qs.filter(scenario__project__organization_id__in=allowed)
-    canary_qs = scoping.narrow_to_active_organization(
-        canary_qs, active_org, field="scenario__project__organization_id"
-    )
-    canaries = [
-        {
-            "id": c.pk,
-            "scenario": c.scenario.slug,
-            "consumer": c.consumer.subject,
-            "release": c.release_id,
-            "expires": c.expires_at,
-            "can_stop": can_manage_releases(user, c.scenario.project.organization_id),
-        }
-        for c in canary_qs
-    ]
-    return render(
-        request,
-        "console/releases.html",
-        {"title": "Release'ler", "rows": rows, "canaries": canaries},
-    )
+
+@login_required
+@require_GET
+def runs(request: HttpRequest) -> HttpResponse:
+    """Task-oriented landing over existing, independently authorized run surfaces."""
+    console_context.resolve_active_organization(request)
+    return render(request, "console/runs.html")
 
 
 def _scoped_release(user: UserLike, release_id: int) -> ScenarioRelease:
@@ -2253,13 +2269,13 @@ def documents(request: HttpRequest) -> HttpResponse:
     active_org = console_context.resolve_active_organization(request)
     document_sets_qs = scoping.narrow_to_active_organization(
         scoping.scoped_document_sets(user), active_org, field="organization_id"
-    ).order_by("organization_id", "logical_id")
+    ).order_by("name", "organization__name", "logical_id")
     sets = [
         {
             "id": s.id,
             "public_id": s.public_id,
             "href": reverse("console:document_set_detail_public", args=[s.public_id]),
-            "org": s.organization.slug,
+            "org": s.organization.name,
             "logical_id": s.logical_id,
             "name": s.name,
             "status": s.status,
@@ -2551,25 +2567,43 @@ def document_set_detail(
     parsed_count = sum(
         item.document_version.parse_status == ParseStatus.PARSED for item in latest_members
     )
-    staged_ready = IndexVersion.objects.filter(
-        organization_id=document_set.organization_id,
-        document_set_version__document_set=document_set,
-        status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
-    ).exists()
+    uploaded_complete = bool(latest_members)
+    parsed_complete = uploaded_complete and parsed_count == len(latest_members)
+    draft_complete = parsed_complete and latest_version is not None
     promotable_index = (
         IndexVersion.objects.filter(
             organization_id=document_set.organization_id,
-            document_set_version__document_set=document_set,
+            document_set_version=latest_version,
             status=IndexStatus.PROMOTABLE,
         )
         .order_by("-version")
         .first()
+        if latest_version is not None
+        else None
     )
     is_draft_current = (
         latest_version is not None and latest_version.status == DocumentSetVersionStatus.DRAFT
     )
     is_published_current = (
         latest_version is not None and latest_version.status != DocumentSetVersionStatus.DRAFT
+    )
+    published_complete = draft_complete and is_published_current
+    staged_ready = (
+        published_complete
+        and IndexVersion.objects.filter(
+            organization_id=document_set.organization_id,
+            document_set_version=latest_version,
+            status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
+        ).exists()
+    )
+    serving_set_version = active_index.document_set_version if active_index is not None else None
+    current_active_index = (
+        active_index
+        if active_index is not None
+        and serving_set_version is not None
+        and latest_version is not None
+        and active_index.document_set_version_id == latest_version.id
+        else None
     )
     publish_url = (
         reverse("console:document_set_version_publish", args=[latest_version.id])
@@ -2588,7 +2622,7 @@ def document_set_detail(
     lifecycle_steps = [
         {
             "label": "Yüklendi",
-            "complete": bool(latest_members),
+            "complete": uploaded_complete,
             "detail": f"{len(latest_members)} doküman sürümü"
             if latest_members
             else "Henüz içerik yok",
@@ -2598,7 +2632,7 @@ def document_set_detail(
         },
         {
             "label": "Ayrıştırıldı / normalize edildi",
-            "complete": bool(latest_members) and parsed_count == len(latest_members),
+            "complete": parsed_complete,
             "detail": f"{parsed_count}/{len(latest_members)} hazır",
             "action": _anchor("#build", "İndeks oluştur (ayrıştırmayı çalıştırır)")
             if can_write and latest_members and parsed_count != len(latest_members)
@@ -2606,18 +2640,22 @@ def document_set_detail(
         },
         {
             "label": "Set taslağı",
-            "complete": latest_version is not None,
+            "complete": draft_complete,
             "detail": latest_version.status if latest_version else "Taslak yok",
-            "action": {"type": "post", "url": publish_url, "label": "Taslağı yayımla"}
-            if can_write and is_draft_current
-            else None,
+            "action": None,
         },
         {
             "label": "Set sürümü yayımlandı",
-            "complete": is_published_current,
-            "detail": "Yayımlandı" if is_published_current else "Taslak üyelik değişebilir",
+            "complete": published_complete,
+            "detail": "Yayımlandı"
+            if published_complete
+            else (
+                "Önce ayrıştırmayı tamamlayın"
+                if is_draft_current and not parsed_complete
+                else "Taslak üyelik değişebilir"
+            ),
             "action": {"type": "post", "url": publish_url, "label": "Taslağı yayımla"}
-            if can_write and is_draft_current
+            if can_write and is_draft_current and parsed_complete
             else None,
         },
         {
@@ -2625,18 +2663,27 @@ def document_set_detail(
             "complete": staged_ready,
             "detail": "İndeks sürümü mevcut" if staged_ready else "Promotable indeks yok",
             "action": _anchor("#build", "Staged indeks oluştur")
-            if can_write and is_published_current and not staged_ready
+            if can_write and published_complete and not staged_ready
             else None,
         },
         {
             "label": "Aktif indeks",
-            "complete": active_index is not None,
-            "detail": f"İndeks v{active_index.version}" if active_index else "Serve edilmiyor",
+            "complete": current_active_index is not None and staged_ready,
+            "detail": f"İndeks v{current_active_index.version}"
+            if current_active_index
+            else (
+                f"Güncel sürüm bekliyor; set v{serving_set_version.version} serviste"
+                if serving_set_version is not None
+                else "Serve edilmiyor"
+            ),
             "action": {"type": "post", "url": promote_url, "label": "Promotable indeksi aktif et"}
-            if can_promote_index and active_index is None and promotable_index is not None
+            if can_promote_index and current_active_index is None and promotable_index is not None
             else (
                 _anchor("#build", "Önce staged indeks oluştur")
-                if can_write and active_index is None and promotable_index is None
+                if can_write
+                and published_complete
+                and current_active_index is None
+                and promotable_index is None
                 else None
             ),
         },
@@ -3866,8 +3913,9 @@ def _create(
     resource_type: str,
     permission: Callable[[int | None], bool],
     success_url: str,
+    initial: dict[str, object] | None = None,
 ) -> HttpResponse:
-    form = form_class(request.POST or None, user=request.user)
+    form = form_class(request.POST or None, user=request.user, initial=initial)
     if request.method == "POST" and form.is_valid():
         instance = None
         organization_id = None
@@ -3972,6 +4020,17 @@ def project_create(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def scenario_create(request: HttpRequest) -> HttpResponse:
+    initial: dict[str, object] = {}
+    requested_project = request.GET.get("project", "").strip()
+    if requested_project:
+        try:
+            project_public_id = uuid.UUID(requested_project)
+        except ValueError as exc:
+            raise Http404 from exc
+        project = scoping.scoped_projects(request.user).filter(public_id=project_public_id).first()
+        if project is None or not can_author_scenarios(request.user, project.organization_id):
+            raise Http404
+        initial["project"] = project.pk
     return _create(
         request,
         form_class=ScenarioForm,
@@ -3979,6 +4038,7 @@ def scenario_create(request: HttpRequest) -> HttpResponse:
         resource_type="scenario",
         permission=lambda org_id: org_id is not None and can_author_scenarios(request.user, org_id),
         success_url="console:scenarios",
+        initial=initial,
     )
 
 

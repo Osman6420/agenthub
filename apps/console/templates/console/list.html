@@ -3,6 +3,8 @@
 {% block content %}
 <div class="card">
   <h1>{{ title }}</h1>
+{% if description %}<p class="muted">{{ description }}</p>{% endif %}
+{% if filter_label %}<div class="filter-note"><strong>Filtre:</strong> {{ filter_label }} <a href="?">Temizle</a></div>{% endif %}
   {% if create_links %}
   <div class="actions">
     {% for link in create_links %}{% if link.disabled %}<button type="button" class="button primary" disabled aria-disabled="true" title="{{ link.reason }}">{{ link.label }}</button>{% else %}<a href="{% url link.url %}">{{ link.label }}</a>{% endif %}{% endfor %}
@@ -21,5 +23,6 @@
   {% else %}
   <p class="muted">Yetki kapsamınızda kayıt yok.</p>
   {% endif %}
+  {% if rows_limited %}<div class="notice">Liste ilk 200 kayıtla sınırlandırılmıştır.</div>{% endif %}
 </div>
 {% endblock %}

@@ -44,27 +44,26 @@ additionally require the right role in the **target** organization.
 
 ## 2. Console surfaces
 
-The top navigation exposes the tenant-scoped management surfaces:
+The authenticated sidebar exposes five task-oriented, tenant-scoped surfaces. The organization
+selector changes presentation only; server-side membership and role checks remain authoritative.
 
 | Surface | Purpose |
 | --- | --- |
-| **Genel bakış** | Kapsamdaki organizasyon, proje, senaryo, consumer, artifact ve release sayıları |
-| **Organizasyonlar** | Tenant'lar; yalnız platform admin oluşturur |
+| **Ana Sayfa** | Seçili organizasyonun özeti, dikkat gerektiren sağlık kayıtları ve son işler |
 | **Projeler** | Organizasyon içindeki AI projeleri |
-| **Senaryolar** | RAG / workflow / agent senaryoları ve stable alias'ları |
-| **Artifact'ler** | Immutable, versioned ve checksummed tanımlar |
-| **Release'ler** | Derlenmiş release'ler; eval, aktivasyon, rollback ve canary işlemleri |
-| **DSL / grafik** | Görsel workflow builder — bkz. §4 |
-| **Çalıştırmalar** | Redacted, tenant-scoped agent run listesi ve iz kaydı |
-| **Consumer'lar** | API consumer'ları ve capability bağları |
-| **Tool onayları** | Onay bekleyen yüksek riskli tool çağrıları |
+| **Dokümanlar** | Doküman setleri; set ayrıntısında içerik, sürüm, indeks ve kaynak görevleri |
+| **İstemciler** | API istemcileri, protokol bilgileri, kimlik bilgileri ve senaryo erişim bağları |
+| **Çalıştırmalar** | Mevcut agent, workflow ve recovery yüzeylerine tenant-scoped giriş |
 
-The console is moving to a Turkish-first, scenario-centred hierarchy. Open **Senaryolar** and then
-**Aç** to see one scenario's organization/project path, aliases, active release, bound document
+Senaryolar yalnız sahip oldukları proje altında listelenir. **Projeler** içinden projeyi, ardından
+senaryoyu açarak organization/project path, aliases, active release, bound document
 sets, latest index readiness and consumer access in one page. An authorized author can bind/unbind
 sets and grant/revoke retrieval there. These are two distinct gates: a consumer must be bound to
 the scenario, and it must separately have retrieval access to each document set. Set-binding
 changes require a new release compile; consumer grant changes are enforced at retrieval time.
+Artifact, release ve DSL ayrıntıları aynı senaryo bağlamındaki görev bölümlerinden açılır; bunlar
+global sidebar katalogları değildir. Eski global GET katalog adresleri güvenli bağlamsal sayfalara
+yönlenir; detail ve state-changing route'lar korunur.
 
 Klavye kullanıcıları sayfanın başındaki **Ana içeriğe geç** bağlantısıyla navigasyonu atlayabilir.
 Odak göstergesi tüm link/form kontrollerinde görünürdür; geniş tablolar dar ekranda yatay kaydırılır.

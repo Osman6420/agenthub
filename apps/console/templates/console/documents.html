@@ -3,6 +3,7 @@
 {% block content %}
 
 <div class="page-heading"><div><p class="eyebrow">Bilgi kaynakları</p><h1>Doküman setleri</h1><p class="muted">Dokümanları tek tek değil, senaryolara bağlanan yönetilebilir setler içinde yönetin.</p></div></div>
+{% if filter_label %}<div class="filter-note"><strong>Filtre:</strong> {{ filter_label }} <a href="?">Temizle</a></div>{% endif %}
 
 {% if can_upload %}
 <div class="card form-card">
@@ -14,8 +15,8 @@
 {% endif %}
 
 <div class="card table-card">
-  {% if sets %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki doküman setleri</caption><thead><tr><th>Organizasyon</th><th>Doküman seti</th><th>Durum</th><th>Sürüm</th></tr></thead><tbody>
-  {% for s in sets %}<tr data-href="{{ s.href }}"><td>{{ s.org }}</td><td><strong><a href="{{ s.href }}">{{ s.name }}</a></strong><div class="mono muted">{{ s.logical_id }}</div></td><td><span class="badge {{ s.status }}">{{ s.status }}</span></td><td>{{ s.versions }}</td></tr>{% endfor %}
+  {% if sets %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki doküman setleri</caption><thead><tr><th>Doküman seti</th><th>Organizasyon</th><th>Durum</th><th>Sürüm</th></tr></thead><tbody>
+  {% for s in sets %}<tr data-href="{{ s.href }}"><td><strong><a href="{{ s.href }}">{{ s.name }}</a></strong><div class="mono muted">{{ s.logical_id }}</div></td><td>{{ s.org }}</td><td><span class="badge {{ s.status }}">{{ s.status }}</span></td><td>{{ s.versions }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">Yetki kapsamınızda doküman seti yok.</div>{% endif %}
 </div>
 
