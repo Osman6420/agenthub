@@ -472,3 +472,12 @@ recorded SQLite + PostgreSQL non-owner/RLS + Celery redelivery/restart evidence,
 security matrix and recorded staff/security/SRE review. `Completed` after AGENTS.md verified state,
 the Phase 2.6 plan status and master plan are updated and the integration owner accepts the merge
 per the [Definition of Done](../../ai/definition-of-done.md).
+
+## 2026-07-22 security review correction
+
+The original control-table policy exposed the global row for enforcement but also allowed a
+tenant-scoped application role to update it. Apply an additive migration that separates SELECT
+from INSERT/UPDATE: tenant scopes may read the global row and write only their own organization
+row; global writes require the unscoped, platform-admin management-command path. Preserve the
+existing command authorization and audit behavior, and prove global-write denial under a
+`NOSUPERUSER NOBYPASSRLS` role.

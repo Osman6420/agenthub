@@ -217,5 +217,22 @@ def test_session_handshake_initializes_then_calls_with_session_header() -> None:
     assert called.requests[0][3]["Mcp-Session-Id"] == "sess-123"
 
 
+@pytest.mark.parametrize("session_id", ["", "bad session", "bad\r\nheader", "x" * 1025])
+def test_session_required_rejects_missing_or_unsafe_session_id(session_id: str) -> None:
+    init = _FakeConnection(
+        _RespH(
+            200,
+            _rpc({"serverInfo": {"name": "x"}, "capabilities": {}}),
+            session=session_id,
+        )
+    )
+    adapter = McpToolAdapter(connection_factory=_sequence_factory([init]))
+
+    with pytest.raises(ToolAdapterError, match="MCP_SESSION_INVALID"):
+        adapter.call(_session_request())
+
+    assert len(init.requests) == 1
+
+
 def _rpc_response(result: Any) -> _RespH:
     return _RespH(200, _rpc(result))

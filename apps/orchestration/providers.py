@@ -91,9 +91,9 @@ class OpenAICompatibleModelProvider:
             raise ModelProviderError("MODEL_PROFILE_UNAVAILABLE") from exc
         # Every request must carry a user turn: some OpenAI-compatible backends
         # (notably Gemini's compat layer) reject a system-only request with no
-        # contents (HTTP 400). With retrieval context the prompt stays the system
-        # instruction and the untrusted data is the user turn; without context the
-        # prompt itself becomes the user turn.
+        # contents (HTTP 400). The authored prompt always remains a system instruction;
+        # when retrieval is empty, add a fixed user turn instead of lowering the prompt's
+        # trust/priority semantics to a user message.
         if context:
             context_text = "\n\n".join(chunk.text for chunk in context)
             messages: list[dict[str, str]] = [
@@ -104,7 +104,10 @@ class OpenAICompatibleModelProvider:
                 },
             ]
         else:
-            messages = [{"role": "user", "content": prompt}]
+            messages = [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": "Follow the system instruction."},
+            ]
         payload = {
             "model": profile.model,
             "messages": messages,

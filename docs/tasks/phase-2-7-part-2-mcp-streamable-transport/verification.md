@@ -60,3 +60,12 @@ LIVE SSE + SESSION HANDSHAKE OK
 - No live smoke against a third-party public MCP server (deployment-gated; SSRF egress denies
   loopback, so CI/local use the injected factory). Recommended before enabling a real external MCP
   tool in production.
+
+## 2026-07-22 review correction
+
+- Session-required initialize responses now reject missing, whitespace/control-character, and
+  oversized session identifiers with `MCP_SESSION_INVALID`.
+- Parameterized regression coverage proves failure occurs after initialize and before any
+  notification or `tools/call` request.
+- Included in the 2026-07-22 targeted regression run: **55 passed, 2 PostgreSQL-only skipped**;
+  ruff format/check, mypy, Django system check, and migration drift checks passed.

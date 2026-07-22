@@ -33,6 +33,7 @@ from apps.tools.http_adapter import (
 _PROTOCOL_VERSION = "2025-06-18"
 _ACCEPT = "application/json, text/event-stream"
 _SSE_EVENT_SEPARATOR = re.compile(r"\r?\n\r?\n")
+_SESSION_ID = re.compile(r"[\x21-\x7e]{1,1024}\Z")
 
 
 class McpToolAdapter:
@@ -91,6 +92,11 @@ class McpToolAdapter:
         session_id = init.session_id
         # The initialize response must itself be a valid JSON-RPC result (fail closed).
         self._result(self._read_message(init))
+        # A destination marked session-required must never silently downgrade to the
+        # single-shot path. Bound the upstream-controlled value to visible ASCII before
+        # reflecting it into subsequent request headers.
+        if _SESSION_ID.fullmatch(session_id) is None:
+            raise ToolAdapterError("MCP_SESSION_INVALID")
         notify = self._post(
             request,
             path,

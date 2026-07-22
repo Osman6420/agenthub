@@ -49,3 +49,10 @@ by `migrate` (0006–0008). `showmigrations` and `makemigrations --check` are cl
 - The redacted-runtime-input limitation (agent objective reaches a real model as `[redacted]`) is
   recorded as a follow-up, not fixed here.
 - No load/soak; single live Gemini calls only.
+
+## 2026-07-22 review correction
+
+- Empty-context requests now contain the authored `system` message plus a fixed user turn.
+- The provider regression test asserts both Gemini-compatible user content and preservation of the
+  system-prompt role boundary.
+- Included in the 2026-07-22 targeted regression run: **55 passed, 2 PostgreSQL-only skipped**.

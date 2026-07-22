@@ -134,3 +134,10 @@ Offline (no live egress in CI), via injected connection factory:
   auto-detect from a `400/"session required"` response? Prefer explicit, author-pinned.
 - Whether to fold the SSE reader into the existing OCR async-polling bounded seam or keep a
   dedicated MCP reader (leaning dedicated, to keep OCR untouched).
+
+## 2026-07-22 review correction
+
+For `destination.session: true`, require a non-empty bounded visible-ASCII `Mcp-Session-Id` from
+the initialize response. Missing or unsafe upstream values fail closed before notification or tool
+execution, preventing a configured session-required destination from silently downgrading to the
+single-shot path or reflecting unsafe header data.

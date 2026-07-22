@@ -103,3 +103,13 @@ Env: `MCP_ENABLED=true METRICS_BEARER_TOKEN=test-token`, writable `--basetemp`.
 - **SRE:** kill switch is instantly effective without restart, org-isolated, preserves durable state,
   and re-dispatches on resume; bounded no-progress/repeat guards prevent runaway loops; no new
   production dependency or live egress.
+
+## 2026-07-22 security review correction
+
+- Added forward migration `agents.0004` to split runtime-control SELECT and write policies.
+- Extended the PostgreSQL non-owner test to prove an organization-scoped role can update its own
+  control row but cannot update the visible global row.
+- Per-organization operator writes now establish an explicit transaction-local tenant scope;
+  global writes remain restricted to the unscoped, platform-admin command path and stay audited.
+- PostgreSQL `test_kill_switch_rls.py --create-db`: **2 passed**. The combined targeted SQLite
+  provider/MCP/agent regression run: **55 passed, 2 PostgreSQL-only skipped**.

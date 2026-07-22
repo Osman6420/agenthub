@@ -35,6 +35,7 @@ from apps.gateway.execution_context import verify_execution_context
 from apps.identity.models import Consumer
 from apps.releases.models import ScenarioRelease
 from apps.releases.services import get_artifact_body_for_role, get_manifest_role
+from apps.tenancy.context import set_tenant_scope
 
 
 class AgentRequestError(ValueError):
@@ -235,6 +236,11 @@ def set_runtime_suspension(
     A role-gated audited platform-operator action (invoked by the management commands),
     never a consumer action. Idempotent and upsert-safe on the scope singleton.
     """
+    if organization_id is not None:
+        # The PostgreSQL write policy requires an explicit tenant scope for per-org rows.
+        # Global changes intentionally require an empty scope and therefore remain limited
+        # to the platform-operator command path rather than tenant-scoped requests.
+        set_tenant_scope((organization_id,))
     lookup: dict[str, Any] = {"organization_id": organization_id}
     control, _ = AgentRuntimeControl.objects.select_for_update().get_or_create(
         defaults={"suspended": suspended, "updated_by": actor, "reason": reason[:200]},

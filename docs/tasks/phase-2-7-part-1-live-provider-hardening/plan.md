@@ -40,3 +40,10 @@ through the ADR-0005 SSRF-safe egress) surfaced three defects.
 
 No new dependency, no migration, no change to authorization, public API, egress policy, or audit
 schema. Additive behavior + tests only.
+
+## 2026-07-22 review correction
+
+Preserve the authored prompt as a `system` message even when retrieval context is empty. To satisfy
+OpenAI-compatible backends that reject system-only requests, append a fixed, content-free user turn
+instead of lowering the system prompt to user priority. This retains the provider compatibility fix
+without changing the prompt trust boundary.
