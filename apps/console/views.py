@@ -13,29 +13,33 @@ import uuid
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
-from django.db.models import Q
+from django.core.paginator import Paginator
+from django.db import connection, transaction
+from django.db.models import Count, Q, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_POST
 
-from apps.agents.models import AgentRun
-from apps.agents.services import AgentRequestError, operator_cancel_agent_run
+from apps.agents.models import AgentRun, AgentRunStatus, AgentRuntimeControl
+from apps.agents.services import AgentRequestError, operator_cancel_agent_run, runtime_suspended
 from apps.artifacts.models import ArtifactVersion
 from apps.audit.services import record_event
 from apps.builder.models import WorkflowDraft
 from apps.catalog.models import AIProject, Scenario
 from apps.catalog.services import ProjectOwnerError, create_console_project, create_console_scenario
+from apps.console import context as console_context
 from apps.console import scoping
 from apps.console.forms import (
     BindingForm,
@@ -119,7 +123,12 @@ from apps.ingestion.rest_services import (
 )
 from apps.ingestion.staged_build import StagedBuildError, promote_staged_index
 from apps.ingestion.tasks import sync_confluence_source, sync_rest_source
-from apps.ingestion.vector_store import set_tenant_context
+from apps.ingestion.vector_store import (
+    VectorStoreError,
+    chunk_counts_by_document,
+    chunk_preview_for_document,
+    set_tenant_context,
+)
 from apps.observability.retention import RETENTION_DAYS, run_retention
 from apps.orchestration.authoring_guide import workflow_authoring_guide
 from apps.releases.compiler import (
@@ -152,6 +161,7 @@ from apps.workflows.models import (
     WorkflowRecoveryCase,
     WorkflowRecoveryStatus,
     WorkflowRun,
+    WorkflowRunStatus,
     WorkflowWait,
     WorkflowWaitKind,
     WorkflowWaitStatus,
@@ -159,6 +169,66 @@ from apps.workflows.models import (
 from apps.workflows.recovery_services import WorkflowRecoveryError, decide_recovery_case
 from apps.workflows.tasks import execute_workflow_run
 from apps.workflows.waits import WorkflowWaitError, decide_human_task
+
+# Role-honest affordance reasons (Scope D). When an action the user cannot perform is
+# rendered, it is shown disabled with one of these operator-facing reasons rather than
+# hidden, so the required role is discoverable. These are UX copy only — the server still
+# re-authorizes every action; a disabled control is never the access boundary.
+_CREATE_ORG_REASON = "Organizasyon oluşturmak yalnızca platform yöneticisine açıktır."
+_CREATE_PROJECT_REASON = (
+    "Yeni proje oluşturmak için organizasyon yöneticisi (organization_admin) rolü gerekir."
+)
+_CREATE_SCENARIO_REASON = (
+    "Yeni senaryo oluşturmak için senaryo düzenleyici (scenario_editor) veya üzeri bir rol gerekir."
+)
+_CREATE_CONSUMER_REASON = (
+    "İstemci yönetimi için organizasyon yöneticisi (organization_admin) rolü gerekir."
+)
+_AUTHOR_REASON = (
+    "Bu işlem için senaryo düzenleyici (scenario_editor) veya üzeri bir yazma rolü gerekir."
+)
+_RELEASE_MANAGER_REASON = "Bu işlem için release yöneticisi (release_manager) rolü gerekir."
+_ADMIN_REASON = "Bu işlem için organizasyon yöneticisi (organization_admin) rolü gerekir."
+
+# --- Dashboard run-status buckets (Scope C/H) --------------------------------
+# Persisted statuses grouped into operator-facing buckets. Deep-links to the filtered
+# run lists (Scope H) use the same bucket names via the ``?bucket=`` query param.
+_AGENT_ACTIVE_STATUSES = (
+    AgentRunStatus.QUEUED,
+    AgentRunStatus.RUNNING,
+    AgentRunStatus.WAITING_APPROVAL,
+)
+_AGENT_ATTENTION_STATUSES = (AgentRunStatus.FAILED, AgentRunStatus.TIMED_OUT)
+_AGENT_DONE_STATUSES = (AgentRunStatus.COMPLETED, AgentRunStatus.CANCELLED)
+_WORKFLOW_ACTIVE_STATUSES = (
+    WorkflowRunStatus.REQUESTED,
+    WorkflowRunStatus.QUEUED,
+    WorkflowRunStatus.RUNNING,
+    WorkflowRunStatus.WAITING_APPROVAL,
+    WorkflowRunStatus.WAITING_EVENT,
+    WorkflowRunStatus.WAITING_HUMAN,
+    WorkflowRunStatus.WAITING_TIMER,
+    WorkflowRunStatus.WAITING_CHILD,
+)
+_WORKFLOW_ATTENTION_STATUSES = (
+    WorkflowRunStatus.FAILED,
+    WorkflowRunStatus.TIMED_OUT,
+    WorkflowRunStatus.RECOVERY_REQUIRED,
+)
+_WORKFLOW_DONE_STATUSES = (WorkflowRunStatus.COMPLETED, WorkflowRunStatus.CANCELLED)
+# Bucket -> the concrete statuses it deep-links to on the run-monitoring screens (Scope H).
+AGENT_RUN_BUCKETS: dict[str, tuple[str, ...]] = {
+    "active": tuple(str(s) for s in _AGENT_ACTIVE_STATUSES),
+    "attention": tuple(str(s) for s in _AGENT_ATTENTION_STATUSES),
+    "done": tuple(str(s) for s in _AGENT_DONE_STATUSES),
+}
+WORKFLOW_RUN_BUCKETS: dict[str, tuple[str, ...]] = {
+    "active": tuple(str(s) for s in _WORKFLOW_ACTIVE_STATUSES),
+    "attention": tuple(str(s) for s in _WORKFLOW_ATTENTION_STATUSES),
+    "done": tuple(str(s) for s in _WORKFLOW_DONE_STATUSES),
+}
+# How far back "completed" and "recent failures" look on the dashboard.
+_DASHBOARD_RECENT_HOURS = 24
 
 _UPLOAD_MIME_BY_SUFFIX = {
     ".csv": "text/csv",
@@ -290,20 +360,205 @@ def _token_reveal_response(
     return response
 
 
+def _safe_redirect_target(request: HttpRequest, *, default: str) -> str:
+    """Return a same-origin ``next`` target or the named ``default`` (open-redirect safe)."""
+    nxt = request.POST.get("next", "") or request.GET.get("next", "")
+    if nxt and url_has_allowed_host_and_scheme(
+        nxt, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return nxt
+    return default
+
+
+@login_required
+@require_POST
+def switch_organization(request: HttpRequest) -> HttpResponse:
+    """Set or clear the session's active organization (a display filter, not authorization).
+
+    Membership is the authorization boundary: a blank value selects "all organizations",
+    and any non-member id is rejected with 403 (no existence signal). The active
+    organization only ever narrows an already-tenant-scoped list.
+    """
+    raw = request.POST.get("organization_id", "").strip()
+    if raw == "":
+        request.session.pop(console_context.SESSION_KEY, None)
+    else:
+        try:
+            org_id = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise PermissionDenied from exc
+        if scoping.scoped_organizations(request.user).filter(pk=org_id).first() is None:
+            raise PermissionDenied
+        request.session[console_context.SESSION_KEY] = org_id
+    return redirect(_safe_redirect_target(request, default="console:dashboard"))
+
+
+def _kill_switch_state(active_organization: Organization | None) -> dict[str, object] | None:
+    """Return the agent-runtime kill-switch banner data, or ``None`` when not suspended.
+
+    With an active organization, reports its effective suspension (global OR that org's
+    row). With "all organizations", reports only a *global* suspension; per-organization
+    suspensions are surfaced on each org's own screens to avoid a noisy cross-tenant view.
+    """
+    if active_organization is not None:
+        if not runtime_suspended(active_organization.pk):
+            return None
+        controls = list(
+            AgentRuntimeControl.objects.filter(
+                Q(organization__isnull=True) | Q(organization_id=active_organization.pk),
+                suspended=True,
+            )
+        )
+        control = next((c for c in controls if c.organization_id is None), None) or (
+            controls[0] if controls else None
+        )
+    else:
+        control = AgentRuntimeControl.objects.filter(
+            organization__isnull=True, suspended=True
+        ).first()
+    if control is None:
+        return None
+    return {
+        "scope": "global" if control.organization_id is None else "organization",
+        "reason": control.reason or "",
+    }
+
+
+def _dashboard_metrics(
+    user: UserLike, active_organization: Organization | None
+) -> dict[str, object]:
+    """Bounded operational snapshot for the landing dashboard (counts only, no N+1).
+
+    Everything is derived from the already-tenant-scoped console querysets and narrowed to
+    the active organization when one is selected; codes/counts only, no payloads.
+    """
+    cutoff = timezone.now() - timedelta(hours=_DASHBOARD_RECENT_HOURS)
+    allowed = allowed_organization_ids(user)
+
+    def _org_scope(queryset: QuerySet[Any], *, field: str = "organization_id") -> QuerySet[Any]:
+        qs = queryset if allowed is None else queryset.filter(**{f"{field}__in": allowed})
+        return scoping.narrow_to_active_organization(qs, active_organization, field=field)
+
+    agent_runs = scoping.narrow_to_active_organization(
+        scoping.scoped_agent_runs(user), active_organization, field="organization_id"
+    )
+    workflow_runs = scoping.narrow_to_active_organization(
+        scoping.scoped_workflow_runs(user), active_organization, field="organization_id"
+    )
+    agent_agg = agent_runs.aggregate(
+        active=Count("id", filter=Q(status__in=_AGENT_ACTIVE_STATUSES)),
+        recent_failed=Count(
+            "id", filter=Q(status__in=_AGENT_ATTENTION_STATUSES, created_at__gte=cutoff)
+        ),
+        done=Count("id", filter=Q(status__in=_AGENT_DONE_STATUSES, created_at__gte=cutoff)),
+    )
+    workflow_agg = workflow_runs.aggregate(
+        active=Count("id", filter=Q(status__in=_WORKFLOW_ACTIVE_STATUSES)),
+        recent_failed=Count(
+            "id",
+            filter=Q(
+                status__in=(WorkflowRunStatus.FAILED, WorkflowRunStatus.TIMED_OUT),
+                created_at__gte=cutoff,
+            ),
+        ),
+        recovery=Count("id", filter=Q(status=WorkflowRunStatus.RECOVERY_REQUIRED)),
+        done=Count("id", filter=Q(status__in=_WORKFLOW_DONE_STATUSES, created_at__gte=cutoff)),
+    )
+    runs = {
+        "active": agent_agg["active"] + workflow_agg["active"],
+        "attention": (
+            agent_agg["recent_failed"] + workflow_agg["recent_failed"] + workflow_agg["recovery"]
+        ),
+        "done": agent_agg["done"] + workflow_agg["done"],
+        "agent_active": agent_agg["active"],
+        "workflow_active": workflow_agg["active"],
+    }
+
+    # Pending human decisions (only surfaces are counted; each list view re-authorizes).
+    approvals = _org_scope(ApprovalRequest.objects.filter(status=ApprovalStatus.PENDING)).count()
+    human_tasks = _org_scope(
+        WorkflowWait.objects.filter(kind=WorkflowWaitKind.HUMAN, status=WorkflowWaitStatus.PENDING)
+    ).count()
+    recoveries = _org_scope(
+        WorkflowRecoveryCase.objects.filter(
+            status__in=[
+                WorkflowRecoveryStatus.OPEN,
+                WorkflowRecoveryStatus.AWAITING_SECOND_APPROVAL,
+            ]
+        )
+    ).count()
+
+    # Serving / index health.
+    scenarios_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_scenarios(user), active_organization, field="project__organization_id"
+    )
+    no_active_release = scenarios_qs.exclude(
+        id__in=ScenarioRelease.objects.filter(status=ReleaseStatus.ACTIVE).values("scenario_id")
+    ).count()
+    promotable_indexes = _org_scope(
+        IndexVersion.objects.filter(status=IndexStatus.PROMOTABLE)
+    ).count()
+    failed_builds = _org_scope(
+        StagedIndexBuildJob.objects.filter(
+            status__in=[
+                StagedIndexBuildJobStatus.FAILED,
+                StagedIndexBuildJobStatus.RECONCILIATION_REQUIRED,
+            ]
+        )
+    ).count()
+    active_canaries = _org_scope(
+        ReleaseCanary.objects.filter(status=CanaryStatus.ACTIVE),
+        field="scenario__project__organization_id",
+    ).count()
+
+    return {
+        "runs": runs,
+        "decisions": {
+            "approvals": approvals,
+            "human_tasks": human_tasks,
+            "recoveries": recoveries,
+            "total": approvals + human_tasks + recoveries,
+        },
+        "health": {
+            "no_active_release": no_active_release,
+            "promotable_indexes": promotable_indexes,
+            "failed_builds": failed_builds,
+            "active_canaries": active_canaries,
+        },
+        "recent_hours": _DASHBOARD_RECENT_HOURS,
+    }
+
+
 @login_required
 def dashboard(request: HttpRequest) -> HttpResponse:
     user = request.user
+    active_org = console_context.resolve_active_organization(request)
     organizations_qs = scoping.scoped_organizations(user).order_by("name", "slug")
     context = {
         "is_platform_admin": is_platform_admin(user),
-        "organizations": organizations_qs,
+        "active_organization": active_org,
+        "organizations": organizations_qs[:50],
+        "metrics": _dashboard_metrics(user, active_org),
+        "kill_switch": _kill_switch_state(active_org),
         "counts": {
             "organizations": organizations_qs.count(),
-            "projects": scoping.scoped_projects(user).count(),
-            "scenarios": scoping.scoped_scenarios(user).count(),
-            "consumers": scoping.scoped_consumers(user).count(),
-            "artifacts": scoping.scoped_artifacts(user).count(),
-            "releases": scoping.scoped_releases(user).count(),
+            "projects": scoping.narrow_to_active_organization(
+                scoping.scoped_projects(user), active_org, field="organization_id"
+            ).count(),
+            "scenarios": scoping.narrow_to_active_organization(
+                scoping.scoped_scenarios(user), active_org, field="project__organization_id"
+            ).count(),
+            "document_sets": scoping.narrow_to_active_organization(
+                scoping.scoped_document_sets(user), active_org, field="organization_id"
+            ).count(),
+            "consumers": scoping.narrow_to_active_organization(
+                scoping.scoped_consumers(user), active_org, field="organization_id"
+            ).count(),
+            "releases": scoping.narrow_to_active_organization(
+                scoping.scoped_releases(user),
+                active_org,
+                field="scenario__project__organization_id",
+            ).count(),
         },
     }
     return render(request, "console/dashboard.html", context)
@@ -369,6 +624,8 @@ def organization_detail(request: HttpRequest, slug: str) -> HttpResponse:
             "inventories": inventories,
             "counts": counts,
             "list_limit": list_limit,
+            # Relocated advanced retention/purge entry (Scope F): org admins only.
+            "can_admin": can_admin_org(request.user, organization.pk),
         },
     )
 
@@ -377,11 +634,12 @@ def organization_detail(request: HttpRequest, slug: str) -> HttpResponse:
 def organizations(request: HttpRequest) -> HttpResponse:
     rows = [
         {
+            "href": reverse("console:organization_detail", args=[o.slug]),
             "cols": [
                 o.slug,
                 {"text": o.name, "url": "console:organization_detail", "arg": o.slug},
                 "Aktif" if o.status == OrganizationStatus.ACTIVE else "Pasif",
-            ]
+            ],
         }
         for o in scoping.scoped_organizations(request.user)
     ]
@@ -392,28 +650,36 @@ def organizations(request: HttpRequest) -> HttpResponse:
             "title": "Organizasyonlar",
             "headers": ["Slug", "Ad", "Durum"],
             "rows": rows,
-            "create_links": (
-                [{"url": "console:organization_create", "label": "Yeni organizasyon"}]
-                if can_create_organization(request.user)
-                else []
-            ),
+            "create_links": [
+                {
+                    "url": "console:organization_create",
+                    "label": "Yeni organizasyon",
+                    "disabled": not can_create_organization(request.user),
+                    "reason": _CREATE_ORG_REASON,
+                }
+            ],
         },
     )
 
 
 @login_required
 def projects(request: HttpRequest) -> HttpResponse:
+    active_org = console_context.resolve_active_organization(request)
+    projects_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_projects(request.user), active_org, field="organization_id"
+    )
     rows = [
         {
+            "href": reverse("console:project_detail_public", args=[p.public_id]),
             "cols": [
                 p.organization.slug,
                 p.slug,
                 {"text": p.name, "url": "console:project_detail_public", "arg": p.public_id},
                 p.risk_level,
                 p.status,
-            ]
+            ],
         }
-        for p in scoping.scoped_projects(request.user)
+        for p in projects_qs
     ]
     return render(
         request,
@@ -422,11 +688,14 @@ def projects(request: HttpRequest) -> HttpResponse:
             "title": "AI projeleri",
             "headers": ["Organizasyon", "Slug", "Ad", "Risk", "Durum"],
             "rows": rows,
-            "create_links": (
-                [{"url": "console:project_create", "label": "Yeni proje"}]
-                if admin_organization_ids(request.user) != set()
-                else []
-            ),
+            "create_links": [
+                {
+                    "url": "console:project_create",
+                    "label": "Yeni proje",
+                    "disabled": admin_organization_ids(request.user) == set(),
+                    "reason": _CREATE_PROJECT_REASON,
+                }
+            ],
         },
     )
 
@@ -464,15 +733,20 @@ def project_detail(
 
 @login_required
 def scenarios(request: HttpRequest) -> HttpResponse:
+    active_org = console_context.resolve_active_organization(request)
+    scenarios_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_scenarios(request.user), active_org, field="project__organization_id"
+    ).order_by("project__organization__name", "project__name", "name")
+    can_create = author_organization_ids(request.user) != set()
     return render(
         request,
         "console/scenarios.html",
         {
             "title": "Senaryolar",
-            "scenarios": scoping.scoped_scenarios(request.user).order_by(
-                "project__organization__name", "project__name", "name"
-            ),
-            "can_create": author_organization_ids(request.user) != set(),
+            "scenarios": scenarios_qs,
+            "can_create": can_create,
+            # Role-honest affordance (Scope D): when the create button is disabled, say why.
+            "create_reason": "" if can_create else _CREATE_SCENARIO_REASON,
         },
     )
 
@@ -703,6 +977,9 @@ def scenario_detail(
             .order_by("name", "logical_id"),
             "can_write": can_author_scenarios(request.user, organization_id),
             "can_compile_release": can_manage_releases(request.user, organization_id),
+            # Role-honest affordances (Scope D): reasons shown on disabled authoring controls.
+            "author_reason": _AUTHOR_REASON,
+            "release_reason": _RELEASE_MANAGER_REASON,
         },
     )
 
@@ -914,17 +1191,23 @@ def scenario_revoke_consumer(
 
 @login_required
 def consumers(request: HttpRequest) -> HttpResponse:
+    active_org = console_context.resolve_active_organization(request)
+    consumers_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_consumers(request.user), active_org, field="organization_id"
+    )
+    _no_consumer_admin = admin_organization_ids(request.user) == set()
     rows = [
         {
+            "href": reverse("console:consumer_detail_public", args=[c.public_id]),
             "cols": [
                 c.organization.slug,
                 {"text": c.name, "url": "console:consumer_detail_public", "arg": c.public_id},
                 c.subject,
                 c.protocol,
                 c.status,
-            ]
+            ],
         }
-        for c in scoping.scoped_consumers(request.user)
+        for c in consumers_qs
     ]
     return render(
         request,
@@ -933,14 +1216,20 @@ def consumers(request: HttpRequest) -> HttpResponse:
             "title": "İstemciler",
             "headers": ["Organizasyon", "Ad", "Subject", "Protokol", "Durum"],
             "rows": rows,
-            "create_links": (
-                [
-                    {"url": "console:consumer_create", "label": "Yeni istemci"},
-                    {"url": "console:binding_create", "label": "Yeni istemci bağı"},
-                ]
-                if admin_organization_ids(request.user) != set()
-                else []
-            ),
+            "create_links": [
+                {
+                    "url": "console:consumer_create",
+                    "label": "Yeni istemci",
+                    "disabled": _no_consumer_admin,
+                    "reason": _CREATE_CONSUMER_REASON,
+                },
+                {
+                    "url": "console:binding_create",
+                    "label": "Yeni istemci bağı",
+                    "disabled": _no_consumer_admin,
+                    "reason": _CREATE_CONSUMER_REASON,
+                },
+            ],
         },
     )
 
@@ -1100,10 +1389,11 @@ def consumer_token_revoke(request: HttpRequest, public_id: object, token_id: int
 
 @login_required
 def artifacts(request: HttpRequest) -> HttpResponse:
+    active_org = console_context.resolve_active_organization(request)
     rows = list(
-        scoping.scoped_artifacts(request.user).order_by(
-            "organization__slug", "type", "logical_id", "-version"
-        )
+        scoping.narrow_to_active_organization(
+            scoping.scoped_artifacts(request.user), active_org, field="organization_id"
+        ).order_by("organization__slug", "type", "logical_id", "-version")
     )
     return render(
         request,
@@ -1176,8 +1466,14 @@ def artifact_detail(request: HttpRequest, pk: int) -> HttpResponse:
 @login_required
 def releases(request: HttpRequest) -> HttpResponse:
     user = request.user
+    active_org = console_context.resolve_active_organization(request)
     rows = []
-    for r in scoping.scoped_releases(user).select_related("scenario__project__organization"):
+    releases_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_releases(user).select_related("scenario__project__organization"),
+        active_org,
+        field="scenario__project__organization_id",
+    )
+    for r in releases_qs:
         manageable = can_manage_releases(user, r.scenario.project.organization_id)
         pre_active = r.status in (ReleaseStatus.CANDIDATE, ReleaseStatus.CANARY)
         rows.append(
@@ -1204,6 +1500,9 @@ def releases(request: HttpRequest) -> HttpResponse:
     )
     if allowed is not None:
         canary_qs = canary_qs.filter(scenario__project__organization_id__in=allowed)
+    canary_qs = scoping.narrow_to_active_organization(
+        canary_qs, active_org, field="scenario__project__organization_id"
+    )
     canaries = [
         {
             "id": c.pk,
@@ -1536,11 +1835,63 @@ def workflow_recovery_decide(request: HttpRequest, recovery_id: uuid.UUID) -> Ht
     return redirect("console:workflow_recoveries")
 
 
+_RUN_DAYS_CHOICES = (1, 7, 30, 90)
+_RUN_PAGE_SIZE = 50
+
+
+def _query_without_page(request: HttpRequest) -> str:
+    """Current querystring minus ``page``, so pagination links keep the active filters."""
+    params = request.GET.copy()
+    params.pop("page", None)
+    return params.urlencode()
+
+
+def _apply_run_filters(
+    request: HttpRequest, queryset: QuerySet[Any], buckets: dict[str, tuple[str, ...]]
+) -> tuple[QuerySet[Any], dict[str, object]]:
+    """Apply bounded server-side run filters (status/bucket/scenario/date) within tenant scope.
+
+    Filters only ever narrow the already-tenant-scoped queryset. Unknown values are ignored
+    (never raise), and the returned ``applied`` mapping drives the sticky filter UI and
+    pagination query string.
+    """
+    status = request.GET.get("status", "").strip()
+    bucket = request.GET.get("bucket", "").strip()
+    scenario_q = request.GET.get("q", "").strip()[:100]
+    days_raw = request.GET.get("days", "").strip()
+    applied: dict[str, object] = {}
+    if status:
+        queryset = queryset.filter(status=status)
+        applied["status"] = status
+    elif bucket in buckets:
+        queryset = queryset.filter(status__in=buckets[bucket])
+        applied["bucket"] = bucket
+    if scenario_q:
+        queryset = queryset.filter(scenario__slug__icontains=scenario_q)
+        applied["q"] = scenario_q
+    if days_raw:
+        try:
+            days = int(days_raw)
+        except ValueError:
+            days = 0
+        if days in _RUN_DAYS_CHOICES:
+            queryset = queryset.filter(created_at__gte=timezone.now() - timedelta(days=days))
+            applied["days"] = days
+    return queryset, applied
+
+
 @login_required
 def agent_runs(request: HttpRequest) -> HttpResponse:
+    active_org = console_context.resolve_active_organization(request)
+    base = scoping.narrow_to_active_organization(
+        scoping.scoped_agent_runs(request.user), active_org, field="organization_id"
+    ).order_by("-created_at")
+    filtered, applied = _apply_run_filters(request, base, AGENT_RUN_BUCKETS)
+    page = Paginator(filtered, _RUN_PAGE_SIZE).get_page(request.GET.get("page"))
     rows = [
         {
             "public_id": str(run.public_id),
+            "href": reverse("console:agent_run_detail", args=[str(run.public_id)]),
             "org": run.organization.slug,
             "scenario": run.scenario.slug,
             "status": run.status,
@@ -1549,10 +1900,20 @@ def agent_runs(request: HttpRequest) -> HttpResponse:
             "error": run.error_code,
             "created": run.created_at,
         }
-        for run in scoping.scoped_agent_runs(request.user).order_by("-created_at")[:200]
+        for run in page
     ]
     return render(
-        request, "console/agent_runs.html", {"title": "Agent çalıştırmaları", "rows": rows}
+        request,
+        "console/agent_runs.html",
+        {
+            "title": "Agent çalıştırmaları",
+            "rows": rows,
+            "page": page,
+            "applied": applied,
+            "status_choices": AgentRunStatus.choices,
+            "days_choices": _RUN_DAYS_CHOICES,
+            "base_query": _query_without_page(request),
+        },
     )
 
 
@@ -1600,9 +1961,16 @@ def agent_run_detail(request: HttpRequest, public_id: str) -> HttpResponse:
 
 @login_required
 def workflow_runs(request: HttpRequest) -> HttpResponse:
+    active_org = console_context.resolve_active_organization(request)
+    base = scoping.narrow_to_active_organization(
+        scoping.scoped_workflow_runs(request.user), active_org, field="organization_id"
+    ).order_by("-created_at")
+    filtered, applied = _apply_run_filters(request, base, WORKFLOW_RUN_BUCKETS)
+    page = Paginator(filtered, _RUN_PAGE_SIZE).get_page(request.GET.get("page"))
     rows = [
         {
             "id": run.pk,
+            "href": reverse("console:workflow_run_detail", args=[run.pk]),
             "org": run.organization.slug,
             "scenario": run.scenario.slug,
             "status": run.status,
@@ -1610,10 +1978,20 @@ def workflow_runs(request: HttpRequest) -> HttpResponse:
             "awaiting_node": run.awaiting_node,
             "created": run.created_at,
         }
-        for run in scoping.scoped_workflow_runs(request.user).order_by("-created_at")[:200]
+        for run in page
     ]
     return render(
-        request, "console/workflow_runs.html", {"title": "Workflow çalıştırmaları", "rows": rows}
+        request,
+        "console/workflow_runs.html",
+        {
+            "title": "Workflow çalıştırmaları",
+            "rows": rows,
+            "page": page,
+            "applied": applied,
+            "status_choices": WorkflowRunStatus.choices,
+            "days_choices": _RUN_DAYS_CHOICES,
+            "base_query": _query_without_page(request),
+        },
     )
 
 
@@ -1872,20 +2250,24 @@ def builder(request: HttpRequest) -> HttpResponse:
 def documents(request: HttpRequest) -> HttpResponse:
     """List tenant-scoped document sets as the primary content workspace."""
     user = request.user
+    active_org = console_context.resolve_active_organization(request)
+    document_sets_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_document_sets(user), active_org, field="organization_id"
+    ).order_by("organization_id", "logical_id")
     sets = [
         {
             "id": s.id,
             "public_id": s.public_id,
+            "href": reverse("console:document_set_detail_public", args=[s.public_id]),
             "org": s.organization.slug,
             "logical_id": s.logical_id,
             "name": s.name,
             "status": s.status,
             "versions": s.versions.count(),
         }
-        for s in scoping.scoped_document_sets(user).order_by("organization_id", "logical_id")
+        for s in document_sets_qs
     ]
     can_upload = author_organization_ids(user) != set()
-    can_open_advanced_inventory = admin_organization_ids(user) != set()
     return render(
         request,
         "console/documents.html",
@@ -1894,7 +2276,8 @@ def documents(request: HttpRequest) -> HttpResponse:
             "sets": sets,
             "set_form": DocumentSetForm(user=user),
             "can_upload": can_upload,
-            "can_open_advanced_inventory": can_open_advanced_inventory,
+            # Role-honest affordance (Scope D): explain the disabled create form.
+            "create_reason": "" if can_upload else _AUTHOR_REASON,
         },
     )
 
@@ -2070,8 +2453,10 @@ def document_set_detail(
             "Operatör doğrulaması olmadan yeniden denenmez",
         ),
     }
-    versions = [
-        {
+
+    def _version_detail(v: DocumentSetVersion) -> dict[str, object]:
+        """Full authoring detail for one set version (members/indexes/jobs)."""
+        return {
             "id": v.id,
             "version": v.version,
             "status": v.status,
@@ -2135,7 +2520,17 @@ def document_set_detail(
                 )
             ],
         }
-        for v in document_set.versions.order_by("-version")
+
+    # Show only the current (latest) version expanded; older versions collapse behind a
+    # "Geçmiş sürümler" control as read-only summaries (Scope F).
+    all_versions = list(
+        document_set.versions.order_by("-version").annotate(_member_count=Count("memberships"))
+    )
+    latest_version = all_versions[0] if all_versions else None
+    current_version = _version_detail(latest_version) if latest_version is not None else None
+    older_versions = [
+        {"version": v.version, "status": v.status, "member_count": getattr(v, "_member_count", 0)}
+        for v in all_versions[1:]
     ]
     active_index = (
         IndexVersion.objects.filter(
@@ -2148,7 +2543,6 @@ def document_set_detail(
         .order_by("-updated_at", "-id")
         .first()
     )
-    latest_version = document_set.versions.order_by("-version").first()
     latest_members = (
         list(latest_version.memberships.select_related("document_version").all())
         if latest_version is not None
@@ -2162,6 +2556,35 @@ def document_set_detail(
         document_set_version__document_set=document_set,
         status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
     ).exists()
+    promotable_index = (
+        IndexVersion.objects.filter(
+            organization_id=document_set.organization_id,
+            document_set_version__document_set=document_set,
+            status=IndexStatus.PROMOTABLE,
+        )
+        .order_by("-version")
+        .first()
+    )
+    is_draft_current = (
+        latest_version is not None and latest_version.status == DocumentSetVersionStatus.DRAFT
+    )
+    is_published_current = (
+        latest_version is not None and latest_version.status != DocumentSetVersionStatus.DRAFT
+    )
+    publish_url = (
+        reverse("console:document_set_version_publish", args=[latest_version.id])
+        if latest_version is not None
+        else ""
+    )
+    promote_url = (
+        reverse("console:document_set_promote_index", args=[promotable_index.id])
+        if promotable_index is not None
+        else ""
+    )
+    # Each incomplete step the operator is authorized for carries an actionable control
+    # (Scope F): a one-click POST where it is unambiguous (publish / promote), otherwise a
+    # link to the on-page section that performs it (upload / build).
+    _anchor = lambda href, label: {"type": "anchor", "href": href, "label": label}  # noqa: E731
     lifecycle_steps = [
         {
             "label": "Yüklendi",
@@ -2169,57 +2592,53 @@ def document_set_detail(
             "detail": f"{len(latest_members)} doküman sürümü"
             if latest_members
             else "Henüz içerik yok",
-            "next": "Dosya yükleyin" if can_write and not latest_members else "",
+            "action": _anchor("#uploads", "Dosya yükle")
+            if can_write and not latest_members
+            else None,
         },
         {
             "label": "Ayrıştırıldı / normalize edildi",
             "complete": bool(latest_members) and parsed_count == len(latest_members),
             "detail": f"{parsed_count}/{len(latest_members)} hazır",
-            "next": "İndeks oluşturma ayrıştırmayı çalıştırır"
-            if latest_members and parsed_count != len(latest_members)
-            else "",
+            "action": _anchor("#build", "İndeks oluştur (ayrıştırmayı çalıştırır)")
+            if can_write and latest_members and parsed_count != len(latest_members)
+            else None,
         },
         {
             "label": "Set taslağı",
             "complete": latest_version is not None,
             "detail": latest_version.status if latest_version else "Taslak yok",
-            "next": "Taslağı yayımlayın"
-            if can_write
-            and latest_version is not None
-            and latest_version.status == DocumentSetVersionStatus.DRAFT
-            else "",
+            "action": {"type": "post", "url": publish_url, "label": "Taslağı yayımla"}
+            if can_write and is_draft_current
+            else None,
         },
         {
             "label": "Set sürümü yayımlandı",
-            "complete": latest_version is not None
-            and latest_version.status != DocumentSetVersionStatus.DRAFT,
-            "detail": "Yayımlandı"
-            if latest_version is not None
-            and latest_version.status != DocumentSetVersionStatus.DRAFT
-            else "Taslak üyelik değişebilir",
-            "next": "Önce taslağı yayımlayın"
-            if latest_version is not None
-            and latest_version.status == DocumentSetVersionStatus.DRAFT
-            else "",
+            "complete": is_published_current,
+            "detail": "Yayımlandı" if is_published_current else "Taslak üyelik değişebilir",
+            "action": {"type": "post", "url": publish_url, "label": "Taslağı yayımla"}
+            if can_write and is_draft_current
+            else None,
         },
         {
             "label": "Staged indeks hazır",
             "complete": staged_ready,
             "detail": "İndeks sürümü mevcut" if staged_ready else "Promotable indeks yok",
-            "next": "Yayımlanmış set sürümünden staged indeks oluşturun"
-            if can_write
-            and latest_version is not None
-            and latest_version.status != DocumentSetVersionStatus.DRAFT
-            and not staged_ready
-            else "",
+            "action": _anchor("#build", "Staged indeks oluştur")
+            if can_write and is_published_current and not staged_ready
+            else None,
         },
         {
             "label": "Aktif indeks",
             "complete": active_index is not None,
             "detail": f"İndeks v{active_index.version}" if active_index else "Serve edilmiyor",
-            "next": "Değerlendirilen promotable indeksi aktif edin"
-            if can_promote_index and active_index is None
-            else "",
+            "action": {"type": "post", "url": promote_url, "label": "Promotable indeksi aktif et"}
+            if can_promote_index and active_index is None and promotable_index is not None
+            else (
+                _anchor("#build", "Önce staged indeks oluştur")
+                if can_write and active_index is None and promotable_index is None
+                else None
+            ),
         },
     ]
     # Active, uploaded documents in this set's tenant, offered as members of a draft version.
@@ -2262,7 +2681,8 @@ def document_set_detail(
                 "name": document_set.name,
                 "status": document_set.status,
             },
-            "versions": versions,
+            "current_version": current_version,
+            "older_versions": older_versions,
             "latest_version": latest_version,
             "active_index": active_index,
             "lifecycle_steps": lifecycle_steps,
@@ -2333,6 +2753,8 @@ def document_set_document_detail(
         .order_by("-document_set_version__version", "-document_version__version")
     )
     versions = list(document.versions.order_by("-version"))
+    can_write = can_author_scenarios(request.user, document.organization_id)
+    chunk_view = _document_chunk_view(document_set, versions) if can_write else None
     return render(
         request,
         "console/document_set_document_detail.html",
@@ -2344,9 +2766,51 @@ def document_set_document_detail(
             "versions": versions,
             "memberships": memberships,
             "replacement_form": DocumentReplacementForm(),
-            "can_write": can_author_scenarios(request.user, document.organization_id),
+            "can_write": can_write,
+            "chunk_view": chunk_view,
         },
     )
+
+
+def _document_chunk_view(
+    document_set: DocumentSet, versions: list[DocumentVersion]
+) -> dict[str, object] | None:
+    """Chunk count + bounded text preview for a document in the set's active served index.
+
+    Authorized-operator inspection (Scope G): resolves the content-plane document versions to
+    their chunks in the active per-``IndexVersion`` store (keyed by ``document_version_id``),
+    under tenant RLS. PostgreSQL-only (the blue/green vector store is not built on SQLite);
+    returns ``None`` off PostgreSQL, when nothing is served, or when the store is unavailable.
+    Embeddings are never read; text is truncated in the database.
+    """
+    if connection.vendor != "postgresql" or not versions:
+        return None
+    active_index = (
+        IndexVersion.objects.filter(
+            document_set_version__document_set=document_set,
+            organization_id=document_set.organization_id,
+            status=IndexStatus.ACTIVE,
+            store_ready=True,
+        )
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+    if active_index is None:
+        return None
+    version_ids = [v.pk for v in versions]
+    try:
+        counts = chunk_counts_by_document(active_index, version_ids)
+        if not counts:
+            return {"index_version": active_index.version, "total_chunks": 0, "preview": []}
+        target_vid = max(counts, key=lambda key: counts[key])
+        preview = chunk_preview_for_document(active_index, target_vid, max_chunks=5, max_chars=600)
+    except VectorStoreError:
+        return None
+    return {
+        "index_version": active_index.version,
+        "total_chunks": sum(counts.values()),
+        "preview": [{"ordinal": ordinal, "text": text} for ordinal, text in preview],
+    }
 
 
 @login_required

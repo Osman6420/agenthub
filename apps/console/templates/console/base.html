@@ -1,4 +1,4 @@
-<!doctype html>
+<!doctype html>{% load static %}
 <html lang="tr">
 <head>
   <meta charset="utf-8">
@@ -29,6 +29,15 @@
     .sidebar nav { display: grid; gap: 3px; }
     .sidebar nav a { color: #cbe1df; padding: 9px 11px; border-radius: 8px; font-size: 14px; font-weight: 570; }
     .sidebar nav a:hover { color: #fff; background: var(--nav-soft); text-decoration: none; }
+    .org-switch-box { margin: 4px 0 8px; padding: 0 10px; }
+    .org-switch-label { margin: 0 0 5px; padding: 0; }
+    .org-switch select { width: 100%; padding: 8px 9px; border-radius: 8px; border: 1px solid #315158; background: var(--nav-soft); color: #e6f4f3; font: inherit; font-size: 13px; }
+    .org-switch select:hover { border-color: #4a7b80; }
+    .org-switch-go { width: 100%; margin-top: 7px; }
+    .js-on .org-switch-go { display: none; }
+    .org-static { color: #e6f4f3; font-size: 14px; font-weight: 650; }
+    tr[data-href] { cursor: pointer; }
+    .js-on tr[data-href]:hover { background: var(--surface-soft); }
     .user-box { margin-top: auto; border-top: 1px solid #315158; padding: 16px 10px 0; }
     .user-box strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
     .user-box span { color: #9eb8b7; font-size: 12px; }
@@ -76,6 +85,16 @@
     .button.secondary { background: #fff; border-color: #b7c7cc; color: var(--brand-dark); }
     .button.ghost { background: transparent; }
     .button.danger { color: var(--danger); border-color: #efc3bf; }
+    .button[disabled], .button:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+    .reason { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+    details.version-history { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-top: 14px; background: var(--surface-soft); }
+    details.version-history summary { cursor: pointer; font-size: 14px; }
+    details.version-history .access-row:first-of-type { border-top: 0; }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
+    .filter-bar label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .filter-bar select, .filter-bar input { padding: 8px 9px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); font: inherit; font-size: 13px; }
+    .pagination { display: flex; gap: 14px; align-items: center; justify-content: center; padding: 16px; color: var(--muted); font-size: 13px; }
+    .filter-note { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; color: var(--muted); font-size: 13px; }
     button.link { min-height: 38px; background: none; border: none; color: var(--brand-dark); cursor: pointer; padding: 7px 4px; font: inherit; font-size: 12px; font-weight: 700; }
     .user-box button.link { color: #d5e8e6; padding-inline: 0; }
     form.inline { display: inline; }
@@ -135,6 +154,23 @@
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="{% url 'console:dashboard' %}"><span class="brand-mark">A</span><span>AgentHub</span></a>
+      <div class="org-switch-box">
+        {% if workspace_multi_org %}
+        <form class="org-switch" method="post" action="{% url 'console:switch_organization' %}" data-autosubmit>
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+          <label class="nav-label org-switch-label" for="org-switch">Aktif organizasyon</label>
+          <select id="org-switch" name="organization_id">
+            <option value="">Tüm organizasyonlar</option>
+            {% for org in available_organizations %}<option value="{{ org.id }}"{% if active_organization and active_organization.id == org.id %} selected{% endif %}>{{ org.name }}</option>{% endfor %}
+          </select>
+          <button class="button secondary org-switch-go" type="submit">Değiştir</button>
+        </form>
+        {% elif available_organizations %}
+        <div class="nav-label org-switch-label">Organizasyon</div>
+        <div class="org-static">{{ available_organizations.0.name }}</div>
+        {% endif %}
+      </div>
       <div class="nav-label">Çalışma alanı</div>
       <nav aria-label="Ana menü">
         <a href="{% url 'console:dashboard' %}">Genel bakış</a>
@@ -160,7 +196,7 @@
       <div class="user-box"><strong>{{ user.get_username }}</strong><span>Oturum açık</span><form method="post" action="{% url 'console:logout' %}">{% csrf_token %}<button class="link" type="submit">Çıkış yap</button></form></div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><span class="topbar-title">Operasyon konsolu</span><span class="muted">Güvenli · Denetlenebilir</span></header>
+      <header class="topbar"><span class="topbar-title">Operasyon konsolu</span><span class="topbar-scope muted">{% if active_organization %}Kapsam: {{ active_organization.name }}{% else %}Kapsam: Tüm organizasyonlar{% endif %}</span></header>
       <main id="main-content" tabindex="-1">
   {% else %}
       <main id="main-content" tabindex="-1">
@@ -171,6 +207,7 @@
   {% if user.is_authenticated %}
     </div>
   </div>
+  <script src="{% static 'console/console.js' %}" defer></script>
   {% endif %}
 </body>
 </html>

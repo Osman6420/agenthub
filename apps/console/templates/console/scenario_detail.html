@@ -18,7 +18,7 @@
       {% for alias in aliases %}<span class="chip">API: {{ alias.alias }}</span>{% endfor %}
     </div>
   </div>
-  <a class="button secondary" href="{% url 'console:builder' %}?organization={{ scenario.organization.slug }}&amp;scenario={{ scenario.public_id }}">Scenario Studio'yu aç</a>
+  {% if can_write %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ scenario.organization.slug }}&amp;scenario={{ scenario.public_id }}">Scenario Studio'yu aç</a>{% else %}<button type="button" class="button secondary" disabled aria-disabled="true" title="{{ author_reason }}">Scenario Studio'yu aç</button>{% endif %}
 </div>
 
 <div class="summary-grid">
@@ -44,7 +44,7 @@
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Çalışan tanım</p><h2>Aktif release artifact'leri</h2><p class="muted">Aşağıdaki roller yalnız aktif release manifestindeki exact immutable version'lardır.</p></div>{% if active_release %}<span class="badge active">release #{{ active_release.id }}</span>{% endif %}</div>
   {% if active_release %}
-    {% for row in active_artifacts %}<div class="access-row"><div><strong>{{ row.role }}</strong><p class="muted">{{ row.type }} · {{ row.ref }}</p></div>{% if row.artifact %}<a class="button secondary" href="{% url 'console:artifact_detail' row.artifact.id %}">DSL / detay</a>{% if row.checksum_matches %}<span class="access-ok">checksum doğru</span>{% else %}<span class="access-missing">checksum uyuşmuyor</span>{% endif %}{% if row.workflow_draft %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ row.workflow_draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ row.workflow_draft.id }}">Grafikte aç</a>{% endif %}{% else %}<span class="access-missing">Artifact çözümlenemedi</span>{% endif %}</div>{% empty %}<p class="muted">Aktif release artifact rolü içermiyor.</p>{% endfor %}
+    {% for row in active_artifacts %}<div class="access-row"><div><strong>{{ row.role }}</strong><p class="muted">{{ row.type }} · {{ row.ref }}</p></div>{% if row.artifact %}<a class="button secondary" href="{% url 'console:artifact_detail' row.artifact.id %}">DSL / detay</a>{% if row.checksum_matches %}<span class="access-ok">checksum doğru</span>{% else %}<span class="access-missing">checksum uyuşmuyor</span>{% endif %}{% if row.workflow_draft and can_write %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ row.workflow_draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ row.workflow_draft.id }}">Grafikte aç</a>{% endif %}{% else %}<span class="access-missing">Artifact çözümlenemedi</span>{% endif %}</div>{% empty %}<p class="muted">Aktif release artifact rolü içermiyor.</p>{% endfor %}
   {% else %}<div class="empty">Aktif release yok; artifact seçimi henüz runtime'a çıkmamış.</div>{% endif %}
 </section>
 
@@ -54,8 +54,8 @@
 </section>
 
 <section class="card">
-  <div class="section-heading"><div><p class="eyebrow">Scenario Studio</p><h2>Workflow draft'ları</h2><p class="muted">Yalnız bu senaryoya bağlı mutable authoring state gösterilir; aktif release pini değildir.</p></div><a href="{% url 'console:builder' %}?organization={{ scenario.organization.slug }}&amp;scenario={{ scenario.public_id }}">Yeni draft</a></div>
-  {% for draft in project_drafts %}<div class="access-row"><div><strong>{{ draft.name }}</strong><p class="muted mono">{{ draft.logical_id }} · revision {{ draft.revision }} · son publish v{{ draft.last_published_version }}</p></div><a class="button secondary" href="{% url 'console:builder' %}?organization={{ draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ draft.id }}">Grafikte aç</a></div>{% empty %}<p class="muted">Bu senaryoya bağlı workflow draft'ı yok.</p>{% endfor %}
+  <div class="section-heading"><div><p class="eyebrow">Scenario Studio</p><h2>Workflow draft'ları</h2><p class="muted">Yalnız bu senaryoya bağlı mutable authoring state gösterilir; aktif release pini değildir.</p></div>{% if can_write %}<a href="{% url 'console:builder' %}?organization={{ scenario.organization.slug }}&amp;scenario={{ scenario.public_id }}">Yeni draft</a>{% else %}<button type="button" class="button" disabled aria-disabled="true" title="{{ author_reason }}">Yeni draft</button>{% endif %}</div>
+  {% for draft in project_drafts %}<div class="access-row"><div><strong>{{ draft.name }}</strong><p class="muted mono">{{ draft.logical_id }} · revision {{ draft.revision }} · son publish v{{ draft.last_published_version }}</p></div>{% if can_write %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ draft.id }}">Grafikte aç</a>{% else %}<button type="button" class="button secondary" disabled aria-disabled="true" title="{{ author_reason }}">Grafikte aç</button>{% endif %}</div>{% empty %}<p class="muted">Bu senaryoya bağlı workflow draft'ı yok.</p>{% endfor %}
 </section>
 
 <section class="card">

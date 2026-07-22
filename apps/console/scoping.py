@@ -92,6 +92,26 @@ def scoped_document_set_versions(user: UserLike) -> QuerySet[DocumentSetVersion]
     return qs if allowed is None else qs.filter(organization_id__in=allowed)
 
 
+def narrow_to_active_organization(
+    queryset: QuerySet,
+    active_organization: Organization | None,
+    *,
+    field: str = "organization_id",
+) -> QuerySet:
+    """Narrow an already-tenant-scoped queryset to the active organization when one is set.
+
+    ``active_organization`` is the membership-validated value from
+    :func:`apps.console.context.resolve_active_organization`; ``None`` means
+    "all organizations" and returns the queryset unchanged. This only ever *narrows* an
+    already-scoped queryset — it is a readability filter, never the authorization boundary.
+    ``field`` is the queryset's lookup path to the organization (e.g. ``organization_id``,
+    ``project__organization_id``, or ``pk`` for the organization list itself).
+    """
+    if active_organization is None:
+        return queryset
+    return queryset.filter(**{field: active_organization.pk})
+
+
 def scoped_connector_sources(user: UserLike) -> QuerySet[Source]:
     allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = Source.objects.filter(

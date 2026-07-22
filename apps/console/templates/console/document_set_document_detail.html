@@ -23,6 +23,16 @@
 
 <div class="card table-card"><div class="table-scroll"><table><caption class="sr-only">Doküman sürümleri</caption><thead><tr><th>Sürüm</th><th>Ayrıştırma</th><th>Tür</th><th>Boyut</th><th>Oluşturma</th></tr></thead><tbody>{% for version in versions %}<tr><td>v{{ version.version }}</td><td><span class="badge {{ version.parse_status }}">{{ version.parse_status }}</span></td><td>{{ version.mime_type }}</td><td>{{ version.byte_size }} bayt</td><td>{{ version.created_at }}</td></tr>{% endfor %}</tbody></table></div></div>
 
+{% if chunk_view %}
+<div class="card">
+  <div class="section-heading"><div><h2>İndeks parçaları (chunk)</h2><p class="muted">Aktif indeks v{{ chunk_view.index_version }} içinde bu dokümandan üretilen parçalar. Yalnız yetkili operatörlere gösterilir; embedding gösterilmez.</p></div><span class="badge">{{ chunk_view.total_chunks }} parça</span></div>
+  {% if chunk_view.preview %}
+  <p class="muted">İlk {{ chunk_view.preview|length }} parçanın kısaltılmış önizlemesi:</p>
+  {% for chunk in chunk_view.preview %}<div class="relationship-card"><div class="relationship-head"><div><h4>Parça #{{ chunk.ordinal }}</h4></div></div><div class="relationship-body"><div><p class="mono" style="white-space:pre-wrap;overflow-wrap:anywhere;margin:0;">{{ chunk.text }}</p></div></div></div>{% endfor %}
+  {% elif chunk_view.total_chunks == 0 %}<p class="muted">Bu doküman aktif indekste parça içermiyor (henüz indekslenmemiş olabilir).</p>{% endif %}
+</div>
+{% endif %}
+
 <div class="card"><h2>Set sürümü pinleri</h2>{% for membership in memberships %}<p><a href="{% url 'console:document_set_detail_public' set.public_id %}">Set v{{ membership.document_set_version.version }}</a> <span class="badge {{ membership.document_set_version.status }}">{{ membership.document_set_version.status }}</span> → doküman v{{ membership.document_version.version }}</p>{% empty %}<p class="muted">Bu set içinde pin yok.</p>{% endfor %}</div>
 
 {% endblock %}

@@ -180,8 +180,14 @@ def test_disabled_organization_is_not_offered_by_creation_forms(client: Client) 
     body = response.content.decode()
 
     assert response.status_code == 200
-    assert f'value="{active.id}"' in body
-    assert f'value="{disabled.id}"' not in body
+    # The workspace switcher (base chrome) legitimately lists every visible organization,
+    # including disabled ones which stay viewable read-only. The invariant here is narrower:
+    # the project-creation *form* must not offer a disabled org as a target. Assert against
+    # the form's ``organization`` <select> region, not the whole page.
+    select_start = body.index('name="organization"')
+    select_region = body[select_start : body.index("</select>", select_start)]
+    assert f'value="{active.id}"' in select_region
+    assert f'value="{disabled.id}"' not in select_region
 
 
 def test_detail_pages_are_cross_tenant_safe_and_keep_canonical_urls(client: Client) -> None:

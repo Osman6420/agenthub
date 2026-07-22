@@ -15,8 +15,8 @@
 </div>
 
 <div class="card">
-  <div class="section-heading"><div><h2>Uçtan uca yaşam döngüsü</h2><p class="muted">Her aşama mevcut durumu, engeli ve yetkiniz varsa sonraki işlemi gösterir.</p></div></div>
-  {% for step in lifecycle_steps %}<div class="access-row"><div><strong>{{ forloop.counter }}. {{ step.label }}</strong><p class="muted">{{ step.detail }}</p></div>{% if step.complete %}<span class="access-ok">Hazır</span>{% else %}<span class="access-missing">Bekliyor</span>{% endif %}<span class="muted">{{ step.next }}</span></div>{% endfor %}
+  <div class="section-heading"><div><h2>Uçtan uca yaşam döngüsü</h2><p class="muted">Her aşama mevcut durumu, engeli ve yetkiniz varsa yapılacak işlemi gösterir.</p></div></div>
+  {% for step in lifecycle_steps %}<div class="access-row"><div><strong>{{ forloop.counter }}. {{ step.label }}</strong><p class="muted">{{ step.detail }}</p></div>{% if step.complete %}<span class="access-ok">Hazır</span>{% else %}<span class="access-missing">Bekliyor</span>{% endif %}{% if step.action %}{% if step.action.type == 'post' %}<form class="inline" method="post" action="{{ step.action.url }}">{% csrf_token %}<button class="button primary" type="submit">{{ step.action.label }}</button></form>{% else %}<a class="button secondary" href="{{ step.action.href }}">{{ step.action.label }}</a>{% endif %}{% else %}<span></span>{% endif %}</div>{% endfor %}
 </div>
 
 <div class="card action-card">
@@ -25,7 +25,7 @@
 </div>
 
 {% if can_write %}
-<div class="card">
+<div class="card" id="uploads">
   <div class="section-heading"><div><h2>Toplu doküman yükle</h2><p class="muted">Dosya adından başlık ve stabil ID üretilir; yükleme son taslağı günceller, yayına çıkmaz.</p></div></div>
   <form class="form-card" method="post" action="{% url 'console:document_set_bulk_upload_public' set.public_id %}" enctype="multipart/form-data">
     {% csrf_token %}
@@ -42,10 +42,11 @@
     {% if can_write %}<form method="post" action="{% url 'console:document_set_version_create_public' set.public_id %}">{% csrf_token %}<button class="button secondary" type="submit">Boş taslak aç</button></form>{% endif %}
   </div>
 
-  {% for v in versions %}
+  {% with v=current_version %}
+  {% if v %}
   <div class="relationship-card">
     <div class="relationship-head">
-      <div><h3>Set sürümü v{{ v.version }}</h3><p class="muted">{{ v.members|length }} doküman sürümü</p></div>
+      <div><h3>Güncel set sürümü v{{ v.version }}</h3><p class="muted">{{ v.members|length }} doküman sürümü</p></div>
       <div class="status-stack"><span class="badge {{ v.status }}">{{ v.status }}</span></div>
     </div>
     <div class="relationship-body">
@@ -59,7 +60,7 @@
         <form method="post" action="{% url 'console:document_set_version_publish' v.id %}" style="margin-top:12px;">{% csrf_token %}<button class="button primary" type="submit">Taslağı yayımla</button></form>
         {% endif %}
       </div>
-      <div>
+      <div id="build">
         <h4>İndeksler</h4>
         {% for index in v.indexes %}
         <div class="access-row"><div><strong>{{ index.profile }}</strong><p class="muted">İndeks v{{ index.version }} · {{ index.documents }} doküman · {{ index.chunks }} parça{% if index.reused_documents %} · {{ index.reused_documents }} yeniden kullanıldı{% endif %}</p></div><span class="badge {{ index.status }}">{{ index.status }}</span>{% if index.can_promote %}<form method="post" action="{% url 'console:document_set_promote_index' index.id %}">{% csrf_token %}<button class="button primary" type="submit">Aktif et</button></form>{% endif %}</div>
@@ -77,7 +78,15 @@
       </div>
     </div>
   </div>
-  {% empty %}<div class="empty">Henüz bir set sürümü yok. Toplu yükleme ilk taslağı otomatik açar.</div>{% endfor %}
+  {% else %}<div class="empty">Henüz bir set sürümü yok. Toplu yükleme ilk taslağı otomatik açar.</div>{% endif %}
+  {% endwith %}
+
+  {% if older_versions %}
+  <details class="version-history">
+    <summary><strong>Geçmiş sürümler ({{ older_versions|length }})</strong></summary>
+    {% for v in older_versions %}<div class="access-row"><div><strong>Set sürümü v{{ v.version }}</strong><p class="muted">{{ v.member_count }} doküman sürümü</p></div><span class="badge {{ v.status }}">{{ v.status }}</span></div>{% endfor %}
+  </details>
+  {% endif %}
 </div>
 
 <div class="card">

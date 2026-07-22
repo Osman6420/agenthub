@@ -90,7 +90,10 @@ def test_scenario_shows_exact_active_artifact_release_and_project_draft(client: 
         updated_by="author",
         last_published_version=artifact.version,
     )
-    client.force_login(_member("auditor", org, Role.AUDITOR))
+    # The draft graph ("Grafikte aç") link is an authoring affordance, now shown only to
+    # users who can author (Scope D). Log in as a scenario editor so the link renders; the
+    # test's intent is that the exact active artifact + linked project draft are surfaced.
+    client.force_login(_member("editor", org, Role.SCENARIO_EDITOR))
 
     response = client.get(reverse("console:scenario_detail", args=[scenario.pk]))
     body = response.content.decode()

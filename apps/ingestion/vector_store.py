@@ -181,6 +181,35 @@ def chunk_counts_by_document(
             return {int(row[0]): int(row[1]) for row in cursor.fetchall()}
 
 
+def chunk_preview_for_document(
+    index_version: IndexVersion,
+    document_version_id: int,
+    *,
+    max_chunks: int = 5,
+    max_chars: int = 600,
+) -> list[tuple[int, str]]:
+    """Return up to ``max_chunks`` ``(ordinal, truncated text)`` rows for one document version.
+
+    A bounded read for authorized operator inspection under tenant RLS: embeddings are never
+    returned, at most ``max_chunks`` rows are read, and each chunk's text is truncated to
+    ``max_chars`` characters in the database (never materializing full chunk bodies).
+    """
+    _require_postgres()
+    name = store_name(index_version)
+    limit = max(1, min(int(max_chunks), 50))
+    chars = max(1, min(int(max_chars), 4000))
+    with transaction.atomic():
+        set_tenant_context(int(index_version.organization_id))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'SELECT ordinal, LEFT(text, %s) FROM "{name}" '  # noqa: S608
+                "WHERE organization_id = %s AND document_version_id = %s "
+                "ORDER BY ordinal LIMIT %s",
+                [chars, index_version.organization_id, int(document_version_id), limit],
+            )
+            return [(int(row[0]), row[1]) for row in cursor.fetchall()]
+
+
 def copy_chunks(parent: IndexVersion, target: IndexVersion, document_version_ids: list[int]) -> int:
     """Copy compatible immutable rows between int-derived stores under the same tenant context."""
     _require_postgres()

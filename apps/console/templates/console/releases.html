@@ -14,7 +14,7 @@
     </thead>
     <tbody>
       {% for r in rows %}
-      <tr>
+      <tr data-href="{% url 'console:release_detail' r.id %}">
         <td><a href="{% url 'console:release_detail' r.id %}">{{ r.id }}</a></td>
         <td><a href="{% url 'console:organization_detail' r.org_slug %}">{{ r.org }}</a></td>
         <td><a href="{% url 'console:scenario_detail_public' r.scenario_public_id %}">{{ r.scenario }}</a></td>

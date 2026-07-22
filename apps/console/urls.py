@@ -17,6 +17,7 @@ urlpatterns = [
     ),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("", views.dashboard, name="dashboard"),
+    path("switch-organization/", views.switch_organization, name="switch_organization"),
     path("o/<slug:slug>/", views.organization_detail, name="organization_detail"),
     path("organizations/", views.organizations, name="organizations"),
     path("organizations/new/", views.organization_create, name="organization_create"),

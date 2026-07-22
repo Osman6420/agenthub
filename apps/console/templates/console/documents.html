@@ -9,19 +9,14 @@
   <div class="section-heading"><div><h2>Yeni doküman seti</h2><p class="muted">Set oluşturduktan sonra detay ekranından toplu dosya yükleyebilirsiniz.</p></div></div>
   <form method="post" action="{% url 'console:document_set_create' %}">{% csrf_token %}{{ set_form.as_p }}<button type="submit">Set oluştur</button></form>
 </div>
+{% else %}
+<div class="card"><div class="section-heading"><div><h2>Yeni doküman seti</h2></div></div><p class="reason">{{ create_reason }}</p></div>
 {% endif %}
 
 <div class="card table-card">
-  {% if sets %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki doküman setleri</caption><thead><tr><th>Organizasyon</th><th>Doküman seti</th><th>Durum</th><th>Sürüm</th><th>İşlem</th></tr></thead><tbody>
-  {% for s in sets %}<tr><td>{{ s.org }}</td><td><strong>{{ s.name }}</strong><div class="mono muted">{{ s.logical_id }}</div></td><td><span class="badge {{ s.status }}">{{ s.status }}</span></td><td>{{ s.versions }}</td><td class="row-action"><a class="button secondary" href="{% url 'console:document_set_detail_public' s.public_id %}">Çalışma alanını aç</a></td></tr>{% endfor %}
+  {% if sets %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki doküman setleri</caption><thead><tr><th>Organizasyon</th><th>Doküman seti</th><th>Durum</th><th>Sürüm</th></tr></thead><tbody>
+  {% for s in sets %}<tr data-href="{{ s.href }}"><td>{{ s.org }}</td><td><strong><a href="{{ s.href }}">{{ s.name }}</a></strong><div class="mono muted">{{ s.logical_id }}</div></td><td><span class="badge {{ s.status }}">{{ s.status }}</span></td><td>{{ s.versions }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="empty">Yetki kapsamınızda doküman seti yok.</div>{% endif %}
 </div>
-
-{% if can_open_advanced_inventory %}
-<div class="card action-card">
-  <div><h2>Gelişmiş saklama yönetimi</h2><p class="muted">Tombstone ve fiziksel purge envanteri yalnız organizasyon yöneticileri içindir.</p></div>
-  <a class="button secondary" href="{% url 'console:advanced_document_inventory' %}">Gelişmiş envanteri aç</a>
-</div>
-{% endif %}
 
 {% endblock %}

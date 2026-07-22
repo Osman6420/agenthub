@@ -94,6 +94,9 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                # Active-organization workspace selector (display filter only; re-validated
+                # against membership every request — never an authorization input).
+                "apps.console.context.active_workspace",
             ],
         },
     },

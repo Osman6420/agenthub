@@ -71,6 +71,31 @@ def test_provision_write_search_roundtrip() -> None:
 
 @pg_only
 @pytest.mark.django_db
+def test_chunk_preview_is_bounded_and_ordered() -> None:
+    # Backs the console document-detail chunk view (Scope G): counts + a bounded, ordered,
+    # truncated text preview for one document version, embeddings never returned.
+    iv = _index_version(dimensions=4)
+    vector_store.provision_store(iv)
+    rows = [
+        VectorRow(
+            iv.organization_id, 42, ordinal, f"chunk-{ordinal} " + "x" * 50, [1.0, 0.0, 0.0, 0.0]
+        )
+        for ordinal in range(8)
+    ]
+    rows.append(VectorRow(iv.organization_id, 99, 0, "other doc", [0.0, 1.0, 0.0, 0.0]))
+    vector_store.write_chunks(iv, rows)
+
+    counts = vector_store.chunk_counts_by_document(iv, [42, 99])
+    assert counts == {42: 8, 99: 1}
+
+    preview = vector_store.chunk_preview_for_document(iv, 42, max_chunks=3, max_chars=10)
+    assert [ordinal for ordinal, _ in preview] == [0, 1, 2]  # ordered, capped at max_chunks
+    assert all(len(text) <= 10 for _, text in preview)  # truncated in the database
+    vector_store.drop_store(iv)
+
+
+@pg_only
+@pytest.mark.django_db
 def test_search_is_tenant_scoped() -> None:
     iv = _index_version(dimensions=4)
     vector_store.provision_store(iv)

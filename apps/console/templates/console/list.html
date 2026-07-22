@@ -5,7 +5,7 @@
   <h1>{{ title }}</h1>
   {% if create_links %}
   <div class="actions">
-    {% for link in create_links %}<a href="{% url link.url %}">{{ link.label }}</a>{% endfor %}
+    {% for link in create_links %}{% if link.disabled %}<button type="button" class="button primary" disabled aria-disabled="true" title="{{ link.reason }}">{{ link.label }}</button>{% else %}<a href="{% url link.url %}">{{ link.label }}</a>{% endif %}{% endfor %}
   </div>
   {% endif %}
   {% if rows %}
@@ -14,7 +14,7 @@
     <thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in rows %}
-      <tr>{% for c in row.cols %}<td>{% if c.url %}<a href="{% url c.url c.arg %}">{{ c.text }}</a>{% else %}{{ c }}{% endif %}</td>{% endfor %}</tr>
+      <tr{% if row.href %} data-href="{{ row.href }}"{% endif %}>{% for c in row.cols %}<td>{% if c.url %}<a href="{% url c.url c.arg %}">{{ c.text }}</a>{% else %}{{ c }}{% endif %}</td>{% endfor %}</tr>
       {% endfor %}
     </tbody>
   </table></div>
