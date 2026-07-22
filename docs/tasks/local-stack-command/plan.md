@@ -19,6 +19,9 @@ can also collide.
 - Build the frontend, validate Compose configuration, wait for health, and show bounded diagnostics.
 - Document prerequisites, commands, data behavior, troubleshooting, and host-mode boundaries.
 - Route README and the manual testing guide to the command.
+- Keep Python dependency installation in a Docker layer keyed only by dependency metadata, with a
+  persistent BuildKit pip download cache for legitimate dependency/base rebuilds.
+- Skip `npm ci` when the package lock and local Node/npm toolchain fingerprint are unchanged.
 
 ## Non-goals
 
@@ -35,6 +38,9 @@ can also collide.
   confirmation barrier, suitable only for explicitly disposable automation.
 - Failed health checks return a non-zero exit and bounded service state/logs.
 - Current-state documentation explains exact behavior and recovery.
+- A Python source-only change rebuilds the application package without resolving/downloading Python
+  dependencies.
+- Repeated `Update` runs skip `npm ci` while `package-lock.json`, Node, and npm are unchanged.
 
 ## Affected components
 

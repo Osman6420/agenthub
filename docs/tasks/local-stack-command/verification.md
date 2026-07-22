@@ -14,6 +14,9 @@
 | Live update/migration | Infrastructure `up`, `run --rm migrate`, application-role `up` | Pass | Applied `agents.0004_runtime_control_write_policy`; all canonical roles started | Existing `pgdata` and `miniodata` preserved |
 | Pending migrations | `docker compose ... exec -T web python manage.py migrate --check` | Pass | Exit 0 | No pending migration |
 | Live readiness | `/v1/health/live` and `/v1/health/ready` | Pass | HTTP 200; database/migrations/Redis `ok` | Full Compose application topology running |
+| Python source-only cache | Temporary source-context probe then `docker compose ... build web` | Pass | Dependency install layer `CACHED`; only `pip install --no-build-isolation --no-deps` reran in 2.8s | Probe removed after verification; no Python dependency download in source layer |
+| Frontend dependency fingerprint | Two consecutive `Update` runs | Pass | Second run printed `skipping npm ci` | Fingerprint covers package-lock SHA-256 plus Node/npm versions |
+| Warm Update | `.\scripts\local-stack.ps1 -Action Update` | Pass | All Docker layers cached, no migration pending, liveness 200 | About 41s versus about 3m20s before cache separation |
 
 ## Acceptance criteria mapping
 
@@ -28,6 +31,9 @@
 
 The CLI uses closed validation sets and fixed subprocess argument arrays, never evaluates user input,
 does not print the process environment, and makes destructive behavior explicit.
+
+Dependency cache keys contain only public lock/toolchain versions and hashes. No credential or secret
+is persisted in the frontend fingerprint or BuildKit cache configuration.
 
 ## Authorization tests
 
@@ -65,6 +71,9 @@ default documented full-stack path.
   application-role startup, liveness, and readiness all passed separately.
 - Application unit/type/lint suites were not run because no application code or dependency changed.
 - PowerShell Pester/PSScriptAnalyzer checks are not repository-provided.
+- A direct `docker build --network=none` probe used a different cache namespace and failed at the
+  pre-existing Debian `apt install curl` layer before reaching Python layers. The canonical Compose
+  source-only probe passed and showed the Python dependency layer as `CACHED`.
 
 ## Remaining risks
 

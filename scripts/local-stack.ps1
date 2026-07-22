@@ -69,9 +69,31 @@ function Wait-ForLiveness {
 }
 
 function Build-Frontend {
+    Assert-Command -Name 'node'
     Assert-Command -Name 'npm'
-    Write-Host 'Installing locked frontend dependencies...'
-    Invoke-Checked -FilePath 'npm' -ArgumentList @('--prefix', 'frontend', 'ci')
+    $lockPath = Join-Path $RepositoryRoot 'frontend\package-lock.json'
+    $fingerprintPath = Join-Path $RepositoryRoot 'frontend\node_modules\.agenthub-dependency-fingerprint'
+    $nodeModulesPath = Join-Path $RepositoryRoot 'frontend\node_modules'
+
+    $nodeVersion = (& node --version).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to read the Node.js version.' }
+    $npmVersion = (& npm --version).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to read the npm version.' }
+    $lockHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $lockPath).Hash
+    $dependencyFingerprint = "$lockHash|$nodeVersion|$npmVersion"
+    $installedFingerprint = if (Test-Path -LiteralPath $fingerprintPath) {
+        (Get-Content -Raw -LiteralPath $fingerprintPath).Trim()
+    }
+    else { '' }
+
+    if ((Test-Path -LiteralPath $nodeModulesPath) -and $installedFingerprint -eq $dependencyFingerprint) {
+        Write-Host 'Frontend dependency lock and toolchain are unchanged; skipping npm ci.'
+    }
+    else {
+        Write-Host 'Frontend dependency lock or toolchain changed; installing locked dependencies...'
+        Invoke-Checked -FilePath 'npm' -ArgumentList @('--prefix', 'frontend', 'ci')
+        Set-Content -NoNewline -LiteralPath $fingerprintPath -Value $dependencyFingerprint
+    }
     Write-Host 'Building the workflow-builder frontend...'
     Invoke-Checked -FilePath 'npm' -ArgumentList @('--prefix', 'frontend', 'run', 'build')
 }

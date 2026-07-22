@@ -23,6 +23,17 @@ application roles, waits for liveness, and prints service state:
 `Update` preserves the Compose `pgdata` and `miniodata` volumes. It does not roll migrations back or
 seed/replace existing records.
 
+`Update` does not reinstall dependencies on every source edit:
+
+- Frontend `npm ci` runs only when `package-lock.json`, Node, or npm changes. Otherwise the existing
+  locked `node_modules` installation is reused and only the local frontend build runs.
+- Python third-party packages live in a Docker layer keyed by `pyproject.toml`. Editing `apps/` or
+  `config/` reinstalls only the local `agenthub` package with `--no-build-isolation --no-deps`; it
+  does not resolve or download Python dependencies or build tools.
+- When dependency metadata genuinely changes or the Docker build cache was manually removed,
+  BuildKit reuses its pip download cache where available. A first build on a new machine or after
+  cache pruning still requires registry access.
+
 ## Clean start: delete all local data
 
 Use this only when the local database and object store may be discarded:

@@ -1,10 +1,11 @@
+# syntax=docker/dockerfile:1.7
+
 # Single immutable image; the container command selects the role
 # (web / worker-runtime / worker-ingestion / worker-eval / beat / migrate).
 FROM python:3.13-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
@@ -14,13 +15,21 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# The application packages are part of the local project metadata, so they must exist before
-# `pip install .`. Copy only package sources here; the bind-mounted development tree still replaces
-# them in Compose while immutable builds retain a cacheable dependency/application layer.
+# Install third-party dependencies in a layer keyed only by dependency metadata. Minimal package
+# placeholders let setuptools read the application metadata without coupling this expensive layer to
+# normal source edits. BuildKit retains downloaded wheels across legitimate dependency-layer rebuilds.
 COPY pyproject.toml ./
+RUN --mount=type=cache,target=/root/.cache/pip mkdir -p config apps \
+    && touch config/__init__.py apps/__init__.py \
+    && pip install "setuptools>=68" \
+    && pip install .
+
+# Install the real application without dependency resolution. Source-only changes now rebuild this
+# cheap layer and cannot download Python packages. The development bind mount still replaces these
+# files at runtime, while immutable builds contain the current application source.
 COPY config ./config
 COPY apps ./apps
-RUN pip install --upgrade pip && pip install .
+RUN pip install --no-build-isolation --no-deps --force-reinstall .
 
 # Runtime entry point.
 COPY manage.py ./
