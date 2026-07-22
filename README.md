@@ -25,7 +25,7 @@ py -3.13 -m venv .venv
 ./.venv/Scripts/python -m mypy .
 
 # Tam yerel ortam (Postgres+pgvector, Redis, MinIO, web + worker'lar):
-docker compose -f deploy/compose/docker-compose.yml up --build
+.\scripts\local-stack.ps1
 # Sağlık kontrolü: GET http://localhost:8000/v1/health/live  (ve .../ready)
 ```
 
@@ -123,6 +123,7 @@ authorized, non-self approval (30-minute expiry, request-checksum bound); a work
 - [Definition of Done](docs/ai/definition-of-done.md)
 - [Coding-agent handoff](docs/ai/agent-handoff.md)
 - [Local startup, health checks and manual testing](docs/manual-testing-guide.md)
+- [Single-command local stack runbook](docs/operations/local-development-stack.md)
 - [Master plan](docs/planning/master-plan.md)
 - [ADR index](docs/adr/README.md)
 - [Task documentation and templates](docs/tasks/README.md)

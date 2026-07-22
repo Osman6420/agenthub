@@ -18,6 +18,26 @@ The supported local topology is defined in
 infer service state from an old handoff or PID: query Docker Compose and the health
 endpoint each time.
 
+For the normal full-stack path, use the repository-owned lifecycle command. It builds the frontend
+and current application image, applies migrations, starts every role, waits for liveness, and prints
+Compose state. It preserves local data by default:
+
+```powershell
+.\scripts\local-stack.ps1                 # update/recreate, preserve data
+.\scripts\local-stack.ps1 -Action Fresh   # confirmed reset, delete local volumes
+.\scripts\local-stack.ps1 -Action Status
+```
+
+> **Critical data-loss warning:** `Fresh` deletes all local PostgreSQL and MinIO data after typed
+> confirmation. `Fresh -Force` is substantially more dangerous because it bypasses that confirmation
+> and performs the irreversible deletion immediately. Do not use `-Force` for normal startup or
+> troubleshooting. It is only for a positively identified disposable environment where losing every
+> local tenant, document, run, release, audit record, and stored object is explicitly intended.
+
+The complete behavior, destructive reset warning, logs, stop, and troubleshooting commands are in
+the [local development stack runbook](operations/local-development-stack.md). The raw commands below
+remain useful for inspection and specialist host-mode debugging.
+
 Choose one mode and avoid starting duplicate web or worker processes:
 
 ```powershell
@@ -25,8 +45,8 @@ Choose one mode and avoid starting duplicate web or worker processes:
 docker compose -f deploy/compose/docker-compose.yml ps
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/v1/health/live
 
-# Mode A: run the complete stack in Docker.
-docker compose -f deploy/compose/docker-compose.yml up --build
+# Mode A: run the complete stack in Docker (supported wrapper).
+.\scripts\local-stack.ps1
 
 # Mode B: run only infrastructure in Docker; use the host commands below for web/worker.
 docker compose -f deploy/compose/docker-compose.yml up -d postgres redis minio
