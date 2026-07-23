@@ -19,8 +19,8 @@ taking a scenario from draft to a served release. It is written for tenant opera
    In production this is your **LDAP / directory** identity; in local development it is a
    Django account. There is no separate builder login — the visual builder reuses this
    same session.
-3. After login you land on the **Dashboard**, which shows counts for only the
-   organizations you belong to.
+3. After login you land on the **Dashboard** for one validated organization. The last valid
+   selection is retained; otherwise the first authorized organization is selected deterministically.
 
 **What you can see and do is decided entirely on the server** from your directory group /
 role membership. The UI never grants access the backend would deny.
@@ -31,6 +31,7 @@ role membership. The UI never grants access the backend would deny.
 | --- | --- |
 | `platform_admin` (superuser) | Everything, across all organizations; create organizations |
 | `organization_admin` | Administer an org: consumers, bindings, authoring, releases |
+| `document_manager` | Manage document sets, documents, sources and indexes; no project, scenario, consumer, release or membership administration |
 | `project_owner` | Author scenarios/artifacts in the org |
 | `scenario_editor` | Author scenarios/artifacts and **workflow drafts** |
 | `release_manager` | Compile/promote/rollback releases, start/stop canaries |
@@ -45,7 +46,8 @@ additionally require the right role in the **target** organization.
 ## 2. Console surfaces
 
 The authenticated sidebar exposes five task-oriented, tenant-scoped surfaces. The organization
-selector changes presentation only; server-side membership and role checks remain authoritative.
+selector always selects exactly one workspace and changes presentation only; server-side membership
+and role checks remain authoritative. There is no cross-organization console view.
 
 | Surface | Purpose |
 | --- | --- |
@@ -54,6 +56,12 @@ selector changes presentation only; server-side membership and role checks remai
 | **Dokümanlar** | Doküman setleri; set ayrıntısında içerik, sürüm, indeks ve kaynak görevleri |
 | **İstemciler** | API istemcileri, protokol bilgileri, kimlik bilgileri ve senaryo erişim bağları |
 | **Çalıştırmalar** | Mevcut agent, workflow ve recovery yüzeylerine tenant-scoped giriş |
+| **Kullanıcılar ve yetkiler** | Organizasyon yöneticileri için tek-rol üyelik yönetimi; son organizasyon yöneticisi kaldırılamaz |
+
+Platform yöneticisi **Yeni organizasyon** ile organizasyonu ve zorunlu ilk
+`organization_admin` üyeliğini atomik oluşturur. Yeni proje, doküman seti ve istemci seçili
+organizasyondan; yeni senaryo ise açıldığı proje URL'sinden türetilir. Bu formlarda parent tenant
+seçicisi bulunmaz ve gönderilen ek parent alanları dikkate alınmaz.
 
 Senaryolar yalnız sahip oldukları proje altında listelenir. **Projeler** içinden projeyi, ardından
 senaryoyu açarak organization/project path, aliases, active release, bound document
@@ -93,7 +101,9 @@ sürümün yerini alır. Yeni taslak, son yayımlanmış set üyeliğini korur.
 
 Yükleme doğrudan serve edilmez. Operatör taslağı açıkça yayımlar, tenant'a grant edilmiş embedding
 ve isteğe bağlı OCR profilini seçerek staged build'i ingestion kuyruğuna gönderir. İndeks hazır
-olduğunda yalnız `release_manager`/`organization_admin` rolü **Aktif et** işlemini yapabilir.
+olduğunda `document_manager`, mevcut belge yazarları ve organizasyon yöneticileri belge/index
+adımlarını yürütebilir; release yaşam döngüsü ayrı `release_manager`/`organization_admin` yetkisini
+korur.
 Çalışma alanı taslak, yayımlanmış set, building/promotable indeks ve aktif indeks durumlarını ayrı
 gösterir. Manuel akış otomatik promotion yapmaz.
 

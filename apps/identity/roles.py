@@ -13,6 +13,7 @@ from django.db import models
 class Role(models.TextChoices):
     PLATFORM_ADMIN = "platform_admin", "Platform admin"
     ORGANIZATION_ADMIN = "organization_admin", "Organization admin"
+    DOCUMENT_MANAGER = "document_manager", "Document manager"
     PROJECT_OWNER = "project_owner", "Project owner"
     SCENARIO_EDITOR = "scenario_editor", "Scenario editor"
     RELEASE_MANAGER = "release_manager", "Release manager"

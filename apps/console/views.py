@@ -53,6 +53,8 @@ from apps.console.forms import (
     DocumentSetBulkUploadForm,
     DocumentSetForm,
     DocumentUploadForm,
+    MembershipCreateForm,
+    MembershipRoleForm,
     OrganizationForm,
     ProjectForm,
     RestContractForm,
@@ -85,6 +87,7 @@ from apps.identity.credentials import (
     rotate_consumer_token,
 )
 from apps.identity.models import BindingStatus, Consumer, ConsumerBinding, ConsumerStatus
+from apps.identity.roles import Role
 from apps.ingestion.confluence_services import (
     ConfluenceAuthorizationError,
     ConfluenceServiceError,
@@ -140,18 +143,22 @@ from apps.releases.compiler import (
 from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.tenancy.identifiers import IdentifierAllocationError
-from apps.tenancy.models import Organization, OrganizationStatus
+from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 from apps.tenancy.services import (
+    MembershipManagementError,
     UserLike,
+    add_organization_membership,
     admin_organization_ids,
     allowed_organization_ids,
-    author_organization_ids,
     can_admin_org,
     can_author_scenarios,
     can_create_organization,
+    can_manage_documents,
     can_manage_releases,
+    change_organization_membership,
     create_console_organization,
     is_platform_admin,
+    remove_organization_membership,
 )
 from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_approval
 from apps.tools.authz import resolve_actor_roles
@@ -373,23 +380,22 @@ def _safe_redirect_target(request: HttpRequest, *, default: str) -> str:
 @login_required
 @require_POST
 def switch_organization(request: HttpRequest) -> HttpResponse:
-    """Set or clear the session's active organization (a display filter, not authorization).
+    """Set the session's active organization (a display filter, not authorization).
 
-    Membership is the authorization boundary: a blank value selects "all organizations",
-    and any non-member id is rejected with 403 (no existence signal). The active
+    Membership is the authorization boundary: blank and non-member ids are rejected with
+    403 (no existence signal). The active
     organization only ever narrows an already-tenant-scoped list.
     """
     raw = request.POST.get("organization_id", "").strip()
     if raw == "":
-        request.session.pop(console_context.SESSION_KEY, None)
-    else:
-        try:
-            org_id = int(raw)
-        except (TypeError, ValueError) as exc:
-            raise PermissionDenied from exc
-        if scoping.scoped_organizations(request.user).filter(pk=org_id).first() is None:
-            raise PermissionDenied
-        request.session[console_context.SESSION_KEY] = org_id
+        raise PermissionDenied
+    try:
+        org_id = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise PermissionDenied from exc
+    if scoping.scoped_organizations(request.user).filter(pk=org_id).first() is None:
+        raise PermissionDenied
+    request.session[console_context.SESSION_KEY] = org_id
     return redirect(_safe_redirect_target(request, default="console:dashboard"))
 
 
@@ -741,9 +747,145 @@ def organizations(request: HttpRequest) -> HttpResponse:
     return redirect("console:dashboard")
 
 
+def _managed_active_organization(request: HttpRequest) -> Organization:
+    organization = console_context.resolve_active_organization(request)
+    if organization is None:
+        raise PermissionDenied
+    if not can_admin_org(request.user, organization.pk):
+        record_event(
+            actor_type="user",
+            actor_id=request.user.get_username(),
+            action="organization_membership.manage",
+            outcome="deny",
+            organization_id=organization.pk,
+            resource_type="organization",
+            resource_id=str(organization.pk),
+            reason="ADMIN_REQUIRED_OR_ORGANIZATION_INACTIVE",
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+        raise PermissionDenied
+    return organization
+
+
+def _audit_membership_failure(
+    request: HttpRequest, organization_id: int, membership_id: int | None, code: str
+) -> None:
+    record_event(
+        actor_type="user",
+        actor_id=request.user.get_username(),
+        action="organization_membership.manage",
+        outcome="failure",
+        organization_id=organization_id,
+        resource_type="organization_membership",
+        resource_id=str(membership_id or ""),
+        reason=code,
+        request_id=_request_id(request),
+        trace_id=_trace_id(request),
+    )
+
+
+@login_required
+@require_GET
+def organization_members(request: HttpRequest) -> HttpResponse:
+    organization = _managed_active_organization(request)
+    memberships = list(
+        OrganizationMembership.objects.filter(organization=organization)
+        .select_related("user")
+        .order_by("user__username", "pk")[:201]
+    )
+    return render(
+        request,
+        "console/organization_members.html",
+        {
+            "organization": organization,
+            "memberships": memberships[:200],
+            "memberships_limited": len(memberships) > 200,
+            "add_form": MembershipCreateForm(organization=organization),
+            "role_choices": [choice for choice in Role.choices if choice[0] != Role.PLATFORM_ADMIN],
+        },
+    )
+
+
+@login_required
+@require_POST
+def organization_member_add(request: HttpRequest) -> HttpResponse:
+    organization = _managed_active_organization(request)
+    form = MembershipCreateForm(request.POST, organization=organization)
+    if not form.is_valid():
+        messages.error(request, "Üyelik eklenemedi: kullanıcı veya rol geçersiz.")
+    else:
+        try:
+            add_organization_membership(
+                organization=organization,
+                user=form.cleaned_data["user"],
+                role=form.cleaned_data["role"],
+                actor=request.user,
+                request_id=_request_id(request),
+                trace_id=_trace_id(request),
+            )
+            messages.success(request, "Üyelik eklendi.")
+        except MembershipManagementError as exc:
+            _audit_membership_failure(request, organization.pk, None, exc.code)
+            messages.error(request, f"Üyelik eklenemedi: {exc.code}")
+    return redirect("console:organization_members")
+
+
+def _managed_membership(request: HttpRequest, membership_id: int) -> OrganizationMembership:
+    organization = _managed_active_organization(request)
+    membership = OrganizationMembership.objects.filter(
+        pk=membership_id, organization=organization
+    ).first()
+    if membership is None:
+        raise Http404
+    return membership
+
+
+@login_required
+@require_POST
+def organization_member_role(request: HttpRequest, membership_id: int) -> HttpResponse:
+    membership = _managed_membership(request, membership_id)
+    form = MembershipRoleForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Rol değiştirilemedi: rol geçersiz.")
+    else:
+        try:
+            change_organization_membership(
+                membership=membership,
+                role=form.cleaned_data["role"],
+                actor=request.user,
+                request_id=_request_id(request),
+                trace_id=_trace_id(request),
+            )
+            messages.success(request, "Rol güncellendi.")
+        except MembershipManagementError as exc:
+            _audit_membership_failure(request, membership.organization_id, membership.pk, exc.code)
+            messages.error(request, f"Rol değiştirilemedi: {exc.code}")
+    return redirect("console:organization_members")
+
+
+@login_required
+@require_POST
+def organization_member_remove(request: HttpRequest, membership_id: int) -> HttpResponse:
+    membership = _managed_membership(request, membership_id)
+    try:
+        remove_organization_membership(
+            membership=membership,
+            actor=request.user,
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+        messages.success(request, "Üyelik kaldırıldı.")
+    except MembershipManagementError as exc:
+        _audit_membership_failure(request, membership.organization_id, membership.pk, exc.code)
+        messages.error(request, f"Üyelik kaldırılamadı: {exc.code}")
+    return redirect("console:organization_members")
+
+
 @login_required
 def projects(request: HttpRequest) -> HttpResponse:
     active_org = console_context.resolve_active_organization(request)
+    can_create_project = active_org is not None and can_admin_org(request.user, active_org.pk)
     projects_qs = scoping.narrow_to_active_organization(
         scoping.scoped_projects(request.user), active_org, field="organization_id"
     )
@@ -772,7 +914,7 @@ def projects(request: HttpRequest) -> HttpResponse:
                 {
                     "url": "console:project_create",
                     "label": "Yeni proje",
-                    "disabled": admin_organization_ids(request.user) == set(),
+                    "disabled": not can_create_project,
                     "reason": _CREATE_PROJECT_REASON,
                 }
             ],
@@ -796,6 +938,7 @@ def project_detail(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     project = _scoped_project(request.user, pk, public_id)
+    request.session[console_context.SESSION_KEY] = project.organization_id
     scenarios_qs = Scenario.objects.filter(project=project).order_by("name", "slug")
     scenario_candidates = list(scenarios_qs[:201])
     return render(
@@ -914,6 +1057,7 @@ def scenario_detail(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     scenario = _scoped_scenario(request.user, pk, public_id)
+    request.session[console_context.SESSION_KEY] = scenario.organization_id
     organization_id = scenario.project.organization_id
     active_release = ScenarioRelease.objects.filter(
         scenario=scenario, status=ReleaseStatus.ACTIVE
@@ -1265,7 +1409,7 @@ def consumers(request: HttpRequest) -> HttpResponse:
     consumers_qs = scoping.narrow_to_active_organization(
         scoping.scoped_consumers(request.user), active_org, field="organization_id"
     )
-    _no_consumer_admin = admin_organization_ids(request.user) == set()
+    _no_consumer_admin = active_org is None or not can_admin_org(request.user, active_org.pk)
     rows = [
         {
             "href": reverse("console:consumer_detail_public", args=[c.public_id]),
@@ -1320,6 +1464,7 @@ def consumer_detail(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     consumer = _scoped_consumer(request.user, pk, public_id)
+    request.session[console_context.SESSION_KEY] = consumer.organization_id
     binding_candidates = list(
         consumer.bindings.select_related("scenario", "scenario__project")
         .prefetch_related("scenario__aliases")
@@ -1476,6 +1621,7 @@ def _scoped_artifact(user: UserLike, pk: int) -> ArtifactVersion:
 @login_required
 def artifact_detail(request: HttpRequest, pk: int) -> HttpResponse:
     artifact = _scoped_artifact(request.user, pk)
+    request.session[console_context.SESSION_KEY] = artifact.organization_id
     pinned_by: list[dict[str, object]] = []
     releases = scoping.scoped_releases(request.user).filter(
         scenario__project__organization_id=artifact.organization_id
@@ -1549,6 +1695,7 @@ def _scoped_release(user: UserLike, release_id: int) -> ScenarioRelease:
 @login_required
 def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
     release = _scoped_release(request.user, release_id)
+    request.session[console_context.SESSION_KEY] = release.organization_id
     manifest_json = json.dumps(release.manifest, ensure_ascii=False, indent=2, sort_keys=True)
     display_limit = int(getattr(settings, "CONSOLE_MAX_ARTIFACT_DISPLAY_CHARS", 500_000))
     manifest_too_large = len(manifest_json) > display_limit
@@ -2283,14 +2430,14 @@ def documents(request: HttpRequest) -> HttpResponse:
         }
         for s in document_sets_qs
     ]
-    can_upload = author_organization_ids(user) != set()
+    can_upload = active_org is not None and can_manage_documents(user, active_org.pk)
     return render(
         request,
         "console/documents.html",
         {
             "title": "Doküman setleri",
             "sets": sets,
-            "set_form": DocumentSetForm(user=user),
+            "set_form": DocumentSetForm(user=user, organization=active_org),
             "can_upload": can_upload,
             # Role-honest affordance (Scope D): explain the disabled create form.
             "create_reason": "" if can_upload else _AUTHOR_REASON,
@@ -2321,7 +2468,7 @@ def advanced_document_inventory(request: HttpRequest) -> HttpResponse:
             "version": document.current_version,
             "tombstoned": document.is_tombstoned,
             "pinned": document.pk in pinned_document_ids,
-            "can_write": can_author_scenarios(request.user, document.organization_id),
+            "can_write": can_manage_documents(request.user, document.organization_id),
             "can_purge": can_admin_org(request.user, document.organization_id),
         }
         for document in queryset.order_by("organization_id", "logical_id")
@@ -2342,7 +2489,7 @@ def document_upload(request: HttpRequest) -> HttpResponse:
         return redirect("console:documents")
     organization = form.cleaned_data["organization"]
     # Server-side authorization re-check (the scoped choices are UI convenience only).
-    if not can_author_scenarios(request.user, organization.id):
+    if not can_manage_documents(request.user, organization.id):
         raise PermissionDenied
     upload = form.cleaned_data["file"]
     try:
@@ -2366,7 +2513,7 @@ def document_soft_delete(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     document = _scoped_document(request.user, pk, public_id)
-    if not can_author_scenarios(request.user, document.organization_id):
+    if not can_manage_documents(request.user, document.organization_id):
         raise PermissionDenied
     document_services.soft_delete_document(document, actor=request.user.get_username())
     messages.success(request, f"Document {document.logical_id} tombstoned.")
@@ -2409,13 +2556,13 @@ def _scoped_document(user: UserLike, pk: int | None = None, public_id: object = 
 @login_required
 @require_POST
 def document_set_create(request: HttpRequest) -> HttpResponse:
-    form = DocumentSetForm(request.POST, user=request.user)
+    organization = console_context.resolve_active_organization(request)
+    if organization is None or not can_manage_documents(request.user, organization.pk):
+        raise PermissionDenied
+    form = DocumentSetForm(request.POST, user=request.user, organization=organization)
     if not form.is_valid():
         messages.error(request, "Create failed: check the form fields.")
         return redirect("console:documents")
-    organization = form.cleaned_data["organization"]
-    if not can_author_scenarios(request.user, organization.id):
-        raise PermissionDenied
     try:
         document_set = document_services.create_console_document_set(
             organization=organization,
@@ -2435,7 +2582,8 @@ def document_set_detail(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
-    can_write = can_author_scenarios(request.user, document_set.organization_id)
+    request.session[console_context.SESSION_KEY] = document_set.organization_id
+    can_write = can_manage_documents(request.user, document_set.organization_id)
     can_promote_index = can_manage_releases(request.user, document_set.organization_id)
     worker_available = compatible_worker_available()
     job_labels: dict[str, tuple[str, str]] = {
@@ -2790,6 +2938,7 @@ def document_set_document_detail(
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, public_id=public_id)
     document = _scoped_set_document(request.user, document_set, document_public_id)
+    request.session[console_context.SESSION_KEY] = document_set.organization_id
     memberships = list(
         DocumentSetMembership.objects.filter(
             organization_id=document_set.organization_id,
@@ -2800,7 +2949,7 @@ def document_set_document_detail(
         .order_by("-document_set_version__version", "-document_version__version")
     )
     versions = list(document.versions.order_by("-version"))
-    can_write = can_author_scenarios(request.user, document.organization_id)
+    can_write = can_manage_documents(request.user, document.organization_id)
     chunk_view = _document_chunk_view(document_set, versions) if can_write else None
     return render(
         request,
@@ -2867,7 +3016,7 @@ def document_set_document_replace(
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, public_id=public_id)
     document = _scoped_set_document(request.user, document_set, document_public_id)
-    if not can_author_scenarios(request.user, document.organization_id):
+    if not can_manage_documents(request.user, document.organization_id):
         raise PermissionDenied
     form = DocumentReplacementForm(request.POST, request.FILES)
     if not form.is_valid():
@@ -2917,7 +3066,7 @@ def document_set_remove_member(
     request: HttpRequest, version_pk: int, membership_pk: int
 ) -> HttpResponse:
     set_version = _scoped_set_version(request.user, version_pk)
-    if not can_author_scenarios(request.user, set_version.organization_id):
+    if not can_manage_documents(request.user, set_version.organization_id):
         raise PermissionDenied
     try:
         document_services.remove_document_from_set_draft(
@@ -2941,7 +3090,7 @@ def document_set_document_tombstone(
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, public_id=public_id)
     document = _scoped_set_document(request.user, document_set, document_public_id)
-    if not can_author_scenarios(request.user, document.organization_id):
+    if not can_manage_documents(request.user, document.organization_id):
         raise PermissionDenied
     document_services.soft_delete_document(
         document,
@@ -2967,7 +3116,7 @@ def _connector_context(
     preview_items: list[dict[str, object]] | None = None,
     preview_valid: bool = False,
 ) -> dict[str, object]:
-    can_write = can_author_scenarios(request.user, document_set.organization_id)
+    can_write = can_manage_documents(request.user, document_set.organization_id)
     can_promote = can_manage_releases(request.user, document_set.organization_id)
     sources: list[dict[str, object]] = []
     source_qs = (
@@ -3108,7 +3257,7 @@ def rest_contract_preview(
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
-    if not can_author_scenarios(request.user, document_set.organization_id):
+    if not can_manage_documents(request.user, document_set.organization_id):
         raise PermissionDenied
     form = RestContractForm(request.POST, prefix="contract")
     preview_items: list[dict[str, object]] = []
@@ -3140,7 +3289,7 @@ def rest_contract_create(
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
-    if not can_author_scenarios(request.user, document_set.organization_id):
+    if not can_manage_documents(request.user, document_set.organization_id):
         raise PermissionDenied
     form = RestContractForm(request.POST, prefix="contract")
     if form.is_valid():
@@ -3179,7 +3328,7 @@ def confluence_source_create(
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
-    if not can_author_scenarios(request.user, document_set.organization_id):
+    if not can_manage_documents(request.user, document_set.organization_id):
         raise PermissionDenied
     form = ConfluenceSourceForm(request.POST, document_set=document_set, prefix="confluence")
     if form.is_valid():
@@ -3213,7 +3362,7 @@ def rest_source_create(
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
     set_tenant_context(document_set.organization_id)
-    if not can_author_scenarios(request.user, document_set.organization_id):
+    if not can_manage_documents(request.user, document_set.organization_id):
         raise PermissionDenied
     form = RestSourceForm(request.POST, document_set=document_set, prefix="rest-source")
     if form.is_valid():
@@ -3322,7 +3471,7 @@ def connector_source_detail(request: HttpRequest, source_pk: int) -> HttpRespons
             "published_version": published_version,
             "staged_index": staged_index,
             "active_index": active_index,
-            "can_write": can_author_scenarios(request.user, source.organization_id),
+            "can_write": can_manage_documents(request.user, source.organization_id),
         },
     )
 
@@ -3334,7 +3483,7 @@ def connector_source_run(request: HttpRequest, source_pk: int) -> HttpResponse:
     document_set = source.document_set
     if document_set is None:
         raise Http404
-    if not can_author_scenarios(request.user, source.organization_id):
+    if not can_manage_documents(request.user, source.organization_id):
         raise PermissionDenied
     try:
         if source.connector_type == ConnectorType.CONFLUENCE_DC:
@@ -3376,7 +3525,7 @@ def connector_source_run(request: HttpRequest, source_pk: int) -> HttpResponse:
 def connector_schedule_configure(request: HttpRequest, source_pk: int) -> HttpResponse:
     source = _scoped_connector_source(request.user, source_pk)
     set_tenant_context(source.organization_id)
-    can_author = can_author_scenarios(request.user, source.organization_id)
+    can_author = can_manage_documents(request.user, source.organization_id)
     can_promote = can_manage_releases(request.user, source.organization_id)
     if not can_author and not can_promote:
         raise PermissionDenied
@@ -3450,7 +3599,7 @@ def document_set_bulk_upload(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
-    if not can_author_scenarios(request.user, document_set.organization_id):
+    if not can_manage_documents(request.user, document_set.organization_id):
         raise PermissionDenied
     form = DocumentSetBulkUploadForm(request.POST, request.FILES)
     if not form.is_valid():
@@ -3513,7 +3662,7 @@ def document_set_bulk_upload(
 @require_POST
 def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpResponse:
     set_version = _scoped_set_version(request.user, version_pk)
-    if not can_author_scenarios(request.user, set_version.organization_id):
+    if not can_manage_documents(request.user, set_version.organization_id):
         raise PermissionDenied
     form = DocumentSetBuildForm(request.POST, organization_id=set_version.organization_id)
     if not form.is_valid():
@@ -3583,7 +3732,7 @@ def _scoped_build_job(user: UserLike, public_id: uuid.UUID) -> StagedIndexBuildJ
 
 
 def _require_build_job_author(request: HttpRequest, job: StagedIndexBuildJob, action: str) -> None:
-    if can_author_scenarios(request.user, job.organization_id):
+    if can_manage_documents(request.user, job.organization_id):
         return
     record_event(
         actor_type="user",
@@ -3660,7 +3809,7 @@ def document_set_version_create(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
-    if not can_author_scenarios(request.user, document_set.organization_id):
+    if not can_manage_documents(request.user, document_set.organization_id):
         raise PermissionDenied
     document_services.create_document_set_version(
         document_set=document_set, actor=request.user.get_username()
@@ -3673,7 +3822,7 @@ def document_set_version_create(
 @require_POST
 def document_set_add_member(request: HttpRequest, version_pk: int) -> HttpResponse:
     set_version = _scoped_set_version(request.user, version_pk)
-    if not can_author_scenarios(request.user, set_version.organization_id):
+    if not can_manage_documents(request.user, set_version.organization_id):
         raise PermissionDenied
     document_id = request.POST.get("document_id", "")
     document = (
@@ -3712,7 +3861,7 @@ def document_set_add_member(request: HttpRequest, version_pk: int) -> HttpRespon
 @require_POST
 def document_set_version_publish(request: HttpRequest, version_pk: int) -> HttpResponse:
     set_version = _scoped_set_version(request.user, version_pk)
-    if not can_author_scenarios(request.user, set_version.organization_id):
+    if not can_manage_documents(request.user, set_version.organization_id):
         raise PermissionDenied
     try:
         document_services.publish_document_set_version(
@@ -3754,7 +3903,7 @@ def document_set_bind_scenario(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
-    if not can_author_scenarios(request.user, document_set.organization_id):
+    if not can_manage_documents(request.user, document_set.organization_id):
         raise PermissionDenied
     scenario_id = request.POST.get("scenario_id", "")
     scenario = (
@@ -3793,7 +3942,7 @@ def document_set_unbind_scenario(request: HttpRequest, binding_pk: int) -> HttpR
     ):
         raise Http404
     set_tenant_context(binding.organization_id)
-    if not can_author_scenarios(request.user, binding.organization_id):
+    if not can_manage_documents(request.user, binding.organization_id):
         raise PermissionDenied
     document_set_public_id = binding.document_set.public_id
     document_services.unbind_scenario_document_set(binding, actor=request.user.get_username())
@@ -3807,7 +3956,7 @@ def document_set_grant_consumer(
     request: HttpRequest, pk: int | None = None, public_id: object = None
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
-    if not can_author_scenarios(request.user, document_set.organization_id):
+    if not can_manage_documents(request.user, document_set.organization_id):
         raise PermissionDenied
     consumer_id = request.POST.get("consumer_id", "")
     consumer = (
@@ -3845,7 +3994,7 @@ def document_set_revoke_grant(request: HttpRequest, grant_pk: int) -> HttpRespon
     ):
         raise Http404
     set_tenant_context(grant.organization_id)
-    if not can_author_scenarios(request.user, grant.organization_id):
+    if not can_manage_documents(request.user, grant.organization_id):
         raise PermissionDenied
     document_set_public_id = grant.document_set.public_id
     document_services.revoke_document_set_grant(grant, actor=request.user.get_username())
@@ -3935,7 +4084,9 @@ def _create(
             with transaction.atomic():
                 if resource_type == "organization":
                     instance = create_console_organization(
-                        name=form.cleaned_data["name"], status=form.cleaned_data["status"]
+                        name=form.cleaned_data["name"],
+                        status=form.cleaned_data["status"],
+                        initial_admin=request.user,
                     )
                     organization_id = instance.pk
                 elif resource_type == "project":
@@ -3978,6 +4129,7 @@ def _create(
         else:
             if resource_type == "organization":
                 organization = cast(Organization, instance)
+                request.session[console_context.SESSION_KEY] = organization.pk
                 return redirect("console:organization_detail", slug=organization.slug)
             if resource_type == "project":
                 project = cast(AIProject, instance)
@@ -3995,6 +4147,16 @@ def _create(
 @login_required
 def organization_create(request: HttpRequest) -> HttpResponse:
     if not can_create_organization(request.user):
+        record_event(
+            actor_type="user",
+            actor_id=request.user.get_username(),
+            action="console.organization.create",
+            outcome="deny",
+            resource_type="organization",
+            reason="PLATFORM_ADMIN_REQUIRED",
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
         raise PermissionDenied
     return _create(
         request,
@@ -4008,50 +4170,88 @@ def organization_create(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def project_create(request: HttpRequest) -> HttpResponse:
-    return _create(
-        request,
-        form_class=ProjectForm,
-        title="Yeni proje",
-        resource_type="project",
-        permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
-        success_url="console:projects",
-    )
+    organization = console_context.resolve_active_organization(request)
+    if organization is None or not can_admin_org(request.user, organization.pk):
+        raise PermissionDenied
+    form = ProjectForm(request.POST or None, user=request.user, organization=organization)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                project = create_console_project(
+                    organization=organization,
+                    name=form.cleaned_data["name"],
+                    owner_membership=form.cleaned_data["owner_membership"],
+                    risk_level=form.cleaned_data["risk_level"],
+                    status=form.cleaned_data["status"],
+                )
+                _audit_create(request, "project", str(project.pk), organization.pk)
+        except IdentifierAllocationError:
+            form.add_error(None, IdentifierAllocationError.code)
+        except ProjectOwnerError:
+            form.add_error("owner_membership", "Seçilen proje sahibi artık atanamaz.")
+        else:
+            return redirect("console:project_detail_public", public_id=project.public_id)
+    return render(request, "console/form.html", {"title": "Yeni proje", "form": form})
 
 
 @login_required
-def scenario_create(request: HttpRequest) -> HttpResponse:
-    initial: dict[str, object] = {}
-    requested_project = request.GET.get("project", "").strip()
-    if requested_project:
+def scenario_create(
+    request: HttpRequest, project_public_id: uuid.UUID | None = None
+) -> HttpResponse:
+    if project_public_id is None:
+        requested_project = request.GET.get("project", "").strip()
+        if not requested_project:
+            raise Http404
         try:
             project_public_id = uuid.UUID(requested_project)
         except ValueError as exc:
             raise Http404 from exc
-        project = scoping.scoped_projects(request.user).filter(public_id=project_public_id).first()
-        if project is None or not can_author_scenarios(request.user, project.organization_id):
-            raise Http404
-        initial["project"] = project.pk
-    return _create(
-        request,
-        form_class=ScenarioForm,
-        title="Yeni senaryo",
-        resource_type="scenario",
-        permission=lambda org_id: org_id is not None and can_author_scenarios(request.user, org_id),
-        success_url="console:scenarios",
-        initial=initial,
-    )
+    project = scoping.scoped_projects(request.user).filter(public_id=project_public_id).first()
+    if project is None:
+        raise Http404
+    if not can_author_scenarios(request.user, project.organization_id):
+        raise PermissionDenied
+    form = ScenarioForm(request.POST or None, user=request.user, project=project)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                scenario = create_console_scenario(
+                    project=project,
+                    name=form.cleaned_data["name"],
+                    type=form.cleaned_data["type"],
+                    visibility=form.cleaned_data["visibility"],
+                    risk_level=form.cleaned_data["risk_level"],
+                    status=form.cleaned_data["status"],
+                )
+                _audit_create(request, "scenario", str(scenario.pk), project.organization_id)
+        except IdentifierAllocationError:
+            form.add_error(None, IdentifierAllocationError.code)
+        else:
+            return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    return render(request, "console/form.html", {"title": "Yeni senaryo", "form": form})
 
 
 @login_required
 def consumer_create(request: HttpRequest) -> HttpResponse:
-    return _create(
-        request,
-        form_class=ConsumerForm,
-        title="Yeni istemci",
-        resource_type="consumer",
-        permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
-        success_url="console:consumers",
-    )
+    organization = console_context.resolve_active_organization(request)
+    if organization is None or not can_admin_org(request.user, organization.pk):
+        raise PermissionDenied
+    form = ConsumerForm(request.POST or None, user=request.user, organization=organization)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                consumer = create_console_consumer(
+                    organization=organization,
+                    name=form.cleaned_data["name"],
+                    protocol=form.cleaned_data["protocol"],
+                    status=form.cleaned_data["status"],
+                )
+                _audit_create(request, "consumer", str(consumer.pk), organization.pk)
+        except ConsumerSubjectAllocationError:
+            form.add_error(None, ConsumerSubjectAllocationError.code)
+        else:
+            return redirect("console:consumer_detail_public", public_id=consumer.public_id)
+    return render(request, "console/form.html", {"title": "Yeni istemci", "form": form})
 
 
 @login_required

@@ -61,7 +61,7 @@ def test_projects_list_is_tenant_scoped(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_platform_admin_sees_all_projects(client: Client) -> None:
+def test_platform_admin_sees_projects_in_one_selected_workspace(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
     AIProject.objects.create(organization=org_a, slug="alpha", name="Alpha")
@@ -72,7 +72,11 @@ def test_platform_admin_sees_all_projects(client: Client) -> None:
 
     body = client.get(reverse("console:projects")).content.decode()
     assert "alpha" in body
-    assert "beta" in body
+    assert "beta" not in body
+    client.post(reverse("console:switch_organization"), {"organization_id": org_b.pk})
+    switched = client.get(reverse("console:projects")).content.decode()
+    assert "alpha" not in switched
+    assert "beta" in switched
 
 
 @pytest.mark.django_db
@@ -108,6 +112,7 @@ def test_org_admin_cannot_create_project_in_another_org(client: Client) -> None:
     OrganizationMembership.objects.create(
         organization=org_a, user=user, role=Role.ORGANIZATION_ADMIN
     )
+    owner_membership = OrganizationMembership.objects.get(organization=org_a, user=user)
     client.force_login(user)
 
     response = client.post(
@@ -116,14 +121,16 @@ def test_org_admin_cannot_create_project_in_another_org(client: Client) -> None:
             "organization": org_b.pk,
             "slug": "forbidden",
             "name": "Forbidden",
+            "owner_membership": owner_membership.pk,
             "risk_level": "medium",
             "status": "active",
         },
     )
 
-    assert response.status_code == 200
-    assert "Select a valid choice" in response.content.decode()
-    assert not AIProject.objects.filter(slug="forbidden").exists()
+    assert response.status_code == 302
+    project = AIProject.objects.get(name="Forbidden")
+    assert project.organization == org_a
+    assert not AIProject.objects.filter(organization=org_b, name="Forbidden").exists()
 
 
 @pytest.mark.django_db
@@ -198,9 +205,7 @@ def test_project_owner_must_belong_to_selected_organization(client: Client) -> N
     )
 
     assert response.status_code == 200
-    assert (
-        "Seçilen proje sahibi bu organizasyonun uygun bir üyesi değil" in response.content.decode()
-    )
+    assert "Select a valid choice" in response.content.decode()
     assert not AIProject.objects.filter(slug="forbidden-owner").exists()
 
 
@@ -213,7 +218,7 @@ def test_scenario_author_create_is_atomic_and_audited(client: Client) -> None:
     client.force_login(user)
 
     response = client.post(
-        reverse("console:scenario_create"),
+        reverse("console:project_scenario_create", args=[project.public_id]),
         {
             "project": project.pk,
             "slug": "faq",

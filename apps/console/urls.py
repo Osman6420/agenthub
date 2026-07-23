@@ -28,6 +28,11 @@ urlpatterns = [
     path("projects/id/<uuid:public_id>/", views.project_detail, name="project_detail_public"),
     path("scenarios/", views.scenarios, name="scenarios"),
     path("scenarios/new/", views.scenario_create, name="scenario_create"),
+    path(
+        "projects/id/<uuid:project_public_id>/scenarios/new/",
+        views.scenario_create,
+        name="project_scenario_create",
+    ),
     path("scenarios/<int:pk>/", views.scenario_detail, name="scenario_detail"),
     path("scenarios/id/<uuid:public_id>/", views.scenario_detail, name="scenario_detail_public"),
     path(
@@ -129,6 +134,18 @@ urlpatterns = [
         name="document_purge_public",
     ),
     path("document-sets/new/", views.document_set_create, name="document_set_create"),
+    path("access/members/", views.organization_members, name="organization_members"),
+    path("access/members/add/", views.organization_member_add, name="organization_member_add"),
+    path(
+        "access/members/<int:membership_id>/role/",
+        views.organization_member_role,
+        name="organization_member_role",
+    ),
+    path(
+        "access/members/<int:membership_id>/remove/",
+        views.organization_member_remove,
+        name="organization_member_remove",
+    ),
     path("document-sets/<int:pk>/", views.document_set_detail, name="document_set_detail"),
     path(
         "document-sets/id/<uuid:public_id>/",

@@ -11,6 +11,7 @@ import json
 from typing import Any, cast
 
 from django import forms
+from django.contrib.auth import get_user_model
 from django.db.models import QuerySet
 
 from apps.catalog.models import AIProject, Scenario
@@ -69,22 +70,23 @@ class ProjectForm(forms.ModelForm):
 
     class Meta:
         model = AIProject
-        fields = ["organization", "name", "owner_membership", "risk_level", "status"]
+        fields = ["name", "owner_membership", "risk_level", "status"]
         labels = {"name": "Proje adı"}
         help_texts = {"name": "Kalıcı proje kimliği otomatik oluşturulur."}
 
-    def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, user: Any = None, organization: Organization | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
-        ids = admin_organization_ids(user)
-        cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
-            Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
-        )
         memberships = OrganizationMembership.objects.select_related("organization", "user").filter(
             organization__status=OrganizationStatus.ACTIVE,
             role__in=[Role.ORGANIZATION_ADMIN, Role.PROJECT_OWNER],
         )
-        if ids is not None:
-            memberships = memberships.filter(organization_id__in=ids)
+        memberships = (
+            memberships.filter(organization=organization)
+            if organization is not None
+            else memberships.none()
+        )
         cast(
             forms.ModelChoiceField, self.fields["owner_membership"]
         ).queryset = memberships.order_by("organization__name", "user__username")
@@ -93,12 +95,10 @@ class ProjectForm(forms.ModelForm):
         cleaned_data = super().clean()
         if cleaned_data is None:
             return None
-        organization = cleaned_data.get("organization")
         owner_membership = cleaned_data.get("owner_membership")
-        if (
-            organization
-            and owner_membership
-            and owner_membership.organization_id != organization.pk
+        owner_queryset = cast(forms.ModelChoiceField, self.fields["owner_membership"]).queryset
+        if owner_membership and (
+            owner_queryset is None or not owner_queryset.filter(pk=owner_membership.pk).exists()
         ):
             self.add_error(
                 "owner_membership", "Seçilen proje sahibi bu organizasyonun uygun bir üyesi değil."
@@ -109,38 +109,70 @@ class ProjectForm(forms.ModelForm):
 class ScenarioForm(forms.ModelForm):
     class Meta:
         model = Scenario
-        fields = ["project", "name", "type", "visibility", "risk_level", "status"]
+        fields = ["name", "type", "visibility", "risk_level", "status"]
         labels = {"name": "Senaryo adı"}
         help_texts = {"name": "Kalıcı kimlik ve ilk API alias'ı otomatik oluşturulur."}
 
-    def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        user: Any = None,
+        project: AIProject | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
-        ids = author_organization_ids(user)
-        cast(forms.ModelChoiceField, self.fields["project"]).queryset = _scope(
-            AIProject.objects.select_related("organization").filter(
-                organization__status=OrganizationStatus.ACTIVE
-            ),
-            ids,
-            "organization_id",
-        )
 
 
 class ConsumerForm(forms.ModelForm):
     class Meta:
         model = Consumer
-        fields = ["organization", "name", "protocol", "status"]
+        fields = ["name", "protocol", "status"]
         labels = {"name": "İstemci uygulama adı", "protocol": "Protokol"}
         help_texts = {
             "name": "Bearer kimlik konusu sistem tarafından güvenli ve kalıcı olarak oluşturulur.",
             "protocol": "Kimlik bilgisi, istemci oluşturulduktan sonra ayrı olarak üretilir.",
         }
 
-    def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, user: Any = None, organization: Organization | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
-        ids = admin_organization_ids(user)
-        cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
-            Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
-        )
+
+
+class MembershipCreateForm(forms.Form):
+    user = forms.CharField(
+        max_length=150,
+        label="Kullanıcı adı",
+        help_text="Mevcut ve etkin directory kullanıcısının tam kullanıcı adını girin.",
+        strip=True,
+    )
+    role = forms.ChoiceField(
+        choices=[choice for choice in Role.choices if choice[0] != Role.PLATFORM_ADMIN],
+        label="Rol",
+    )
+
+    def __init__(self, *args: Any, organization: Organization, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.organization = organization
+
+    def clean_user(self) -> Any:
+        username = self.cleaned_data["user"]
+        user = get_user_model().objects.filter(username=username, is_active=True).first()
+        if (
+            user is None
+            or OrganizationMembership.objects.filter(
+                organization=self.organization, user=user
+            ).exists()
+        ):
+            raise forms.ValidationError("Kullanıcı eklenemiyor.")
+        return user
+
+
+class MembershipRoleForm(forms.Form):
+    role = forms.ChoiceField(
+        choices=[choice for choice in Role.choices if choice[0] != Role.PLATFORM_ADMIN],
+        label="Rol",
+    )
 
 
 class ConsumerTokenIssueForm(forms.Form):
@@ -210,19 +242,16 @@ class DocumentUploadForm(forms.Form):
 class DocumentSetForm(forms.Form):
     """Create a document set in an author-scoped organization (P8.2)."""
 
-    organization = forms.ModelChoiceField(queryset=Organization.objects.none())
     name = forms.CharField(
         max_length=200,
         label="Doküman seti adı",
         help_text="Kalıcı doküman seti kimliği otomatik oluşturulur.",
     )
 
-    def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, user: Any = None, organization: Organization | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
-        ids = author_organization_ids(user)
-        cast(forms.ModelChoiceField, self.fields["organization"]).queryset = _scope(
-            Organization.objects.filter(status=OrganizationStatus.ACTIVE), ids
-        )
 
 
 class MultipleFileInput(forms.ClearableFileInput):

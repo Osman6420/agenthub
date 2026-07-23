@@ -13,8 +13,9 @@
   <div>
     <p class="eyebrow">{% if active_organization %}{{ active_organization.name }}{% else %}Organizasyonlar{% endif %}</p>
     <h1>Ana Sayfa</h1>
-    <p class="muted">{% if active_organization %}Kapsam: <strong>{{ active_organization.name }}</strong>. Yalnız bu organizasyonun durumu gösteriliyor.{% else %}Kapsam: erişebildiğiniz tüm organizasyonlar.{% endif %}</p>
+    <p class="muted">{% if active_organization %}Kapsam: <strong>{{ active_organization.name }}</strong>. Yalnız bu organizasyonun durumu gösteriliyor.{% else %}Erişebileceğiniz bir organizasyon bulunmuyor.{% endif %}</p>
   </div>
+  {% if is_platform_admin %}<a class="button primary" href="{% url 'console:organization_create' %}">Yeni organizasyon</a>{% endif %}
 </div>
 
 <section class="card">

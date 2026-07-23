@@ -126,7 +126,7 @@ def test_non_author_cannot_create_set(client: Client) -> None:
         reverse("console:document_set_create"),
         {"organization": org.id, "logical_id": "kb", "name": "KB"},
     )
-    assert response.status_code == 302  # form invalid (org outside author scope)
+    assert response.status_code == 403
     assert not DocumentSet.objects.filter(organization=org, logical_id="kb").exists()
 
 

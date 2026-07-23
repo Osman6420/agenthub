@@ -28,7 +28,7 @@ from apps.ingestion.models import (
 )
 from apps.ingestion.vector_store import set_tenant_context
 from apps.tenancy.models import Organization
-from apps.tenancy.services import UserLike, can_author_scenarios, is_platform_admin
+from apps.tenancy.services import UserLike, can_manage_documents, is_platform_admin
 from apps.tools.egress import EgressDenied, validate_private_network_policy
 
 
@@ -190,7 +190,7 @@ def create_confluence_source(
     connector_config: dict[str, Any],
 ) -> Source:
     actor_id = str(getattr(actor, "pk", "anonymous"))
-    if not can_author_scenarios(actor, organization.id):
+    if not can_manage_documents(actor, organization.id):
         record_event(
             actor_type=ActorType.USER,
             actor_id=actor_id,
@@ -266,7 +266,7 @@ def create_confluence_sync_run(
     actor_id = str(getattr(actor, "pk", "anonymous"))
     if source.connector_type != ConnectorType.CONFLUENCE_DC or not source.confluence_profile_id:
         raise ConfluenceServiceError("CONFLUENCE_SOURCE_REQUIRED")
-    if not can_author_scenarios(actor, source.organization_id):
+    if not can_manage_documents(actor, source.organization_id):
         record_event(
             actor_type=ActorType.USER,
             actor_id=actor_id,

@@ -166,9 +166,8 @@
         {% if workspace_multi_org %}
         <div class="nav-label org-switch-label">Aktif organizasyon</div>
         <details class="org-menu">
-          <summary>{% if active_organization %}{{ active_organization.name }}{% else %}Tüm organizasyonlar{% endif %}</summary>
+          <summary>{{ active_organization.name }}</summary>
           <div class="org-menu-options">
-            <form method="post" action="{% url 'console:switch_organization' %}">{% csrf_token %}<button class="org-menu-item" type="submit" name="organization_id" value=""{% if not active_organization %} aria-current="true"{% endif %}>Tüm organizasyonlar</button></form>
             {% for org in available_organizations %}<form method="post" action="{% url 'console:switch_organization' %}">{% csrf_token %}<button class="org-menu-item" type="submit" name="organization_id" value="{{ org.id }}"{% if active_organization and active_organization.id == org.id %} aria-current="true"{% endif %}>{{ org.name }}</button></form>{% endfor %}
           </div>
         </details>
@@ -184,10 +183,11 @@
         <a href="{% url 'console:documents' %}">Dokümanlar</a>
         <a href="{% url 'console:consumers' %}">İstemciler</a>
         <a href="{% url 'console:runs' %}">Çalıştırmalar</a>
+        {% if can_manage_organization_members %}<a href="{% url 'console:organization_members' %}">Kullanıcılar ve yetkiler</a>{% endif %}
       </nav>
     </aside>
     <div class="workspace">
-      <header class="topbar"><div><span class="topbar-title">Operasyon konsolu</span><span class="topbar-scope muted"> · {% if active_organization %}{{ active_organization.name }}{% else %}Tüm organizasyonlar{% endif %}</span></div><div class="topbar-user"><strong>{{ user.get_username }}</strong><form method="post" action="{% url 'console:logout' %}">{% csrf_token %}<button class="link" type="submit">Çıkış yap</button></form></div></header>
+      <header class="topbar"><div><span class="topbar-title">Operasyon konsolu</span>{% if active_organization %}<span class="topbar-scope muted"> · {{ active_organization.name }}</span>{% endif %}</div><div class="topbar-user"><strong>{{ user.get_username }}</strong><form method="post" action="{% url 'console:logout' %}">{% csrf_token %}<button class="link" type="submit">Çıkış yap</button></form></div></header>
       <main id="main-content" tabindex="-1">
   {% else %}
       <main id="main-content" tabindex="-1">

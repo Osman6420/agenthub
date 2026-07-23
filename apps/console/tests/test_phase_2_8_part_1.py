@@ -285,13 +285,13 @@ def test_project_is_scenario_entry_point_with_accessible_tabs(client: Client) ->
     assert 'role="tablist"' in body
     assert 'aria-current="page">Senaryolar' in body
     assert reverse("console:scenario_detail_public", args=[scenario.public_id]) in body
-    create_url = f"{reverse('console:scenario_create')}?project={project.public_id}"
+    create_url = reverse("console:project_scenario_create", args=[project.public_id])
     assert create_url in body
     assert "Bu projede senaryo yok" not in body
 
     create_response = client.get(create_url)
     assert create_response.status_code == 200
-    assert create_response.context["form"].initial["project"] == project.pk
+    assert "project" not in create_response.context["form"].fields
 
 
 def test_scenario_breadcrumb_and_task_tabs_preserve_project_context(client: Client) -> None:

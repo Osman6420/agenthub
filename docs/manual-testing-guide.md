@@ -198,6 +198,11 @@ Open `http://127.0.0.1:8000/console/`.
 | 1.13 | As `editor` or `auditor`, request `/console/documents/advanced/` | HTTP 403; standalone storage inventory is not disclosed |
 | 1.16 | Request legacy GET lists `/console/organizations/`, `/console/scenarios/`, `/console/artifacts/`, `/console/releases/` | Internal redirect reaches Ana Sayfa or Projeler; POST to a removed catalogue is not redirected |
 | 1.17 | At 390, 900 and 1440 px, scroll a long scenario/document page and use keyboard-only navigation | Sidebar stays dark/readable, tables scroll, focus remains visible and task tabs reach real sections |
+| 1.18 | Log in as a multi-org user with no saved selection, then forge/revoke the saved organization | Exactly one deterministic authorized workspace remains active; “Tüm organizasyonlar” never appears |
+| 1.19 | As platform admin choose **Yeni organizasyon** | Organization and initial admin are created together and the new workspace becomes active |
+| 1.20 | As organization admin open **Kullanıcılar ve yetkiler**; add, change and remove a directory user | Only the active organization changes; `platform_admin` is absent; last organization admin removal/change is rejected |
+| 1.21 | Repeat document-set/source/index actions as `document_manager`, then open project/scenario/consumer/release/member mutations | Document-plane actions are available; every non-document mutation is denied |
+| 1.22 | Open New Project, New Consumer and New Document Set; open New Scenario from a project | No organization/project selector is present; forged parent POST fields cannot change the trusted context |
 
 Tip: `admin` is a superuser (sees everything); the others are role-scoped to `demo`.
 

@@ -39,7 +39,7 @@ from apps.tenancy.models import Organization
 from apps.tenancy.services import (
     allowed_organization_ids,
     can_admin_org,
-    can_author_scenarios,
+    can_manage_documents,
 )
 
 
@@ -104,7 +104,7 @@ def _resolve_org_in_scope(request: HttpRequest, ref: Any) -> Organization:
 
 
 def _require_author(request: HttpRequest, organization_id: int) -> None:
-    if not can_author_scenarios(request.user, organization_id):
+    if not can_manage_documents(request.user, organization_id):
         raise PermissionDenied
 
 
@@ -158,7 +158,7 @@ def _serialize_document(document: Document, *, request: HttpRequest, detail: boo
         "lifecycle_state": document.lifecycle_state,
         "deleted_at": document.deleted_at.isoformat() if document.deleted_at else None,
         "updated_at": document.updated_at.isoformat(),
-        "can_write": can_author_scenarios(request.user, document.organization_id),
+        "can_write": can_manage_documents(request.user, document.organization_id),
         "can_purge": can_admin_org(request.user, document.organization_id),
     }
     if detail:
@@ -189,7 +189,7 @@ def _serialize_set(document_set: DocumentSet, *, request: HttpRequest) -> dict:
             {"id": v.pk, "version": v.version, "status": v.status}
             for v in document_set.versions.all().order_by("version")
         ],
-        "can_write": can_author_scenarios(request.user, document_set.organization_id),
+        "can_write": can_manage_documents(request.user, document_set.organization_id),
     }
 
 

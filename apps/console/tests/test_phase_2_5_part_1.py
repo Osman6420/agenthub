@@ -58,8 +58,8 @@ def test_dashboard_lists_authorized_active_and_disabled_organizations(client: Cl
     assert "Aktif Kurum" in body
     assert "Pasif Kurum" in body
     assert "Yabancı Kurum" not in body
-    assert reverse("console:organization_detail", args=[active.slug]) in body
-    assert reverse("console:organization_detail", args=[disabled.slug]) in body
+    assert f'value="{active.id}"' in body
+    assert f'value="{disabled.id}"' in body
     assert foreign.slug not in body
 
 
@@ -169,7 +169,7 @@ def test_platform_admin_cannot_mutate_disabled_organization() -> None:
 
 
 def test_disabled_organization_is_not_offered_by_creation_forms(client: Client) -> None:
-    active = Organization.objects.create(slug="aktif", name="Aktif")
+    Organization.objects.create(slug="aktif", name="Aktif")
     disabled = Organization.objects.create(
         slug="pasif", name="Pasif", status=OrganizationStatus.DISABLED
     )
@@ -180,14 +180,9 @@ def test_disabled_organization_is_not_offered_by_creation_forms(client: Client) 
     body = response.content.decode()
 
     assert response.status_code == 200
-    # The workspace switcher (base chrome) legitimately lists every visible organization,
-    # including disabled ones which stay viewable read-only. The invariant here is narrower:
-    # the project-creation *form* must not offer a disabled org as a target. Assert against
-    # the form's ``organization`` <select> region, not the whole page.
-    select_start = body.index('name="organization"')
-    select_region = body[select_start : body.index("</select>", select_start)]
-    assert f'value="{active.id}"' in select_region
-    assert f'value="{disabled.id}"' not in select_region
+    assert 'name="organization"' not in body
+    client.post(reverse("console:switch_organization"), {"organization_id": disabled.pk})
+    assert client.get(reverse("console:project_create")).status_code == 403
 
 
 def test_detail_pages_are_cross_tenant_safe_and_keep_canonical_urls(client: Client) -> None:

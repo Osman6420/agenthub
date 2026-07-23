@@ -75,7 +75,7 @@ def test_switch_organization_rejects_non_member(client: Client) -> None:
     assert client.session.get(SESSION_KEY) is None
 
 
-def test_switch_organization_sets_and_clears_active(client: Client) -> None:
+def test_switch_organization_sets_active_and_rejects_clearing(client: Client) -> None:
     own = _org("own")
     other = _org("other")
     client.force_login(_member("u", own, Role.AUDITOR, other))
@@ -83,8 +83,8 @@ def test_switch_organization_sets_and_clears_active(client: Client) -> None:
     assert set_response.status_code == 302
     assert client.session.get(SESSION_KEY) == own.id
     clear_response = client.post(reverse("console:switch_organization"), {"organization_id": ""})
-    assert clear_response.status_code == 302
-    assert client.session.get(SESSION_KEY) is None
+    assert clear_response.status_code == 403
+    assert client.session.get(SESSION_KEY) == own.id
 
 
 def test_switch_organization_requires_post(client: Client) -> None:
@@ -121,12 +121,13 @@ def test_active_org_narrows_project_list_and_scenarios_live_under_project(client
     assert "P alpha" in scoped
     assert "P beta" not in scoped
 
-    # Clearing the active org restores the full, tenant-scoped view.
+    # Missing state deterministically restores one authorized workspace, never a
+    # cross-organization view.
     session[SESSION_KEY] = None
     session.save()
-    everything = client.get(reverse("console:projects")).content.decode()
-    assert "P alpha" in everything
-    assert "P beta" in everything
+    defaulted = client.get(reverse("console:projects")).content.decode()
+    assert "P alpha" in defaulted
+    assert "P beta" not in defaulted
     assert client.get(reverse("console:scenarios")).headers["Location"] == reverse(
         "console:projects"
     )
@@ -141,17 +142,17 @@ def test_single_org_user_gets_static_label_not_dropdown(client: Client) -> None:
     assert client.session.get(SESSION_KEY) == org.id
 
 
-def test_platform_admin_with_one_org_defaults_to_all_organizations(client: Client) -> None:
+def test_platform_admin_with_one_org_defaults_to_that_workspace(client: Client) -> None:
     User = get_user_model()
     admin = User.objects.create_superuser(username="platform-one", password=None)
-    Organization.objects.create(slug="only-platform-org", name="Only platform org")
+    organization = Organization.objects.create(slug="only-platform-org", name="Only platform org")
     client.force_login(admin)
 
     response = client.get(reverse("console:dashboard"))
 
     assert response.status_code == 200
-    assert client.session.get(SESSION_KEY) is None
-    assert "Tüm organizasyonlar" in response.content.decode()
+    assert client.session.get(SESSION_KEY) == organization.pk
+    assert "Tüm organizasyonlar" not in response.content.decode()
 
 
 def test_multi_org_user_gets_server_post_organization_menu(client: Client) -> None:
@@ -160,7 +161,7 @@ def test_multi_org_user_gets_server_post_organization_menu(client: Client) -> No
     client.force_login(_member("u", org_a, Role.AUDITOR, org_b))
     body = client.get(reverse("console:dashboard")).content.decode()
     assert '<details class="org-menu">' in body
-    assert body.count('name="organization_id"') == 3
+    assert body.count('name="organization_id"') == 2
 
 
 # ----------------------------------------------------------------------------- C

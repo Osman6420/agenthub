@@ -5,7 +5,7 @@ derived server-side from :func:`apps.tenancy.services.allowed_organization_ids`;
 active organization merely narrows an already-tenant-scoped list to one organization for
 readability. It never widens access, and it is re-validated against current membership on
 **every** request — a stale, revoked, or forged id is cleared and treated as
-"all organizations".
+the deterministic first authorized organization.
 """
 
 from __future__ import annotations
@@ -14,10 +14,9 @@ from django.http import HttpRequest
 
 from apps.console import scoping
 from apps.tenancy.models import Organization
-from apps.tenancy.services import is_platform_admin
+from apps.tenancy.services import can_admin_org
 
-# Session key holding the operator's chosen active organization (an integer pk) or absent
-# for "all organizations".
+# Session key holding the operator's chosen active organization (an integer pk).
 SESSION_KEY = "active_organization_id"
 
 # Upper bound on how many organizations the selector renders; a platform admin could be a
@@ -27,10 +26,10 @@ _MAX_SELECTOR_ORGS = 200
 
 
 def resolve_active_organization(request: HttpRequest) -> Organization | None:
-    """Return the validated active organization, or ``None`` for "all organizations".
+    """Return the validated active organization, or ``None`` when none is accessible.
 
     The session id is confirmed against current membership every request; an invalid or
-    no-longer-permitted id is cleared from the session and treated as "all organizations".
+    no-longer-permitted id is replaced with the first authorized organization.
     Never trusts the session value for authorization — it can only *narrow* what the user
     is already allowed to see.
     """
@@ -38,27 +37,26 @@ def resolve_active_organization(request: HttpRequest) -> Organization | None:
     if user is None or not getattr(user, "is_authenticated", False):
         return None
     raw = request.session.get(SESSION_KEY)
+    fallback = scoping.scoped_organizations(user).order_by("name", "slug", "pk").first()
     if raw is None:
-        # A non-platform user with exactly one visible organization has no meaningful
-        # "all organizations" choice. Persist the deterministic default so subsequent
-        # requests observe the same explicit workspace. Platform admins always default
-        # to the cross-organization view, even in a one-organization installation.
-        if not is_platform_admin(user):
-            visible = list(scoping.scoped_organizations(user).order_by("pk")[:2])
-            if len(visible) == 1:
-                request.session[SESSION_KEY] = visible[0].pk
-                return visible[0]
-        return None
+        if fallback is not None:
+            request.session[SESSION_KEY] = fallback.pk
+        return fallback
     try:
         org_id = int(raw)
     except (TypeError, ValueError):
-        request.session.pop(SESSION_KEY, None)
-        return resolve_active_organization(request)
+        if fallback is None:
+            request.session.pop(SESSION_KEY, None)
+            return None
+        request.session[SESSION_KEY] = fallback.pk
+        return fallback
     organization = scoping.scoped_organizations(user).filter(pk=org_id).first()
     if organization is None:
-        # Membership lost or forged id: clear and apply the normal deterministic default.
-        request.session.pop(SESSION_KEY, None)
-        return resolve_active_organization(request)
+        if fallback is None:
+            request.session.pop(SESSION_KEY, None)
+            return None
+        request.session[SESSION_KEY] = fallback.pk
+        return fallback
     return organization
 
 
@@ -82,7 +80,7 @@ def active_workspace(request: HttpRequest) -> dict[str, object]:
         "active_organization": active,
         "available_organizations": available,
         "available_organizations_limited": available_limited,
-        # Offer the "all organizations" option (and a real dropdown) only when the user can
-        # actually see more than one organization; single-org users get a static label.
-        "workspace_multi_org": len(available) > 1 or is_platform_admin(user),
+        # Multiple organizations use a dropdown; single-org users get a static label.
+        "workspace_multi_org": len(available) > 1,
+        "can_manage_organization_members": (active is not None and can_admin_org(user, active.pk)),
     }

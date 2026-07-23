@@ -88,6 +88,14 @@ field**:
 - **Write gates** are role-based in the *target* organization: e.g. authoring requires
   `can_author_scenarios`; releases require `can_manage_releases`. Platform admin (superuser)
   may cross org boundaries.
+- **Workspace state grants nothing:** the console always presents one revalidated organization,
+  and an authorized object deep link changes that presentation state only after exact-object
+  authorization. Forged, stale and revoked session values fall back without widening scope.
+- **Document-only least privilege:** `can_manage_documents` adds `document_manager` to existing
+  document authority without granting project, scenario, consumer, release or membership actions.
+- **Membership invariants:** organization/member changes are row-locked, cannot assign
+  `platform_admin`, cannot remove/change the last organization admin, and roll back if required
+  audit persistence fails.
 - **Field-level** exposure is curated: responses project only safe fields (for example the
   builder's node-schema returns tool binding **role names**, never endpoints or secrets).
 

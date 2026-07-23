@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [Phase 2.8 Part 2 — organization and access management (completed 2026-07-22)](phase-2-8-part-2-organization-access-management-2026-07-22/plan.md);
+  [verification](phase-2-8-part-2-organization-access-management-2026-07-22/verification.md).
+
 - [Phase 2.8 Part 1 — console information architecture (completed 2026-07-22)](phase-2-8-part-1-console-information-architecture-2026-07-22/plan.md);
   [verification](phase-2-8-part-1-console-information-architecture-2026-07-22/verification.md).
 
