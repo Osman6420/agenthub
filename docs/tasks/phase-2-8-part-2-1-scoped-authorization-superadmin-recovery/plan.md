@@ -13,7 +13,11 @@ Identity, tenancy, catalog, documents, releases, runtime control, console and ob
 
 ## Status
 
-**Planned.** This plan supersedes the intended long-term use of organization-wide
+**In progress (implementation started 2026-07-23).** The owner approved every decision in the
+approval gate and explicitly approved the authorization/additive-migration implementation on
+2026-07-23. The first reviewable slice adds ADR-0013, the central capability decision contract and
+the single daily Global Administrator identity without switching existing endpoints. This plan
+supersedes the intended long-term use of organization-wide
 `scenario_editor`, `document_manager`, `release_manager` and unrestricted Django-superuser bypass.
 Current behavior remains authoritative until an implementing task is approved, migrated and
 verified.
@@ -353,22 +357,31 @@ owner's current product decision:
 
 | Decision | Status | Product decision / recommended default |
 | --- | --- | --- |
-| Who may create scenarios? | Open | Global/Organization/assigned Project Admin; Scenario Editor edits only assigned scenarios |
-| May Project Admin assign Scenario Editors? | Open | Yes, only inside an assigned project; cannot grant Project Admin or document roles |
+| Who may create scenarios? | **Confirmed 2026-07-23** | Global/Organization/assigned Project Admin; Scenario Editor edits only assigned scenarios |
+| May Project Admin assign Scenario Editors? | **Confirmed 2026-07-23** | Yes, only inside an assigned project; cannot grant Project Admin or document roles |
 | Scenario Editor operational authority | **Confirmed** | None: cannot cancel runs, pause or resume |
 | Project Admin operational authority | **Confirmed** | None: cannot cancel runs, pause or resume |
 | What safe document-set metadata may admins/editors see? | **Confirmed** | Set/document/source display labels, public IDs, health, manager and grant state may be shown; chunk text/context still requires content authority |
 | Retrieval development and diagnostics exposure | **Confirmed** | Scenario Editor sees document/source labels, IDs and retrieval metrics but no chunk text/context; content-authorized users see bounded chunk context; only content-authorized editors may freely prompt-test protected data |
-| Who approves scenario-to-set retrieve grants? | Open | An assigned Document Set Manager only |
+| Who approves scenario-to-set retrieve grants? | **Confirmed 2026-07-23** | An assigned Document Set Manager only |
 | Application elevation model | **Confirmed** | None: no temporary-access table, approval flow, expiry or per-action elevation code |
-| Superadmin authentication | Open | Separate non-daily identity with phishing-resistant MFA and guarded credential storage |
-| Superadmin alert recipients and evidence retention | Open | Immediate security/operator alert and retention under the security-audit policy |
+| Superadmin authentication | **Confirmed 2026-07-23** | Separate non-daily identity with phishing-resistant MFA and guarded credential storage |
+| Superadmin alert recipients and evidence retention | **Confirmed 2026-07-23** | Immediate security/operator alert and retention under the security-audit policy |
 | Legacy role/data handling | **Confirmed** | Existing assignments/users are demo-only and may be reset after environment verification; no production-style role backfill |
-| Revocation effect on released scenarios | Open | Immediate denial of new retrieval; immutable release stays recorded but cannot bypass live grant |
+| Revocation effect on released scenarios | **Confirmed 2026-07-23** | Immediate denial of new retrieval; immutable release stays recorded but cannot bypass live grant |
 
 These product decisions do not authorize implementation changes by themselves. Authentication,
 authorization and migration work still requires the explicit implementation approval mandated by
-the repository change policy.
+the repository change policy. That approval was given by the owner on 2026-07-23.
+
+## Implementation slices
+
+- [x] Slice 1: ADR-0013, single daily Global Administrator record, central capability vocabulary
+  and deny-by-default decisions for Global/Organization Admin and superadmin recovery.
+- [x] Slice 2: project/scenario/document-set assignments and audited mutation services.
+- [x] Slice 3: scenario-to-document-set request/grant/revocation model and live enforcement.
+- [ ] Slice 4: release and existing endpoint migration away from broad legacy roles.
+- [ ] Slice 5: responsive access UI, superadmin alerting/runbook and final compatibility cleanup.
 
 ## Testing strategy
 

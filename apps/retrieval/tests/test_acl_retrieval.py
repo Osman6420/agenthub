@@ -12,10 +12,18 @@ from collections.abc import Iterator
 import pytest
 from django.contrib.auth import get_user_model
 from django.db import connection
+from django.utils import timezone
 
+from apps.catalog.models import AIProject, Scenario, ScenarioType
 from apps.documents import services as doc_services
 from apps.documents import storage
-from apps.documents.models import Document, DocumentSetVersion, GrantPrincipalType
+from apps.documents.models import (
+    Document,
+    DocumentSetVersion,
+    GrantPrincipalType,
+    ScenarioDocumentSetGrant,
+    ScenarioDocumentSetGrantStatus,
+)
 from apps.identity.models import Consumer, ConsumerProtocol
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
 from apps.ingestion.models import EmbeddingProfile
@@ -111,14 +119,27 @@ def _retrieve(
     dsv_ids: list[int],
     query: str = "alpha policy",
     consumer: Consumer | None = None,
+    scenario: Scenario | None = None,
 ) -> list:
     return PgvectorRetrievalProvider().retrieve(
         query=query,
         profile={"top_k": 5},
         organization_id=org.id,
         index_versions=[],
+        scenario_id=scenario.pk if scenario else None,
         document_set_version_ids=dsv_ids,
         consumer_id=consumer.id if consumer else None,
+    )
+
+
+def _scenario(org: Organization) -> Scenario:
+    project = AIProject.objects.create(organization=org, slug="acl", name="ACL")
+    return Scenario.objects.create(
+        organization=org,
+        project=project,
+        slug="acl",
+        name="ACL",
+        type=ScenarioType.RAG,
     )
 
 
@@ -132,6 +153,33 @@ def test_end_to_end_returns_bound_documents() -> None:
     hits = _retrieve(org, [dsv.id], query="alpha policy text", consumer=consumer)
     assert hits and any("alpha" in h.text for h in hits)
     assert all(h.source_id == f"docset-version:{dsv.id}" for h in hits)
+
+
+def test_live_scenario_grant_revocation_blocks_pinned_release_retrieval() -> None:
+    org = Organization.objects.create(slug="live-grant", name="Live Grant")
+    profile = _profile(org)
+    dsv = _published_set(org, "kb", ["alpha policy text"])
+    _build_and_promote(org, dsv, profile)
+    consumer = _consumer(org)
+    _grant(consumer, dsv)
+    scenario = _scenario(org)
+    manager = get_user_model().objects.create_user(username="live-manager", password=None)
+    grant = ScenarioDocumentSetGrant.objects.create(
+        organization=org,
+        scenario=scenario,
+        document_set=dsv.document_set,
+        granted_by=manager,
+        granted_at=timezone.now(),
+    )
+
+    assert _retrieve(org, [dsv.id], consumer=consumer, scenario=scenario)
+
+    grant.status = ScenarioDocumentSetGrantStatus.REVOKED
+    grant.revoked_by = manager
+    grant.revoked_at = timezone.now()
+    grant.save()
+
+    assert _retrieve(org, [dsv.id], consumer=consumer, scenario=scenario) == []
 
 
 def test_deny_by_default_when_not_promoted() -> None:

@@ -24,6 +24,7 @@ class RetrievalProvider(Protocol):
         profile: dict[str, Any],
         organization_id: int,
         index_versions: list[int],
+        scenario_id: int | None = None,
         document_set_version_ids: list[int] | None = None,
         consumer_id: int | None = None,
     ) -> list[RetrievedChunk]: ...
@@ -42,6 +43,7 @@ class StaticRetrievalProvider:
         profile: dict[str, Any],
         organization_id: int,
         index_versions: list[int],
+        scenario_id: int | None = None,
         document_set_version_ids: list[int] | None = None,
         consumer_id: int | None = None,
     ) -> list[RetrievedChunk]:
@@ -69,6 +71,7 @@ class DemoRetrievalProvider:
         profile: dict[str, Any],
         organization_id: int,
         index_versions: list[int],
+        scenario_id: int | None = None,
         document_set_version_ids: list[int] | None = None,
         consumer_id: int | None = None,
     ) -> list[RetrievedChunk]:
@@ -97,6 +100,7 @@ class PgvectorRetrievalProvider:
         profile: dict[str, Any],
         organization_id: int,
         index_versions: list[int],
+        scenario_id: int | None = None,
         document_set_version_ids: list[int] | None = None,
         consumer_id: int | None = None,
     ) -> list[RetrievedChunk]:
@@ -108,6 +112,7 @@ class PgvectorRetrievalProvider:
                 query=query,
                 profile=profile,
                 organization_id=organization_id,
+                scenario_id=scenario_id,
                 document_set_version_ids=document_set_version_ids,
                 consumer_id=consumer_id,
             )
@@ -151,6 +156,7 @@ class PgvectorRetrievalProvider:
         query: str,
         profile: dict[str, Any],
         organization_id: int,
+        scenario_id: int | None,
         document_set_version_ids: list[int],
         consumer_id: int | None,
     ) -> list[RetrievedChunk]:
@@ -162,13 +168,19 @@ class PgvectorRetrievalProvider:
         """
         from django.db import connection
 
-        if connection.vendor != "postgresql" or not document_set_version_ids or consumer_id is None:
+        if (
+            connection.vendor != "postgresql"
+            or not document_set_version_ids
+            or consumer_id is None
+        ):
             return []
         from apps.documents.models import (
             DocumentSetGrant,
             DocumentSetVersion,
             DocumentVersion,
             GrantPrincipalType,
+            ScenarioDocumentSetGrant,
+            ScenarioDocumentSetGrantStatus,
         )
         from apps.identity.models import Consumer, ConsumerStatus
         from apps.ingestion import vector_store
@@ -184,17 +196,32 @@ class PgvectorRetrievalProvider:
             status=ConsumerStatus.ACTIVE,
         ).exists():
             return []
-        authorized_set_ids = DocumentSetGrant.objects.filter(
-            organization_id=organization_id,
-            principal_type=GrantPrincipalType.CONSUMER,
-            principal_ref=str(consumer_id),
-            permission="retrieve",
-        ).values_list("document_set_id", flat=True)
+        authorized_set_ids = list(
+            DocumentSetGrant.objects.filter(
+                organization_id=organization_id,
+                principal_type=GrantPrincipalType.CONSUMER,
+                principal_ref=str(consumer_id),
+                permission="retrieve",
+            ).values_list("document_set_id", flat=True)
+        )
+        if scenario_id is None:
+            live_scenario_set_ids = authorized_set_ids
+        else:
+            live_scenario_set_ids = list(
+                ScenarioDocumentSetGrant.objects.filter(
+                    organization_id=organization_id,
+                    scenario_id=scenario_id,
+                    document_set_id__in=authorized_set_ids,
+                    permission="retrieve",
+                    status=ScenarioDocumentSetGrantStatus.GRANTED,
+                    revoked_at__isnull=True,
+                ).values_list("document_set_id", flat=True)
+            )
         authorized_version_ids = list(
             DocumentSetVersion.objects.filter(
                 id__in=document_set_version_ids,
                 organization_id=organization_id,
-                document_set_id__in=authorized_set_ids,
+                document_set_id__in=live_scenario_set_ids,
             ).values_list("id", flat=True)
         )
         if not authorized_version_ids:

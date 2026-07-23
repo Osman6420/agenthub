@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import uuid
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 
 from apps.tenancy.models import Organization, TimeStampedModel, ensure_immutable_public_id
 
@@ -303,15 +305,170 @@ class ScenarioDocumentSetBinding(TimeStampedModel):
         return f"binding:{self.scenario_id}:{self.document_set_id}"
 
 
+class ScenarioDocumentSetRequestStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+
+
+class GrantPermission(models.TextChoices):
+    RETRIEVE = "retrieve", "Retrieve"
+
+
+class ScenarioDocumentSetAccessRequest(TimeStampedModel):
+    """A scenario author request; it never grants retrieval by itself."""
+
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="scenario_document_set_access_requests",
+    )
+    scenario = models.ForeignKey(
+        "catalog.Scenario",
+        on_delete=models.CASCADE,
+        related_name="document_set_access_requests",
+    )
+    document_set = models.ForeignKey(
+        DocumentSet,
+        on_delete=models.CASCADE,
+        related_name="scenario_access_requests",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="scenario_document_set_access_requests",
+    )
+    purpose = models.CharField(max_length=500)
+    status = models.CharField(
+        max_length=16,
+        choices=ScenarioDocumentSetRequestStatus.choices,
+        default=ScenarioDocumentSetRequestStatus.PENDING,
+    )
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="decided_scenario_document_set_access_requests",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_reason = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "document_set"],
+                condition=Q(status=ScenarioDocumentSetRequestStatus.PENDING),
+                name="uniq_pending_scenario_document_set_request",
+            )
+        ]
+        ordering = ["organization_id", "-created_at"]
+
+    def clean(self) -> None:
+        _validate_scenario_document_set_lineage(
+            organization_id=self.organization_id,
+            scenario=self.scenario if self.scenario_id else None,
+            document_set=self.document_set if self.document_set_id else None,
+        )
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        self.full_clean()
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
+
+
+class ScenarioDocumentSetGrantStatus(models.TextChoices):
+    GRANTED = "granted", "Granted"
+    REVOKED = "revoked", "Revoked"
+
+
+class ScenarioDocumentSetGrant(TimeStampedModel):
+    """Live scenario retrieve authority, distinct from configuration binding."""
+
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="scenario_document_set_grants",
+    )
+    scenario = models.ForeignKey(
+        "catalog.Scenario",
+        on_delete=models.CASCADE,
+        related_name="document_set_grants",
+    )
+    document_set = models.ForeignKey(
+        DocumentSet,
+        on_delete=models.CASCADE,
+        related_name="scenario_grants",
+    )
+    permission = models.CharField(
+        max_length=16,
+        choices=GrantPermission.choices,
+        default=GrantPermission.RETRIEVE,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=ScenarioDocumentSetGrantStatus.choices,
+        default=ScenarioDocumentSetGrantStatus.GRANTED,
+    )
+    granted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="granted_scenario_document_set_access",
+    )
+    granted_at = models.DateTimeField()
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="revoked_scenario_document_set_access",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "document_set", "permission"],
+                name="uniq_scenario_document_set_grant",
+            )
+        ]
+        ordering = ["organization_id", "scenario_id", "document_set_id"]
+
+    def clean(self) -> None:
+        _validate_scenario_document_set_lineage(
+            organization_id=self.organization_id,
+            scenario=self.scenario if self.scenario_id else None,
+            document_set=self.document_set if self.document_set_id else None,
+        )
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        self.full_clean()
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == ScenarioDocumentSetGrantStatus.GRANTED and self.revoked_at is None
+
+
+def _validate_scenario_document_set_lineage(
+    *,
+    organization_id: int | None,
+    scenario: object | None,
+    document_set: object | None,
+) -> None:
+    if scenario is not None and getattr(scenario, "organization_id", None) != organization_id:
+        raise ValidationError("scenario access organization must match scenario")
+    if (
+        document_set is not None
+        and getattr(document_set, "organization_id", None) != organization_id
+    ):
+        raise ValidationError("scenario access organization must match document set")
+
+
 class GrantPrincipalType(models.TextChoices):
     CONSUMER = "consumer", "Consumer"
     SERVICE = "service", "Service"
     USER = "user", "User"
     GROUP = "group", "Group"
-
-
-class GrantPermission(models.TextChoices):
-    RETRIEVE = "retrieve", "Retrieve"
 
 
 class DocumentSetGrant(TimeStampedModel):

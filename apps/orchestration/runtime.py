@@ -105,6 +105,7 @@ def run_rag(
             query=query,
             profile=bundle.retrieval_profile,
             organization_id=bundle.organization_id,
+            scenario_id=getattr(bundle, "scenario_id", getattr(release, "scenario_id", None)),
             index_versions=bundle.index_versions,
             document_set_version_ids=bundle.document_set_version_ids,
             consumer_id=_consumer_id(execution_context),

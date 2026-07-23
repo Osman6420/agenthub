@@ -24,6 +24,7 @@ _CACHE_TTL = 300
 class ReleaseBundle:
     release_id: int
     organization_id: int
+    scenario_id: int
     prompt_text: str
     policy: dict[str, Any]
     model_profile: dict[str, Any]
@@ -47,6 +48,7 @@ def _build(release: ScenarioRelease) -> ReleaseBundle:
     return ReleaseBundle(
         release_id=release.id,
         organization_id=release.scenario.project.organization_id,
+        scenario_id=release.scenario_id,
         prompt_text=str(prompt_body.get("template", "")),
         policy=get_artifact_body_for_role(release, "policy") or {},
         model_profile=get_artifact_body_for_role(release, "model_profile") or {},

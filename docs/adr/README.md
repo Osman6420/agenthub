@@ -20,3 +20,4 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 | [0010](0010-workflow-dataflow-join-wait-and-human-task-contract.md) | Accepted | Restricted dataflow paths, deterministic joins, authenticated one-time event resume and typed human tasks. |
 | [0011](0011-reviewed-python-node-isolation-and-lifecycle.md) | Proposed | P2.6.8 minimum isolated runner, exact-checksum review/activation, source governance and safe catalog contract. |
 | [0012](0012-durable-ingestion-build-jobs-and-worker-readiness.md) | Accepted | PostgreSQL-authoritative staged-index jobs, dispatch outbox, reconciliation and compatible-worker evidence. |
+| [0013](0013-scoped-operator-capabilities-and-superadmin-recovery.md) | Accepted | Closed operator capabilities, delegated object scopes, document-content separation and exceptional superadmin recovery. |

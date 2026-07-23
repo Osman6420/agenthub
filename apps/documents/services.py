@@ -600,10 +600,19 @@ def pinned_document_set_version_ids(scenario: Scenario) -> list[int]:
     release compiler; the resolver later expands each pinned version to its *active* index version
     (the pointer flip), so promotion/rollback take effect without recompiling.
     """
+    from apps.documents.models import ScenarioDocumentSetGrant, ScenarioDocumentSetGrantStatus
+
+    granted_set_ids = ScenarioDocumentSetGrant.objects.filter(
+        scenario=scenario,
+        permission=GrantPermission.RETRIEVE,
+        status=ScenarioDocumentSetGrantStatus.GRANTED,
+        revoked_at__isnull=True,
+    ).values_list("document_set_id", flat=True)
     set_ids = list(
-        ScenarioDocumentSetBinding.objects.filter(scenario=scenario).values_list(
-            "document_set_id", flat=True
-        )
+        ScenarioDocumentSetBinding.objects.filter(
+            scenario=scenario,
+            document_set_id__in=granted_set_ids,
+        ).values_list("document_set_id", flat=True)
     )
     pinned: list[int] = []
     for set_id in set_ids:

@@ -15,6 +15,7 @@ def _fake_bundle(**overrides: Any) -> SimpleNamespace:
     base = {
         "retrieval_profile": {},
         "organization_id": 1,
+        "scenario_id": 2,
         "index_versions": [],
         "document_set_version_ids": [],
         "prompt_text": "system prompt",

@@ -21,8 +21,38 @@ not store general startup instructions or assumed service status in this handoff
 
 ## Active handoff
 
-No active agent transition is recorded. Before relying on this section, compare
-it with the live repository state.
+- **Task and outcome:** Continue
+  [`Phase 2.8 Part 2.1`](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md).
+  Slices 1–3 are implemented: central operator capabilities and Global Administrator; delegated
+  project/scenario/document-set assignments; scenario-to-document-set request/grant/revocation
+  with compile-time and live retrieval enforcement.
+- **Approved scope:** The owner approved every Part 2.1 product decision plus authorization and
+  additive migrations on 2026-07-23. Slice 4 may migrate release/existing endpoint predicates.
+  Slice 5 owns Access UI and superadmin alert/runbook/compatibility cleanup. Do not remove legacy
+  roles until the plan's cleanup gate is met.
+- **Decisions and assumptions:** Preserve
+  [`ADR-0013`](../adr/0013-scoped-operator-capabilities-and-superadmin-recovery.md): administrative
+  authority does not imply document content; only an assigned Document Set Manager grants scenario
+  retrieval; binding is configuration; live grant revocation immediately blocks new retrieval.
+- **Working tree:** Phase planning is committed at `c17e5ca`; Part 2.1 Slices 1–3 are the current
+  `feat(auth): add scoped operator authorization foundations` HEAD. Exclude unrelated concurrent changes in `AGENTS.md`,
+  `CLAUDE.md`, `.cbmignore`, `docs/tasks/codebase-memory-developer-tooling/`, `.worktrees/` and
+  Celery Beat schedule files.
+- **Verification:** See
+  [`verification.md`](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/verification.md).
+  Latest passing evidence includes identity 27 tests, documents 53 tests, pinning/ACL/orchestration
+  35 tests, cached-bundle runtime 11 tests, focused request/grant 6 tests, migration/RLS 3 tests,
+  Ruff, Mypy, migration drift and Django system check. Full repository and browser/accessibility
+  suites remain pending.
+- **Runtime:** The local Compose stack was healthy before implementation. Migrations
+  `identity.0007`, `identity.0008` and `documents.0006` have not been applied to the persistent
+  local database; no restart was performed.
+- **Risks and blockers:** Legacy console/API predicates and binding UI remain. Runtime is
+  fail-closed without a live scenario grant, but Slice 4–5 must migrate callers and UX. Superadmin
+  MFA, high-severity alerting and recovery runbook are not production-ready.
+- **Next action:** Start Slice 4 by inventorying every `can_manage_releases`, `release_manager` and
+  endpoint-level `is_superuser` caller, then migrate one bounded release lifecycle path to the
+  central capability service with denial, cross-tenant and audit-failure tests.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:
