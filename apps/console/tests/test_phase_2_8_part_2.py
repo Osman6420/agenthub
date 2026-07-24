@@ -158,11 +158,11 @@ def test_membership_page_and_lifecycle_are_active_org_scoped(client: Client) -> 
 
     added = client.post(
         reverse("console:organization_member_add"),
-        {"user": target.get_username(), "role": Role.DOCUMENT_MANAGER},
+        {"user": target.get_username(), "role": Role.AUDITOR},
     )
     membership = OrganizationMembership.objects.get(organization=org, user=target)
     assert added.status_code == 302
-    assert membership.role == Role.DOCUMENT_MANAGER
+    assert membership.role == Role.AUDITOR
 
     changed = client.post(
         reverse("console:organization_member_role", args=[membership.pk]),

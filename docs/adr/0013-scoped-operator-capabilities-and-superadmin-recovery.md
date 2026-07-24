@@ -57,9 +57,11 @@ alert.
 
 ## Operational consequences
 
-Daily administration uses a non-superuser account. Recovery credential custody, phishing-resistant
-MFA, alert routing and evidence review are operational prerequisites before the superadmin path is
-accepted for production use.
+Daily administration uses a non-superuser account. For the initial stage, recovery credential
+custody, a unique strong password, rotation, alert routing and evidence review are operational
+prerequisites before the superadmin path is accepted for use. By owner decision on 2026-07-24,
+phishing-resistant MFA is deferred to Phase 3 security hardening; password compromise and phishing
+therefore remain accepted residual risks for the initial stage.
 
 ## Data and privacy consequences
 
@@ -92,7 +94,7 @@ superuser, widening RLS or deleting denial tests.
 
 ## References
 
-- [Phase 2.8 Part 2.1 plan](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md)
-- [Phase 2.8 Part 2.1 threat model](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/threat-model.md)
+- [Phase 2.8 Part 2.1 plan](../planning/archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md)
+- [Phase 2.8 Part 2.1 threat model](../planning/archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/threat-model.md)
 - [ADR-0001](0001-custom-console-ldap-auth.md)
 - [ADR-0004](0004-tenant-isolation-postgres-rls-connection-context.md)

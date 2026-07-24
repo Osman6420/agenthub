@@ -124,6 +124,12 @@ TOOL_APPROVALS = Counter(
     ("decision",),
     registry=REGISTRY,
 )
+SUPERADMIN_EVENTS = Counter(
+    "agenthub_superadmin_events_total",
+    "Exceptional superadmin activity by bounded event kind.",
+    ("kind",),
+    registry=REGISTRY,
+)
 
 # --- P2.6.11 orchestration-structure telemetry (bounded labels only) ----------------------
 WORKFLOW_BRANCHES = Counter(

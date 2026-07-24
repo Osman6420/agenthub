@@ -6,7 +6,9 @@
 > inputs; it does not authorize a scanner product/dependency/egress or authentication,
 > authorization, IAM, token, network or downstream production changes. Optional multi-agent
 > supervision moved from proposed Phase 2.6 to Phase 3 by owner decision on 2026-07-16; it remains
-> discovery-only and is not required for Phase 2.6 completion.
+> discovery-only and is not required for Phase 2.6 completion. Phishing-resistant MFA for the
+> exceptional Django superadmin recovery identity moved from Phase 2.8 Part 2.1 to Phase 3 security
+> hardening by owner decision on 2026-07-24.
 
 ## Purpose
 
@@ -102,6 +104,18 @@ Decisions required before implementation:
 Before implementation, require a separate ADR and threat model proving unique value beyond bounded
 parallel/sub-workflow composition.
 
+## Workstream E — Superadmin recovery authentication hardening
+
+Add phishing-resistant MFA to the separate, non-daily Django superadmin recovery identity. Until
+this workstream is implemented, Phase 2.8 Part 2.1 uses a unique strong password with guarded
+custody, rotation, high-severity audit, immediate security/operator alerting and a recovery
+runbook. This deferral is an explicitly accepted initial-stage risk, not evidence that a password
+alone is equivalent to MFA.
+
+Before implementation, select the authentication mechanism and recovery factors, define
+enrolment/reset and credential-custody procedures, test lockout and recovery failure modes, and
+update the superadmin threat model and operational runbook.
+
 ## Required planning artifacts
 
 Before either workstream is implemented, create its dedicated task plan and proportionate threat
@@ -110,6 +124,8 @@ IdP/OBO/downstream trust and a compatibility/rollout/rollback plan. Upload scann
 upload/quarantine data-flow, scanner decision record, rollout/rollback plan and negative test matrix.
 Persistent history requires a conversation ownership/data lifecycle ADR, privacy review, RLS and
 authorization matrix, retention/purge runbook and migration/rollback plan.
+Superadmin MFA requires an authentication design review, recovery-factor custody policy, negative
+authentication tests and rollout/rollback evidence.
 
 ## Status
 

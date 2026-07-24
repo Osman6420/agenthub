@@ -1,5 +1,7 @@
 # Threat Model: Phase 2.8 Part 2.1 — Scoped authorization and superadmin recovery
 
+> Archived with the completed task on 2026-07-24.
+
 ## Assets and actors
 
 Organization membership, delegated project/scenario/document-set authority, releases, document
@@ -23,7 +25,7 @@ untrusted until server-side authorization and tenant lineage checks complete.
 | Binding mistaken for authorization | Require both active binding and current retrieve grant |
 | Forged cross-tenant assignment/grant | Direct organization lineage constraints, service checks and forced RLS |
 | Global Admin becomes unrestricted superuser | Non-superuser daily account and closed capability mapping |
-| Superadmin becomes routine bypass | Separate account/surface, guarded MFA, alerting, runbook and audit |
+| Superadmin becomes routine bypass | Separate account/surface, guarded unique strong password, rotation, alerting, runbook and audit; phishing-resistant MFA is deferred to Phase 3 |
 | Application roles grow hidden temporary privilege | No elevation/approval/temporary-access subsystem |
 | Stale object grant survives revocation | Per-operation check, bounded cache invalidation and queued/worker race tests |
 | Project Admin publishes unreviewed release | Release service permits only Global/owning Organization Admin |
@@ -39,8 +41,10 @@ untrusted until server-side authorization and tenant lineage checks complete.
 A governed scenario may legitimately expose document-derived answers, and a Scenario Editor can
 attempt prompt-based indirect disclosure even without direct document-page access. The confirmed
 authoring/runtime retrieval and diagnostic-output separation must close this boundary. The
-superadmin can bypass normal data separation by design; guarded credentials, MFA, alerting and
-immutable evidence reduce but cannot eliminate that recovery-account risk.
+superadmin can bypass normal data separation by design. Guarded credentials, rotation, alerting and
+immutable evidence reduce but cannot eliminate that recovery-account risk. Password compromise and
+phishing remain explicitly accepted initial-stage residual risks until phishing-resistant MFA is
+implemented in Phase 3.
 
 Slice 4 separates scenario release authority from exact document-set operations and removes the
 broad legacy runtime predicate. Legacy role values remain in schemas and disposable-demo seed data

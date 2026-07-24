@@ -37,6 +37,12 @@ from apps.ingestion.models import (
 from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 from apps.tenancy.services import admin_organization_ids, author_organization_ids
 
+APPLICATION_MEMBERSHIP_ROLE_CHOICES = [
+    choice
+    for choice in Role.choices
+    if choice[0] in {Role.ORGANIZATION_ADMIN, Role.APPROVER, Role.AUDITOR}
+]
+
 
 def _scope(qs: QuerySet, ids: set[int] | None, field: str = "id") -> QuerySet:
     return qs if ids is None else qs.filter(**{f"{field}__in": ids})
@@ -147,7 +153,7 @@ class MembershipCreateForm(forms.Form):
         strip=True,
     )
     role = forms.ChoiceField(
-        choices=[choice for choice in Role.choices if choice[0] != Role.PLATFORM_ADMIN],
+        choices=APPLICATION_MEMBERSHIP_ROLE_CHOICES,
         label="Rol",
     )
 
@@ -170,9 +176,91 @@ class MembershipCreateForm(forms.Form):
 
 class MembershipRoleForm(forms.Form):
     role = forms.ChoiceField(
-        choices=[choice for choice in Role.choices if choice[0] != Role.PLATFORM_ADMIN],
+        choices=APPLICATION_MEMBERSHIP_ROLE_CHOICES,
         label="Rol",
     )
+
+
+class AssignmentMemberChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, membership: OrganizationMembership) -> str:
+        return membership.user.get_username()
+
+
+class DelegatedAssignmentForm(forms.Form):
+    PROJECT_ADMINISTRATOR = "project_administrator"
+    SCENARIO_EDITOR = "scenario_editor"
+    DOCUMENT_SET_MANAGER = "document_set_manager"
+
+    responsibility = forms.ChoiceField(
+        choices=[
+            (PROJECT_ADMINISTRATOR, "Project Administrator"),
+            (SCENARIO_EDITOR, "Scenario Editor"),
+            (DOCUMENT_SET_MANAGER, "Document Set Manager"),
+        ],
+        label="Sorumluluk",
+    )
+    member = AssignmentMemberChoiceField(
+        queryset=OrganizationMembership.objects.none(),
+        label="Organizasyon üyesi",
+    )
+    project = forms.ModelChoiceField(
+        queryset=AIProject.objects.none(),
+        required=False,
+        label="Proje",
+    )
+    scenario = forms.ModelChoiceField(
+        queryset=Scenario.objects.none(),
+        required=False,
+        label="Senaryo",
+    )
+    document_set = forms.ModelChoiceField(
+        queryset=DocumentSet.objects.none(),
+        required=False,
+        label="Doküman seti",
+    )
+
+    def __init__(self, *args: Any, organization: Organization, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        cast(forms.ModelChoiceField, self.fields["member"]).queryset = (
+            OrganizationMembership.objects.select_related("user")
+            .filter(
+                organization=organization,
+                user__is_active=True,
+                user__is_superuser=False,
+            )
+            .order_by("user__username")
+        )
+        cast(forms.ModelChoiceField, self.fields["project"]).queryset = AIProject.objects.filter(
+            organization=organization
+        ).order_by("name", "slug")
+        cast(forms.ModelChoiceField, self.fields["scenario"]).queryset = Scenario.objects.filter(
+            project__organization=organization
+        ).order_by("project__name", "name", "slug")
+        cast(
+            forms.ModelChoiceField, self.fields["document_set"]
+        ).queryset = DocumentSet.objects.filter(organization=organization).order_by(
+            "name", "logical_id"
+        )
+
+    def clean(self) -> dict[str, Any] | None:
+        cleaned_data = super().clean()
+        if cleaned_data is None:
+            return None
+        responsibility = cleaned_data.get("responsibility")
+        if not isinstance(responsibility, str):
+            return cleaned_data
+        target_field = {
+            self.PROJECT_ADMINISTRATOR: "project",
+            self.SCENARIO_EDITOR: "scenario",
+            self.DOCUMENT_SET_MANAGER: "document_set",
+        }.get(responsibility)
+        if target_field is None:
+            return cleaned_data
+        target = cleaned_data.get(target_field)
+        if target is None:
+            self.add_error(target_field, "Seçilen sorumluluk için hedef zorunludur.")
+        cleaned_data["target"] = target
+        return cleaned_data
 
 
 class ConsumerTokenIssueForm(forms.Form):

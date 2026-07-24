@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.contrib.auth.signals import user_logged_in
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from apps.agents.models import AgentRun, AgentRunEvent
 from apps.audit.models import AuditEvent
+from apps.audit.services import record_event
 from apps.evaluations.models import EvalCaseResult
 from apps.ingestion.models import IngestionRun
 from apps.observability.metrics import (
@@ -18,6 +20,7 @@ from apps.observability.metrics import (
     INGESTION_RUNS,
     RELEASE_LIFECYCLE,
     RUNTIME_REQUESTS,
+    SUPERADMIN_EVENTS,
     TOKENS,
     TOOL_APPROVALS,
     TOOL_INVOCATIONS,
@@ -31,6 +34,7 @@ from apps.observability.metrics import (
     WORKFLOW_WAITS,
 )
 from apps.observability.models import UsageEvent
+from apps.observability.tracing import current_trace_id
 from apps.tools.models import (
     TERMINAL_INVOCATION_STATUSES,
     ApprovalRequest,
@@ -107,6 +111,34 @@ def release_audit_saved(sender: Any, instance: AuditEvent, created: bool, **kwar
         action = "other"
     outcome = instance.outcome if instance.outcome in {"allow", "deny", "failure"} else "other"
     RELEASE_LIFECYCLE.labels(action=action, outcome=outcome).inc()
+
+
+@receiver(post_save, sender=AuditEvent, dispatch_uid="observability.superadmin_event")
+def superadmin_audit_saved(
+    sender: Any, instance: AuditEvent, created: bool, **kwargs: Any
+) -> None:
+    if not created or not instance.action.startswith("superadmin."):
+        return
+    kind = "login" if instance.action == "superadmin.login" else "action"
+    SUPERADMIN_EVENTS.labels(kind=kind).inc()
+
+
+@receiver(user_logged_in, dispatch_uid="observability.superadmin_login")
+def superadmin_logged_in(sender: Any, request: Any, user: Any, **kwargs: Any) -> None:
+    """Audit the exceptional identity without recording username, IP or session data."""
+    if not getattr(user, "is_superuser", False):
+        return
+    record_event(
+        actor_type="user",
+        actor_id=str(user.pk),
+        action="superadmin.login",
+        outcome="success",
+        resource_type="authentication",
+        resource_id="django_session",
+        reason="exceptional_recovery_identity",
+        request_id=str(getattr(request, "request_id", ""))[:64],
+        trace_id=current_trace_id(),
+    )
 
 
 @receiver(post_save, sender=WorkflowRun, dispatch_uid="observability.workflow_run")

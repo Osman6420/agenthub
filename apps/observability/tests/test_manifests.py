@@ -76,6 +76,11 @@ def test_alerts_and_dashboard_have_actionable_content() -> None:
     alerts = rules["groups"][0]["rules"]
     assert alerts
     assert all(rule["annotations"].get("runbook_url") for rule in alerts)
+    superadmin_alert = next(
+        rule for rule in alerts if rule.get("alert") == "AgentHubSuperadminActivity"
+    )
+    assert superadmin_alert["labels"]["severity"] == "page"
+    assert superadmin_alert["for"] == "0m"
 
     dashboard = json.loads(
         (ROOT / "deploy" / "monitoring" / "grafana-dashboard.json").read_text(encoding="utf-8")

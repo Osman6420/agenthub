@@ -13,12 +13,18 @@
   <a role="tab" href="#documents">Dokümanlar</a>
   <a role="tab" href="#versions">Sürümler ve indeks</a>
   <a role="tab" href="#sources">Kaynaklar</a>
+  <a role="tab" href="#access">Erişim</a>
 </nav>
 
 <div class="summary-grid" id="overview">
   <div class="summary-card"><span>Son set sürümü</span><strong>{% if latest_version %}v{{ latest_version.version }}{% else %}—{% endif %}</strong><small class="muted">{% if latest_version %}{{ latest_version.status }}{% else %}Henüz taslak yok{% endif %}</small></div>
   <div class="summary-card"><span>Aktif indeks</span><strong>{% if active_index %}v{{ active_index.version }}{% else %}—{% endif %}</strong><small class="muted">{% if active_index %}Set v{{ active_index.document_set_version.version }} · {{ active_index.chunk_count }} parça{% else %}Henüz serve edilmiyor{% endif %}</small></div>
   <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Release derlemesinde pinlenir</small></div>
+</div>
+
+<div class="card" id="access">
+  <div class="section-heading"><div><h2>Doküman seti erişimi</h2><p class="muted">Atanmış yöneticiler bu setin içerik ve indeks operasyonlarını yönetebilir.</p></div>{% if can_manage_access %}<a class="button secondary" href="{% url 'console:organization_members' %}">Erişimi yönet</a>{% endif %}</div>
+  {% for assignment in manager_assignments %}<div class="access-row"><strong>{{ assignment.user.get_username }}</strong><span class="badge">Doküman seti yöneticisi</span></div>{% empty %}<p class="muted">Atanmış doküman seti yöneticisi yok.</p>{% endfor %}
 </div>
 
 <div class="card" id="documents">

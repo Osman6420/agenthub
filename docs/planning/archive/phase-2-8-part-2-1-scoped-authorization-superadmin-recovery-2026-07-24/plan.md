@@ -1,5 +1,7 @@
 # Task Plan: Phase 2.8 Part 2.1 — Scoped authorization and superadmin recovery
 
+> Archived after verified completion on 2026-07-24.
+
 ## Objective
 
 Replace organization-wide content roles with a small, explicit authorization model that supports
@@ -13,7 +15,7 @@ Identity, tenancy, catalog, documents, releases, runtime control, console and ob
 
 ## Status
 
-**In progress (implementation started 2026-07-23).** The owner approved every decision in the
+**Completed and automatically verified 2026-07-24.** The owner approved every decision in the
 approval gate and explicitly approved the authorization/additive-migration implementation on
 2026-07-23. The first reviewable slice adds ADR-0013, the central capability decision contract and
 the single daily Global Administrator identity without switching existing endpoints. This plan
@@ -28,6 +30,14 @@ Slice 4 is complete. Scenario compile/evaluate, promote, canary and rollback ent
 `platform.manage`. The broad `can_manage_releases` runtime predicate has been removed while legacy
 role values remain only for the Slice 5 reset/compatibility gate. Disabled-organization denial and
 existing console/CLI error contracts remain stable.
+
+Slice 5 connects the existing audited delegated-assignment
+services to the organization Access page: tenant-filtered member and object choices, explicit
+Project Administrator / Scenario Editor / Document Set Manager responsibilities, safe assignment
+summaries and exact removal. Organization-wide membership forms stop offering legacy content and
+release roles. Stored legacy values remain readable but are not offered by current assignment
+surfaces; their destructive demo reset was not required for this non-destructive closure.
+Superadmin use is fail-closed audited and immediately alertable, with an operator runbook.
 
 ## Scope
 
@@ -272,8 +282,9 @@ requirements follow the console accessibility baseline.
   authorization/identity recovery.
 - No application elevation, temporary privilege, approval queue, expiry banner or emergency-access
   data model exists.
-- Superadmin credentials use separate phishing-resistant MFA, guarded storage and immediate login
-  alerting. The account is not offered through organization/member role forms.
+- For the initial stage, superadmin uses a unique strong password, guarded credential storage,
+  rotation and immediate login alerting. Phishing-resistant MFA is deferred to Phase 3 by owner
+  decision on 2026-07-24. The account is not offered through organization/member role forms.
 - The central authorization boundary recognizes superadmin directly, so individual endpoints do not
   add special elevation branches.
 - Every superadmin document list/view/add/delete, document-set grant/revoke, role mutation, release
@@ -322,8 +333,9 @@ requirements follow the console accessibility baseline.
 - Part 4 scenario authoring/release services.
 - Part 5 document profiles/index operations and set manager surface.
 - Part 7 unified operations and kill-switch controls.
-- Existing tenant/RLS, audit and authentication infrastructure; superadmin MFA and credential
-  custody require a separately reviewed operations design.
+- Existing tenant/RLS, audit and authentication infrastructure; initial superadmin password
+  custody, rotation and alerting require a separately reviewed operations design. Phishing-resistant
+  MFA is a Phase 3 hardening dependency, not a Slice 5 completion gate.
 
 ## Milestones
 
@@ -372,7 +384,7 @@ owner's current product decision:
 | Retrieval development and diagnostics exposure | **Confirmed** | Scenario Editor sees document/source labels, IDs and retrieval metrics but no chunk text/context; content-authorized users see bounded chunk context; only content-authorized editors may freely prompt-test protected data |
 | Who approves scenario-to-set retrieve grants? | **Confirmed 2026-07-23** | An assigned Document Set Manager only |
 | Application elevation model | **Confirmed** | None: no temporary-access table, approval flow, expiry or per-action elevation code |
-| Superadmin authentication | **Confirmed 2026-07-23** | Separate non-daily identity with phishing-resistant MFA and guarded credential storage |
+| Superadmin authentication | **Reconfirmed 2026-07-24** | Initial stage: separate non-daily identity with a unique strong password, guarded storage, rotation and monitoring; phishing-resistant MFA is deferred to Phase 3 |
 | Superadmin alert recipients and evidence retention | **Confirmed 2026-07-23** | Immediate security/operator alert and retention under the security-audit policy |
 | Legacy role/data handling | **Confirmed** | Existing assignments/users are demo-only and may be reset after environment verification; no production-style role backfill |
 | Revocation effect on released scenarios | **Confirmed 2026-07-23** | Immediate denial of new retrieval; immutable release stays recorded but cannot bypass live grant |
@@ -388,7 +400,7 @@ the repository change policy. That approval was given by the owner on 2026-07-23
 - [x] Slice 2: project/scenario/document-set assignments and audited mutation services.
 - [x] Slice 3: scenario-to-document-set request/grant/revocation model and live enforcement.
 - [x] Slice 4: release and existing endpoint migration away from broad legacy roles.
-- [ ] Slice 5: responsive access UI, superadmin alerting/runbook and final compatibility cleanup.
+- [x] Slice 5: responsive access UI, superadmin alerting/runbook and final compatibility cleanup.
 
 ## Testing strategy
 
@@ -436,7 +448,7 @@ AppSec and SRE reviews close; task evidence reaches Verified.
 
 ## Links
 
-- [Phase 2.8 plan](../../planning/phase-2-8-plan.md)
-- [Phase 2.8 Part 7 plan](../phase-2-8-part-7-unified-runs-kill-switch/plan.md)
-- [Current security overview](../../security-overview.md)
+- [Phase 2.8 plan](../../phase-2-8-plan.md)
+- [Phase 2.8 Part 7 plan](../../../tasks/phase-2-8-part-7-unified-runs-kill-switch/plan.md)
+- [Current security overview](../../../security-overview.md)
 - [Threat model](threat-model.md)

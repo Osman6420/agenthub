@@ -36,7 +36,7 @@ observability and migrations, and therefore has its own staged acceptance gates.
    Slice 5 still needs the responsive Access UI, superadmin alert/runbook and final compatibility
    cleanup. The implemented slices already centralize release, delegated-object and live
    scenario-to-document-set authority. See the
-   [Part 2.1 plan](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md).
+   [Part 2.1 archive](archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md).
 4. **Part 3 — Unified workflow engine — Planned.** One `workflow_definition`, compiler, runtime,
    Run/Event model and public run surface; RAG and agent become governed workflow presets/nodes.
 5. **Part 4 — Scenario authoring, reusable artifacts and release experience — Planned.** Preset-led
@@ -71,7 +71,7 @@ acceptance gate.
 - Organization membership remains one role per user per organization. `document_manager` is a
   document-only role; it is not a combination of scenario or release roles.
 - The target authorization model is defined by the
-  [Part 2.1 scoped authorization and superadmin-recovery plan](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md).
+  [Part 2.1 scoped authorization and superadmin-recovery archive](archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md).
   Daily Global Admin is an application role on a non-superuser account; Django superuser is a
   separate superadmin recovery identity. Delegated authority is organization-, project-,
   scenario- or document-set-scoped.

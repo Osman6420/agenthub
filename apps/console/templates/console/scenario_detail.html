@@ -26,6 +26,7 @@
   <a role="tab" href="#documents">Dokümanlar</a>
   <a role="tab" href="#configuration">Yapılandırma</a>
   <a role="tab" href="#releases">Release’ler</a>
+  <a role="tab" href="#access">Erişim</a>
 </nav>
 
 <div class="summary-grid" id="overview">
@@ -33,6 +34,11 @@
   <div class="summary-card"><span>İstemci bağı</span><strong>{{ consumer_bindings|length }}</strong></div>
   <div class="summary-card"><span>Aktif release</span><strong>{% if active_release %}#{{ active_release.id }}{% else %}Yok{% endif %}</strong></div>
 </div>
+
+<section class="card" id="access">
+  <div class="section-heading"><div><h2>Senaryo erişimi</h2><p class="muted">Senaryo editörlüğü operasyon veya ham doküman içeriği yetkisi vermez.</p></div>{% if can_manage_access %}<a class="button secondary" href="{% url 'console:organization_members' %}">Erişimi yönet</a>{% endif %}</div>
+  {% for assignment in editor_assignments %}<div class="access-row"><strong>{{ assignment.user.get_username }}</strong><span class="badge">Senaryo editörü</span></div>{% empty %}<p class="muted">Atanmış senaryo editörü yok.</p>{% endfor %}
+</section>
 
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Sunum yolları</p><h2>Senaryoyu çağırma</h2><p class="muted">Yetki istemci tokenı + protokol + senaryo alias bağı + capability üzerinden sunucuda doğrulanır.</p></div></div>
@@ -73,7 +79,7 @@
     {% for artifact in artifact_candidates %}<div class="access-row"><label><input type="checkbox" name="artifact_ids" value="{{ artifact.id }}"> <strong>{{ artifact.type }}</strong> · {{ artifact.logical_id }}:v{{ artifact.version }}</label><span class="mono">{{ artifact.checksum|slice:':12' }}</span><label>Manifest rolü <input name="role_{{ artifact.id }}" value="{{ artifact.type }}" maxlength="128"></label></div>{% empty %}<p class="muted">Bu organizasyonda published artifact sürümü yok.</p>{% endfor %}
     {% if artifact_candidates %}<button class="button primary" type="submit">Candidate release derle</button>{% endif %}
   </form>
-  {% else %}<p class="muted">Artifact kataloğu salt okunur. Candidate derleme yalnız organizasyon yöneticisi veya release manager rolüne açıktır.</p>{% for artifact in artifact_candidates %}<div class="access-row"><div><strong>{{ artifact.type }}</strong> · {{ artifact.logical_id }}:v{{ artifact.version }}</div><span class="mono">{{ artifact.checksum|slice:':12' }}</span></div>{% empty %}<p class="muted">Artifact yok.</p>{% endfor %}{% endif %}
+  {% else %}<p class="muted">Artifact kataloğu salt okunur. Candidate derleme yalnız Global Administrator veya organizasyon yöneticisine açıktır.</p>{% for artifact in artifact_candidates %}<div class="access-row"><div><strong>{{ artifact.type }}</strong> · {{ artifact.logical_id }}:v{{ artifact.version }}</div><span class="mono">{{ artifact.checksum|slice:':12' }}</span></div>{% empty %}<p class="muted">Artifact yok.</p>{% endfor %}{% endif %}
 </section>
 
 <details class="card form-card">

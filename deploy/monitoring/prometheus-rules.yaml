@@ -35,6 +35,13 @@ groups:
         annotations:
           summary: No recent contract/config-compatible ingestion worker is visible
           runbook_url: docs/manual-testing-guide.md#0-bring-up-the-stack
+      - alert: AgentHubSuperadminActivity
+        expr: increase(agenthub_superadmin_events_total[2m]) > 0
+        for: 0m
+        labels: {severity: page}
+        annotations:
+          summary: Exceptional superadmin identity was used
+          runbook_url: docs/operations/superadmin-recovery.md
   - name: agenthub-p2-6-11-orchestration
     rules:
       - alert: AgentHubQueueSaturation

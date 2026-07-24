@@ -6,7 +6,7 @@ Provide one organization-scoped operational page for execution, evaluation, inge
 and connector-sync work, while preserving each job's native authorization and lifecycle. Add audited
 run/scenario/project/organization/platform runtime controls to the console. Implement the role,
 content-separation, superadmin-recovery and stop/resume rules from the
-[Part 2.1 scoped authorization plan](../phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md).
+[Part 2.1 scoped authorization archive](../../planning/archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md).
 
 ## Background
 
@@ -135,7 +135,7 @@ admission/claims and control state without organization/run IDs as labels.
 Part 1 navigation/dashboard and verified Part 3 unified execution/control contract. Existing native
 evaluation/ingestion/sync scoping/detail pages remain sources of truth. Authorization and
 superadmin recovery follow the
-[Part 2.1 scoped authorization plan](../phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md);
+[Part 2.1 scoped authorization archive](../../planning/archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md);
 scenario-to-document-set grants from Part 5 remain independent from runtime controls.
 
 ## Implementation steps

@@ -63,3 +63,9 @@ def extract_context(headers: Any) -> Any:
 def inject_context(headers: dict[str, str]) -> dict[str, str]:
     propagate.inject(carrier=headers)
     return headers
+
+
+def current_trace_id() -> str:
+    """Return the active span trace ID without creating identity-bearing attributes."""
+    span_context = trace.get_current_span().get_span_context()
+    return f"{span_context.trace_id:032x}" if span_context.is_valid else ""

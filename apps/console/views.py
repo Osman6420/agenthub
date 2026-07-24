@@ -42,12 +42,14 @@ from apps.catalog.services import ProjectOwnerError, create_console_project, cre
 from apps.console import context as console_context
 from apps.console import scoping
 from apps.console.forms import (
+    APPLICATION_MEMBERSHIP_ROLE_CHOICES,
     BindingForm,
     CanaryForm,
     ConfluenceSourceForm,
     ConnectorScheduleForm,
     ConsumerForm,
     ConsumerTokenIssueForm,
+    DelegatedAssignmentForm,
     DocumentReplacementForm,
     DocumentSetBuildForm,
     DocumentSetBulkUploadForm,
@@ -78,6 +80,13 @@ from apps.documents.models import (
 from apps.documents.services import DocumentError
 from apps.documents.storage import StorageError
 from apps.evaluations.services import EvalError, run_eval
+from apps.identity.assignment_services import (
+    AssignmentError,
+    assign_document_set_manager,
+    assign_project_administrator,
+    assign_scenario_editor,
+    remove_delegated_assignment,
+)
 from apps.identity.credentials import (
     ConsumerSubjectAllocationError,
     CredentialLifecycleError,
@@ -86,8 +95,15 @@ from apps.identity.credentials import (
     revoke_consumer_token,
     rotate_consumer_token,
 )
-from apps.identity.models import BindingStatus, Consumer, ConsumerBinding, ConsumerStatus
-from apps.identity.roles import Role
+from apps.identity.models import (
+    BindingStatus,
+    Consumer,
+    ConsumerBinding,
+    ConsumerStatus,
+    DocumentSetManagerAssignment,
+    ProjectAdministratorAssignment,
+    ScenarioEditorAssignment,
+)
 from apps.ingestion.confluence_services import (
     ConfluenceAuthorizationError,
     ConfluenceServiceError,
@@ -797,15 +813,64 @@ def organization_members(request: HttpRequest) -> HttpResponse:
         .select_related("user")
         .order_by("user__username", "pk")[:201]
     )
+    visible_memberships = memberships[:200]
+    project_assignments = list(
+        ProjectAdministratorAssignment.objects.filter(organization=organization)
+        .select_related("user", "project")
+        .order_by("user__username", "project__name", "pk")[:201]
+    )
+    scenario_assignments = list(
+        ScenarioEditorAssignment.objects.filter(organization=organization)
+        .select_related("user", "scenario__project")
+        .order_by("user__username", "scenario__name", "pk")[:201]
+    )
+    document_set_assignments = list(
+        DocumentSetManagerAssignment.objects.filter(organization=organization)
+        .select_related("user", "document_set")
+        .order_by("user__username", "document_set__name", "pk")[:201]
+    )
+    delegated_counts: dict[int, dict[str, int]] = {
+        membership.user_id: {"projects": 0, "scenarios": 0, "document_sets": 0}
+        for membership in visible_memberships
+    }
+    for project_assignment in project_assignments:
+        delegated_counts.setdefault(
+            project_assignment.user_id,
+            {"projects": 0, "scenarios": 0, "document_sets": 0},
+        )["projects"] += 1
+    for scenario_assignment in scenario_assignments:
+        delegated_counts.setdefault(
+            scenario_assignment.user_id,
+            {"projects": 0, "scenarios": 0, "document_sets": 0},
+        )["scenarios"] += 1
+    for document_set_assignment in document_set_assignments:
+        delegated_counts.setdefault(
+            document_set_assignment.user_id,
+            {"projects": 0, "scenarios": 0, "document_sets": 0},
+        )["document_sets"] += 1
+    for membership in visible_memberships:
+        cast(Any, membership).delegated_counts = delegated_counts[membership.user_id]
     return render(
         request,
         "console/organization_members.html",
         {
             "organization": organization,
-            "memberships": memberships[:200],
+            "memberships": visible_memberships,
             "memberships_limited": len(memberships) > 200,
             "add_form": MembershipCreateForm(organization=organization),
-            "role_choices": [choice for choice in Role.choices if choice[0] != Role.PLATFORM_ADMIN],
+            "assignment_form": DelegatedAssignmentForm(organization=organization),
+            "role_choices": APPLICATION_MEMBERSHIP_ROLE_CHOICES,
+            "project_assignments": project_assignments[:200],
+            "scenario_assignments": scenario_assignments[:200],
+            "document_set_assignments": document_set_assignments[:200],
+            "assignments_limited": any(
+                len(assignments) > 200
+                for assignments in (
+                    project_assignments,
+                    scenario_assignments,
+                    document_set_assignments,
+                )
+            ),
         },
     )
 
@@ -886,6 +951,69 @@ def organization_member_remove(request: HttpRequest, membership_id: int) -> Http
 
 
 @login_required
+@require_POST
+def delegated_assignment_add(request: HttpRequest) -> HttpResponse:
+    organization = _managed_active_organization(request)
+    form = DelegatedAssignmentForm(request.POST, organization=organization)
+    if not form.is_valid():
+        messages.error(request, "Sorumluluk atanamadı: üye veya hedef geçersiz.")
+        return redirect("console:organization_members")
+
+    membership = form.cleaned_data["member"]
+    responsibility = form.cleaned_data["responsibility"]
+    common = {
+        "target_user": membership.user,
+        "actor": request.user,
+        "request_id": _request_id(request),
+        "trace_id": _trace_id(request),
+    }
+    try:
+        if responsibility == DelegatedAssignmentForm.PROJECT_ADMINISTRATOR:
+            assign_project_administrator(project=form.cleaned_data["target"], **common)
+        elif responsibility == DelegatedAssignmentForm.SCENARIO_EDITOR:
+            assign_scenario_editor(scenario=form.cleaned_data["target"], **common)
+        else:
+            assign_document_set_manager(document_set=form.cleaned_data["target"], **common)
+        messages.success(request, "Sorumluluk atandı.")
+    except AssignmentError as exc:
+        messages.error(request, f"Sorumluluk atanamadı: {exc.code}")
+    return redirect("console:organization_members")
+
+
+@login_required
+@require_POST
+def delegated_assignment_remove(
+    request: HttpRequest, assignment_type: str, assignment_id: int
+) -> HttpResponse:
+    organization = _managed_active_organization(request)
+    model: Any = {
+        DelegatedAssignmentForm.PROJECT_ADMINISTRATOR: ProjectAdministratorAssignment,
+        DelegatedAssignmentForm.SCENARIO_EDITOR: ScenarioEditorAssignment,
+        DelegatedAssignmentForm.DOCUMENT_SET_MANAGER: DocumentSetManagerAssignment,
+    }.get(assignment_type)
+    if model is None:
+        raise Http404
+    assignment = (
+        model.objects.filter(pk=assignment_id, organization=organization)
+        .select_related("user")
+        .first()
+    )
+    if assignment is None:
+        raise Http404
+    try:
+        remove_delegated_assignment(
+            assignment=assignment,
+            actor=request.user,
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+        messages.success(request, "Sorumluluk kaldırıldı.")
+    except AssignmentError as exc:
+        messages.error(request, f"Sorumluluk kaldırılamadı: {exc.code}")
+    return redirect("console:organization_members")
+
+
+@login_required
 def projects(request: HttpRequest) -> HttpResponse:
     active_org = console_context.resolve_active_organization(request)
     can_create_project = active_org is not None and can_admin_org(request.user, active_org.pk)
@@ -956,6 +1084,10 @@ def project_detail(
             "can_create_scenario": project.organization.status == OrganizationStatus.ACTIVE
             and can_author_scenarios(request.user, project.organization_id),
             "create_scenario_reason": _CREATE_SCENARIO_REASON,
+            "administrator_assignments": project.administrator_assignments.select_related(
+                "user"
+            ).order_by("user__username", "user_id"),
+            "can_manage_access": can_admin_org(request.user, project.organization_id),
         },
     )
 
@@ -1194,6 +1326,10 @@ def scenario_detail(
             .order_by("name", "logical_id"),
             "can_write": can_author_scenarios(request.user, organization_id),
             "can_compile_release": can_manage_scenario_releases(request.user, organization_id),
+            "editor_assignments": scenario.editor_assignments.select_related("user").order_by(
+                "user__username", "user_id"
+            ),
+            "can_manage_access": can_admin_org(request.user, organization_id),
             # Role-honest affordances (Scope D): reasons shown on disabled authoring controls.
             "author_reason": _AUTHOR_REASON,
             "release_reason": _RELEASE_AUTHORITY_REASON,
@@ -2911,6 +3047,10 @@ def document_set_detail(
             ).order_by("name", "subject"),
             "can_write": can_write,
             "can_promote_index": can_promote_index,
+            "manager_assignments": document_set.manager_assignments.select_related("user").order_by(
+                "user__username", "user_id"
+            ),
+            "can_manage_access": can_admin_org(request.user, document_set.organization_id),
             "max_batch_files": int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20)),
         },
     )

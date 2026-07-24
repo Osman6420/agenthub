@@ -21,38 +21,32 @@ not store general startup instructions or assumed service status in this handoff
 
 ## Active handoff
 
-- **Task and outcome:** Continue
-  [`Phase 2.8 Part 2.1`](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md).
-  Slices 1–4 are implemented and automatically verified. Scenario releases, exact document-set
-  operations and tool platform-role resolution now use the central capability service; the broad
-  legacy release predicate is removed.
-- **Approved scope:** The owner approved every Part 2.1 product decision plus authorization and
-  additive migrations on 2026-07-23. Slice 4 may migrate release/existing endpoint predicates.
-  Slice 5 owns Access UI and superadmin alert/runbook/compatibility cleanup. Do not remove legacy
-  roles until the plan's cleanup gate is met.
+- **Task and outcome:** No incomplete Part 2.1 unit. The task is completed and archived in the
+  [`Phase 2.8 Part 2.1 plan`](../planning/archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md).
+- **Approved scope:** Part 2.1 authorization, additive migrations, Access UX and superadmin
+  recovery controls are closed. Start a new active handoff before Part 3 implementation.
 - **Decisions and assumptions:** Preserve
   [`ADR-0013`](../adr/0013-scoped-operator-capabilities-and-superadmin-recovery.md): administrative
   authority does not imply document content; only an assigned Document Set Manager grants scenario
   retrieval; binding is configuration; live grant revocation immediately blocks new retrieval.
-- **Working tree:** Phase planning is committed at `c17e5ca`; Part 2.1 Slices 1–3 are the current
-  `feat(auth): add scoped operator authorization foundations` HEAD and Slice 4 is uncommitted.
+- **Working tree:** Slice 4 is committed at `1729510`; Slice 5 closes in the next commit.
   Exclude unrelated concurrent changes in `AGENTS.md`,
   `CLAUDE.md`, `.cbmignore`, `docs/tasks/codebase-memory-developer-tooling/`, `.worktrees/` and
   Celery Beat schedule files.
 - **Verification:** See
-  [`verification.md`](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/verification.md).
+  [`verification.md`](../planning/archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/verification.md).
   Slice 4 evidence includes 29 release-focused, 37 document-operation, 13 tool-authorization,
   315/317 identity-release-ingestion-tools and 168 console tests passing; two expected
-  off-PostgreSQL guards skipped. Ruff, Mypy, Django check, migration drift and diff check pass.
-  Full repository and browser/accessibility suites remain pending.
+  off-PostgreSQL guards skipped. Slice 5 Access evidence includes 20 focused and 170 console tests,
+  Ruff, Mypy, Django check, migration drift and diff check passing. Browser visual/accessibility
+  inspection is pending because no browser backend is available.
 - **Runtime:** The complete local Compose topology is running. PostgreSQL, Redis and MinIO are
   healthy; web liveness returns HTTP 200. Migrations `identity.0007`, `identity.0008` and
   `documents.0006` are applied to the persistent local database.
-- **Risks and blockers:** Slice 5 Access UI and compatibility cleanup remain. Superadmin MFA,
-  high-severity alerting and recovery runbook are not production-ready. Legacy role values remain
-  in schemas and disposable-demo seed data but no Slice 4 runtime release predicate consumes them.
-- **Next action:** Start Slice 5 with the responsive Access UI and superadmin alert/runbook, then
-  remove legacy role choices only after the plan's reset and rollback gate is verified.
+- **Risks and blockers:** Live visual browser inspection was unavailable. Stored legacy role values
+  remain readable for compatibility but cannot be selected in ordinary membership forms.
+  Phishing-resistant MFA is deferred to Phase 3 by owner decision on 2026-07-24.
+- **Next action:** Create a fresh handoff for Phase 2.8 Part 3 before implementation.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:

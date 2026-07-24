@@ -146,6 +146,16 @@ urlpatterns = [
         views.organization_member_remove,
         name="organization_member_remove",
     ),
+    path(
+        "access/assignments/add/",
+        views.delegated_assignment_add,
+        name="delegated_assignment_add",
+    ),
+    path(
+        "access/assignments/<str:assignment_type>/<int:assignment_id>/remove/",
+        views.delegated_assignment_remove,
+        name="delegated_assignment_remove",
+    ),
     path("document-sets/<int:pk>/", views.document_set_detail, name="document_set_detail"),
     path(
         "document-sets/id/<uuid:public_id>/",

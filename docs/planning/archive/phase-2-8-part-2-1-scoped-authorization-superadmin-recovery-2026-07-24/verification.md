@@ -1,9 +1,13 @@
 # Verification: Phase 2.8 Part 2.1 — Scoped authorization and superadmin recovery
 
+> Archived with the completed task on 2026-07-24.
+
 ## Status
 
-**In progress.** Slices 1–4 are implemented and automatically verified. Access UI, superadmin
-alert/runbook work and final compatibility cleanup remain unimplemented.
+**Verified 2026-07-24.** Slices 1–5 are implemented. Automated authorization, tenant isolation,
+Access UI, superadmin audit/alert and runbook checks pass. Live visual browser inspection could not
+run because this session exposed no browser backend; automated accessibility and responsive
+rendering coverage passed.
 
 ## Environment
 
@@ -143,20 +147,64 @@ superuser compatibility decision to the central capability service. The broad
   `platform.manage`, with no direct endpoint-level `is_superuser` branch.
 - No production caller or definition of the broad `can_manage_releases` predicate remains.
 
+## Slice 5 evidence
+
+Slice 5 connects the audited delegated-assignment services to organization and object Access
+surfaces, removes legacy content/release roles from ordinary membership forms, and adds the
+exceptional superadmin audit/alert/runbook boundary.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Access UI, Part 2 and assignment-service focus | `docker compose ... exec -T web python -m pytest apps/console/tests/test_phase_2_8_part_2_1_access.py apps/console/tests/test_phase_2_8_part_2.py apps/identity/tests/test_delegated_assignments.py` | Pass: 20 |
+| Console regression | `docker compose ... exec -T web python -m pytest --reuse-db apps/console/tests` | Pass: 170 |
+| Ruff | `docker compose ... python -m ruff check` over the Access UI files | Pass |
+| Mypy | `docker compose ... python -m mypy apps/console/forms.py apps/console/views.py` | Pass |
+| Django system check | `docker compose ... python manage.py check` | Pass |
+| Migration drift | `docker compose ... python manage.py makemigrations --check --dry-run` | Pass: no changes |
+| Patch whitespace | `git diff --check` | Pass |
+| Browser responsive/accessibility inspection | In-app Browser discovery | Not run: no browser backend is available in this session |
+| Access, observability and manifest focus | `docker compose ... python -m pytest apps/console/tests/test_phase_2_8_part_2_1_access.py apps/observability/tests/test_manifests.py apps/observability/tests/test_signals.py --reuse-db` | Pass: 10 |
+| Console/identity/ingestion/documents regression | `docker compose ... python -m pytest apps/console/tests apps/identity/tests apps/ingestion/tests/test_confluence.py apps/ingestion/tests/test_rest_pull.py apps/documents/tests --reuse-db` | Pass: 287 |
+| Changed production-file Mypy | `docker compose ... python -m mypy apps/identity/superadmin_middleware.py apps/observability/signals.py apps/console/views.py` | Pass |
+| Django system check | `docker compose ... python manage.py check` | Pass: no issues |
+| Migration drift | `docker compose ... python manage.py makemigrations --check --dry-run` | Pass: no changes |
+
+### Slice 5 verified behavior
+
+- Organization Access lists exact Project Administrator, Scenario Editor and Document Set Manager
+  assignments with safe target labels and per-member counts.
+- The assignment form offers only active, non-superuser organization members and exact
+  same-organization projects, scenarios and document sets.
+- Forged cross-tenant target IDs fail form validation before the audited service; every accepted
+  create/remove is reauthorized and audited by the existing mutation service.
+- Ordinary membership add/change forms no longer offer `release_manager`, `document_manager`,
+  `project_owner`, `scenario_editor` or `platform_admin`.
+- Project, scenario and document-set details expose tenant-scoped Access sections without foreign
+  member leakage and link authorized administrators to the organization Access surface.
+- Every authenticated superadmin console route writes a safe pre-action audit event before view
+  execution; audit persistence failure stops the request. Superadmin login and activity increment a
+  bounded metric consumed by an immediate page-severity Prometheus alert.
+- The recovery runbook covers guarded strong-password custody, minimum intervention, evidence
+  review, logout/rotation and fail-closed audit/alert handling. Phishing-resistant MFA remains in
+  Phase 3 by owner decision.
+- Stored legacy role values remain readable for compatibility and existing disposable demo data,
+  but ordinary membership forms cannot create them. No destructive local reset was performed.
+
 ## Reviews
 
 - Staff engineering: additive model and decision API are small; existing callers remain compatible.
-- Application security: deny-by-default decisions, trusted organization input contract and explicit
-  content exclusions are covered. Superadmin remains intentionally powerful and must not be wired
-  to sensitive endpoints until dedicated audit/alert failure handling lands.
+- Application security: deny-by-default decisions, trusted organization input, content exclusions
+  and fail-closed superadmin pre-action audit are covered. The superadmin remains intentionally
+  powerful; password compromise/phishing is the accepted initial-stage residual risk.
 - SRE: the complete local Compose topology is running and healthy; liveness returned HTTP 200.
   Migrations `identity.0007`, `identity.0008` and `documents.0006` are applied locally. No new
   Slice 4 migration is required.
 
-## Checks not yet run
+## Checks not run
 
 - Full repository SQLite and PostgreSQL/RLS suites.
-- Browser, accessibility and responsive visual checks.
+- Live browser visual/responsive inspection; no browser backend was available. Automated console
+  accessibility tests passed inside the 287-test regression.
 - Concurrent request/approve/revoke races and browser accessibility tests.
 
 ## Residual risks
@@ -166,5 +214,6 @@ superuser compatibility decision to the central capability service. The broad
 - `QuerySet.update` and raw SQL can bypass model validation; production mutation paths must use the
   audited assignment service, while RLS remains the tenant backstop rather than a complete lineage
   constraint.
-- Superadmin audit, immediate alerting, MFA/custody operations and recovery runbook are not yet
-  implemented; this slice must not be interpreted as production recovery readiness.
+- Superadmin activity is audited and alertable, but operational alert delivery and credential
+  custody must still be exercised in each deployment environment.
+- Phishing-resistant MFA is an accepted Phase 3 hardening item and is not a Slice 5 completion gate.
