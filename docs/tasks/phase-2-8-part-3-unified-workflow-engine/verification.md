@@ -214,7 +214,30 @@ Codebase Memory data-flow tracing confirmed that the legacy `execute_graph` writ
 WorkflowRun-specific branch/wait/recovery tables. It is therefore not registered as the unified Run
 executor. A Run-native node-step adapter and fleet-revision-safe Celery task remain pending.
 
+## Gate 2 bounded Run-native executor evidence
+
+A default-off internal executor now supports only `input`, `format_output`, `validate_contract`,
+`condition` and `end`. It validates the entire graph's API version, node allowlist, edge shape,
+reachability and acyclicity before entering `running`. It never calls legacy WorkflowRun branch,
+wait, retry, compensation or recovery persistence. Execution derives purpose-separated transition
+UUIDs from the claim token, uses the shared transition/checkpoint service, validates output contracts
+and output policy, and observes cancellation/deadline between nodes.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Bounded executor PostgreSQL | Compose web `python -m pytest -q apps/workflows/tests/test_unified_run.py` | 27 passed, including default-off gate, successful Run-native completion, unsupported/cyclic preflight denial and between-node cancellation |
+| Bounded executor affected regression | Compose web `python -m pytest -q apps/workflows/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py apps/agents/tests/test_governed_loop.py` | 300 passed |
+| Focused Ruff | Compose web `python -m ruff check --no-cache ...` on executor/claim/transition/test files | Passed |
+| Focused Mypy | Compose web `python -m mypy apps/workflows/unified_executor.py apps/workflows/background_claims.py apps/workflows/transitions.py` | Passed |
+| Migration drift | Compose web `python manage.py makemigrations --check --dry-run` | Passed: no changes detected |
+| Diff whitespace | `git diff --check` | Passed |
+
+No Celery task or public route dispatches this executor. Tool/model/retrieval and every durable pause,
+child, parallel, retry, compensation or recovery node remain denied. Real broker redelivery,
+worker-loss and deployment-gate smoke remain pending.
+
 ## Final status
 
 **In progress — Gate 2 persistence, background claim/delivery and worker admission verified;
-Run-native Celery execution, shared consumers and cutover remain pending.**
+bounded Run-native execution is verified; Celery delivery, shared consumers and cutover remain
+pending.**

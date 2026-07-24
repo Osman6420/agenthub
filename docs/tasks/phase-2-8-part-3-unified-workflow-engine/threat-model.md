@@ -52,6 +52,8 @@ tenant tables.
 | Kill-switch race admits/resumes work | Check authoritative control at admission and each transition claim |
 | Broker forges a compatible worker/compiler revision | Treat delivery revision as diagnostic only; reload Run/WorkflowVersion checksum and compiler pins and compare with locally supported versions before claim |
 | Legacy WorkflowRun executor mutates side tables for a unified Run | Do not register the unified Celery task until branch/wait/recovery persistence is Run-native; fail closed at the adapter boundary |
+| Initial Run-native executor accidentally reaches a side effect or durable pause | Default-off gate plus exact node-type allowlist; reject the whole graph before `running`; no fallback to legacy `execute_graph` |
+| Redelivery repeats start/completion transitions | Derive stable purpose-separated transition UUIDs from the delivery claim token and reuse transition checksum replay/terminal guards |
 | Destructive migration deletes real state | Immediate pre-cutover zero-state/consumer proof and separate exact migration approval |
 | Rollback cannot restore removed schema | Tested previous-code + empty-database rebuild; stop cutover if environment is not disposable |
 

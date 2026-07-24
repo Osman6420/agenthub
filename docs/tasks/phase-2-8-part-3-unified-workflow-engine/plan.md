@@ -118,6 +118,12 @@ it does not authorize an unreviewed destructive migration.
   already-running owner may only converge to cancellation, timeout or explicit recovery while
   suspended. Full graph execution is not connected until legacy WorkflowRun-only branch/wait/recovery
   writes are replaced with unified Run persistence.
+- The first Run-native executor slice is internal-gated off by default and accepts only bounded,
+  side-effect-free `input`, `format_output`, `validate_contract`, `condition` and `end` nodes.
+  Tool/model/retrieval, durable wait, approval, child, parallel, retry, compensation and recovery
+  nodes fail closed before the Run enters `running`. One claim owns deterministic start/terminal
+  transition tokens; checkpoint/output validation and terminal/cancellation/deadline semantics stay
+  in the shared transition service. This slice is directly tested and is not yet Celery-dispatched.
 
 ### Explicit synchronous disconnect and cancellation semantics
 
@@ -272,8 +278,9 @@ verified output of this part.
    Additive migration `0011` owns the claim fields and constraint. It does not connect public routes,
    register a new Celery task or replace the old worker. Worker admission also enforces exact
    compiler/checksum compatibility and kill-switch revalidation before any Celery registration.
-   Disconnect transport hooks, general recovery tooling, delivery scheduling and full graph execution
-   remain pending.
+   The next internal executor slice is limited to side-effect-free bounded linear/conditional graphs
+   behind a default-off deployment gate. Disconnect transport hooks, general recovery tooling,
+   delivery scheduling and full graph execution remain pending.
 3. **Consumer migration:** move Responses, Chat Completions, GET/cancel, MCP, evaluation, console,
    metrics, approvals, children, recovery and kill-switch checks to the unified engine; convert demo
    and fixtures; run semantic parity, concurrency, restart and load/soak tests.

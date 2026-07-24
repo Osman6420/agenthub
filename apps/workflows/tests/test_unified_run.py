@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, close_old_connections, connection
+from django.test import override_settings
 from django.utils import timezone
 
 from apps.agents.services import set_runtime_suspension
@@ -33,6 +34,11 @@ from apps.workflows.transitions import (
     request_run_cancellation,
     resolve_expired_sync_lease,
     transition_run,
+)
+from apps.workflows.unified_executor import (
+    UnifiedExecutorError,
+    _validated_graph,
+    execute_claimed_bounded_run,
 )
 
 
@@ -324,6 +330,127 @@ def test_background_claim_and_transition_recheck_kill_switch(workflow_fixture) -
         background_claim_token=token,
     )
     assert recovery.status == "recovery_required"
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_unified_executor_completes_without_legacy_side_tables(
+    workflow_fixture,
+) -> None:
+    run = _queued_background_run(workflow_fixture, key="bounded-executor")
+    Run.objects.filter(pk=run.id).update(redacted_state={"query": "hello"})
+    token = uuid4()
+    claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+        lease_seconds=30,
+    )
+    result = execute_claimed_bounded_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+    )
+    assert result.status == "completed"
+    run.refresh_from_db()
+    assert run.checkpoint["output"] == {"answer": "ok", "sources": []}
+    assert run.step_count == 3
+    assert run.background_claim_token is None
+
+
+@pytest.mark.django_db
+def test_bounded_unified_executor_is_default_off(workflow_fixture) -> None:
+    run = _queued_background_run(workflow_fixture, key="bounded-executor-disabled")
+    token = uuid4()
+    claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+        lease_seconds=30,
+    )
+    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_DISABLED"):
+        execute_claimed_bounded_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            claim_token=token,
+        )
+    run.refresh_from_db()
+    assert run.status == "queued"
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_unified_executor_observes_cancellation_between_nodes(
+    workflow_fixture,
+    monkeypatch,
+) -> None:
+    from apps.workflows import unified_executor
+
+    run = _queued_background_run(workflow_fixture, key="bounded-executor-cancel")
+    token = uuid4()
+    claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+        lease_seconds=30,
+    )
+    original_execute_node = unified_executor._execute_node
+
+    def execute_then_cancel(**kwargs):
+        result = original_execute_node(**kwargs)
+        if kwargs["node"]["type"] == "input":
+            request_run_cancellation(
+                organization_id=run.organization_id,
+                run_id=run.id,
+                reason_code="CLIENT_REQUESTED",
+            )
+        return result
+
+    monkeypatch.setattr(unified_executor, "_execute_node", execute_then_cancel)
+    result = execute_claimed_bounded_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+    )
+    assert result.status == "cancelled"
+    run.refresh_from_db()
+    assert run.background_claim_token is None
+
+
+def test_bounded_unified_executor_rejects_unsupported_and_cyclic_graphs() -> None:
+    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_NODE_UNSUPPORTED"):
+        _validated_graph(
+            {
+                "api_version": "agenthub/compiled-workflow/v5",
+                "input_node": "request",
+                "nodes": [
+                    {"id": "request", "type": "input", "config": {}},
+                    {"id": "tool", "type": "tool", "config": {}},
+                ],
+                "edges": [{"from": "request", "to": "tool"}],
+            }
+        )
+    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_GRAPH_UNBOUNDED"):
+        _validated_graph(
+            {
+                "api_version": "agenthub/compiled-workflow/v5",
+                "input_node": "request",
+                "nodes": [
+                    {"id": "request", "type": "input", "config": {}},
+                    {
+                        "id": "condition",
+                        "type": "condition",
+                        "config": {"expression": "true"},
+                    },
+                    {"id": "done", "type": "end", "config": {}},
+                ],
+                "edges": [
+                    {"from": "request", "to": "condition"},
+                    {"from": "condition", "to": "condition", "when": True},
+                    {"from": "condition", "to": "done", "when": False},
+                ],
+            }
+        )
 
 
 @pytest.mark.django_db(transaction=True)
