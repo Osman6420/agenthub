@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
+from django.test import override_settings
 from rest_framework.test import APIClient
 
+from apps.agents.runtime import AgentResult
 from apps.workflows.models import (
     WorkflowRun,
     WorkflowRunEvent,
@@ -11,6 +16,7 @@ from apps.workflows.models import (
 )
 from apps.workflows.runtime import (
     WorkflowRuntimeError,
+    _execute_eligible_node,
     _validate_output_policy,
     run_workflow_candidate,
 )
@@ -22,6 +28,48 @@ def _client(token: str) -> APIClient:
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     return client
+
+
+def test_agent_loop_runtime_rechecks_gate_and_returns_bounded_summary() -> None:
+    node = {
+        "id": "agent",
+        "type": "agent_loop",
+        "config": {"policy": {"tools": [], "limits": {}}},
+    }
+    run = SimpleNamespace(release=object())
+    with pytest.raises(WorkflowRuntimeError, match="WORKFLOW_AGENT_LOOP_DISABLED"):
+        _execute_eligible_node(node=node, state={}, input_env={"input": {}}, run=run)
+
+    result = AgentResult(
+        output={"answer": "ok"},
+        state={},
+        steps=2,
+        tool_calls=0,
+        input_tokens=3,
+        output_tokens=4,
+        tools_called=(),
+    )
+    with (
+        override_settings(WORKFLOW_AGENT_LOOP_ENABLED=True),
+        patch("apps.agents.runtime.run_embedded_agent_loop", return_value=result),
+    ):
+        output = _execute_eligible_node(
+            node=node,
+            state={},
+            input_env={"input": {"query": "hello"}},
+            run=run,
+        )
+
+    assert output == {
+        "output": {"answer": "ok"},
+        "agent": {
+            "steps": 2,
+            "tool_calls": 0,
+            "input_tokens": 3,
+            "output_tokens": 4,
+            "escalated": False,
+        },
+    }
 
 
 @pytest.mark.django_db(transaction=True)

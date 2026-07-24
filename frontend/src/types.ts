@@ -60,6 +60,7 @@ export interface NodeTypeSchema {
   supports_compensation?: boolean;
   branch_owner?: boolean;
   composition?: boolean;
+  agent_loop?: boolean;
 }
 
 export interface ToolBindingRole {
@@ -81,7 +82,7 @@ export interface NodeSchema {
   limits: { max_nodes: number; max_edges: number; max_parallel_branches?: number };
   node_types: NodeTypeSchema[];
   retry_policy?: RetryPolicySchema;
-  gates?: { composition_enabled: boolean };
+  gates?: { composition_enabled: boolean; agent_loop_enabled?: boolean };
   tool_binding_roles: ToolBindingRole[];
   custom_nodes: { node_ref: string }[];
   projects: { id: number; slug: string; name: string }[];

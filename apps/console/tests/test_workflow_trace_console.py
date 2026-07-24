@@ -127,7 +127,7 @@ def _build_run(org: Organization) -> WorkflowRun:
             source_artifact=workflow,
             compiled_graph={"nodes": {}},
             checksum="c" * 64,
-            compiler_version="workflow-compiler/v4",
+            compiler_version="workflow-compiler/v5",
             created_by="editor",
         )
         version.save()
@@ -186,7 +186,7 @@ def _build_run(org: Organization) -> WorkflowRun:
         pending_checksum="1" * 64,
         workflow_checksum="e" * 64,
         release_id_snapshot=release.pk,
-        compiler_version="workflow-compiler/v4",
+        compiler_version="workflow-compiler/v5",
         redacted_payload={"payload": SECRET},
         deadline_at=timezone.now() + timedelta(hours=1),
     )

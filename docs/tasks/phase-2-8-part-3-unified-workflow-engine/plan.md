@@ -22,9 +22,21 @@ RAG runs synchronously outside the durable WorkflowRun/AgentRun state machines. 
 The concise workflow guide is read verbatim into AI authoring, so DSL, compiler, Studio schema,
 model-facing instructions and human architecture documentation must change atomically.
 
-Initial repository inspection indicates the dependency spans roughly 125 source/documentation files
-and 45 test files. Implementation must refresh this inventory before work and use it as the removal
-checklist; the estimates are not permission to perform broad unreviewed rewrites.
+The refreshed 2026-07-24 Codebase Memory index contains 10,000 nodes and 43,610 edges. Exact
+graph-augmented search finds 101 `ScenarioType`/scenario-type matches across 89 application files;
+an exact removal scan for the broader old endpoint/artifact/run vocabulary currently identifies 87
+application/config/frontend files. `RunStatusView.get` is the highest-fan-in project symbol, and the
+workflow boundary calls into gateway, releases, tools and orchestration. These measured inventories,
+not the older 125/45 estimates, are the starting removal checklist and must be regenerated after
+each gate.
+
+The live Compose database is not empty: it currently contains 17 scenarios (8 RAG, 7 workflow,
+2 agent), 7 workflow artifacts, 4 agent artifacts, 4 workflow versions, 5 agent versions,
+5 workflow runs, 13 agent runs, 31 workflow events, 39 agent events, 20 idempotency rows and
+2 approval rows. One workflow run is `running`; child links are empty. The owner explicitly states
+that these are disposable local/non-production records and requests no compatibility or conversion
+for them. This replaces the old “prove zero rows” assumption with a drain-and-reset cutover policy;
+it does not authorize an unreviewed destructive migration.
 
 ## Scope
 
@@ -124,8 +136,10 @@ checklist; the estimates are not permission to perform broad unreviewed rewrites
 - New production dependencies, arbitrary code/dynamic graph mutation, chain-of-thought storage,
   tenant-selected endpoints/secrets, trusting client/node authority fields, automatic background
   takeover after disconnect or a mixed old/new runtime fleet after cutover.
-- Preserving old data/API compatibility. The approved assumption is that protected real data and old
-  API consumers do not exist; that assumption must be verified immediately before deletion.
+- Preserving old workflow/agent/scenario/run data or old API compatibility. The owner confirmed on
+  2026-07-24 that there is no material real workflow data and existing workflow/run records may be
+  discarded rather than converted. Repository configuration and access logs still need a bounded
+  old-consumer check, but row counts no longer block cutover.
 - Implementing the Part 4 polished scenario UX or Part 7 cross-job operations page beyond the
   minimum surfaces required to migrate runtime consumers.
 
@@ -156,28 +170,32 @@ select only a mode already allowed by the exact compiled release.
   `X-AgentHub-Run-Id` and run endpoints.
 - Cross-tenant run/get/cancel, retrieval, tool, child and approval access fails closed with PostgreSQL
   non-owner RLS.
-- Pre-cutover evidence proves zero protected data and zero old API consumers; otherwise the
-  destructive gate stops and the plan must be revised.
+- Pre-cutover evidence records exact disposable-row counts, proves no production environment is in
+  scope, drains the currently running workflow and old workers, and finds no configured old API
+  consumer. Existing local rows are expected and are deleted by the approved reset/cutover path.
 - Static scans find no live `/query`, `/invoke`, ScenarioType, `agent_definition`, AgentRun or
   WorkflowRun references after cutover.
 
 ## ADR, data and migration policy
 
-Before implementation, write an ADR for the single product model, in-place DSL change, mode-analysis
-contract, sync disconnect/cancel semantics, Responses/run identifiers, no-dual-runtime rule,
-destructive cutover and rollback.
+Before implementation, write ADR-0014 for the single product model, in-place DSL change,
+mode-analysis contract, sync disconnect/cancel semantics, Responses/run identifiers,
+no-dual-runtime rule, destructive cutover and rollback.
 
 Gates 1–3 add the unified tables and migrate code without deleting old structures. Every new direct
 tenant table receives constraints, indexes, FORCE RLS and non-owner grants/tests. Immediately before
 Gate 4, record exact counts and references for scenarios/releases/manifests, agent/workflow versions,
 runs/events, idempotency, approvals, child links and pending work; inspect access/configuration/docs
-for `/query`/`/invoke` consumers. Any protected row, resumable job or consumer blocks deletion.
+for `/query`/`/invoke` consumers. A production target, a configured old consumer, or work that has
+not been explicitly drained blocks deletion. Disposable local rows do not require conversion.
 
-After a separately approved migration diff, Gate 4 removes old runtime tables, artifacts/type fields
-and endpoints. The accepted rollback is explicitly **previous application code plus recreation of an
-empty database, migrations and approved seed/configuration**. It is not an in-place downgrade and
-does not promise preservation of post-cutover runs. The full empty-database rebuild/rollback drill
-must pass before destructive apply.
+After a separately approved exact migration/reset diff, Gate 4 removes old runtime tables,
+artifacts/type fields and endpoints. No data migration is built for Scenario type, AgentVersion,
+AgentRun/Event or WorkflowRun/Event because the owner rejected that compatibility requirement.
+The accepted rollback is explicitly **previous application code plus recreation of an empty
+database, migrations and approved seed/configuration**. It is not an in-place downgrade and does
+not preserve pre- or post-cutover runs. The full empty-database rebuild/rollback drill must pass
+before destructive apply.
 
 ## Security, privacy, observability and audit
 
@@ -196,15 +214,31 @@ verified output of this part.
 
 ## Implementation gates and delivery order
 
-1. **Inventory and contract:** refresh dependency/data/API inventory; write ADR; add `agent_loop`,
-   RAG invariants, execution-mode analysis/reasons, protected-field rules, guides and compiler tests.
-2. **Unified persistence/state machine:** add Run/RunEvent/RLS, database-ordered event allocation,
-   shared transition/terminal guards, sync lease/disconnect/cancel and background worker executor.
+1. **Inventory and contract — In progress:** refreshed dependency/data/API inventory and live
+   Compose baseline; ADR-0014 drafted; compiled-workflow v5 now carries execution-mode
+   analysis/reasons; the closed `agent_loop` compiler/Studio/AI-authoring contract reuses current
+   agent policy validation and is deployment-gated off until runtime integration. RAG invariants,
+   protected-field rules and remaining parity tests continue. Release compilation now pins the
+   compiler mode analysis into the manifest/checksum and fails closed unless every embedded agent
+   tool/verification role resolves to an exact safe tool binding; positive sync proof for bounded
+   tool/agent calls remains pending because pinned transport timeouts are not yet in the manifest.
+   The first runtime adapter now executes only tool-free embedded policies behind the same
+   deployment gate, using a persistence-independent policy resolver shared with AgentRun.
+   Tool/approval policies remain rejected until unified pause/checkpoint ownership exists.
+2. **Unified persistence/state machine — In progress:** additive UUID `Run` and direct-tenant
+   `RunEvent` tables, compiler/release pins, lifecycle/checkpoint/lease/cancellation/counter fields,
+   closed event types, bounded/redacted payload validation, database-locked monotonic event
+   allocation, constraints/indexes and FORCE RLS are implemented. The shared locked transition
+   service now enforces legal state edges, checkpoint compare-and-swap, bounded monotonic counters,
+   terminal immutability and stale/late-result evidence. Sync lease/disconnect/cancel behavior,
+   transition-token idempotency and the background worker executor remain pending.
 3. **Consumer migration:** move Responses, Chat Completions, GET/cancel, MCP, evaluation, console,
    metrics, approvals, children, recovery and kill-switch checks to the unified engine; convert demo
    and fixtures; run semantic parity, concurrency, restart and load/soak tests.
-4. **Destructive readiness:** prove zero protected data/resumable work/old API consumers; stop/drain
-   old workers; run and record empty-database rollback drill; obtain manual migration-diff approval.
+4. **Destructive readiness:** confirm the target is disposable/non-production, record counts,
+   stop/drain the live `running` workflow and old workers, check configured old API consumers, run
+   and record the empty-database rollback drill, and obtain manual approval for the exact
+   destructive migration/reset diff.
 5. **Atomic cutover:** remove Agent/RAG runtimes, old tables/artifacts/type field/endpoints, apply one
    contract version, rebuild seed/configuration and run end-to-end/static acceptance.
 6. **Documentation closure:** update master plan, ADR status, current architecture/user/manual docs
@@ -228,18 +262,20 @@ verified output of this part.
 - Retry, duplicate delivery, idempotency conflict/replay, worker restart, timeout, approval/event/
   human/timer/child resume and recovery-required behavior.
 - PostgreSQL non-owner RLS and cross-tenant run/cancel/retrieval/tool/child/approval denial.
-- Pre-delete zero-data/API-consumer evidence, destructive migration, empty-database rollback/rebuild,
-  static removed-reference scan and mixed-worker denial.
+- Pre-delete disposable-environment/count/API-consumer evidence, drain proof, destructive migration,
+  empty-database rollback/rebuild, static removed-reference scan and mixed-worker denial.
 - Ruff format/lint, mypy, Django/migration checks, unit/integration/security, secret scan,
   staging-equivalent load/soak and manual end-to-end smoke.
 
 ## Rollout and rollback
 
-No mixed runtime fleet. Gates 1–3 run without deleting old schema. At cutover, drain/stop old workers,
-confirm zero protected state/consumers, approve migration, deploy one compiler/checkpoint version and
-run acceptance. Before destructive apply, normal code rollback remains possible. After destructive
-apply, rollback is only the tested procedure: stop new roles, deploy previous code, recreate an empty
-database, apply previous migrations and approved seed/configuration, then verify health/smoke.
+No mixed runtime fleet. Gates 1–3 run without deleting old schema. At cutover, confirm the target is
+the approved disposable environment, drain/stop old work and workers, record rows to be discarded,
+confirm no configured old consumer, approve the exact migration/reset, deploy one compiler/checkpoint
+version and run acceptance. Before destructive apply, normal code rollback remains possible. After
+destructive apply, rollback is only the tested procedure: stop new roles, deploy previous code,
+recreate an empty database, apply previous migrations and approved seed/configuration, then verify
+health/smoke.
 
 ## Cost and risks
 
@@ -256,8 +292,10 @@ not implementation choices left to the engineer.
 
 ## Status
 
-**Planned.** Public API, authorization and destructive migration work requires the approvals and ADR
-defined above.
+**In progress — Gate 1 inventory/contract.** The owner approved starting Part 3 and explicitly waived
+legacy workflow/run data compatibility on 2026-07-24. ADR-0014 and additive compiler-contract work
+may proceed. Public API/authorization changes and the exact destructive migration/reset remain
+separate approval gates under repository policy.
 
 ## Completion criteria
 

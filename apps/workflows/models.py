@@ -59,7 +59,7 @@ class WorkflowVersion(models.Model):
     compiled_graph = models.JSONField()
     checksum = models.CharField(max_length=64)
     # The active compiled-contract version is set explicitly by ``compile_workflow_version``
-    # (``apps.workflows.compiler.COMPILER_VERSION``, currently ``workflow-compiler/v4``). This
+    # (``apps.workflows.compiler.COMPILER_VERSION``, currently ``workflow-compiler/v5``). This
     # column default is only a legacy fallback and is never used by the service path.
     compiler_version = models.CharField(max_length=32, default="workflow-compiler/v1")
     created_by = models.CharField(max_length=200)
@@ -114,6 +114,142 @@ WORKFLOW_TERMINAL_STATUSES = frozenset(
         WorkflowRunStatus.CANCELLED,
     }
 )
+
+
+class RunExecutionMode(models.TextChoices):
+    SYNC = "sync", "Synchronous"
+    BACKGROUND = "background", "Background"
+
+
+class RunAwaitingKind(models.TextChoices):
+    APPROVAL = "approval", "Approval"
+    EVENT = "event", "Event"
+    HUMAN = "human", "Human"
+    TIMER = "timer", "Timer"
+    CHILD = "child", "Child"
+    RECOVERY = "recovery", "Recovery"
+
+
+class RunCancellationState(models.TextChoices):
+    NONE = "none", "None"
+    REQUESTED = "requested", "Requested"
+    ACKNOWLEDGED = "acknowledged", "Acknowledged"
+
+
+class RunEventType(models.TextChoices):
+    REQUESTED = "run.requested", "Run requested"
+    QUEUED = "run.queued", "Run queued"
+    STARTED = "run.started", "Run started"
+    CHECKPOINTED = "run.checkpointed", "Run checkpointed"
+    WAITING = "run.waiting", "Run waiting"
+    RESUMED = "run.resumed", "Run resumed"
+    CANCELLATION_REQUESTED = "run.cancellation_requested", "Cancellation requested"
+    RECOVERY_REQUIRED = "run.recovery_required", "Recovery required"
+    COMPLETED = "run.completed", "Run completed"
+    FAILED = "run.failed", "Run failed"
+    TIMED_OUT = "run.timed_out", "Run timed out"
+    CANCELLED = "run.cancelled", "Run cancelled"
+    LATE_RESULT_DISCARDED = "run.late_result_discarded", "Late result discarded"
+
+
+class Run(TimeStampedModel):
+    """Canonical persistence root for synchronous and background workflow execution."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="runs"
+    )
+    scenario = models.ForeignKey(
+        "catalog.Scenario", on_delete=models.CASCADE, related_name="runs"
+    )
+    release = models.ForeignKey(
+        "releases.ScenarioRelease", on_delete=models.PROTECT, related_name="runs"
+    )
+    workflow_version = models.ForeignKey(
+        WorkflowVersion, on_delete=models.PROTECT, related_name="unified_runs"
+    )
+    consumer = models.ForeignKey(
+        "identity.Consumer", on_delete=models.PROTECT, related_name="runs"
+    )
+    actor_id = models.CharField(max_length=200)
+    response_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    idempotency_key = models.CharField(max_length=128)
+    compiled_checksum = models.CharField(max_length=64)
+    compiler_version = models.CharField(max_length=32)
+    status = models.CharField(
+        max_length=20, choices=WorkflowRunStatus.choices, default=WorkflowRunStatus.REQUESTED
+    )
+    execution_mode = models.CharField(max_length=16, choices=RunExecutionMode.choices)
+    checkpoint = models.JSONField(default=dict)
+    checkpoint_version = models.PositiveIntegerField(default=1)
+    next_event_sequence = models.PositiveBigIntegerField(default=1)
+    awaiting_kind = models.CharField(
+        max_length=16, choices=RunAwaitingKind.choices, blank=True
+    )
+    awaiting_reference = models.CharField(max_length=200, blank=True)
+    deadline_at = models.DateTimeField()
+    sync_lease_token = models.UUIDField(null=True, blank=True)
+    sync_lease_expires_at = models.DateTimeField(null=True, blank=True)
+    cancellation_state = models.CharField(
+        max_length=16,
+        choices=RunCancellationState.choices,
+        default=RunCancellationState.NONE,
+    )
+    cancellation_requested_at = models.DateTimeField(null=True, blank=True)
+    cancellation_reason_code = models.CharField(max_length=64, blank=True)
+    step_count = models.PositiveIntegerField(default=0)
+    tool_call_count = models.PositiveIntegerField(default=0)
+    input_token_count = models.PositiveIntegerField(default=0)
+    output_token_count = models.PositiveIntegerField(default=0)
+    input_checksum = models.CharField(max_length=64)
+    execution_context = models.JSONField(default=dict)
+    redacted_state = models.JSONField(default=dict)
+    error_code = models.CharField(max_length=64, blank=True)
+    reason_code = models.CharField(max_length=64, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["consumer", "idempotency_key"],
+                name="uniq_run_consumer_idempotency",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(checkpoint_version__gte=1),
+                name="run_checkpoint_version_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(next_event_sequence__gte=1),
+                name="run_next_event_sequence_positive",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "status", "created_at"]),
+            models.Index(fields=["organization", "execution_mode", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"run:{self.pk}:{self.status}"
+
+    def clean(self) -> None:
+        organization_id = self.organization_id
+        if self.scenario_id and organization_id != self.scenario.project.organization_id:
+            raise ValidationError("run scenario must match run organization")
+        if self.release_id and self.release.scenario_id != self.scenario_id:
+            raise ValidationError("run release must match run scenario")
+        if self.workflow_version_id and self.workflow_version.scenario_id != self.scenario_id:
+            raise ValidationError("run workflow must match run scenario")
+        if self.consumer_id and self.consumer.organization_id != organization_id:
+            raise ValidationError("run consumer must match run organization")
+        if bool(self.awaiting_kind) != bool(self.awaiting_reference):
+            raise ValidationError("run awaiting kind and reference must be set together")
+        if self.execution_mode != RunExecutionMode.SYNC and (
+            self.sync_lease_token or self.sync_lease_expires_at
+        ):
+            raise ValidationError("only synchronous runs may hold a sync lease")
+        if bool(self.sync_lease_token) != bool(self.sync_lease_expires_at):
+            raise ValidationError("sync lease token and expiry must be set together")
 
 
 class WorkflowRun(TimeStampedModel):
@@ -586,3 +722,47 @@ class WorkflowRecoveryApproval(TimeStampedModel):
         if self.pk is not None:
             raise ValueError("workflow recovery approvals are append-only")
         super().save(*args, **kwargs)
+
+
+class RunEvent(models.Model):
+    """Bounded, redacted event attached to the canonical Run aggregate."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="run_events"
+    )
+    run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="events")
+    sequence = models.PositiveBigIntegerField()
+    event_type = models.CharField(max_length=64, choices=RunEventType.choices)
+    node_id = models.CharField(max_length=64, blank=True)
+    outcome = models.CharField(max_length=32, blank=True)
+    reason_code = models.CharField(max_length=64, blank=True)
+    state_checksum = models.CharField(max_length=64, blank=True)
+    payload = models.JSONField(default=dict)
+    occurred_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "sequence"], name="uniq_unified_run_event_sequence"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sequence__gte=1),
+                name="run_event_sequence_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(event_type__in=RunEventType.values),
+                name="run_event_type_valid",
+            ),
+        ]
+        ordering = ["run_id", "sequence"]
+
+    def __str__(self) -> str:
+        return f"run-event:{self.run_id}:{self.sequence}:{self.event_type}"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.run_id:
+            run_org_id = self.run.organization_id
+            if self.organization_id and self.organization_id != run_org_id:
+                raise ValueError("run event organization must match run organization")
+            self.organization_id = run_org_id
+        super().save(*args, **kwargs)  # type: ignore[arg-type]

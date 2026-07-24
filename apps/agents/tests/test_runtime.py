@@ -9,7 +9,13 @@ from django.utils import timezone
 
 from apps.agents.models import AgentRun, AgentRunStatus
 from apps.agents.planner import DECISION_RESPOND, DECISION_TOOL, AgentDecision
-from apps.agents.runtime import AgentRuntimeError, _validate_decision, execute_agent
+from apps.agents.runtime import (
+    AgentRuntimeError,
+    _validate_decision,
+    execute_agent,
+    run_embedded_agent_loop,
+)
+from apps.agents.services import resolve_release_agent
 from apps.agents.tasks import execute_agent_run
 from apps.agents.tests.conftest import build_agent, make_run
 from apps.identity.capabilities import Capability
@@ -34,6 +40,35 @@ def test_respond_completes_and_persists_output() -> None:
     assert run.step_count == 1
     assert run.checkpoint["output"]["answer"]
     assert run.checkpoint["output"]["sources"] == []
+
+
+def test_embedded_agent_loop_runs_tool_free_policy_without_agentrun_persistence() -> None:
+    fixture = build_agent()
+    run = make_run(fixture)
+    result = run_embedded_agent_loop(
+        compiled_config=resolve_release_agent(fixture.release).compiled_config,
+        release=fixture.release,
+        workflow_run=run,
+        state=dict(run.checkpoint),
+    )
+
+    assert result.output["answer"]
+    assert result.steps == 1
+    run.refresh_from_db()
+    assert run.status == AgentRunStatus.QUEUED
+    assert run.step_count == 0
+
+
+def test_embedded_agent_loop_rejects_tools_until_unified_pause_ownership_exists() -> None:
+    fixture = build_agent(with_tool=True)
+    run = make_run(fixture, capabilities=TOOL_CAPS)
+    with pytest.raises(AgentRuntimeError, match="AGENT_EMBEDDED_TOOLS_UNAVAILABLE"):
+        run_embedded_agent_loop(
+            compiled_config=resolve_release_agent(fixture.release).compiled_config,
+            release=fixture.release,
+            workflow_run=run,
+            state=dict(run.checkpoint),
+        )
 
 
 def test_retrieval_then_respond() -> None:

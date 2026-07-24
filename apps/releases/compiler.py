@@ -222,6 +222,10 @@ def compile_release(
         # an immutable ``transform_profile`` in this same release (P2.6.1 D1), so the runtime can
         # never resolve an unpinned, foreign, mutable or ``latest`` transform profile.
         _assert_transform_profiles_pinned(compiled_workflow_graph, artifacts_manifest)
+        # Embedded agent policy is executable authority. Every declared/verification tool role must
+        # resolve to the same release's exact active binding, with verification remaining
+        # observation-only just like the legacy agent compiler path.
+        _assert_agent_loop_tools_pinned(compiled_workflow_graph, artifacts_manifest)
         # Fail closed: every ``subworkflow``/``agent_call`` node must reference a pinned child role
         # that resolves to an exact same-organization released child scenario (P2.6.5 / ADR-0009).
         # The pin records the child kind/scenario/release/checksum so the runtime can never resolve
@@ -259,6 +263,14 @@ def compile_release(
         manifest["document_set_versions"] = document_set_versions
     if workflow_checksum:
         manifest["workflow_checksum"] = workflow_checksum
+        if compiled_workflow_graph is not None:
+            manifest["execution_mode_analysis"] = compiled_workflow_graph.get(
+                "execution_mode_analysis",
+                {
+                    "supported_execution_modes": ["background"],
+                    "sync_blockers": [{"code": "compiled_mode_analysis_missing", "node_ids": []}],
+                },
+            )
     if agent_checksum:
         manifest["agent_checksum"] = agent_checksum
     manifest_sha = compute_checksum(manifest)
@@ -312,6 +324,52 @@ def _assert_transform_profiles_pinned(
             raise CompileError(
                 f"transform node references an unpinned transform_profile role: {role!r}"
             )
+
+
+def _assert_agent_loop_tools_pinned(
+    graph: dict[str, object], manifest: dict[str, dict[str, object]]
+) -> None:
+    """Bind every embedded agent policy to exact release-pinned tool roles."""
+
+    tool_roles = {
+        role for role, entry in manifest.items() if entry.get("type") == ArtifactType.TOOL_BINDING
+    }
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list):
+        raise CompileError("compiled workflow nodes are invalid")
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "agent_loop":
+            continue
+        node_id = str(node.get("id", ""))
+        config = node.get("config")
+        policy = config.get("policy") if isinstance(config, dict) else None
+        if not isinstance(policy, dict):
+            raise CompileError(f"agent_loop compiled policy is missing: {node_id}")
+        declared = policy.get("tools")
+        if not isinstance(declared, list) or any(not isinstance(role, str) for role in declared):
+            raise CompileError(f"agent_loop compiled tools are invalid: {node_id}")
+        missing = sorted(set(declared) - tool_roles)
+        if missing:
+            raise CompileError(
+                f"agent_loop declares tools with no pinned tool_binding role: {missing}"
+            )
+
+        actions = policy.get("actions")
+        verify_roles = actions.get("verify_roles", []) if isinstance(actions, dict) else []
+        if not isinstance(verify_roles, list):
+            raise CompileError(f"agent_loop verification roles are invalid: {node_id}")
+        for role in verify_roles:
+            if role == "retrieval":
+                continue
+            pinned = manifest.get(str(role), {}).get("tool")
+            if not isinstance(pinned, dict):
+                raise CompileError(
+                    f"agent_loop verification role has no pinned tool_binding: {role}"
+                )
+            if pinned.get("side_effecting") or pinned.get("approval_required"):
+                raise CompileError(
+                    f"agent_loop verification role must be a no-side-effect action: {role}"
+                )
 
 
 def canonical_manifest(release: ScenarioRelease) -> str:

@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import pytest
 from django.db import IntegrityError, transaction
+from django.test import override_settings
 
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
 from apps.catalog.models import AIProject, Scenario, ScenarioType
-from apps.releases.compiler import ArtifactRef, CompileError, compile_release, promote_release
+from apps.releases.compiler import (
+    ArtifactRef,
+    CompileError,
+    _assert_agent_loop_tools_pinned,
+    compile_release,
+    promote_release,
+)
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization
 
@@ -156,3 +163,96 @@ def test_promote_supersedes_previous_active(scenario: Scenario) -> None:
     assert r2.status == ReleaseStatus.ACTIVE
     active = ScenarioRelease.objects.filter(scenario=scenario, status=ReleaseStatus.ACTIVE)
     assert active.count() == 1
+
+
+def test_agent_loop_policy_requires_exact_release_pinned_tools() -> None:
+    graph = {
+        "nodes": [
+            {
+                "id": "agent",
+                "type": "agent_loop",
+                "config": {
+                    "policy": {
+                        "tools": ["tool_binding.search"],
+                        "actions": {"verify_roles": ["tool_binding.search"]},
+                    }
+                },
+            }
+        ]
+    }
+    with pytest.raises(CompileError, match="no pinned tool_binding"):
+        _assert_agent_loop_tools_pinned(graph, {})
+
+    unsafe_manifest = {
+        "tool_binding.search": {
+            "type": ArtifactType.TOOL_BINDING,
+            "tool": {"side_effecting": False, "approval_required": True},
+        }
+    }
+    with pytest.raises(CompileError, match="no-side-effect"):
+        _assert_agent_loop_tools_pinned(graph, unsafe_manifest)
+
+    safe_manifest = {
+        "tool_binding.search": {
+            "type": ArtifactType.TOOL_BINDING,
+            "tool": {"side_effecting": False, "approval_required": False},
+        }
+    }
+    _assert_agent_loop_tools_pinned(graph, safe_manifest)
+
+
+@pytest.mark.django_db
+@override_settings(WORKFLOW_AGENT_LOOP_ENABLED=True)
+def test_release_pins_agent_loop_execution_mode_analysis(scenario: Scenario) -> None:
+    _seed_contracts(scenario.project.organization)
+    workflow = create_artifact_version(
+        organization=scenario.project.organization,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="unified_agent",
+        body={
+            "api_version": "agenthub/v1",
+            "kind": "Workflow",
+            "metadata": {"id": "unified_agent.v1"},
+            "spec": {
+                "input_node": "request",
+                "nodes": [
+                    {"id": "request", "type": "input"},
+                    {
+                        "id": "agent",
+                        "type": "agent_loop",
+                        "config": {"tool_binding_roles": []},
+                        "input_mapping": [{"from": "/input", "to": "/input"}],
+                        "output_mapping": [{"from": "/output", "to": "/output"}],
+                    },
+                    {"id": "done", "type": "end"},
+                ],
+                "edges": [
+                    {"from": "request", "to": "agent"},
+                    {"from": "agent", "to": "done"},
+                ],
+            },
+        },
+        created_by="alice",
+    )
+
+    release = compile_release(
+        scenario=scenario,
+        refs=[
+            *_refs(),
+            ArtifactRef(
+                "workflow_definition",
+                ArtifactType.WORKFLOW_DEFINITION,
+                workflow.logical_id,
+                workflow.version,
+            ),
+        ],
+        runtime_version="rt:part-3",
+        created_by="alice",
+    )
+
+    assert release.manifest["execution_mode_analysis"] == {
+        "supported_execution_modes": ["background"],
+        "sync_blockers": [
+            {"code": "agent_loop_pause_policy_unproven", "node_ids": ["agent"]}
+        ],
+    }

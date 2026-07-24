@@ -21,32 +21,33 @@ not store general startup instructions or assumed service status in this handoff
 
 ## Active handoff
 
-- **Task and outcome:** No incomplete Part 2.1 unit. The task is completed and archived in the
-  [`Phase 2.8 Part 2.1 plan`](../planning/archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md).
-- **Approved scope:** Part 2.1 authorization, additive migrations, Access UX and superadmin
-  recovery controls are closed. Start a new active handoff before Part 3 implementation.
-- **Decisions and assumptions:** Preserve
-  [`ADR-0013`](../adr/0013-scoped-operator-capabilities-and-superadmin-recovery.md): administrative
-  authority does not imply document content; only an assigned Document Set Manager grants scenario
-  retrieval; binding is configuration; live grant revocation immediately blocks new retrieval.
-- **Working tree:** Slice 4 is committed at `1729510`; Slice 5 closes in the next commit.
-  Exclude unrelated concurrent changes in `AGENTS.md`,
-  `CLAUDE.md`, `.cbmignore`, `docs/tasks/codebase-memory-developer-tooling/`, `.worktrees/` and
-  Celery Beat schedule files.
-- **Verification:** See
-  [`verification.md`](../planning/archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/verification.md).
-  Slice 4 evidence includes 29 release-focused, 37 document-operation, 13 tool-authorization,
-  315/317 identity-release-ingestion-tools and 168 console tests passing; two expected
-  off-PostgreSQL guards skipped. Slice 5 Access evidence includes 20 focused and 170 console tests,
-  Ruff, Mypy, Django check, migration drift and diff check passing. Browser visual/accessibility
-  inspection is pending because no browser backend is available.
-- **Runtime:** The complete local Compose topology is running. PostgreSQL, Redis and MinIO are
-  healthy; web liveness returns HTTP 200. Migrations `identity.0007`, `identity.0008` and
-  `documents.0006` are applied to the persistent local database.
-- **Risks and blockers:** Live visual browser inspection was unavailable. Stored legacy role values
-  remain readable for compatibility but cannot be selected in ordinary membership forms.
-  Phishing-resistant MFA is deferred to Phase 3 by owner decision on 2026-07-24.
-- **Next action:** Create a fresh handoff for Phase 2.8 Part 3 before implementation.
+- **Task and outcome:** Phase 2.8 Part 3 Gate 2 unified persistence/state machine is active; see the
+  [Part 3 plan](../tasks/phase-2-8-part-3-unified-workflow-engine/plan.md).
+- **Approved scope:** Plan/ADR and additive compiler/runtime/persistence work. Public API,
+  authorization and the exact destructive migration/reset remain separate approval gates.
+- **Decisions and assumptions:** Preserve ADR-0013 authorization boundaries. Per
+  [ADR-0014](../adr/0014-unified-workflow-engine-cutover.md), one workflow engine replaces RAG,
+  workflow and agent paths; old local workflow/run data is disposable and will not be converted.
+- **Working tree:** Part 3 plan/ADR, compiler v5, gated `agent_loop`, release pins, shared agent
+  policy and tool-free workflow adapter are in progress. Additive UUID `Run`/`RunEvent`, migration,
+  FORCE RLS, locked event allocation and checkpoint-CAS transition/terminal guards are implemented;
+  old models/routes/workers remain active.
+  Exclude user-owned
+  `.codebase-memory/`, `.worktrees/` and Celery Beat schedule files.
+- **Verification:** See the
+  [Part 3 verification record](../tasks/phase-2-8-part-3-unified-workflow-engine/verification.md).
+  Full workflow/builder affected package passes (254); release/workflow regression passes (211);
+  latest agent/workflow regression passes (297); Gate 2 affected regression passes (243);
+  PostgreSQL unified Run/RLS checks pass (8, including two-writer CAS); Gate 2 affected regression
+  passes (245); migration drift, focused Ruff and Mypy pass; focused frontend tests pass (5) and
+  TypeScript typecheck passes.
+- **Runtime:** Full Compose topology is running; PostgreSQL, Redis and MinIO are healthy and web
+  liveness is HTTP 200. One old workflow run is `running`; do not cut over or reset without drain.
+- **Risks and blockers:** Exact destructive migration/reset and public API removal are not approved.
+  Codebase Memory exposes no callable freshness-status endpoint in this session, so graph results
+  are cross-checked with Serena, `rg`, code, migrations and live PostgreSQL.
+- **Next action:** Add durable transition-token idempotency and cooperative cancellation/sync-lease
+  expiry semantics on unified `Run` before connecting any route or worker.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:

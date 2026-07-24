@@ -499,6 +499,25 @@ endpoint, url, entrypoint, package, python, code, secret
 
 ### 8.4 Built-in node türleri
 
+`agent_loop` Part 3 geçiş düğümüdür ve `WORKFLOW_AGENT_LOOP_ENABLED` varsayılanı kapalıdır. Gate
+kapalıyken compiler düğümü reddeder; Studio yalnız gated olarak gösterir. Açık olduğunda config
+zorunlu `tool_binding_roles` ile yalnız `retrieval`, `limits`, `objective_key`, `output_key`,
+`system_prompt` ve `actions` alanlarını kabul eder. Mevcut agent güvenlik şeması ve limit
+normalizasyonu aynen yeniden kullanılır; bilinmeyen/korumalı alanlar reddedilir. Düğüm hem
+`input_mapping` hem `output_mapping` ister ve runtime entegrasyonu tamamlanana kadar
+`agent_loop_pause_policy_unproven` nedeniyle yalnız background destekler.
+Release compiler, policy içindeki her araç rolünün aynı release manifestinde exact ve aktif bir
+`tool_binding` olarak pinlenmesini zorunlu kılar. Verification rolleri side-effect veya approval
+gerektiren binding kullanamaz. Compiler’ın `execution_mode_analysis` çıktısı release manifestine ve
+checksum’una dahil edilir; runtime daha sonra yalnız bu exact analizi yeniden doğrulayabilir.
+
+İlk gated runtime diliminde yalnız tool-free `agent_loop` policy yürütülür. Ortak
+`resolve_runtime_policy` çekirdeği limitleri, verification/escalation kurallarını ve child
+attenuation’ı hem AgentRun hem workflow adapter’ı için aynı şekilde hesaplar. Workflow runtime gate’i
+yeniden kontrol eder ve outer workflow transition sonucu persist eder. Tool ilan eden embedded
+policy, approval pause/checkpoint sahipliği birleşik Run modeline taşınana kadar
+`AGENT_EMBEDDED_TOOLS_UNAVAILABLE` ile fail-closed reddedilir.
+
 #### `input`
 
 ```json
@@ -708,7 +727,7 @@ Mapping yalnız veri taşır; hiçbir zaman yetki taşımaz ve expression/templa
 - Runtime output mapping’i copy-on-success uygular: bir giriş çözülmez/tip uyuşmazsa state kısmen
   değişmez. Durable wait düğümleri `event_wait`, `human_task` ve `timer` olarak kapalı şemalarla
   tanımlanır; event ve insan girdileri yalnız açık `output_mapping` üzerinden state'e girer. Compiled
-  workflow contract versiyonu `agenthub/compiled-workflow/v4`’tür; eski compiled
+  workflow contract versiyonu `agenthub/compiled-workflow/v5`’tir; eski compiled
   graph/checkpoint yeni semantikle çalıştırılamaz.
 
 Stabil diagnostic kodları: `WORKFLOW_PATH_INVALID`, `WORKFLOW_PATH_PROTECTED`,
@@ -736,7 +755,7 @@ branch’leri kapatır.
 
 ### 8.4.3 Failure route, retry ve compensation
 
-Compiled workflow sözleşmesi `agenthub/compiled-workflow/v4` ile server-owned failure taxonomy
+Compiled workflow sözleşmesi `agenthub/compiled-workflow/v5` ile server-owned failure taxonomy
 kullanır: `validation`, `authorization`, `permanent`, `transient`, `outcome_unknown`. Bilinmeyen
 kodlar fail-closed biçimde `permanent` sınıfındadır. Edge üzerindeki `on_error` exact sınıf veya
 `any` olabilir; exact route önceliklidir ve aynı kaynak/sınıf için iki route compile edilmez.

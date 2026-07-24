@@ -35,9 +35,11 @@ from apps.agents.limits import (
     MAX_OBSERVATION_BYTES,
     MAX_OBSERVATION_CONTEXT_BYTES,
     NO_PROGRESS_LIMIT,
+    LimitError,
     resolve_limits,
 )
 from apps.agents.models import AgentRunEvent, AgentRunStatus
+from apps.agents.policy import resolve_runtime_policy
 from apps.agents.planner import (
     AGENT_DECISION_SCHEMA_VERSION,
     DECISION_ESCALATE,
@@ -139,6 +141,60 @@ def run_agent_candidate(*, release: Any, input_payload: dict[str, Any]) -> RunRe
     )
 
 
+def run_embedded_agent_loop(
+    *,
+    compiled_config: dict[str, Any],
+    release: Any,
+    workflow_run: Any,
+    state: dict[str, Any],
+) -> AgentResult:
+    """Run a tool-free compiled agent policy inside one workflow node.
+
+    Tool/approval execution remains disabled until its pause/checkpoint ownership moves to the
+    unified Run state machine. Retrieval/model calls reuse the existing governed seams and the
+    outer workflow transition persists the node result.
+    """
+
+    if compiled_config.get("tools"):
+        raise AgentRuntimeError("AGENT_EMBEDDED_TOOLS_UNAVAILABLE")
+
+    try:
+        resolve_limits(compiled_config.get("limits"))
+    except LimitError:
+        raise AgentRuntimeError("AGENT_POLICY_INVALID") from None
+    embedded = SimpleNamespace(
+        agent_version=SimpleNamespace(compiled_config=compiled_config),
+        release=release,
+        execution_context=workflow_run.execution_context,
+        start_snapshot=dict(state),
+        checkpoint=dict(state),
+        checkpoint_version=CHECKPOINT_SCHEMA_VERSION,
+        status=workflow_run.status,
+        deadline_at=workflow_run.deadline_at,
+        organization=workflow_run.organization,
+        organization_id=workflow_run.organization_id,
+        scenario_id=workflow_run.scenario_id,
+        release_id=workflow_run.release_id,
+        id=workflow_run.id,
+        public_id="",
+        consumer_id=workflow_run.consumer_id,
+        step_count=0,
+        tool_call_count=0,
+        input_tokens=0,
+        output_tokens=0,
+        awaiting_step=None,
+        awaiting_role="",
+    )
+
+    def _refresh(**kwargs: Any) -> None:
+        workflow_run.refresh_from_db(fields=["status", "deadline_at"])
+        embedded.status = workflow_run.status
+        embedded.deadline_at = workflow_run.deadline_at
+
+    embedded.refresh_from_db = _refresh
+    return execute_agent(run=embedded, verify_context=False, persist=False)
+
+
 def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True) -> AgentResult:
     if verify_context:
         try:
@@ -150,32 +206,19 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
         raise AgentRuntimeError("AGENT_CHECKPOINT_INCOMPATIBLE")
 
     config = run.agent_version.compiled_config
-    limits = config["limits"]
-    actions = config.get("actions") or {}
-    verify_roles = frozenset(actions.get("verify_roles", []))
-    role_call_caps = actions.get("role_call_caps") or {}
-    repeat_retrieval = bool(actions.get("repeat_retrieval", False))
-    escalation_enabled = bool(actions.get("escalation_enabled", False))
-
-    # Child-composition attenuation (P2.6.5): when this agent runs as a pinned ``agent_call``
-    # child, the parent call-site's ``max_decisions`` further lowers the step budget, and its
-    # authored ``allowed_actions`` restricts the reachable decision kinds. Both are part of the
-    # server-signed, already-verified execution context. A parent compiled before P2.6.6 has no
-    # ``verify``/``escalate`` in ``allowed_actions``, so those kinds are denied by default.
-    max_steps = int(limits["max_steps"])
-    composition = (
-        run.execution_context.get("composition")
-        if isinstance(run.execution_context, dict)
-        else None
+    policy = resolve_runtime_policy(
+        compiled_config=config,
+        execution_context=run.execution_context if isinstance(run.execution_context, dict) else {},
     )
-    allowed_actions: frozenset[str] | None = None
-    if isinstance(composition, dict):
-        if isinstance(composition.get("max_decisions"), int):
-            max_steps = min(max_steps, int(composition["max_decisions"]))
-        if isinstance(composition.get("allowed_actions"), list):
-            allowed_actions = frozenset(str(a) for a in composition["allowed_actions"])
-    objective_key = config["objective_key"]
-    output_key = config["output_key"]
+    limits = policy.limits
+    verify_roles = policy.verify_roles
+    role_call_caps = policy.role_call_caps
+    repeat_retrieval = policy.repeat_retrieval
+    escalation_enabled = policy.escalation_enabled
+    max_steps = policy.max_steps
+    allowed_actions = policy.allowed_actions
+    objective_key = policy.objective_key
+    output_key = policy.output_key
     planner = get_configured_planner()
 
     state = dict(run.checkpoint) if run.checkpoint else dict(run.start_snapshot)

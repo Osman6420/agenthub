@@ -380,6 +380,29 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
             },
         ],
     },
+    {
+        "type": "agent_loop",
+        "label": "Agent loop",
+        "category": "agent",
+        "supports_mapping": True,
+        "mapping_required": True,
+        "agent_loop": True,
+        "fields": [
+            {
+                "name": "tool_binding_roles",
+                "kind": "list",
+                "required": True,
+                "options_ref": "tool_binding_roles",
+                "help": "Release tarafından sabitlenecek kapalı araç rolü listesi.",
+            },
+            {"name": "retrieval", "kind": "object", "required": False},
+            {"name": "limits", "kind": "object", "required": False},
+            {"name": "objective_key", "kind": "identifier", "required": False},
+            {"name": "output_key", "kind": "identifier", "required": False},
+            {"name": "system_prompt", "kind": "text", "required": False},
+            {"name": "actions", "kind": "object", "required": False},
+        ],
+    },
     {"type": "end", "label": "End", "category": "io", "is_terminal": True, "fields": []},
 ]
 
@@ -445,6 +468,7 @@ def build_node_schema(*, organization_id: int) -> dict[str, Any]:
     # it as unavailable; the compiler independently rejects composition nodes when the gate is
     # off, so UI exposure can never activate a gated capability.
     composition_enabled = bool(getattr(settings, "WORKFLOW_COMPOSITION_ENABLED", False))
+    agent_loop_enabled = bool(getattr(settings, "WORKFLOW_AGENT_LOOP_ENABLED", False))
     return {
         "dsl": {"api_version": "agenthub/v1", "kind": "Workflow"},
         "limits": {
@@ -455,7 +479,10 @@ def build_node_schema(*, organization_id: int) -> dict[str, Any]:
         "node_types": _BUILTIN_NODES,
         "mapping": _MAPPING_SCHEMA,
         "retry_policy": _RETRY_POLICY_SCHEMA,
-        "gates": {"composition_enabled": composition_enabled},
+        "gates": {
+            "composition_enabled": composition_enabled,
+            "agent_loop_enabled": agent_loop_enabled,
+        },
         "tool_binding_roles": tool_binding_roles,
         "custom_nodes": custom_nodes,
     }

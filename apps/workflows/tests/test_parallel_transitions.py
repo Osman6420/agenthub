@@ -25,7 +25,7 @@ def _run(fixture: WorkflowFixture, key: str) -> WorkflowRun:
     WorkflowVersion.objects.filter(pk=version.pk).update(
         compiled_graph=compiled.graph,
         checksum=compiled.checksum,
-        compiler_version="workflow-compiler/v4",
+        compiler_version="workflow-compiler/v5",
     )
     version.refresh_from_db()
     return WorkflowRun.objects.create(

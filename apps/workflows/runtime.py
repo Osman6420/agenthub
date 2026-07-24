@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import jsonschema
+from django.conf import settings
 from django.utils import timezone
 
 from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
@@ -621,6 +622,33 @@ def _execute_eligible_node(
             return retrieve_for_release(release=release, query=query, consumer_id=run.consumer_id)
         except Exception as exc:  # provider-opaque failure -> fail the node with a stable code
             raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_FAILED") from exc
+    if node_type == "agent_loop":
+        if not bool(getattr(settings, "WORKFLOW_AGENT_LOOP_ENABLED", False)):
+            raise WorkflowRuntimeError("WORKFLOW_AGENT_LOOP_DISABLED")
+        from apps.agents.runtime import AgentRuntimeError, run_embedded_agent_loop
+
+        policy = config.get("policy")
+        if not isinstance(policy, dict):
+            raise WorkflowRuntimeError("WORKFLOW_AGENT_LOOP_POLICY_INVALID")
+        try:
+            result = run_embedded_agent_loop(
+                compiled_config=policy,
+                release=release,
+                workflow_run=run,
+                state=input_env if input_env is not None else state,
+            )
+        except AgentRuntimeError as exc:
+            raise WorkflowRuntimeError(exc.code) from None
+        return {
+            "output": result.output,
+            "agent": {
+                "steps": result.steps,
+                "tool_calls": result.tool_calls,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "escalated": result.escalation is not None,
+            },
+        }
     if node_type == "generate":
         from apps.orchestration.providers import ModelProviderError
         from apps.orchestration.rag_steps import chunks_from_state, generate_for_release

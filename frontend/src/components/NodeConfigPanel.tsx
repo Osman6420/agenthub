@@ -48,7 +48,11 @@ export function NodeConfigPanel({
   };
 
   const composition = typeSchema?.composition === true;
-  const gated = composition && schema.gates?.composition_enabled === false;
+  const agentLoop = typeSchema?.agent_loop === true;
+  const gated =
+    (composition && schema.gates?.composition_enabled === false) ||
+    (agentLoop && schema.gates?.agent_loop_enabled === false);
+  const gateLabel = agentLoop ? "agent_loop gate" : "composition gate";
 
   return (
     <aside className="ah-builder-config" style={panelStyle}>
@@ -57,7 +61,7 @@ export function NodeConfigPanel({
 
       {gated && (
         <div role="note" style={gatedStyle}>
-          Bu düğüm dağıtımda kapalı (composition gate). Yayımlanabilir ancak sunucu
+          Bu düğüm dağıtımda kapalı ({gateLabel}). Yayımlanabilir ancak sunucu
           etkinleştirilene kadar reddeder.
         </div>
       )}

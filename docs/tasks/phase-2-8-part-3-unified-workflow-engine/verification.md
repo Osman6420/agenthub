@@ -3,6 +3,23 @@
 > **Status: Not yet verified.** Evidence is recorded independently for every delivery gate. This
 > record does not authorize the destructive migration.
 
+## 2026-07-24 refreshed baseline
+
+| Check | Result |
+| --- | --- |
+| Codebase Memory architecture | 10,000 nodes, 43,610 edges; workflow, gateway, agents, releases, tools, orchestration and evaluation are direct impact areas |
+| Type-dispatch inventory | 101 exact `ScenarioType`/scenario-type matches across 89 application files |
+| Broad removal inventory | 87 application/config/frontend files contain old endpoint/type/artifact/run vocabulary |
+| Compose state | postgres/redis/minio healthy; web/runtime/ingestion/eval/beat running |
+| Liveness | `GET /v1/health/live` → HTTP 200 `{"status":"ok"}` |
+| Applied runtime migrations | workflows through `0008`; agents through `0004`; gateway `0002`; releases `0003` |
+| Live disposable data | 17 scenarios; 11 executable artifacts; 9 compiled versions; 18 runs; 70 events; 20 idempotency rows; 2 approvals; 0 child links |
+| Pending work | one workflow run is `running`; destructive gate must drain it |
+
+The owner stated that existing workflow and run records are not material real data and need neither
+compatibility nor conversion. This evidence authorizes planning that discards those rows, not the
+unreviewed execution of a destructive migration.
+
 | Gate/check | Command | Result | Evidence | Notes |
 | --- | --- | --- | --- | --- |
 | Dependency/data/API inventory | To be recorded | Not run | — | Refresh source/test counts; zero-state/consumer proof later repeated |
@@ -69,6 +86,72 @@ convergence, protected authority, RLS and redaction; SRE reviews disconnect, rec
 empty rollback; API owner reviews Responses/Chat/run compatibility. Record every unavailable check
 and residual risk before Verified.
 
+## Gate 1 implementation evidence
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Compiler v5 execution-mode slice | `python -m pytest apps/workflows/tests/test_compiler.py apps/workflows/tests/test_recovery.py apps/workflows/tests/test_waits.py apps/workflows/tests/test_parallel_transitions.py apps/console/tests/test_workflow_trace_console.py -q` in Compose web | 39 passed |
+| Diff whitespace | `git diff --check` | Passed |
+| Focused Ruff/Mypy | Compose web `ruff` / `mypy` | Unavailable: production image does not contain dev executables |
+| Host test/tool runner | `.venv\Scripts\python.exe` | Unavailable: documented Windows “logon session does not exist” launcher failure |
+| Gated `agent_loop` backend regression | `python -m pytest apps/workflows/tests apps/builder/tests apps/orchestration/tests/test_authoring_guide.py -q` in Compose web | 254 passed |
+| Studio focused tests | `npm --prefix frontend run test -- --run src/__tests__/node_config_panel.test.tsx src/__tests__/schema.test.ts` | 5 passed |
+| Studio typecheck | `npm --prefix frontend run typecheck` | Passed |
+| Release/workflow pin regression | `python -m pytest apps/releases/tests apps/workflows/tests -q` in Compose web | 211 passed |
+| Shared policy + tool-free runtime regression | `python -m pytest apps/agents/tests apps/workflows/tests -q` in Compose web | 297 passed |
+| Unified Run focused model/event checks | `.venv\Scripts\python.exe -m pytest -q apps/workflows/tests/test_unified_run.py` | 4 passed; PostgreSQL-only RLS test skipped |
+| Unified Run PostgreSQL/RLS checks | `.venv\Scripts\python.exe -m pytest -q --ds=config.settings.local apps/workflows/tests/test_unified_run.py` with local Compose PostgreSQL | 5 passed, including non-owner cross-tenant denial |
+| Gate 2 affected regression | `.venv\Scripts\python.exe -m pytest -q apps/workflows/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py` | 243 passed; 3 PostgreSQL-only tests skipped |
+| Migration drift | `.venv\Scripts\python.exe manage.py makemigrations --check --dry-run` | Passed: no changes detected |
+| Gate 2 focused Ruff | `.venv\Scripts\python.exe -m ruff check ...` on unified persistence files | Passed |
+| Gate 2 focused Mypy | `.venv\Scripts\python.exe -m mypy apps/workflows/run_events.py` | Passed |
+| Unified transition PostgreSQL concurrency | `.venv\Scripts\python.exe -m pytest -q --ds=config.settings.local apps/workflows/tests/test_unified_run.py` | 8 passed; concurrent same-version writers produced one commit and one stale result |
+| Transition affected regression | `.venv\Scripts\python.exe -m pytest -q apps/workflows/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py` | 245 passed; 4 PostgreSQL-only tests skipped |
+| Transition Ruff/Mypy | Focused `ruff check` and `mypy apps/workflows/run_events.py apps/workflows/transitions.py` | Passed |
+
+The v5 compiler now emits deterministic `execution_mode_analysis`. Background is always present;
+sync is present only when the graph has no known durable/unproven blocker. Tool/custom nodes fail
+closed until release-pinned bounds can be proven; waits, fan-out and child calls are background-only.
+No endpoint, authorization rule, database schema or production dependency changed in this slice.
+The follow-up closed `agent_loop` contract is disabled by default through
+`WORKFLOW_AGENT_LOOP_ENABLED`; compiler, Studio and AI authoring all expose the same gate. It reuses
+the existing agent-definition validation and hard-limit normalization, requires typed input/output
+mappings, rejects protected/unknown fields and remains background-only until runtime and
+release-pinned pause analysis are implemented.
+Release compilation additionally checks every embedded agent tool/verification role against exact
+same-release tool-binding pins and includes the compiler mode analysis in the release manifest
+checksum. Approval-required or side-effecting verification tools fail closed. Positive sync
+eligibility is deliberately not granted because current tool pins do not yet carry sufficient
+transport-timeout evidence.
+
+The persistence-independent `resolve_runtime_policy` now owns compiled limits, verification roles,
+repeat/escalation flags and composition attenuation for both AgentRun and the workflow adapter.
+Tool-free embedded execution reuses the existing governed planner/retrieve/respond/output-contract
+path, while the workflow runtime independently rechecks `WORKFLOW_AGENT_LOOP_ENABLED` and persists
+only the outer node transition. Embedded tools fail closed with
+`AGENT_EMBEDDED_TOOLS_UNAVAILABLE`; durable approval/checkpoint/counter integration is not claimed.
+
+## Gate 2 persistence evidence
+
+An additive UUID `Run` aggregate and direct-tenant `RunEvent` now exist; no current route or worker
+writes them. The model pins scenario/release/workflow/compiler identity and owns checkpoint version,
+next event sequence, mode/lease, cancellation and usage counters. Event allocation locks the Run
+row, assigns sequence server-side and increments the counter in the same transaction. Event types
+are database-constrained to a closed registry. The allocation boundary rejects payloads over 16
+KiB, depth over eight, non-JSON/non-finite values and sensitive body, prompt, document, credential,
+secret and token fields. PostgreSQL verification proved FORCE RLS visibility for the active tenant
+and denial for another tenant scope under a non-owner role.
+
+The locked transition service derives legal edges and event types server-side. Every committed
+transition increments the checkpoint version; stale status/version results leave state unchanged
+and append safe `run.late_result_discarded` evidence. Terminal results cannot reopen a Run. Waiting
+states require a typed reference, checkpoint JSON is capped at 1 MiB, counters are non-negative and
+bounded by the database integer range, and terminal transitions clear sync leases. A real
+PostgreSQL two-writer test proved the row lock/CAS behavior. A caller-supplied transition-token
+idempotency constraint is not implemented yet, so repeated terminal late deliveries can still
+append repeated discard evidence and must be addressed before worker cutover.
+
 ## Final status
 
-**Planned / not verified.**
+**In progress — Gate 2 persistence foundation verified; shared transitions and consumer migration
+remain pending.**

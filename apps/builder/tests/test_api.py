@@ -434,6 +434,9 @@ def test_node_schema_exposes_all_verified_node_families(client: Client, bf: Buil
     assert data["retry_policy"]["retry_on"] == ["transient"]
     # Composition gate is reported so the UI can render gated families as unavailable.
     assert data["gates"]["composition_enabled"] is False
+    assert data["gates"]["agent_loop_enabled"] is False
+    assert by_type["agent_loop"]["agent_loop"] is True
+    assert by_type["agent_loop"]["mapping_required"] is True
 
 
 def test_node_schema_excludes_other_tenant_bindings(client: Client, bf: BuilderFixture) -> None:

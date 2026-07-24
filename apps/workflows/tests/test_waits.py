@@ -298,7 +298,7 @@ def test_compiler_accepts_wait_contracts_and_rejects_open_payload_schema() -> No
             ],
         },
     }
-    assert compile_workflow(body).graph["api_version"].endswith("/v4")
+    assert compile_workflow(body).graph["api_version"].endswith("/v5")
     body["spec"]["nodes"][1]["config"]["payload_schema"]["additionalProperties"] = True
     with pytest.raises(WorkflowCompileError, match="deny additionalProperties"):
         compile_workflow(body)

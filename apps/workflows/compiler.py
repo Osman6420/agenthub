@@ -36,10 +36,23 @@ MAX_AGENT_CALL_DECISIONS = 20
 AGENT_CALL_ACTIONS = frozenset({"retrieve", "tool", "verify", "respond", "escalate"})
 COMPOSITION_NODE_TYPES = frozenset({"subworkflow", "agent_call"})
 
-# Compiled-contract version (ADR-0008). Bumped for the P2.6.1 typed-mapping semantics so a
-# stale v1 compiled graph or checkpoint can never be resumed under the new runtime.
-COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v4"
-COMPILER_VERSION = "workflow-compiler/v4"
+# Compiled-contract version (ADR-0008/ADR-0014). V5 adds compiler-owned execution-mode evidence;
+# stale graphs or checkpoints can never be resumed under changed semantics.
+COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v5"
+COMPILER_VERSION = "workflow-compiler/v5"
+
+_SYNC_BLOCKER_BY_NODE_TYPE = {
+    "tool": "tool_pause_policy_unproven",
+    "custom": "custom_node_bounds_unproven",
+    "agent_loop": "agent_loop_pause_policy_unproven",
+    "event_wait": "durable_event_wait",
+    "human_task": "durable_human_wait",
+    "timer": "durable_timer_wait",
+    "parallel": "durable_fan_out",
+    "for_each": "durable_fan_out",
+    "subworkflow": "durable_child_run",
+    "agent_call": "durable_child_run",
+}
 
 FAILURE_CLASSES = frozenset(
     {"validation", "authorization", "permanent", "transient", "outcome_unknown"}
@@ -67,6 +80,7 @@ BUILTIN_NODE_TYPES = frozenset(
         "timer",
         "subworkflow",
         "agent_call",
+        "agent_loop",
     }
 )
 
@@ -84,6 +98,7 @@ MAPPING_ELIGIBLE_NODE_TYPES = frozenset(
         "human_task",
         "subworkflow",
         "agent_call",
+        "agent_loop",
     }
 )
 
@@ -112,13 +127,21 @@ def _composition_enabled(explicit: bool | None) -> bool:
     return bool(getattr(settings, "WORKFLOW_COMPOSITION_ENABLED", False))
 
 
+def _agent_loop_enabled(explicit: bool | None) -> bool:
+    if explicit is not None:
+        return explicit
+    return bool(getattr(settings, "WORKFLOW_AGENT_LOOP_ENABLED", False))
+
+
 def compile_workflow(
     body: dict[str, Any],
     *,
     allowed_custom_nodes: frozenset[str] | None = None,
     allow_composition: bool | None = None,
+    allow_agent_loop: bool | None = None,
 ) -> CompiledWorkflow:
     composition_enabled = _composition_enabled(allow_composition)
+    agent_loop_enabled = _agent_loop_enabled(allow_agent_loop)
     _require_exact_keys(body, {"api_version", "kind", "metadata", "spec"}, "workflow")
     if body.get("api_version") != "agenthub/v1" or body.get("kind") != "Workflow":
         raise WorkflowCompileError("unsupported workflow api_version or kind")
@@ -137,7 +160,9 @@ def compile_workflow(
 
     nodes: dict[str, dict[str, Any]] = {}
     for raw in raw_nodes:
-        node = _validate_node(raw, allowed_custom_nodes, composition_enabled)
+        node = _validate_node(
+            raw, allowed_custom_nodes, composition_enabled, agent_loop_enabled
+        )
         node_id = node["id"]
         if node_id in nodes:
             raise WorkflowCompileError("node ids must be unique")
@@ -176,12 +201,39 @@ def compile_workflow(
         "nodes": [nodes[node_id] for node_id in sorted(nodes)],
         "edges": sorted(edges, key=lambda item: (item["from"], str(item.get("when")), item["to"])),
         "limits": {"max_nodes": MAX_NODES, "max_edges": MAX_EDGES},
+        "execution_mode_analysis": _execution_mode_analysis(nodes, reachable),
     }
     return CompiledWorkflow(graph=graph, checksum=compute_checksum(graph))
 
 
+def _execution_mode_analysis(
+    nodes: dict[str, dict[str, Any]], reachable: set[str]
+) -> dict[str, Any]:
+    """Derive safe execution modes from the canonical reachable graph."""
+
+    blocker_nodes: dict[str, list[str]] = {}
+    for node_id in sorted(reachable):
+        code = _SYNC_BLOCKER_BY_NODE_TYPE.get(nodes[node_id]["type"])
+        if code is not None:
+            blocker_nodes.setdefault(code, []).append(node_id)
+
+    blockers = [
+        {"code": code, "node_ids": blocker_nodes[code]} for code in sorted(blocker_nodes)
+    ]
+    supported = ["background"]
+    if not blockers:
+        supported.append("sync")
+    return {
+        "supported_execution_modes": supported,
+        "sync_blockers": blockers,
+    }
+
+
 def _validate_node(
-    raw: Any, allowed_custom_nodes: frozenset[str] | None, composition_enabled: bool
+    raw: Any,
+    allowed_custom_nodes: frozenset[str] | None,
+    composition_enabled: bool,
+    agent_loop_enabled: bool,
 ) -> dict[str, Any]:
     node = _mapping(raw, "node")
     _require_exact_keys(
@@ -198,6 +250,8 @@ def _validate_node(
         # Disabled-by-default: composition is rejected fail-closed until a deployment enables
         # it after the authorization/RLS/recovery gates pass.
         raise WorkflowCompileError("composition nodes are not enabled")
+    if node_type == "agent_loop" and not agent_loop_enabled:
+        raise WorkflowCompileError("agent_loop nodes are not enabled")
     config = node.get("config", {})
     if not isinstance(config, dict):
         raise WorkflowCompileError("node config must be an object")
@@ -282,6 +336,55 @@ def _validate_node(
         if (output_mapping is None) == ("output_key" not in config):
             raise WorkflowCompileError(
                 "tool node requires exactly one of output_key/output_mapping"
+            )
+    elif node_type == "agent_loop":
+        _require_exact_keys(
+            config,
+            {
+                "tool_binding_roles",
+                "retrieval",
+                "limits",
+                "objective_key",
+                "output_key",
+                "system_prompt",
+                "actions",
+            },
+            "agent_loop config",
+            optional={
+                "retrieval",
+                "limits",
+                "objective_key",
+                "output_key",
+                "system_prompt",
+                "actions",
+            },
+        )
+        from apps.agents.compiler import AgentCompileError, compile_agent
+
+        agent_body = {
+            "api_version": "agenthub/v1",
+            "kind": "Agent",
+            "metadata": {"id": "workflow_agent_loop", "owner": "workflow"},
+            "spec": {
+                "tools": config["tool_binding_roles"],
+                **{key: value for key, value in config.items() if key != "tool_binding_roles"},
+            },
+        }
+        try:
+            compiled_agent = compile_agent(agent_body)
+        except AgentCompileError as exc:
+            raise WorkflowCompileError(f"agent_loop config is invalid: {exc}") from exc
+        config = {
+            "policy": {
+                key: value
+                for key, value in compiled_agent.config.items()
+                if key not in {"api_version", "agent_id"}
+            },
+            "policy_checksum": compiled_agent.checksum,
+        }
+        if input_mapping is None or output_mapping is None:
+            raise WorkflowCompileError(
+                "agent_loop node requires input_mapping and output_mapping"
             )
     elif node_type == "generate":
         # Optional per-node prompt/model binding (P5.2): names of manifest roles pinned into the

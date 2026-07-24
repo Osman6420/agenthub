@@ -202,6 +202,7 @@ def build_authoring_context(*, project: AIProject, scenario: Scenario) -> dict[s
         "workflow": {
             "dsl": schema["dsl"],
             "limits": schema["limits"],
+            "gates": schema["gates"],
             "node_types": schema["node_types"],
             "tool_binding_roles": _bounded(schema["tool_binding_roles"]),
             "custom_nodes": _bounded(schema["custom_nodes"]),

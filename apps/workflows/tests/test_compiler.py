@@ -45,7 +45,11 @@ def test_compile_is_deterministic_and_canonical() -> None:
     second = compile_workflow(workflow_body())
     assert first.checksum == second.checksum
     assert first.graph == second.graph
-    assert first.graph["api_version"] == "agenthub/compiled-workflow/v4"
+    assert first.graph["api_version"] == "agenthub/compiled-workflow/v5"
+    assert first.graph["execution_mode_analysis"] == {
+        "supported_execution_modes": ["background", "sync"],
+        "sync_blockers": [],
+    }
 
 
 @pytest.mark.parametrize(
@@ -80,6 +84,72 @@ def test_compile_rejects_graph_over_hard_limit() -> None:
     body["spec"]["nodes"] = [{"id": f"node-{index}", "type": "input"} for index in range(51)]
     with pytest.raises(WorkflowCompileError, match="1..50"):
         compile_workflow(body)
+
+
+def test_execution_mode_analysis_is_stable_and_fails_closed_for_unproven_nodes() -> None:
+    body = workflow_body()
+    body["spec"]["nodes"].insert(
+        1,
+        {
+            "id": "call_tool",
+            "type": "tool",
+            "config": {"binding_role": "search", "output_key": "tool_result"},
+        },
+    )
+    body["spec"]["edges"][0] = {"from": "request", "to": "call_tool"}
+    body["spec"]["edges"].insert(1, {"from": "call_tool", "to": "check"})
+
+    assert compile_workflow(body).graph["execution_mode_analysis"] == {
+        "supported_execution_modes": ["background"],
+        "sync_blockers": [{"code": "tool_pause_policy_unproven", "node_ids": ["call_tool"]}],
+    }
+
+
+def test_agent_loop_is_gated_and_reuses_the_closed_agent_policy_contract() -> None:
+    body = {
+        "api_version": "agenthub/v1",
+        "kind": "Workflow",
+        "metadata": {"id": "agent_flow.v1"},
+        "spec": {
+            "input_node": "request",
+            "nodes": [
+                {"id": "request", "type": "input"},
+                {
+                    "id": "agent",
+                    "type": "agent_loop",
+                    "config": {
+                        "tool_binding_roles": ["tool_binding.search"],
+                        "retrieval": {"enabled": True},
+                        "limits": {"max_steps": 4, "max_tool_calls": 2},
+                    },
+                    "input_mapping": [{"from": "/input", "to": "/input"}],
+                    "output_mapping": [{"from": "/output", "to": "/output"}],
+                },
+                {"id": "done", "type": "end"},
+            ],
+            "edges": [
+                {"from": "request", "to": "agent"},
+                {"from": "agent", "to": "done"},
+            ],
+        },
+    }
+    with pytest.raises(WorkflowCompileError, match="not enabled"):
+        compile_workflow(body)
+
+    compiled = compile_workflow(body, allow_agent_loop=True)
+    agent = next(node for node in compiled.graph["nodes"] if node["id"] == "agent")
+    assert agent["config"]["policy"]["tools"] == ["tool_binding.search"]
+    assert len(agent["config"]["policy_checksum"]) == 64
+    assert compiled.graph["execution_mode_analysis"] == {
+        "supported_execution_modes": ["background"],
+        "sync_blockers": [
+            {"code": "agent_loop_pause_policy_unproven", "node_ids": ["agent"]}
+        ],
+    }
+
+    body["spec"]["nodes"][1]["config"]["endpoint"] = "https://attacker.example"
+    with pytest.raises(WorkflowCompileError, match="forbidden"):
+        compile_workflow(body, allow_agent_loop=True)
 
 
 def test_custom_node_requires_explicit_compiler_allowlist() -> None:

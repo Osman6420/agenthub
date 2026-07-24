@@ -119,7 +119,7 @@ def test_compensation_target_is_pinned_and_not_reachable_from_normal_graph() -> 
             ],
         },
     }
-    assert compile_workflow(body).graph["api_version"].endswith("/v4")
+    assert compile_workflow(body).graph["api_version"].endswith("/v5")
     body["spec"]["edges"].append({"from": "request", "to": "undo"})
     with pytest.raises(WorkflowCompileError, match="WORKFLOW_COMPENSATION_INVALID"):
         compile_workflow(body)
@@ -290,7 +290,7 @@ def test_transient_retry_is_durable_bounded_and_resumes(
     type(run.workflow_version).objects.filter(pk=run.workflow_version_id).update(
         compiled_graph=compiled.graph,
         checksum=compiled.checksum,
-        compiler_version="workflow-compiler/v4",
+        compiler_version="workflow-compiler/v5",
     )
     run.workflow_version.refresh_from_db()
     calls = 0
