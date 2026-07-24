@@ -28,6 +28,10 @@ from apps.workflows.models import (
     WorkflowVersion,
 )
 from apps.workflows.run_events import append_run_event, validate_run_event_payload
+from apps.workflows.tasks import (
+    dispatch_unified_background_run,
+    execute_unified_background_run,
+)
 from apps.workflows.transitions import (
     RunTransitionError,
     renew_sync_lease,
@@ -38,7 +42,9 @@ from apps.workflows.transitions import (
 from apps.workflows.unified_executor import (
     UnifiedExecutorError,
     _validated_graph,
+    execute_background_delivery,
     execute_claimed_bounded_run,
+    service_revision,
 )
 
 
@@ -206,7 +212,10 @@ def test_background_delivery_is_identifier_only_and_tenant_scoped(workflow_fixtu
     token = uuid4()
     claimed = claim_background_delivery(
         body={"run_id": str(run.id), "delivery_token": str(token)},
-        headers={"organization_id": run.organization_id},
+        headers={
+            "organization_id": run.organization_id,
+            "service_revision": service_revision(),
+        },
     )
     assert claimed.outcome == "claimed"
 
@@ -219,12 +228,18 @@ def test_background_delivery_is_identifier_only_and_tenant_scoped(workflow_fixtu
                 "delivery_token": str(uuid4()),
                 "checkpoint": {"forged": True},
             },
-            headers={"organization_id": run.organization_id},
+            headers={
+                "organization_id": run.organization_id,
+                "service_revision": service_revision(),
+            },
         )
     with pytest.raises(Run.DoesNotExist):
         claim_background_delivery(
             body={"run_id": str(run.id), "delivery_token": str(uuid4())},
-            headers={"organization_id": run.organization_id + 99_999},
+            headers={
+                "organization_id": run.organization_id + 99_999,
+                "service_revision": service_revision(),
+            },
         )
 
 
@@ -374,6 +389,12 @@ def test_bounded_unified_executor_is_default_off(workflow_fixture) -> None:
             run_id=run.id,
             claim_token=token,
         )
+    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_DISABLED"):
+        dispatch_unified_background_run(
+            run_id=run.id,
+            organization_id=run.organization_id,
+            delivery_token=token,
+        )
     run.refresh_from_db()
     assert run.status == "queued"
 
@@ -415,6 +436,179 @@ def test_bounded_unified_executor_observes_cancellation_between_nodes(
     assert result.status == "cancelled"
     run.refresh_from_db()
     assert run.background_claim_token is None
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_identifier_only_delivery_executes_and_rejects_stale_revision(
+    workflow_fixture,
+) -> None:
+    run = _queued_background_run(workflow_fixture, key="celery-delivery")
+    token = uuid4()
+    body = {"run_id": str(run.id), "delivery_token": str(token)}
+    headers = {
+        "organization_id": run.organization_id,
+        "service_revision": "stale-revision",
+    }
+    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_REVISION_MISMATCH"):
+        execute_background_delivery(body=body, headers=headers)
+    run.refresh_from_db()
+    assert run.background_claim_token is None
+
+    headers["service_revision"] = service_revision()
+    assert execute_background_delivery(body=body, headers=headers) == "completed"
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_delivery_redelivery_converges_expired_queued_and_running_claims(
+    workflow_fixture,
+) -> None:
+    queued = _queued_background_run(workflow_fixture, key="celery-expired-queued")
+    queued_token = uuid4()
+    claim_background_run(
+        organization_id=queued.organization_id,
+        run_id=queued.id,
+        claim_token=queued_token,
+        lease_seconds=30,
+    )
+    Run.objects.filter(pk=queued.id).update(
+        background_claim_expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    headers = {
+        "organization_id": queued.organization_id,
+        "service_revision": service_revision(),
+    }
+    assert (
+        execute_background_delivery(
+            body={"run_id": str(queued.id), "delivery_token": str(queued_token)},
+            headers=headers,
+        )
+        == "completed"
+    )
+    assert AuditEvent.objects.filter(
+        action="workflow.run.background_claim_released",
+        resource_id=str(queued.id),
+    ).count() == 1
+
+    running = _queued_background_run(workflow_fixture, key="celery-expired-running")
+    running_token = uuid4()
+    claim = claim_background_run(
+        organization_id=running.organization_id,
+        run_id=running.id,
+        claim_token=running_token,
+        lease_seconds=30,
+    )
+    transition_run(
+        organization_id=running.organization_id,
+        run_id=running.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=claim.checkpoint_version,
+        expected_status="queued",
+        target_status="running",
+        background_claim_token=running_token,
+    )
+    Run.objects.filter(pk=running.id).update(
+        background_claim_expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    assert (
+        execute_background_delivery(
+            body={"run_id": str(running.id), "delivery_token": str(running_token)},
+            headers={
+                "organization_id": running.organization_id,
+                "service_revision": service_revision(),
+            },
+        )
+        == "recovery_required"
+    )
+    running.refresh_from_db()
+    assert running.status == "recovery_required"
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_delivery_redelivery_continues_after_worker_crash_post_start(
+    workflow_fixture,
+    monkeypatch,
+) -> None:
+    from apps.workflows import unified_executor
+
+    run = _queued_background_run(workflow_fixture, key="celery-crash-after-start")
+    token = uuid4()
+    body = {"run_id": str(run.id), "delivery_token": str(token)}
+    headers = {
+        "organization_id": run.organization_id,
+        "service_revision": service_revision(),
+    }
+
+    def crash_after_start(**_kwargs):
+        raise RuntimeError("simulated worker loss")
+
+    monkeypatch.setattr(unified_executor, "_execute_node", crash_after_start)
+    with pytest.raises(RuntimeError, match="simulated worker loss"):
+        execute_background_delivery(body=body, headers=headers)
+    run.refresh_from_db()
+    assert run.status == "running"
+
+    monkeypatch.undo()
+    assert execute_background_delivery(body=body, headers=headers) == "completed"
+    run.refresh_from_db()
+    assert run.status == "completed"
+    assert run.events.filter(event_type=RunEventType.STARTED).count() == 1
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_unified_dispatch_is_on_commit_identifier_only(
+    workflow_fixture,
+    django_capture_on_commit_callbacks,
+    monkeypatch,
+) -> None:
+    run = _queued_background_run(workflow_fixture, key="celery-dispatch")
+    token = uuid4()
+    calls: list[dict[str, object]] = []
+
+    def capture_apply_async(**kwargs) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(execute_unified_background_run, "apply_async", capture_apply_async)
+    with django_capture_on_commit_callbacks(execute=True):
+        returned = dispatch_unified_background_run(
+            run_id=run.id,
+            organization_id=run.organization_id,
+            delivery_token=token,
+        )
+        assert calls == []
+    assert returned == token
+    assert calls == [
+        {
+            "args": (str(run.id), str(token)),
+            "headers": {
+                "organization_id": run.organization_id,
+                "service_revision": service_revision(),
+            },
+            "queue": "runtime",
+        }
+    ]
+    assert execute_unified_background_run.acks_late is True
+    assert execute_unified_background_run.reject_on_worker_lost is True
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_unified_celery_task_executes_with_closed_headers(workflow_fixture) -> None:
+    run = _queued_background_run(workflow_fixture, key="celery-task")
+    token = uuid4()
+    result = execute_unified_background_run.apply(
+        args=(str(run.id), str(token)),
+        headers={
+            "organization_id": run.organization_id,
+            "service_revision": service_revision(),
+        },
+    )
+    assert result.get() == "completed"
+    run.refresh_from_db()
+    assert run.status == "completed"
 
 
 def test_bounded_unified_executor_rejects_unsupported_and_cyclic_graphs() -> None:

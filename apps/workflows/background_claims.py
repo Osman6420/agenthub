@@ -39,7 +39,54 @@ class BackgroundClaimResult:
 
 
 _DELIVERY_BODY_FIELDS = frozenset({"delivery_token", "run_id"})
-_DELIVERY_HEADER_FIELDS = frozenset({"organization_id"})
+_DELIVERY_HEADER_FIELDS = frozenset({"organization_id", "service_revision"})
+
+
+@dataclass(frozen=True)
+class BackgroundDelivery:
+    organization_id: int
+    run_id: uuid.UUID
+    delivery_token: uuid.UUID
+    service_revision: str
+
+
+def parse_background_delivery(
+    *,
+    body: Mapping[str, object],
+    headers: Mapping[str, object],
+) -> BackgroundDelivery:
+    """Validate and normalize an identifier-only broker delivery."""
+
+    if not isinstance(body, Mapping) or set(body) != _DELIVERY_BODY_FIELDS:
+        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_BODY_INVALID")
+    if not isinstance(headers, Mapping) or set(headers) != _DELIVERY_HEADER_FIELDS:
+        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_HEADERS_INVALID")
+    raw_organization_id = headers["organization_id"]
+    raw_service_revision = headers["service_revision"]
+    if isinstance(raw_organization_id, bool) or not isinstance(
+        raw_organization_id, (int, str)
+    ):
+        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_IDENTIFIER_INVALID")
+    if (
+        not isinstance(raw_service_revision, str)
+        or not raw_service_revision
+        or len(raw_service_revision) > 64
+    ):
+        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_REVISION_INVALID")
+    try:
+        run_id = uuid.UUID(str(body["run_id"]))
+        delivery_token = uuid.UUID(str(body["delivery_token"]))
+        organization_id = int(raw_organization_id)
+    except (TypeError, ValueError) as exc:
+        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_IDENTIFIER_INVALID") from exc
+    if organization_id < 1:
+        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_IDENTIFIER_INVALID")
+    return BackgroundDelivery(
+        organization_id=organization_id,
+        run_id=run_id,
+        delivery_token=delivery_token,
+        service_revision=raw_service_revision,
+    )
 
 
 def claim_background_delivery(
@@ -50,27 +97,11 @@ def claim_background_delivery(
 ) -> BackgroundClaimResult:
     """Validate an identifier-only broker delivery before claiming its Run."""
 
-    if not isinstance(body, Mapping) or set(body) != _DELIVERY_BODY_FIELDS:
-        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_BODY_INVALID")
-    if not isinstance(headers, Mapping) or set(headers) != _DELIVERY_HEADER_FIELDS:
-        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_HEADERS_INVALID")
-    raw_organization_id = headers["organization_id"]
-    if isinstance(raw_organization_id, bool) or not isinstance(
-        raw_organization_id, (int, str)
-    ):
-        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_IDENTIFIER_INVALID")
-    try:
-        run_id = uuid.UUID(str(body["run_id"]))
-        delivery_token = uuid.UUID(str(body["delivery_token"]))
-        organization_id = int(raw_organization_id)
-    except (TypeError, ValueError) as exc:
-        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_IDENTIFIER_INVALID") from exc
-    if organization_id < 1:
-        raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_IDENTIFIER_INVALID")
+    delivery = parse_background_delivery(body=body, headers=headers)
     return claim_background_run(
-        organization_id=organization_id,
-        run_id=run_id,
-        claim_token=delivery_token,
+        organization_id=delivery.organization_id,
+        run_id=delivery.run_id,
+        claim_token=delivery.delivery_token,
         lease_seconds=lease_seconds,
     )
 
@@ -299,7 +330,32 @@ def resolve_expired_background_claim(
     ):
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_NOT_EXPIRED")
     if run.status == WorkflowRunStatus.QUEUED:
-        return "reclaimable"
+        run.background_claim_token = None
+        run.background_claim_expires_at = None
+        run.background_claim_checkpoint_version = None
+        run.save(
+            update_fields=[
+                "background_claim_token",
+                "background_claim_expires_at",
+                "background_claim_checkpoint_version",
+                "updated_at",
+            ]
+        )
+        record_event(
+            actor_type="system",
+            actor_id="workflow-background-worker",
+            action="workflow.run.background_claim_released",
+            outcome="success",
+            organization_id=organization_id,
+            resource_type="run",
+            resource_id=str(run.id),
+            reason="RUN_BACKGROUND_QUEUED_CLAIM_EXPIRED",
+            after={
+                "checkpoint_version": run.checkpoint_version,
+                "status": str(run.status),
+            },
+        )
+        return "released"
     if run.status in WORKFLOW_TERMINAL_STATUSES:
         return "terminal"
 

@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any
 
 import jsonschema
 from django.conf import settings
+from django.utils import timezone
 
 from apps.releases.services import get_artifact_body_for_role
 from apps.tenancy.context import set_tenant_context
-from apps.workflows.background_claims import _validate_run_pins
+from apps.workflows.background_claims import (
+    _validate_run_pins,
+    claim_background_run,
+    parse_background_delivery,
+    resolve_expired_background_claim,
+)
 from apps.workflows.compiler import COMPILED_WORKFLOW_API_VERSION
 from apps.workflows.models import Run, RunCancellationState, WorkflowRunStatus
 from apps.workflows.runtime import WorkflowRuntimeError, _execute_node, _validate_output_policy
@@ -27,6 +34,10 @@ class UnifiedExecutorError(RuntimeError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+def service_revision() -> str:
+    return os.environ.get("AGENTHUB_SERVICE_REVISION", "development")[:64] or "development"
 
 
 def _transition_token(claim_token: uuid.UUID, purpose: str) -> uuid.UUID:
@@ -119,8 +130,6 @@ def _guard_transition(run: Run, claim_token: uuid.UUID) -> RunTransitionResult |
             reason_code="RUN_CANCELLATION_REQUESTED",
             background_claim_token=claim_token,
         )
-    from django.utils import timezone
-
     if timezone.now() >= run.deadline_at:
         return transition_run(
             organization_id=run.organization_id,
@@ -151,19 +160,39 @@ def execute_claimed_bounded_run(
         organization_id=organization_id,
     )
     _validate_run_pins(run)
+    if (
+        run.background_claim_token != claim_token
+        or run.background_claim_checkpoint_version != run.checkpoint_version
+        or run.background_claim_expires_at is None
+        or run.background_claim_expires_at <= timezone.now()
+    ):
+        raise UnifiedExecutorError("RUN_EXECUTOR_CLAIM_INVALID")
     nodes, outgoing, current = _validated_graph(run.workflow_version.compiled_graph)
-    started = transition_run(
-        organization_id=organization_id,
-        run_id=run.id,
-        transition_token=_transition_token(claim_token, "started"),
-        expected_checkpoint_version=run.checkpoint_version,
-        expected_status=WorkflowRunStatus.QUEUED,
-        target_status=WorkflowRunStatus.RUNNING,
-        background_claim_token=claim_token,
-    )
-    if started.outcome != "committed":
-        return started
-    run.refresh_from_db()
+    if run.status == WorkflowRunStatus.QUEUED:
+        started = transition_run(
+            organization_id=organization_id,
+            run_id=run.id,
+            transition_token=_transition_token(claim_token, "started"),
+            expected_checkpoint_version=run.checkpoint_version,
+            expected_status=WorkflowRunStatus.QUEUED,
+            target_status=WorkflowRunStatus.RUNNING,
+            background_claim_token=claim_token,
+        )
+        if started.outcome != "committed":
+            return started
+        run.refresh_from_db()
+    if run.status != WorkflowRunStatus.RUNNING:
+        outcome = (
+            "terminal"
+            if run.status in {"completed", "failed", "timed_out", "cancelled"}
+            else "stale"
+        )
+        return RunTransitionResult(
+            outcome,
+            str(run.status),
+            run.checkpoint_version,
+            None,
+        )
     state = dict(run.redacted_state)
     executed: list[str] = []
     try:
@@ -226,3 +255,81 @@ def execute_claimed_bounded_run(
         step_delta=len(executed),
         background_claim_token=claim_token,
     )
+
+
+def execute_background_delivery(
+    *,
+    body: dict[str, object],
+    headers: dict[str, object],
+    lease_seconds: int = 30,
+) -> str:
+    """Converge one validated Celery delivery through claim and bounded execution."""
+
+    if not bool(getattr(settings, "UNIFIED_BACKGROUND_EXECUTOR_ENABLED", False)):
+        raise UnifiedExecutorError("RUN_EXECUTOR_DISABLED")
+    delivery = parse_background_delivery(body=body, headers=headers)
+    if delivery.service_revision != service_revision():
+        raise UnifiedExecutorError("RUN_EXECUTOR_REVISION_MISMATCH")
+    claim = claim_background_run(
+        organization_id=delivery.organization_id,
+        run_id=delivery.run_id,
+        claim_token=delivery.delivery_token,
+        lease_seconds=lease_seconds,
+    )
+    if claim.outcome == "expired":
+        resolved = resolve_expired_background_claim(
+            organization_id=delivery.organization_id,
+            run_id=delivery.run_id,
+            claim_token=delivery.delivery_token,
+            transition_token=_transition_token(delivery.delivery_token, "claim-expired"),
+        )
+        if resolved != "released":
+            return resolved
+        claim = claim_background_run(
+            organization_id=delivery.organization_id,
+            run_id=delivery.run_id,
+            claim_token=delivery.delivery_token,
+            lease_seconds=lease_seconds,
+        )
+    elif claim.outcome == "recovery_required":
+        resolve_expired_background_claim(
+            organization_id=delivery.organization_id,
+            run_id=delivery.run_id,
+            claim_token=delivery.delivery_token,
+            transition_token=_transition_token(delivery.delivery_token, "claim-expired"),
+        )
+        return WorkflowRunStatus.RECOVERY_REQUIRED
+    if claim.outcome == "cancellation_requested":
+        result = transition_run(
+            organization_id=delivery.organization_id,
+            run_id=delivery.run_id,
+            transition_token=_transition_token(delivery.delivery_token, "cancelled"),
+            expected_checkpoint_version=claim.checkpoint_version,
+            expected_status=claim.status,
+            target_status=WorkflowRunStatus.CANCELLED,
+            reason_code="RUN_CANCELLATION_REQUESTED",
+        )
+        return result.status
+    if claim.outcome == "deadline_exceeded":
+        result = transition_run(
+            organization_id=delivery.organization_id,
+            run_id=delivery.run_id,
+            transition_token=_transition_token(delivery.delivery_token, "timed-out"),
+            expected_checkpoint_version=claim.checkpoint_version,
+            expected_status=claim.status,
+            target_status=WorkflowRunStatus.TIMED_OUT,
+            reason_code="RUN_DEADLINE_EXCEEDED",
+        )
+        return result.status
+    if claim.outcome == "terminal":
+        return claim.status
+    if claim.outcome in {"busy", "suspended"}:
+        return claim.outcome
+    if claim.outcome not in {"claimed", "replayed"}:
+        raise UnifiedExecutorError("RUN_EXECUTOR_CLAIM_INVALID")
+    result = execute_claimed_bounded_run(
+        organization_id=delivery.organization_id,
+        run_id=delivery.run_id,
+        claim_token=delivery.delivery_token,
+    )
+    return result.status

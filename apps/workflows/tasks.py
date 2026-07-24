@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from functools import partial
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from apps.artifacts.validation import compute_checksum
 from apps.tenancy.context import set_tenant_context
-from apps.workflows.models import WorkflowBranch, WorkflowRun, WorkflowRunEvent, WorkflowRunStatus
+from apps.workflows.models import (
+    Run,
+    WorkflowBranch,
+    WorkflowRun,
+    WorkflowRunEvent,
+    WorkflowRunStatus,
+)
 from apps.workflows.runtime import (
     WorkflowParallelPending,
     WorkflowPaused,
@@ -222,3 +230,61 @@ def reconcile_workflow_waits(limit: int = 100) -> int:
         if organization_id is not None:
             execute_workflow_run.delay(run_id, organization_id)
     return len(run_ids)
+
+
+def dispatch_unified_background_run(
+    *,
+    run_id: uuid.UUID,
+    organization_id: int,
+    delivery_token: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Schedule an identifier-only unified delivery after the caller commits."""
+
+    from apps.workflows.unified_executor import UnifiedExecutorError, service_revision
+
+    if not bool(getattr(settings, "UNIFIED_BACKGROUND_EXECUTOR_ENABLED", False)):
+        raise UnifiedExecutorError("RUN_EXECUTOR_DISABLED")
+    token = delivery_token or uuid.uuid4()
+    transaction.on_commit(
+        partial(
+            execute_unified_background_run.apply_async,
+            args=(str(run_id), str(token)),
+            headers={
+                "organization_id": organization_id,
+                "service_revision": service_revision(),
+            },
+            queue="runtime",
+        )
+    )
+    return token
+
+
+@shared_task(
+    bind=True,
+    queue="runtime",
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def execute_unified_background_run(
+    self: object,
+    run_id: str,
+    delivery_token: str,
+) -> str:
+    """Run one closed identifier-only delivery through the unified executor."""
+
+    from apps.workflows.background_claims import BackgroundClaimError
+    from apps.workflows.unified_executor import (
+        UnifiedExecutorError,
+        execute_background_delivery,
+    )
+
+    headers = getattr(getattr(self, "request", None), "headers", None) or {}
+    try:
+        return execute_background_delivery(
+            body={"run_id": run_id, "delivery_token": delivery_token},
+            headers=dict(headers),
+        )
+    except (BackgroundClaimError, UnifiedExecutorError) as exc:
+        return f"denied:{exc.code}"
+    except Run.DoesNotExist:
+        return "missing"

@@ -54,6 +54,9 @@ tenant tables.
 | Legacy WorkflowRun executor mutates side tables for a unified Run | Do not register the unified Celery task until branch/wait/recovery persistence is Run-native; fail closed at the adapter boundary |
 | Initial Run-native executor accidentally reaches a side effect or durable pause | Default-off gate plus exact node-type allowlist; reject the whole graph before `running`; no fallback to legacy `execute_graph` |
 | Redelivery repeats start/completion transitions | Derive stable purpose-separated transition UUIDs from the delivery claim token and reuse transition checksum replay/terminal guards |
+| Stale fleet delivery claims a Run | Compare bounded diagnostic message revision with the local immutable service revision, then independently validate stored compiler/checksum pins |
+| Worker dies after queued claim but before `running` | `acks_late` redelivery resolves the exact expired queued token, clears ownership with safe audit evidence and reclaims it; no external work is permitted before `running` |
+| Worker dies after `running` and lease expires | Exact-token redelivery resolves to `recovery_required`; never auto-take over or blindly repeat potentially ambiguous work |
 | Destructive migration deletes real state | Immediate pre-cutover zero-state/consumer proof and separate exact migration approval |
 | Rollback cannot restore removed schema | Tested previous-code + empty-database rebuild; stop cutover if environment is not disposable |
 

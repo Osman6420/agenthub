@@ -236,8 +236,34 @@ No Celery task or public route dispatches this executor. Tool/model/retrieval an
 child, parallel, retry, compensation or recovery node remain denied. Real broker redelivery,
 worker-loss and deployment-gate smoke remain pending.
 
+## Gate 2 Celery delivery and worker-loss evidence
+
+The internal runtime task now uses `acks_late` and `reject_on_worker_lost`. Its body is exactly Run
+UUID plus delivery UUID; custom headers are exactly tenant ID and a bounded diagnostic service
+revision. The producer schedules only through `transaction.on_commit`. Stale revisions are
+acknowledged as safe denials before claim, while stored compiler/checksum pins remain authoritative.
+The task is registered in code but has no public producer and the live worker has not been restarted.
+
+Exact-token redelivery now handles all bounded crash positions: an expired queued claim is
+transactionally released with content-free audit evidence and re-claimed; an expired running claim
+converges to `recovery_required`; and a live running claim after crash resumes execution without
+replaying the already committed start transition. Terminal redelivery returns the terminal state.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Celery delivery PostgreSQL | Compose web `python -m pytest -q apps/workflows/tests/test_unified_run.py` | 32 passed, including closed headers/body, on-commit dispatch, real Celery task apply, stale revision, expired queued/running claims and crash-after-start continuation |
+| Celery delivery affected regression | Compose web `python -m pytest -q apps/workflows/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py apps/agents/tests/test_governed_loop.py` | 305 passed |
+| Focused Ruff | Compose web `python -m ruff check --no-cache ...` on delivery/claim/executor/task/test files | Passed |
+| Focused Mypy | Compose web `python -m mypy apps/workflows/background_claims.py apps/workflows/unified_executor.py apps/workflows/tasks.py` | Passed |
+| Migration drift | Compose web `python manage.py makemigrations --check --dry-run` | Passed: no changes detected |
+| Diff whitespace | `git diff --check` | Passed |
+
+Live broker smoke was not run: migrations `0009` through `0011` remain unapplied and the running
+runtime worker predates this task registration. The default-off gate and absence of a public producer
+prevent accidental unified execution in that state.
+
 ## Final status
 
 **In progress — Gate 2 persistence, background claim/delivery and worker admission verified;
-bounded Run-native execution is verified; Celery delivery, shared consumers and cutover remain
-pending.**
+bounded Run-native execution and internal Celery delivery are verified; Run-native durable waits,
+shared consumers and cutover remain pending.**
