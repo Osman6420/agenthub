@@ -84,6 +84,8 @@ def append_locked_run_event(
     outcome: str = "",
     reason_code: str = "",
     state_checksum: str = "",
+    transition_token: uuid.UUID | None = None,
+    transition_checksum: str = "",
 ) -> RunEvent:
     """Append to a Run already locked by the current transaction."""
 
@@ -101,6 +103,8 @@ def append_locked_run_event(
         outcome=outcome,
         reason_code=reason_code,
         state_checksum=state_checksum,
+        transition_token=transition_token,
+        transition_checksum=transition_checksum,
     )
     run.next_event_sequence = sequence + 1
     return event

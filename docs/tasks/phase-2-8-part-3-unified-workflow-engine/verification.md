@@ -108,6 +108,10 @@ and residual risk before Verified.
 | Unified transition PostgreSQL concurrency | `.venv\Scripts\python.exe -m pytest -q --ds=config.settings.local apps/workflows/tests/test_unified_run.py` | 8 passed; concurrent same-version writers produced one commit and one stale result |
 | Transition affected regression | `.venv\Scripts\python.exe -m pytest -q apps/workflows/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py` | 245 passed; 4 PostgreSQL-only tests skipped |
 | Transition Ruff/Mypy | Focused `ruff check` and `mypy apps/workflows/run_events.py apps/workflows/transitions.py` | Passed |
+| Transition idempotency/cancel/lease PostgreSQL | Compose web `python -m pytest -q apps/workflows/tests/test_unified_run.py` | 13 passed, including concurrent duplicate-token replay, cooperative cancel and lease-expiry recovery |
+| Gate 2 idempotency affected regression | Compose web `python -m pytest -q apps/workflows/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py` | 253 passed |
+| Migration drift | Compose web `python manage.py makemigrations --check --dry-run` | Passed: no changes detected |
+| Idempotency slice Ruff/Mypy | Compose web focused `ruff check --no-cache` and `mypy apps/workflows/run_events.py apps/workflows/transitions.py` | Passed |
 
 The v5 compiler now emits deterministic `execution_mode_analysis`. Background is always present;
 sync is present only when the graph has no known durable/unproven blocker. Tool/custom nodes fail
@@ -147,9 +151,20 @@ transition increments the checkpoint version; stale status/version results leave
 and append safe `run.late_result_discarded` evidence. Terminal results cannot reopen a Run. Waiting
 states require a typed reference, checkpoint JSON is capped at 1 MiB, counters are non-negative and
 bounded by the database integer range, and terminal transitions clear sync leases. A real
-PostgreSQL two-writer test proved the row lock/CAS behavior. A caller-supplied transition-token
-idempotency constraint is not implemented yet, so repeated terminal late deliveries can still
-append repeated discard evidence and must be addressed before worker cutover.
+PostgreSQL two-writer testing proved the row lock/CAS behavior. Every transition now requires a UUID
+token. `RunEvent` stores the token with a canonical request checksum under a per-run conditional
+unique constraint. Exact sequential or concurrent replay returns the original result without
+another event or counter mutation; reuse with changed transition content fails closed. This
+intentionally reuses the direct-tenant RLS-protected event authority rather than adding a second
+receipt table.
+
+Cancellation requests are bounded to closed reason codes, recorded once, and remain cooperative
+until the next locked transition boundary, where cancellation wins over ordinary completion.
+Bounded sync leases require the exact UUID owner, cannot extend beyond 60 seconds or the run
+deadline, and cannot renew after cancellation. Expiry resolution verifies the exact expired token
+under the Run lock, then enters `recovery_required`, or `cancelled` if disconnect/cancellation was
+already recorded. It clears ownership and never queues or changes execution mode. Transport
+disconnect hooks, lease scanning/recovery tooling and API/worker integration remain unimplemented.
 
 ## Final status
 

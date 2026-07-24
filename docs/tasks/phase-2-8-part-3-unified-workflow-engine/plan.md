@@ -230,8 +230,11 @@ verified output of this part.
    closed event types, bounded/redacted payload validation, database-locked monotonic event
    allocation, constraints/indexes and FORCE RLS are implemented. The shared locked transition
    service now enforces legal state edges, checkpoint compare-and-swap, bounded monotonic counters,
-   terminal immutability and stale/late-result evidence. Sync lease/disconnect/cancel behavior,
-   transition-token idempotency and the background worker executor remain pending.
+   terminal immutability and stale/late-result evidence. A unique transition token and request
+   checksum on `RunEvent` (avoiding a second receipt authority), exact token replay without side
+   effects, conflicting-token rejection, one-time cooperative cancellation and expired sync-lease
+   resolution without background takeover are implemented.
+   Disconnect transport hooks, recovery tooling and the background worker executor remain pending.
 3. **Consumer migration:** move Responses, Chat Completions, GET/cancel, MCP, evaluation, console,
    metrics, approvals, children, recovery and kill-switch checks to the unified engine; convert demo
    and fixtures; run semantic parity, concurrency, restart and load/soak tests.

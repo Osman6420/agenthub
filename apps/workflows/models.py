@@ -737,6 +737,8 @@ class RunEvent(models.Model):
     outcome = models.CharField(max_length=32, blank=True)
     reason_code = models.CharField(max_length=64, blank=True)
     state_checksum = models.CharField(max_length=64, blank=True)
+    transition_token = models.UUIDField(null=True, blank=True)
+    transition_checksum = models.CharField(max_length=64, blank=True)
     payload = models.JSONField(default=dict)
     occurred_at = models.DateTimeField(auto_now_add=True)
 
@@ -752,6 +754,18 @@ class RunEvent(models.Model):
             models.CheckConstraint(
                 condition=models.Q(event_type__in=RunEventType.values),
                 name="run_event_type_valid",
+            ),
+            models.UniqueConstraint(
+                fields=["run", "transition_token"],
+                condition=models.Q(transition_token__isnull=False),
+                name="uniq_run_event_transition_token",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(transition_token__isnull=True, transition_checksum="")
+                    | (models.Q(transition_token__isnull=False) & ~models.Q(transition_checksum=""))
+                ),
+                name="run_event_transition_token_checksum_pair",
             ),
         ]
         ordering = ["run_id", "sequence"]

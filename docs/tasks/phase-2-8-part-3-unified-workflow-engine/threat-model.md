@@ -40,6 +40,8 @@ tenant tables.
 | Responses ID confused with authority/run ID | Separate stored opaque `resp_...`; UUID-only run endpoints/header; neither substitutes authorization |
 | Cross-tenant run/status/cancel/child access | Exact object predicate, direct tenant lineage, generic denial and FORCE RLS |
 | Duplicate/late worker repeats external side effect | Idempotency/transition token; terminal guards; `outcome_unknown` rather than blind retry |
+| Transition token is replayed with altered state/counters | Persist a canonical request checksum with the token; exact replay returns the recorded result and mismatched replay fails closed |
+| Expired sync lease is claimed by a background worker | Lease resolution requires the exact token and expiry under the Run row lock; it enters recovery/cancelled and never queues work |
 | Stale worker reads new DSL/checkpoint | Atomic fleet cutover and explicit compiler/checkpoint versions |
 | Kill-switch race admits/resumes work | Check authoritative control at admission and each transition claim |
 | Destructive migration deletes real state | Immediate pre-cutover zero-state/consumer proof and separate exact migration approval |

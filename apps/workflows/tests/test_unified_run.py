@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from threading import Barrier, Thread
+from uuid import uuid4
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -10,16 +11,28 @@ from django.utils import timezone
 
 from apps.workflows.models import (
     Run,
+    RunCancellationState,
     RunEvent,
     RunEventType,
     RunExecutionMode,
     WorkflowVersion,
 )
 from apps.workflows.run_events import append_run_event, validate_run_event_payload
-from apps.workflows.transitions import RunTransitionError, transition_run
+from apps.workflows.transitions import (
+    RunTransitionError,
+    renew_sync_lease,
+    request_run_cancellation,
+    resolve_expired_sync_lease,
+    transition_run,
+)
 
 
-def _run(workflow_fixture, *, key: str = "unified-run") -> Run:
+def _run(
+    workflow_fixture,
+    *,
+    key: str = "unified-run",
+    execution_mode: str = RunExecutionMode.BACKGROUND,
+) -> Run:
     workflow_version = WorkflowVersion.objects.get(scenario=workflow_fixture.scenario)
     return Run.objects.create(
         organization=workflow_fixture.organization,
@@ -31,7 +44,7 @@ def _run(workflow_fixture, *, key: str = "unified-run") -> Run:
         idempotency_key=key,
         compiled_checksum=workflow_version.checksum,
         compiler_version=workflow_version.compiler_version,
-        execution_mode=RunExecutionMode.BACKGROUND,
+        execution_mode=execution_mode,
         deadline_at=timezone.now() + timedelta(minutes=5),
         input_checksum="a" * 64,
     )
@@ -116,6 +129,7 @@ def test_transition_commits_checkpoint_counters_and_terminal_guard(workflow_fixt
     started = transition_run(
         organization_id=run.organization_id,
         run_id=run.id,
+        transition_token=uuid4(),
         expected_checkpoint_version=1,
         expected_status="requested",
         target_status="running",
@@ -126,6 +140,7 @@ def test_transition_commits_checkpoint_counters_and_terminal_guard(workflow_fixt
     completed = transition_run(
         organization_id=run.organization_id,
         run_id=run.id,
+        transition_token=uuid4(),
         expected_checkpoint_version=2,
         expected_status="running",
         target_status="completed",
@@ -135,6 +150,7 @@ def test_transition_commits_checkpoint_counters_and_terminal_guard(workflow_fixt
     late = transition_run(
         organization_id=run.organization_id,
         run_id=run.id,
+        transition_token=uuid4(),
         expected_checkpoint_version=3,
         expected_status="running",
         target_status="failed",
@@ -163,6 +179,7 @@ def test_transition_rejects_stale_invalid_and_unbounded_mutations(workflow_fixtu
     transition_run(
         organization_id=run.organization_id,
         run_id=run.id,
+        transition_token=uuid4(),
         expected_checkpoint_version=1,
         target_status="running",
     )
@@ -170,6 +187,7 @@ def test_transition_rejects_stale_invalid_and_unbounded_mutations(workflow_fixtu
     stale = transition_run(
         organization_id=run.organization_id,
         run_id=run.id,
+        transition_token=uuid4(),
         expected_checkpoint_version=1,
         target_status="completed",
     )
@@ -178,6 +196,7 @@ def test_transition_rejects_stale_invalid_and_unbounded_mutations(workflow_fixtu
         transition_run(
             organization_id=run.organization_id,
             run_id=run.id,
+            transition_token=uuid4(),
             expected_checkpoint_version=2,
             target_status="waiting_event",
         )
@@ -185,6 +204,7 @@ def test_transition_rejects_stale_invalid_and_unbounded_mutations(workflow_fixtu
         transition_run(
             organization_id=run.organization_id,
             run_id=run.id,
+            transition_token=uuid4(),
             expected_checkpoint_version=2,
             target_status="failed",
             step_delta=-1,
@@ -193,10 +213,149 @@ def test_transition_rejects_stale_invalid_and_unbounded_mutations(workflow_fixtu
         transition_run(
             organization_id=run.organization_id,
             run_id=run.id,
+            transition_token=uuid4(),
             expected_checkpoint_version=2,
             target_status="failed",
             checkpoint={"safe": "x" * (1024 * 1024)},
         )
+
+
+@pytest.mark.django_db
+def test_transition_token_replay_is_side_effect_free_and_conflicts_fail(
+    workflow_fixture,
+) -> None:
+    run = _run(workflow_fixture)
+    token = uuid4()
+    first = transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=token,
+        expected_checkpoint_version=1,
+        expected_status="requested",
+        target_status="running",
+        step_delta=1,
+    )
+    replay = transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=token,
+        expected_checkpoint_version=1,
+        expected_status="requested",
+        target_status="running",
+        step_delta=1,
+    )
+
+    assert replay == first
+    assert run.events.count() == 1
+    with pytest.raises(RunTransitionError, match="RUN_TRANSITION_TOKEN_CONFLICT"):
+        transition_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            transition_token=token,
+            expected_checkpoint_version=1,
+            expected_status="requested",
+            target_status="running",
+            step_delta=2,
+        )
+
+
+@pytest.mark.django_db
+def test_cancellation_request_is_cooperative_and_idempotent(workflow_fixture) -> None:
+    run = _run(workflow_fixture)
+
+    first = request_run_cancellation(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        reason_code="CLIENT_DISCONNECTED",
+    )
+    replay = request_run_cancellation(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        reason_code="CLIENT_DISCONNECTED",
+    )
+
+    run.refresh_from_db()
+    assert (first.outcome, replay.outcome) == ("committed", "replayed")
+    assert run.status == "requested"
+    assert run.cancellation_state == RunCancellationState.REQUESTED
+    assert run.events.filter(event_type=RunEventType.CANCELLATION_REQUESTED).count() == 1
+
+    cancelled = transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status="requested",
+        target_status="completed",
+    )
+    run.refresh_from_db()
+    assert cancelled.status == "cancelled"
+    assert run.cancellation_state == RunCancellationState.ACKNOWLEDGED
+
+
+@pytest.mark.django_db
+def test_expired_sync_lease_enters_recovery_without_background_takeover(
+    workflow_fixture,
+) -> None:
+    run = _run(
+        workflow_fixture,
+        execution_mode=RunExecutionMode.SYNC,
+    )
+    lease_token = uuid4()
+    now = timezone.now()
+    renew_sync_lease(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        lease_token=lease_token,
+        expires_at=now + timedelta(seconds=30),
+    )
+    Run.objects.filter(pk=run.id).update(sync_lease_expires_at=now - timedelta(seconds=1))
+
+    result = resolve_expired_sync_lease(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        lease_token=lease_token,
+        transition_token=uuid4(),
+        observed_at=now,
+    )
+
+    run.refresh_from_db()
+    assert result.status == "recovery_required"
+    assert run.execution_mode == RunExecutionMode.SYNC
+    assert run.awaiting_kind == "recovery"
+    assert run.sync_lease_token is None
+
+
+@pytest.mark.django_db
+def test_expired_cancelled_sync_lease_becomes_cancelled(workflow_fixture) -> None:
+    run = _run(workflow_fixture, execution_mode=RunExecutionMode.SYNC)
+    lease_token = uuid4()
+    now = timezone.now()
+    renew_sync_lease(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        lease_token=lease_token,
+        expires_at=now + timedelta(seconds=30),
+    )
+    request_run_cancellation(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        reason_code="CLIENT_DISCONNECTED",
+    )
+    Run.objects.filter(pk=run.id).update(sync_lease_expires_at=now - timedelta(seconds=1))
+
+    result = resolve_expired_sync_lease(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        lease_token=lease_token,
+        transition_token=uuid4(),
+        observed_at=now,
+    )
+
+    run.refresh_from_db()
+    assert result.status == "cancelled"
+    assert run.cancellation_state == RunCancellationState.ACKNOWLEDGED
+    assert run.sync_lease_token is None
 
 
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
@@ -214,6 +373,7 @@ def test_concurrent_transition_has_one_commit_and_one_stale_result(workflow_fixt
             result = transition_run(
                 organization_id=run.organization_id,
                 run_id=run.id,
+                transition_token=uuid4(),
                 expected_checkpoint_version=1,
                 expected_status="requested",
                 target_status="running",
@@ -239,6 +399,46 @@ def test_concurrent_transition_has_one_commit_and_one_stale_result(workflow_fixt
         (1, "run.started"),
         (2, "run.late_result_discarded"),
     ]
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_duplicate_transition_token_replays_one_event(workflow_fixture) -> None:
+    run = _run(workflow_fixture)
+    barrier = Barrier(2)
+    token = uuid4()
+    results = []
+    errors: list[BaseException] = []
+
+    def attempt() -> None:
+        close_old_connections()
+        try:
+            barrier.wait()
+            results.append(
+                transition_run(
+                    organization_id=run.organization_id,
+                    run_id=run.id,
+                    transition_token=token,
+                    expected_checkpoint_version=1,
+                    expected_status="requested",
+                    target_status="running",
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted by parent thread
+            errors.append(exc)
+        finally:
+            close_old_connections()
+
+    threads = [Thread(target=attempt), Thread(target=attempt)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not errors
+    assert len(results) == 2
+    assert results[0] == results[1]
+    assert run.events.count() == 1
 
 
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="FORCE RLS requires PostgreSQL")
