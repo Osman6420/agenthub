@@ -20,6 +20,11 @@ session start.
 Follow the Codebase Memory, Serena, `rg`, source-inspection, and test authority
 defined in `AGENTS.md`. At the start of broad or cross-component repository work,
 check `index_status`; reuse a healthy persisted index instead of rebuilding it.
+Do not infer the Codebase Memory project identifier from the repository directory
+name. Resolve it with `list_projects` or `index_status` by matching the current
+checkout path. If those discovery tools are unavailable, use and path-check the
+`available_projects` returned by a read-only query before retrying. Do not record a
+machine-specific derived identifier as the repository's canonical project name.
 Use graph/architecture tools for relationships and impact, and use
 `search_graph.semantic_query` for meaning-based discovery. A semantic task requires
 an index built in `full` or `moderate` mode, not `fast`.

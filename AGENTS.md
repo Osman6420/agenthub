@@ -51,6 +51,12 @@ Use code-intelligence tools according to the evidence required:
      confirm the index is present, fresh, and not degraded. Do not rebuild a healthy
      index at every session start; the persisted graph and watcher are designed to
      carry it across sessions.
+   - Do not assume that the repository directory name is the Codebase Memory project
+     identifier. Resolve registered projects with `list_projects` or `index_status`
+     and select the identifier whose repository path matches the current checkout.
+     If those discovery tools are unavailable, use the `available_projects` returned
+     by a read-only query and verify the path match before retrying. Never commit a
+     machine-specific derived identifier as the canonical project name.
    - Use `get_architecture` or `get_graph_schema` to orient broad work,
      `trace_path` for callers/callees, `detect_changes` for change impact,
      `search_graph` with `semantic_query` for meaning-based discovery, and
