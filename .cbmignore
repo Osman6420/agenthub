@@ -1,0 +1,30 @@
+# Developer worktrees and downloaded tooling
+.worktrees/
+.tmp-cbm-install/
+
+# Virtual environments, dependencies, and caches
+.venv/
+node_modules/
+.pytest_cache/
+.pytest-tmp-*/
+__pycache__/
+
+# Secrets and local environment overrides
+.env
+.env.*
+*.pem
+*.key
+
+# Runtime state and local databases
+celerybeat-schedule*
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# User/customer content and generated media
+uploads/
+media/
+
+# Codebase Memory output must remain local unless separately reviewed
+.codebase-memory/

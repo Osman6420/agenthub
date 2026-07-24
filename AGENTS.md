@@ -41,14 +41,58 @@ If reality invalidates the plan, update it before continuing. Do not patch witho
 
 ## Code intelligence and editing
 
-When Serena MCP symbol tools are available, prefer them for code exploration and
-symbol-level changes: use symbol overviews and symbol lookup before reading whole
-files, reference lookup before changing a public or shared symbol, and semantic
-rename or symbol-body editing when it is safer than text replacement. Use `rg` and
-ordinary file tools for exact text, documentation, configuration, generated files,
-or when Serena is unavailable or returns incomplete results. Do not use a semantic
-tool blindly: inspect the resulting diff and run the same tests and static checks
-required for any other change.
+Use code-intelligence tools according to the evidence required:
+
+1. **Codebase Memory MCP -- persistent structural and semantic discovery**
+   - Prefer it before broad exploration for architecture, packages, routes, graph
+     relationships, multi-hop call paths, hotspots, cross-module dependencies,
+     semantic code search, and git-diff impact or blast-radius analysis.
+   - Before relying on its graph, call `index_status` for the current project and
+     confirm the index is present, fresh, and not degraded. Do not rebuild a healthy
+     index at every session start; the persisted graph and watcher are designed to
+     carry it across sessions.
+   - Use `get_architecture` or `get_graph_schema` to orient broad work,
+     `trace_path` for callers/callees, `detect_changes` for change impact,
+     `search_graph` with `semantic_query` for meaning-based discovery, and
+     `search_code` for graph-ranked code text. Semantic and similarity edges require
+     a `full` or `moderate` index; `fast` mode is insufficient for semantic work.
+   - Treat graph, semantic, similarity, dead-code, and impact results as navigation
+     evidence, never as the source of truth. Dynamic dispatch, decorators,
+     registries, dependency injection, generated code, framework behavior, and
+     runtime configuration may be incomplete or ambiguous.
+   - Do not call mutating or data-ingestion tools such as `delete_project`,
+     `manage_adr`, or `ingest_traces` unless the active task explicitly requires
+     that action and its data and rollback implications have been reviewed.
+
+2. **Serena -- exact semantic symbols, references, and edits**
+   - Use symbol overviews and symbol lookup before reading whole source files.
+   - Use reference lookup to confirm Codebase Memory candidates before changing a
+     public, shared, authorization-sensitive, or security-sensitive symbol.
+   - Prefer semantic rename or symbol-body editing when it is safer than text
+     replacement.
+
+3. **`rg` -- exact textual and non-semantic search**
+   - Use `rg` and `rg --files` for exact strings, settings, URLs, error codes,
+     capability names, decorators, registries, templates, documentation,
+     configuration, migrations, manifests, generated files, fixtures, and test
+     names.
+   - Use it to find indirect or string-based references that graph and symbol tools
+     can miss.
+
+4. **Direct inspection and tests -- final authority**
+   - Read the smallest relevant source regions needed to verify behavior. Code,
+     tests, migrations, runtime configuration, authoritative documentation, and
+     live runtime evidence remain the sources of truth.
+   - Reconcile conflicting tool results before editing. After editing, inspect the
+     actual diff and run the same repository-required tests and static checks
+     regardless of which discovery or editing tool was used.
+
+For non-trivial code changes, default to:
+`Codebase Memory discovery -> Serena symbol/reference confirmation -> rg dynamic
+and textual checks -> smallest complete edit -> diff and test verification`.
+Skip a tool when it adds no evidence. If Codebase Memory or Serena is unavailable,
+stale, degraded, or incomplete, continue with the remaining tools and direct
+inspection; never block correctness on a code-intelligence service.
 
 ## Agent ownership
 

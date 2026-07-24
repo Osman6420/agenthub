@@ -15,4 +15,19 @@ task-specific facts out of this file.
 Read `docs/ai/agent-handoff.md` on an actual Codex/Claude transition, not at every
 session start.
 
+## Codebase Memory usage
+
+Follow the Codebase Memory, Serena, `rg`, source-inspection, and test authority
+defined in `AGENTS.md`. At the start of broad or cross-component repository work,
+check `index_status`; reuse a healthy persisted index instead of rebuilding it.
+Use graph/architecture tools for relationships and impact, and use
+`search_graph.semantic_query` for meaning-based discovery. A semantic task requires
+an index built in `full` or `moderate` mode, not `fast`.
+
+Codebase Memory results are advisory. Confirm candidate declarations and references
+with Serena, check dynamic/string/configuration paths with `rg`, and verify the
+actual source, diff, and tests before concluding or editing. Do not use
+`delete_project`, `manage_adr`, or `ingest_traces` unless the active task explicitly
+requires the mutation or ingestion and its risks have been reviewed.
+
 Markdown is guidance, not enforcement: security constraints also require hooks, permissions, sandboxing, and CI. Ask for user approval before destructive or privilege-expanding tool calls.
