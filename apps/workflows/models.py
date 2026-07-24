@@ -190,6 +190,9 @@ class Run(TimeStampedModel):
     deadline_at = models.DateTimeField()
     sync_lease_token = models.UUIDField(null=True, blank=True)
     sync_lease_expires_at = models.DateTimeField(null=True, blank=True)
+    background_claim_token = models.UUIDField(null=True, blank=True)
+    background_claim_expires_at = models.DateTimeField(null=True, blank=True)
+    background_claim_checkpoint_version = models.PositiveIntegerField(null=True, blank=True)
     cancellation_state = models.CharField(
         max_length=16,
         choices=RunCancellationState.choices,
@@ -223,6 +226,22 @@ class Run(TimeStampedModel):
                 condition=models.Q(next_event_sequence__gte=1),
                 name="run_next_event_sequence_positive",
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        background_claim_token__isnull=True,
+                        background_claim_expires_at__isnull=True,
+                        background_claim_checkpoint_version__isnull=True,
+                    )
+                    | models.Q(
+                        background_claim_token__isnull=False,
+                        background_claim_expires_at__isnull=False,
+                        background_claim_checkpoint_version__isnull=False,
+                        execution_mode=RunExecutionMode.BACKGROUND,
+                    )
+                ),
+                name="run_background_claim_complete",
+            ),
         ]
         indexes = [
             models.Index(fields=["organization", "status", "created_at"]),
@@ -250,6 +269,18 @@ class Run(TimeStampedModel):
             raise ValidationError("only synchronous runs may hold a sync lease")
         if bool(self.sync_lease_token) != bool(self.sync_lease_expires_at):
             raise ValidationError("sync lease token and expiry must be set together")
+        background_claim_parts = (
+            self.background_claim_token,
+            self.background_claim_expires_at,
+            self.background_claim_checkpoint_version,
+        )
+        if any(value is not None for value in background_claim_parts) and (
+            self.execution_mode != RunExecutionMode.BACKGROUND
+            or not all(value is not None for value in background_claim_parts)
+        ):
+            raise ValidationError(
+                "background claim token, expiry and checkpoint version must be set together"
+            )
 
 
 class WorkflowRun(TimeStampedModel):

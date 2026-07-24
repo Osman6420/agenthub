@@ -21,35 +21,34 @@ not store general startup instructions or assumed service status in this handoff
 
 ## Active handoff
 
-- **Task and outcome:** Phase 2.8 Part 3 Gate 2 unified persistence/state machine is active; see the
+- **Task and outcome:** Phase 2.8 Part 3 Gate 2 unified persistence is active; the background
+  claim/delivery boundary is implemented and verified; see the
   [Part 3 plan](../tasks/phase-2-8-part-3-unified-workflow-engine/plan.md).
 - **Approved scope:** Plan/ADR and additive compiler/runtime/persistence work. Public API,
   authorization and the exact destructive migration/reset remain separate approval gates.
 - **Decisions and assumptions:** Preserve ADR-0013 authorization boundaries. Per
   [ADR-0014](../adr/0014-unified-workflow-engine-cutover.md), one workflow engine replaces RAG,
   workflow and agent paths; old local workflow/run data is disposable and will not be converted.
-- **Working tree:** Part 3 plan/ADR, compiler v5, gated `agent_loop`, release pins, shared agent
-  policy and tool-free workflow adapter are committed at `4554e1d`. The current uncommitted Gate 2
-  slice adds migration `0010`, transition-token/checksum idempotency, cooperative cancellation and
-  bounded sync-lease expiry resolution; old models/routes/workers remain active. Exclude unrelated
-  Codebase Memory repair files and any user-owned `.codebase-memory/`, `.worktrees/` or Celery Beat
-  schedule files.
+- **Working tree:** HEAD is `edd8ae2` on `feat/foundation-sprint-0-1`; foundation commits are
+  `4554e1d` and `df22f9a`. The uncommitted task diff adds `background_claims.py`, additive migration
+  `0011`, Run claim fields/constraint, claim-aware transitions, tests and task records. Later commits
+  after `df22f9a` are unrelated and must be preserved. Old models/routes/workers remain active.
 - **Verification:** See the
   [Part 3 verification record](../tasks/phase-2-8-part-3-unified-workflow-engine/verification.md).
-  Full workflow/builder affected package passes (254); release/workflow regression passes (211);
-  latest agent/workflow regression passes (297); PostgreSQL unified Run/RLS/idempotency/cancellation/
-  lease checks pass (13, including concurrent duplicate-token replay); Gate 2 affected regression
-  passes (253); migration drift, focused Ruff and Mypy pass; focused frontend tests pass (5) and
-  TypeScript typecheck passes.
-- **Runtime:** Full Compose topology is running; PostgreSQL, Redis and MinIO report healthy.
-  Migration `0010` has not been applied to the live development database. Re-check pending old work
-  before any cutover or reset.
+  Latest background claim PostgreSQL suite passes (20, including two-writer ownership, duplicate/
+  stale delivery, cancellation/deadline, crash recovery, tenant scoping and audit rollback); affected
+  workflow/builder/release regression passes (261); migration drift, focused Ruff and Mypy pass.
+- **Runtime:** Full canonical Compose topology is running; PostgreSQL, Redis and MinIO are healthy and
+  liveness returns 200. Migrations `0009` through `0011` have not been applied to the live development
+  database. Re-check state before any migration, restart, cutover or reset.
 - **Risks and blockers:** Exact destructive migration/reset and public API removal are not approved.
-  Codebase Memory transport closed during the latest call and exposed no callable freshness-status
-  endpoint, so this slice was cross-checked with Serena, `rg`, code, migrations and PostgreSQL tests.
-  Disconnect hooks, lease scanning/recovery tooling and worker/API integration remain pending.
-- **Next action:** Design and implement the smallest background executor claim/delivery boundary
-  using the unified transition token and checkpoint CAS; do not connect public routes yet.
+  Codebase Memory is callable and the path-matched index reports 10,263 nodes/44,684 edges, but no
+  `index_status` endpoint is exposed. Serena, `rg`, direct code/diff and PostgreSQL tests were also
+  used. No Celery task is registered; disconnect hooks, scheduling, fleet revision enforcement,
+  general recovery tooling and full graph execution remain pending.
+- **Next action:** Connect the verified identifier-only delivery/claim boundary to the smallest
+  unified Celery executor slice with revision/kill-switch checks; keep public routes and old workers
+  unchanged.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:

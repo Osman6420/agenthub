@@ -166,7 +166,34 @@ under the Run lock, then enters `recovery_required`, or `cancelled` if disconnec
 already recorded. It clears ownership and never queues or changes execution mode. Transport
 disconnect hooks, lease scanning/recovery tooling and API/worker integration remain unimplemented.
 
+## Gate 2 background claim/delivery evidence
+
+The additive `0011` migration adds one complete-or-null background claim tuple to `Run`: UUID token,
+bounded expiry and checkpoint-version snapshot. An identifier-only delivery parser rejects extra
+task-body/header authority and uses the tenant header only to establish PostgreSQL RLS context before
+reloading the Run. Claim acquisition uses `select_for_update`; same-token redelivery is inert,
+competing live delivery is busy, and an expired queued claim can be replaced before work starts.
+Every background transition after queue admission proves the exact claim token and checkpoint
+snapshot. An expired running claim converges to `recovery_required` without takeover; cancellation
+and deadline guards converge to `cancelled`/`timed_out`. Claim audit is content-free and transactional:
+an audit persistence failure rolls back ownership.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Codebase Memory availability/architecture | `get_architecture(overview)` for path-matched project `C-Users-kuzuc-Desktop-agenthub` | Passed: 10,263 nodes, 44,684 edges; semantic/similarity edges available; freshness endpoint not exposed |
+| Unified background claim PostgreSQL | Compose web `python -m pytest -q apps/workflows/tests/test_unified_run.py` | 20 passed, including two-writer single-owner claim, duplicate/competing delivery, stale owner, queued reclaim, running crash recovery, cancellation, deadline, tenant scoping, identifier-only delivery and audit rollback |
+| Background claim affected regression | Compose web `python -m pytest -q apps/workflows/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py` | 261 passed |
+| Migration drift | Compose web `python manage.py makemigrations --check --dry-run` | Passed: no changes detected |
+| Focused Ruff | Compose web `python -m ruff check --no-cache ...` on claim/model/transition/test/migration files | Passed |
+| Focused Mypy | Compose web `python -m mypy apps/workflows/background_claims.py apps/workflows/transitions.py` | Passed |
+| Diff whitespace | `git diff --check` | Passed |
+
+No public route, authorization policy, tenant-isolation rule, production dependency or old worker
+path changed. Migrations `0009` through `0011` were not applied to the live development database. No
+Celery task is registered yet, so broker redelivery/crash integration and full graph execution remain
+pending despite the verified persistence boundary.
+
 ## Final status
 
-**In progress — Gate 2 persistence foundation verified; shared transitions and consumer migration
-remain pending.**
+**In progress — Gate 2 persistence and background claim/delivery boundary verified; Celery/full
+executor integration, shared consumers and cutover remain pending.**

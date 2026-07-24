@@ -143,19 +143,21 @@ def _transition_checksum(
     reason_code: str,
     error_code: str,
     deltas: tuple[int, int, int, int],
+    background_claim_token: uuid.UUID | None,
 ) -> str:
-    return compute_checksum(
-        {
-            "awaiting_reference": awaiting_reference,
-            "checkpoint": checkpoint,
-            "deltas": list(deltas),
-            "error_code": error_code,
-            "expected_checkpoint_version": expected_checkpoint_version,
-            "expected_status": expected_status,
-            "reason_code": reason_code,
-            "target_status": target_status,
-        }
-    )
+    content: dict[str, Any] = {
+        "awaiting_reference": awaiting_reference,
+        "checkpoint": checkpoint,
+        "deltas": list(deltas),
+        "error_code": error_code,
+        "expected_checkpoint_version": expected_checkpoint_version,
+        "expected_status": expected_status,
+        "reason_code": reason_code,
+        "target_status": target_status,
+    }
+    if background_claim_token is not None:
+        content["background_claim_token"] = str(background_claim_token)
+    return compute_checksum(content)
 
 
 def _replayed_transition(event: RunEvent, checksum: str) -> RunTransitionResult:
@@ -186,6 +188,7 @@ def transition_run(
     tool_call_delta: int = 0,
     input_token_delta: int = 0,
     output_token_delta: int = 0,
+    background_claim_token: uuid.UUID | None = None,
 ) -> RunTransitionResult:
     """Commit one legal transition or safely record a stale/terminal late result."""
 
@@ -212,6 +215,7 @@ def transition_run(
         reason_code=reason_code,
         error_code=error_code,
         deltas=deltas,
+        background_claim_token=background_claim_token,
     )
     set_tenant_context(organization_id)
     run = Run.objects.select_for_update().get(
@@ -242,6 +246,44 @@ def transition_run(
             run.checkpoint_version,
             event.sequence,
         )
+    transition_now = timezone.now()
+    admission_queue = (
+        run.status == WorkflowRunStatus.REQUESTED
+        and target == WorkflowRunStatus.QUEUED
+        and background_claim_token is None
+    )
+    guard_convergence = background_claim_token is None and (
+        (
+            run.cancellation_state == RunCancellationState.REQUESTED
+            and target == WorkflowRunStatus.CANCELLED
+        )
+        or (transition_now >= run.deadline_at and target == WorkflowRunStatus.TIMED_OUT)
+    )
+    if (
+        run.execution_mode == RunExecutionMode.BACKGROUND
+        and not admission_queue
+        and not guard_convergence
+    ):
+        if not isinstance(background_claim_token, uuid.UUID):
+            raise RunTransitionError("RUN_BACKGROUND_CLAIM_REQUIRED")
+        if (
+            run.background_claim_token != background_claim_token
+            or run.background_claim_checkpoint_version != expected_checkpoint_version
+        ):
+            raise RunTransitionError("RUN_BACKGROUND_CLAIM_STALE")
+        claim_may_be_expired = target in {
+            WorkflowRunStatus.CANCELLED,
+            WorkflowRunStatus.RECOVERY_REQUIRED,
+            WorkflowRunStatus.TIMED_OUT,
+        }
+        if (
+            run.background_claim_expires_at is None
+            or (
+                run.background_claim_expires_at <= transition_now
+                and not claim_may_be_expired
+            )
+        ):
+            raise RunTransitionError("RUN_BACKGROUND_CLAIM_EXPIRED")
     if run.checkpoint_version != expected_checkpoint_version or (
         expected_status is not None and run.status != expected_status
     ):
@@ -272,6 +314,14 @@ def transition_run(
         target = WorkflowRunStatus.CANCELLED
         awaiting_reference = ""
         reason_code = "RUN_CANCELLATION_REQUESTED"
+    elif transition_now >= run.deadline_at and target not in {
+        WorkflowRunStatus.CANCELLED,
+        WorkflowRunStatus.RECOVERY_REQUIRED,
+        WorkflowRunStatus.TIMED_OUT,
+    }:
+        target = WorkflowRunStatus.TIMED_OUT
+        awaiting_reference = ""
+        reason_code = "RUN_DEADLINE_EXCEEDED"
     current = WorkflowRunStatus(run.status)
     if target not in _ALLOWED_TRANSITIONS.get(current, set()):
         raise RunTransitionError("RUN_TRANSITION_INVALID")
@@ -305,18 +355,31 @@ def transition_run(
     ):
         raise RunTransitionError("RUN_COUNTER_LIMIT_EXCEEDED")
 
-    now = timezone.now()
+    now = transition_now
     if target == WorkflowRunStatus.RUNNING and run.started_at is None:
         run.started_at = now
     if target in WORKFLOW_TERMINAL_STATUSES:
         run.finished_at = now
         run.sync_lease_token = None
         run.sync_lease_expires_at = None
+        run.background_claim_token = None
+        run.background_claim_expires_at = None
+        run.background_claim_checkpoint_version = None
         if target == WorkflowRunStatus.CANCELLED:
             run.cancellation_state = RunCancellationState.ACKNOWLEDGED
     elif target == WorkflowRunStatus.RECOVERY_REQUIRED:
         run.sync_lease_token = None
         run.sync_lease_expires_at = None
+        run.background_claim_token = None
+        run.background_claim_expires_at = None
+        run.background_claim_checkpoint_version = None
+    elif run.execution_mode == RunExecutionMode.BACKGROUND:
+        if target == WorkflowRunStatus.RUNNING:
+            run.background_claim_checkpoint_version = run.checkpoint_version
+        else:
+            run.background_claim_token = None
+            run.background_claim_expires_at = None
+            run.background_claim_checkpoint_version = None
 
     event = append_locked_run_event(
         run=run,

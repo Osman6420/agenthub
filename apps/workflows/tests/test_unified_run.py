@@ -9,6 +9,14 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, close_old_connections, connection
 from django.utils import timezone
 
+from apps.audit.models import AuditEvent
+from apps.workflows.background_claims import (
+    BackgroundClaimError,
+    claim_background_delivery,
+    claim_background_run,
+    renew_background_claim,
+    resolve_expired_background_claim,
+)
 from apps.workflows.models import (
     Run,
     RunCancellationState,
@@ -31,7 +39,7 @@ def _run(
     workflow_fixture,
     *,
     key: str = "unified-run",
-    execution_mode: str = RunExecutionMode.BACKGROUND,
+    execution_mode: str = RunExecutionMode.SYNC,
 ) -> Run:
     workflow_version = WorkflowVersion.objects.get(scenario=workflow_fixture.scenario)
     return Run.objects.create(
@@ -48,6 +56,24 @@ def _run(
         deadline_at=timezone.now() + timedelta(minutes=5),
         input_checksum="a" * 64,
     )
+
+
+def _queued_background_run(workflow_fixture, *, key: str) -> Run:
+    run = _run(
+        workflow_fixture,
+        key=key,
+        execution_mode=RunExecutionMode.BACKGROUND,
+    )
+    transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status=run.status,
+        target_status="queued",
+    )
+    run.refresh_from_db()
+    return run
 
 
 @pytest.mark.django_db
@@ -68,9 +94,265 @@ def test_run_rejects_incomplete_wait_and_sync_lease_contracts(workflow_fixture) 
         run.full_clean()
 
     run.awaiting_kind = ""
+    run.execution_mode = RunExecutionMode.BACKGROUND
     run.sync_lease_expires_at = timezone.now() + timedelta(seconds=30)
     with pytest.raises(ValidationError, match="only synchronous"):
         run.full_clean()
+
+    run = _run(
+        workflow_fixture,
+        key="invalid-background-claim",
+        execution_mode=RunExecutionMode.BACKGROUND,
+    )
+    run.background_claim_token = uuid4()
+    with pytest.raises(ValidationError, match="background claim token"):
+        run.full_clean()
+
+
+@pytest.mark.django_db
+def test_background_claim_replay_competition_and_checkpoint_ownership(
+    workflow_fixture,
+) -> None:
+    run = _queued_background_run(workflow_fixture, key="background-claim")
+    claim_token = uuid4()
+    first = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=claim_token,
+        lease_seconds=30,
+    )
+    replay = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=claim_token,
+        lease_seconds=30,
+    )
+    competing = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=uuid4(),
+        lease_seconds=30,
+    )
+
+    assert first.outcome == "claimed"
+    assert replay.outcome == "replayed"
+    assert replay.claim_expires_at == first.claim_expires_at
+    assert competing.outcome == "busy"
+    audit = AuditEvent.objects.get(
+        action="workflow.run.background_claim",
+        resource_id=str(run.id),
+    )
+    assert audit.after == {
+        "checkpoint_version": run.checkpoint_version,
+        "status": "queued",
+    }
+    assert str(claim_token) not in str(audit.after)
+
+    committed = transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=first.checkpoint_version,
+        expected_status="queued",
+        target_status="running",
+        background_claim_token=claim_token,
+    )
+    assert committed.outcome == "committed"
+    run.refresh_from_db()
+    assert run.background_claim_checkpoint_version == run.checkpoint_version
+
+    with pytest.raises(BackgroundClaimError, match="RUN_BACKGROUND_CLAIM_STALE"):
+        renew_background_claim(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            claim_token=claim_token,
+            expected_checkpoint_version=first.checkpoint_version,
+            lease_seconds=30,
+        )
+
+
+@pytest.mark.django_db
+def test_background_claim_fails_closed_when_audit_persistence_fails(
+    workflow_fixture,
+    monkeypatch,
+) -> None:
+    run = _queued_background_run(workflow_fixture, key="background-audit-failure")
+
+    def fail_audit(**_kwargs) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr("apps.workflows.background_claims.record_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        claim_background_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            claim_token=uuid4(),
+            lease_seconds=30,
+        )
+    run.refresh_from_db()
+    assert run.background_claim_token is None
+
+
+@pytest.mark.django_db
+def test_background_delivery_is_identifier_only_and_tenant_scoped(workflow_fixture) -> None:
+    run = _queued_background_run(workflow_fixture, key="background-delivery")
+    token = uuid4()
+    claimed = claim_background_delivery(
+        body={"run_id": str(run.id), "delivery_token": str(token)},
+        headers={"organization_id": run.organization_id},
+    )
+    assert claimed.outcome == "claimed"
+
+    with pytest.raises(
+        BackgroundClaimError, match="RUN_BACKGROUND_DELIVERY_BODY_INVALID"
+    ):
+        claim_background_delivery(
+            body={
+                "run_id": str(run.id),
+                "delivery_token": str(uuid4()),
+                "checkpoint": {"forged": True},
+            },
+            headers={"organization_id": run.organization_id},
+        )
+    with pytest.raises(Run.DoesNotExist):
+        claim_background_delivery(
+            body={"run_id": str(run.id), "delivery_token": str(uuid4())},
+            headers={"organization_id": run.organization_id + 99_999},
+        )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_background_delivery_has_one_claim_owner(workflow_fixture) -> None:
+    run = _queued_background_run(workflow_fixture, key="background-claim-race")
+    barrier = Barrier(2)
+    outcomes: list[str] = []
+    errors: list[BaseException] = []
+
+    def claim(token) -> None:
+        close_old_connections()
+        try:
+            barrier.wait()
+            result = claim_background_run(
+                organization_id=run.organization_id,
+                run_id=run.id,
+                claim_token=token,
+                lease_seconds=30,
+            )
+            outcomes.append(result.outcome)
+        except BaseException as exc:  # pragma: no cover - surfaced by assertion
+            errors.append(exc)
+        finally:
+            close_old_connections()
+
+    threads = [Thread(target=claim, args=(uuid4(),)) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert sorted(outcomes) == ["busy", "claimed"]
+
+
+@pytest.mark.django_db
+def test_expired_background_claim_reclaims_only_before_running(workflow_fixture) -> None:
+    run = _queued_background_run(workflow_fixture, key="background-expiry")
+    old_token = uuid4()
+    claim = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=old_token,
+        lease_seconds=30,
+    )
+    Run.objects.filter(pk=run.id).update(
+        background_claim_expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    replacement_token = uuid4()
+    replacement = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=replacement_token,
+        lease_seconds=30,
+    )
+    assert replacement.outcome == "claimed"
+    with pytest.raises(RunTransitionError, match="RUN_BACKGROUND_CLAIM_STALE"):
+        transition_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            transition_token=uuid4(),
+            expected_checkpoint_version=claim.checkpoint_version,
+            expected_status="queued",
+            target_status="running",
+            background_claim_token=old_token,
+        )
+
+    transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=replacement.checkpoint_version,
+        expected_status="queued",
+        target_status="running",
+        background_claim_token=replacement_token,
+    )
+    Run.objects.filter(pk=run.id).update(
+        background_claim_expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    outcome = resolve_expired_background_claim(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=replacement_token,
+        transition_token=uuid4(),
+    )
+    assert outcome == "committed"
+    run.refresh_from_db()
+    assert run.status == "recovery_required"
+    assert run.background_claim_token is None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("guard", "expected_outcome", "expected_status"),
+    [
+        ("cancellation", "cancellation_requested", "cancelled"),
+        ("deadline", "deadline_exceeded", "timed_out"),
+    ],
+)
+def test_background_claim_observes_cancellation_and_deadline_before_work(
+    workflow_fixture,
+    guard: str,
+    expected_outcome: str,
+    expected_status: str,
+) -> None:
+    run = _queued_background_run(workflow_fixture, key=f"background-{guard}")
+    if guard == "cancellation":
+        request_run_cancellation(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            reason_code="CLIENT_REQUESTED",
+        )
+    else:
+        Run.objects.filter(pk=run.id).update(
+            deadline_at=timezone.now() - timedelta(seconds=1)
+        )
+
+    claim = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=uuid4(),
+        lease_seconds=30,
+    )
+    assert claim.outcome == expected_outcome
+    run.refresh_from_db()
+    result = transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status="queued",
+        target_status=expected_status,
+    )
+    assert result.status == expected_status
 
 
 @pytest.mark.django_db

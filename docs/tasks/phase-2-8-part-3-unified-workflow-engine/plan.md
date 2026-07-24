@@ -22,7 +22,7 @@ RAG runs synchronously outside the durable WorkflowRun/AgentRun state machines. 
 The concise workflow guide is read verbatim into AI authoring, so DSL, compiler, Studio schema,
 model-facing instructions and human architecture documentation must change atomically.
 
-The refreshed 2026-07-24 Codebase Memory index contains 10,000 nodes and 43,610 edges. Exact
+The refreshed 2026-07-24 Codebase Memory index currently contains 10,263 nodes and 44,684 edges. Exact
 graph-augmented search finds 101 `ScenarioType`/scenario-type matches across 89 application files;
 an exact removal scan for the broader old endpoint/artifact/run vocabulary currently identifies 87
 application/config/frontend files. `RunStatusView.get` is the highest-fan-in project symbol, and the
@@ -87,6 +87,29 @@ it does not authorize an unreviewed destructive migration.
 - Late or duplicate tool/model/worker results re-lock the Run, verify expected state/version and are
   discarded/audited when the run is terminal or the transition token is stale. A terminal run can
   never be reopened.
+
+### Unified background claim and delivery boundary
+
+- Celery is delivery only; PostgreSQL is the claim authority. A delivery contains only the Run UUID,
+  a UUID delivery token and tenant routing context. Actor/capability claims, DSL/checkpoint bodies,
+  provider payloads and secrets are never accepted from or copied into the task message.
+- A background claim locks the direct-tenant Run row and binds a bounded claim token, expiry and
+  checkpoint-version snapshot. Exact-token redelivery is side-effect-free; a different token cannot
+  displace an unexpired owner. Background transitions must prove the current unexpired claim token
+  and expected checkpoint version under the same Run lock.
+- Claim acquisition checks terminal state, cooperative cancellation and the Run deadline before any
+  node/provider/tool work. A queued claim that expires before the claimed worker commits `running`
+  may be replaced because external work is forbidden before that transition. Expiry after `running`
+  is ambiguous and enters `recovery_required`; it is never automatically taken over or blindly
+  retried.
+- Successful transitions advance the claim's checkpoint snapshot. Terminal, waiting and explicit
+  recovery transitions clear claim ownership. A stale worker result therefore cannot mutate a newer
+  checkpoint even if its broker delivery is later replayed.
+- State-changing claim acquisition and recovery emit only closed, bounded, content-free audit/event
+  reason codes. Lease renewal and inert duplicate/busy delivery do not create unbounded audit noise.
+  Logs and metric labels use safe Run IDs or counts, never raw claim tokens, task bodies, checkpoints,
+  prompts, model/tool results or credentials. Audit persistence follows the existing operation-level
+  fail-closed contract before externally visible work proceeds.
 
 ### Explicit synchronous disconnect and cancellation semantics
 
@@ -234,7 +257,13 @@ verified output of this part.
    checksum on `RunEvent` (avoiding a second receipt authority), exact token replay without side
    effects, conflicting-token rejection, one-time cooperative cancellation and expired sync-lease
    resolution without background takeover are implemented.
-   Disconnect transport hooks, recovery tooling and the background worker executor remain pending.
+   The persistence foundation now includes the PostgreSQL-authoritative background claim/delivery
+   boundary:
+   identifier-only delivery, UUID claim ownership, checkpoint-bound transition authorization,
+   duplicate/stale delivery handling, deadline/cancellation guards and crash-to-recovery semantics.
+   Additive migration `0011` owns the claim fields and constraint. It does not connect public routes,
+   register a new Celery task or replace the old worker. Disconnect transport hooks, general recovery
+   tooling, delivery scheduling and full graph execution remain pending.
 3. **Consumer migration:** move Responses, Chat Completions, GET/cancel, MCP, evaluation, console,
    metrics, approvals, children, recovery and kill-switch checks to the unified engine; convert demo
    and fixtures; run semantic parity, concurrency, restart and load/soak tests.

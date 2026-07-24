@@ -42,6 +42,12 @@ tenant tables.
 | Duplicate/late worker repeats external side effect | Idempotency/transition token; terminal guards; `outcome_unknown` rather than blind retry |
 | Transition token is replayed with altered state/counters | Persist a canonical request checksum with the token; exact replay returns the recorded result and mismatched replay fails closed |
 | Expired sync lease is claimed by a background worker | Lease resolution requires the exact token and expiry under the Run row lock; it enters recovery/cancelled and never queues work |
+| Forged task payload widens tenant/actor/capability/checkpoint authority | Identifier-only delivery; tenant context is required for RLS lookup and all actor/capability/release/checkpoint authority is reloaded from the locked Run |
+| Duplicate delivery or competing worker steals an active claim | UUID claim token plus bounded expiry and checkpoint snapshot under the Run row lock; exact replay is inert and a different live token fails closed |
+| Stale worker commits after ownership/checkpoint changed | Every background transition proves the unexpired claim token and expected checkpoint version in the same transaction; terminal and waiting transitions clear ownership |
+| Worker crashes before versus after external work | External work is forbidden before the `running` transition; an expired queued claim may be replaced, while an expired running claim enters `recovery_required` without automatic takeover |
+| Cancellation/deadline races with claim or delivery | Claim and every transition re-check cancellation, terminal state and authoritative deadline under lock before work; cancellation/timeout wins before ordinary progress |
+| Broker/task/audit logging leaks confidential state | Task carries identifiers only; events/audit use closed safe reason codes; logs/metrics exclude task bodies, checkpoint, prompt, model/tool results, credentials and raw tokens |
 | Stale worker reads new DSL/checkpoint | Atomic fleet cutover and explicit compiler/checkpoint versions |
 | Kill-switch race admits/resumes work | Check authoritative control at admission and each transition claim |
 | Destructive migration deletes real state | Immediate pre-cutover zero-state/consumer proof and separate exact migration approval |
