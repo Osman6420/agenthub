@@ -21,9 +21,11 @@ env/
 staticfiles/
 media/
 .runtime/
+celerybeat-schedule*
 
 # Test / type / lint caches
 .pytest_cache/
+.pytest-tmp-*/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -35,6 +37,11 @@ htmlcov/
 .claude/settings.local.json
 .DS_Store
 Thumbs.db
+
+# Local code-intelligence and worktree state
+.codebase-memory/
+.worktrees/
+.tmp-cbm-install/
 
 # Frontend (React Flow workflow builder)
 frontend/node_modules/
