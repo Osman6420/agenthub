@@ -23,9 +23,9 @@ not store general startup instructions or assumed service status in this handoff
 
 - **Task and outcome:** Continue
   [`Phase 2.8 Part 2.1`](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md).
-  Slices 1–3 are implemented: central operator capabilities and Global Administrator; delegated
-  project/scenario/document-set assignments; scenario-to-document-set request/grant/revocation
-  with compile-time and live retrieval enforcement.
+  Slices 1–4 are implemented and automatically verified. Scenario releases, exact document-set
+  operations and tool platform-role resolution now use the central capability service; the broad
+  legacy release predicate is removed.
 - **Approved scope:** The owner approved every Part 2.1 product decision plus authorization and
   additive migrations on 2026-07-23. Slice 4 may migrate release/existing endpoint predicates.
   Slice 5 owns Access UI and superadmin alert/runbook/compatibility cleanup. Do not remove legacy
@@ -35,24 +35,24 @@ not store general startup instructions or assumed service status in this handoff
   authority does not imply document content; only an assigned Document Set Manager grants scenario
   retrieval; binding is configuration; live grant revocation immediately blocks new retrieval.
 - **Working tree:** Phase planning is committed at `c17e5ca`; Part 2.1 Slices 1–3 are the current
-  `feat(auth): add scoped operator authorization foundations` HEAD. Exclude unrelated concurrent changes in `AGENTS.md`,
+  `feat(auth): add scoped operator authorization foundations` HEAD and Slice 4 is uncommitted.
+  Exclude unrelated concurrent changes in `AGENTS.md`,
   `CLAUDE.md`, `.cbmignore`, `docs/tasks/codebase-memory-developer-tooling/`, `.worktrees/` and
   Celery Beat schedule files.
 - **Verification:** See
   [`verification.md`](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/verification.md).
-  Latest passing evidence includes identity 27 tests, documents 53 tests, pinning/ACL/orchestration
-  35 tests, cached-bundle runtime 11 tests, focused request/grant 6 tests, migration/RLS 3 tests,
-  Ruff, Mypy, migration drift and Django system check. Full repository and browser/accessibility
-  suites remain pending.
-- **Runtime:** The local Compose stack was healthy before implementation. Migrations
-  `identity.0007`, `identity.0008` and `documents.0006` have not been applied to the persistent
-  local database; no restart was performed.
-- **Risks and blockers:** Legacy console/API predicates and binding UI remain. Runtime is
-  fail-closed without a live scenario grant, but Slice 4–5 must migrate callers and UX. Superadmin
-  MFA, high-severity alerting and recovery runbook are not production-ready.
-- **Next action:** Start Slice 4 by inventorying every `can_manage_releases`, `release_manager` and
-  endpoint-level `is_superuser` caller, then migrate one bounded release lifecycle path to the
-  central capability service with denial, cross-tenant and audit-failure tests.
+  Slice 4 evidence includes 29 release-focused, 37 document-operation, 13 tool-authorization,
+  315/317 identity-release-ingestion-tools and 168 console tests passing; two expected
+  off-PostgreSQL guards skipped. Ruff, Mypy, Django check, migration drift and diff check pass.
+  Full repository and browser/accessibility suites remain pending.
+- **Runtime:** The complete local Compose topology is running. PostgreSQL, Redis and MinIO are
+  healthy; web liveness returns HTTP 200. Migrations `identity.0007`, `identity.0008` and
+  `documents.0006` are applied to the persistent local database.
+- **Risks and blockers:** Slice 5 Access UI and compatibility cleanup remain. Superadmin MFA,
+  high-severity alerting and recovery runbook are not production-ready. Legacy role values remain
+  in schemas and disposable-demo seed data but no Slice 4 runtime release predicate consumes them.
+- **Next action:** Start Slice 5 with the responsive Access UI and superadmin alert/runbook, then
+  remove legacy role choices only after the plan's reset and rollback gate is verified.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:

@@ -108,7 +108,7 @@ def test_scenario_shows_exact_active_artifact_release_and_project_draft(client: 
 
 
 @pytest.mark.django_db
-def test_release_manager_compiles_exact_same_tenant_candidate_without_activation(
+def test_organization_admin_compiles_exact_same_tenant_candidate_without_activation(
     client: Client,
 ) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
@@ -127,7 +127,7 @@ def test_release_manager_compiles_exact_same_tenant_candidate_without_activation
         body={"type": "object"},
         created_by="author",
     )
-    client.force_login(_member("manager", org, Role.RELEASE_MANAGER))
+    client.force_login(_member("manager", org, Role.ORGANIZATION_ADMIN))
     response = client.post(
         reverse("console:scenario_compile_candidate", args=[scenario.public_id]),
         {
@@ -169,7 +169,7 @@ def test_candidate_compile_denies_auditor_foreign_artifact_and_type_confusion(
     client.force_login(_member("auditor-denied", org, Role.AUDITOR))
     assert client.post(url, {"artifact_ids": [str(local.pk)]}).status_code == 403
 
-    client.force_login(_member("manager-safe", org, Role.RELEASE_MANAGER))
+    client.force_login(_member("manager-safe", org, Role.ORGANIZATION_ADMIN))
     assert (
         client.post(
             url,
@@ -200,7 +200,7 @@ def test_candidate_compile_rolls_back_when_audit_fails(
         body={"type": "object"},
         created_by="author",
     )
-    client.force_login(_member("manager-audit", org, Role.RELEASE_MANAGER))
+    client.force_login(_member("manager-audit", org, Role.ORGANIZATION_ADMIN))
 
     def fail_audit(**_kwargs: Any) -> None:
         raise RuntimeError("audit unavailable")

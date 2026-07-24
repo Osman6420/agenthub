@@ -42,6 +42,11 @@ authoring/runtime retrieval and diagnostic-output separation must close this bou
 superadmin can bypass normal data separation by design; guarded credentials, MFA, alerting and
 immutable evidence reduce but cannot eliminate that recovery-account risk.
 
+Slice 4 separates scenario release authority from exact document-set operations and removes the
+broad legacy runtime predicate. Legacy role values remain in schemas and disposable-demo seed data
+until Slice 5 cleanup; reintroducing them into an authorization decision would restore overgranting
+and must be rejected by compatibility tests and final code search.
+
 ## Required security evidence
 
 Capability and object-list denial matrices; cross-tenant/RLS tests; indirect prompt/retrieval

@@ -44,8 +44,8 @@ from apps.ingestion.vector_store import set_tenant_context
 from apps.tenancy.models import Organization
 from apps.tenancy.services import (
     UserLike,
+    can_manage_document_set_operations,
     can_manage_documents,
-    can_manage_releases,
     is_platform_admin,
 )
 from apps.tools.secrets_resolver import _secret_name
@@ -352,7 +352,9 @@ def configure_sync_schedule(
     organization_id = source.organization_id
     targets = list(scenarios)
     if automation_mode == ScheduleAutomationMode.PROMOTE_IF_SAFE:
-        if not can_manage_releases(actor, organization_id):
+        if source.document_set is None or not can_manage_document_set_operations(
+            actor, source.document_set
+        ):
             raise RestAuthorizationError("RELEASE_MANAGER_REQUIRED")
         if not targets:
             raise RestServiceError("PROMOTION_TARGET_REQUIRED")

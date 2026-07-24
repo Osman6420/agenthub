@@ -14,6 +14,7 @@ from django.urls import reverse
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.services import bind_scenario_document_set, create_document_set
+from apps.identity.models import DocumentSetManagerAssignment
 from apps.identity.roles import Role
 from apps.ingestion.models import (
     ConfluenceProfile,
@@ -353,7 +354,14 @@ def test_schedule_role_split_and_bound_promotion_target(client: Client) -> None:
     }
     assert client.post(url, promote_payload).status_code == 403
 
-    client.force_login(_member("release", org, Role.RELEASE_MANAGER))
+    manager = _member("set-manager", org, Role.AUDITOR)
+    DocumentSetManagerAssignment.objects.create(
+        organization=org,
+        document_set=document_set,
+        user=manager,
+        assigned_by=manager,
+    )
+    client.force_login(manager)
     assert client.post(url, promote_payload).status_code == 302
     schedule.refresh_from_db()
     assert schedule.automation_mode == ScheduleAutomationMode.PROMOTE_IF_SAFE

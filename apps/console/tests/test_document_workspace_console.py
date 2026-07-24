@@ -19,6 +19,7 @@ from apps.documents.services import (
     create_document_set,
     publish_document_set_version,
 )
+from apps.identity.models import DocumentSetManagerAssignment
 from apps.identity.roles import Role
 from apps.ingestion.models import (
     EmbeddingProfile,
@@ -209,7 +210,7 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
 
 
 @pytest.mark.django_db
-def test_index_promotion_requires_release_manager(client: Client) -> None:
+def test_index_promotion_requires_document_set_manager(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
     other = Organization.objects.create(slug="org-b", name="B")
     document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
@@ -233,10 +234,19 @@ def test_index_promotion_requires_release_manager(client: Client) -> None:
     assert client.post(url).status_code == 403
     client.force_login(_member("foreign-release", other, Role.RELEASE_MANAGER))
     assert client.post(url).status_code == 404
-    client.force_login(_member("release", org, Role.RELEASE_MANAGER))
+    client.force_login(_member("legacy-release", org, Role.RELEASE_MANAGER))
+    assert client.post(url).status_code == 403
+    manager = _member("set-manager", org, Role.AUDITOR)
+    DocumentSetManagerAssignment.objects.create(
+        organization=org,
+        document_set=document_set,
+        user=manager,
+        assigned_by=manager,
+    )
+    client.force_login(manager)
     with patch("apps.console.views.promote_staged_index") as promote:
         assert client.post(url).status_code == 302
-        promote.assert_called_once_with(index, actor="release")
+        promote.assert_called_once_with(index, actor="set-manager")
 
 
 @pytest.mark.django_db

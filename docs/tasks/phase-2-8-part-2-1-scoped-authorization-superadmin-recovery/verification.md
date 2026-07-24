@@ -2,8 +2,8 @@
 
 ## Status
 
-**In progress.** Slices 1–3 are implemented and automatically verified. Legacy endpoint migration,
-access UI and recovery alert/runbook work remain unimplemented.
+**In progress.** Slices 1–4 are implemented and automatically verified. Access UI, superadmin
+alert/runbook work and final compatibility cleanup remain unimplemented.
 
 ## Environment
 
@@ -106,29 +106,63 @@ above.
 - Request and grant tables carry direct organization lineage, canonical PostgreSQL FORCE RLS, and
   verified reversible migration `documents.0006_scenario_document_set_access`.
 
+## Slice 4 evidence
+
+Slice 4 migrates scenario release, exact document-set operations and the last endpoint-level
+superuser compatibility decision to the central capability service. The broad
+`can_manage_releases` runtime predicate is removed.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Release lifecycle and console focus | `docker compose ... exec -T web python -m pytest apps/releases/tests/test_lifecycle.py apps/releases/tests/test_lifecycle_commands.py apps/console/tests/test_release_actions.py apps/console/tests/test_scenario_artifact_console.py` | Pass: 29 |
+| Document-set promotion and connector focus | `docker compose ... exec -T web python -m pytest apps/ingestion/tests/test_rest_pull.py apps/console/tests/test_document_workspace_console.py apps/console/tests/test_connector_workspace_console.py` | Pass: 37 |
+| Tool authorization focus | `docker compose ... exec -T web python -m pytest apps/tools/tests/test_authz.py apps/tools/tests/test_commands.py apps/console/tests/test_tool_approval_views.py` | Pass: 13 |
+| Identity/release/ingestion/tools regression | `docker compose ... exec -T web python -m pytest apps/identity/tests apps/releases/tests apps/ingestion/tests apps/tools/tests` | Pass: 315, skip: 2 expected off-PostgreSQL guards |
+| Console regression | `docker compose ... exec -T web python -m pytest apps/console/tests` | Pass: 168 |
+| Removed-predicate compatibility focus | `docker compose ... exec -T web python -m pytest apps/console/tests/test_phase_2_5_part_1.py` | Pass: 8 |
+| Ruff | `docker compose ... python -m ruff check` over Slice 4 files | Pass |
+| Mypy | `docker compose ... python -m mypy` over five changed source modules | Pass |
+| Django system check | `docker compose ... python manage.py check` | Pass |
+| Migration drift | `docker compose ... python manage.py makemigrations --check --dry-run` | Pass: no changes |
+| Patch whitespace | `git diff --check` | Pass |
+
+### Slice 4 verified behavior
+
+- Global Administrator and the owning Organization Administrator receive scenario release
+  authority; foreign Organization Administrators, legacy Release Managers, Project
+  Administrators, Scenario Editors and unrelated members fail closed.
+- Disabled or missing organizations remain denied before the central capability decision.
+- Console scenario compile and release lifecycle actions plus release CLI actor resolution share
+  the new compatibility facade.
+- Existing CLI error codes remain stable during staged migration.
+- Exact Document Set Managers, not legacy Release Managers or organization-wide administrators,
+  activate staged indexes and approve connector promotion automation.
+- Connector workers revalidate that exact Document Set Manager assignment before applying an
+  approved promotion; revocation fails closed.
+- Tool approval compatibility resolves Global Administrator and recovery superadmin through
+  `platform.manage`, with no direct endpoint-level `is_superuser` branch.
+- No production caller or definition of the broad `can_manage_releases` predicate remains.
+
 ## Reviews
 
 - Staff engineering: additive model and decision API are small; existing callers remain compatible.
 - Application security: deny-by-default decisions, trusted organization input contract and explicit
   content exclusions are covered. Superadmin remains intentionally powerful and must not be wired
   to sensitive endpoints until dedicated audit/alert failure handling lands.
-- SRE: no service restart or live migration was performed. Deployment requires applying
-  `identity.0007_globaladministrator` and `identity.0008_delegated_assignments`; migration
-  reverse/forward is verified. Slice 3 additionally requires
-  `documents.0006_scenario_document_set_access`; cached pre-slice release bundles are tolerated by
-  deriving the trusted scenario from the release until cache refresh.
+- SRE: the complete local Compose topology is running and healthy; liveness returned HTTP 200.
+  Migrations `identity.0007`, `identity.0008` and `documents.0006` are applied locally. No new
+  Slice 4 migration is required.
 
 ## Checks not yet run
 
 - Full repository SQLite and PostgreSQL/RLS suites.
 - Browser, accessibility and responsive visual checks.
-- Legacy console/API endpoint migration, concurrent request/approve/revoke races and browser
-  accessibility tests.
+- Concurrent request/approve/revoke races and browser accessibility tests.
 
 ## Residual risks
 
-- Existing endpoints still use legacy role predicates and broad superuser behavior until their
-  staged migration.
+- Legacy role values remain in compatibility schemas and disposable-demo seed data until Slice 5;
+  no Slice 4 runtime authorization decision consumes `release_manager`.
 - `QuerySet.update` and raw SQL can bypass model validation; production mutation paths must use the
   audited assignment service, while RLS remains the tenant backstop rather than a complete lineage
   constraint.

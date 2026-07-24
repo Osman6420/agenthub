@@ -34,7 +34,7 @@ from apps.ingestion.vector_store import set_tenant_context
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.lifecycle import promote
 from apps.releases.models import ReleaseStatus, ScenarioRelease
-from apps.tenancy.services import can_manage_releases
+from apps.tenancy.services import can_manage_document_set_operations
 
 
 class ConnectorAutomationError(RuntimeError):
@@ -275,7 +275,7 @@ def _validate_promotion_authority(
     targets: list[ConnectorSchedulePromotionTarget],
 ) -> Any:
     manager = get_user_model().objects.filter(pk=schedule.promotion_approved_by).first()
-    if manager is None or not can_manage_releases(manager, organization_id):
+    if manager is None or not can_manage_document_set_operations(manager, candidate.document_set):
         raise ConnectorAutomationError("AUTOMATION_RELEASE_MANAGER_REVOKED")
     if not targets:
         raise ConnectorAutomationError("AUTOMATION_PROMOTION_TARGET_REQUIRED")

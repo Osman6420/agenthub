@@ -50,7 +50,11 @@ def _evaluated_release() -> tuple[Organization, ScenarioRelease]:
 
 def _manager(org: Organization, username: str = "rm") -> None:
     user = get_user_model().objects.create_user(username=username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=Role.RELEASE_MANAGER)
+    OrganizationMembership.objects.create(
+        organization=org,
+        user=user,
+        role=Role.ORGANIZATION_ADMIN,
+    )
 
 
 @pytest.mark.django_db
@@ -71,7 +75,7 @@ def test_promote_command_denied_for_unknown_actor() -> None:
 
 
 @pytest.mark.django_db
-def test_promote_command_promotes_for_release_manager() -> None:
+def test_promote_command_promotes_for_organization_admin() -> None:
     org, release = _evaluated_release()
     _manager(org)
     call_command("promote_release", "--release", str(release.pk), "--actor", "rm")

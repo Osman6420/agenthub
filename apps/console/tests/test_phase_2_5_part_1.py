@@ -16,7 +16,7 @@ from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
 from apps.identity.roles import Role
 from apps.releases.models import ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
-from apps.tenancy.services import can_admin_org, can_author_scenarios, can_manage_releases
+from apps.tenancy.services import can_admin_org, can_author_scenarios
 
 User = get_user_model()
 pytestmark = pytest.mark.django_db
@@ -154,7 +154,6 @@ def test_disabled_organization_is_readable_but_rejects_direct_mutation(client: C
     assert mutation.status_code == 403
     assert can_admin_org(editor, organization.id) is False
     assert can_author_scenarios(editor, organization.id) is False
-    assert can_manage_releases(editor, organization.id) is False
 
 
 def test_platform_admin_cannot_mutate_disabled_organization() -> None:
@@ -165,7 +164,6 @@ def test_platform_admin_cannot_mutate_disabled_organization() -> None:
 
     assert can_admin_org(root, organization.id) is False
     assert can_author_scenarios(root, organization.id) is False
-    assert can_manage_releases(root, organization.id) is False
 
 
 def test_disabled_organization_is_not_offered_by_creation_forms(client: Client) -> None:

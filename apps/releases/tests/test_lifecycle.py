@@ -13,7 +13,12 @@ from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario, ScenarioType
 from apps.evaluations.services import run_eval
-from apps.identity.models import Consumer
+from apps.identity.models import (
+    Consumer,
+    GlobalAdministrator,
+    ProjectAdministratorAssignment,
+    ScenarioEditorAssignment,
+)
 from apps.identity.roles import Role
 from apps.ingestion.models import IndexStatus, IndexVersion, Source
 from apps.orchestration.resolver import resolve_bundle
@@ -30,7 +35,7 @@ from apps.releases.routing import select_release
 from apps.retrieval.providers import StaticRetrievalProvider
 from apps.retrieval.types import RetrievedChunk
 from apps.tenancy.models import Organization, OrganizationMembership
-from apps.tenancy.services import can_manage_releases
+from apps.tenancy.services import can_manage_scenario_releases
 
 CHUNK = RetrievedChunk(
     text="Iade suresi 14 gundur.",
@@ -191,16 +196,58 @@ def test_rollback_rejects_non_superseded_target() -> None:
 
 
 @pytest.mark.django_db
-def test_can_manage_releases_requires_release_manager_role() -> None:
+def test_can_manage_scenario_releases_uses_scoped_capability() -> None:
     org = Organization.objects.create(slug="acme", name="Acme")
+    foreign_org = Organization.objects.create(slug="foreign", name="Foreign")
+    project = AIProject.objects.create(organization=org, slug="release", name="Release")
+    scenario = Scenario.objects.create(
+        project=project,
+        slug="scoped",
+        name="Scoped",
+        type=ScenarioType.RAG,
+    )
     user_model = get_user_model()
-    manager = user_model.objects.create_user(username="rm", password="x")  # noqa: S106
+    global_admin = user_model.objects.create_user(username="global", password="x")  # noqa: S106
+    org_admin = user_model.objects.create_user(username="oa", password="x")  # noqa: S106
+    legacy_manager = user_model.objects.create_user(username="rm", password="x")  # noqa: S106
+    project_admin = user_model.objects.create_user(username="pa", password="x")  # noqa: S106
+    scenario_editor = user_model.objects.create_user(username="se", password="x")  # noqa: S106
     stranger = user_model.objects.create_user(username="ns", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=manager, role=Role.RELEASE_MANAGER)
+    GlobalAdministrator.objects.create(user=global_admin)
+    OrganizationMembership.objects.create(
+        organization=org, user=org_admin, role=Role.ORGANIZATION_ADMIN
+    )
+    OrganizationMembership.objects.create(
+        organization=org, user=legacy_manager, role=Role.RELEASE_MANAGER
+    )
+    OrganizationMembership.objects.create(
+        organization=org, user=project_admin, role=Role.AUDITOR
+    )
+    ProjectAdministratorAssignment.objects.create(
+        organization=org,
+        project=project,
+        user=project_admin,
+        assigned_by=org_admin,
+    )
+    OrganizationMembership.objects.create(
+        organization=org, user=scenario_editor, role=Role.AUDITOR
+    )
+    ScenarioEditorAssignment.objects.create(
+        organization=org,
+        scenario=scenario,
+        user=scenario_editor,
+        assigned_by=org_admin,
+    )
     OrganizationMembership.objects.create(organization=org, user=stranger, role=Role.AUDITOR)
 
-    assert can_manage_releases(manager, org.pk) is True
-    assert can_manage_releases(stranger, org.pk) is False
+    assert can_manage_scenario_releases(global_admin, org.pk) is True
+    assert can_manage_scenario_releases(global_admin, foreign_org.pk) is True
+    assert can_manage_scenario_releases(org_admin, org.pk) is True
+    assert can_manage_scenario_releases(org_admin, foreign_org.pk) is False
+    assert can_manage_scenario_releases(legacy_manager, org.pk) is False
+    assert can_manage_scenario_releases(project_admin, org.pk) is False
+    assert can_manage_scenario_releases(scenario_editor, org.pk) is False
+    assert can_manage_scenario_releases(stranger, org.pk) is False
 
 
 def _consumer(scenario: Scenario, subject: str) -> Consumer:

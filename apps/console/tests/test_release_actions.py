@@ -46,10 +46,11 @@ def _login(client: Client, org: Organization, role: str, username: str = "u") ->
 
 
 @pytest.mark.django_db
-def test_non_manager_cannot_promote(client: Client) -> None:
+@pytest.mark.parametrize("role", [Role.AUDITOR, Role.RELEASE_MANAGER])
+def test_non_release_authority_cannot_promote(client: Client, role: str) -> None:
     org = Organization.objects.create(slug="mcm", name="MCM")
     release = _candidate(org)
-    _login(client, org, Role.AUDITOR)
+    _login(client, org, role)
     response = client.post(reverse("console:release_promote", args=[release.pk]))
     assert response.status_code == 403
     release.refresh_from_db()
@@ -60,7 +61,7 @@ def test_non_manager_cannot_promote(client: Client) -> None:
 def test_manager_promote_without_eval_is_denied_gracefully(client: Client) -> None:
     org = Organization.objects.create(slug="mcm", name="MCM")
     release = _candidate(org)
-    _login(client, org, Role.RELEASE_MANAGER)
+    _login(client, org, Role.ORGANIZATION_ADMIN)
     response = client.post(reverse("console:release_promote", args=[release.pk]))
     assert response.status_code == 302  # denial is surfaced as a message, not a crash
     release.refresh_from_db()
@@ -71,6 +72,6 @@ def test_manager_promote_without_eval_is_denied_gracefully(client: Client) -> No
 def test_promote_action_is_post_only(client: Client) -> None:
     org = Organization.objects.create(slug="mcm", name="MCM")
     release = _candidate(org)
-    _login(client, org, Role.RELEASE_MANAGER)
+    _login(client, org, Role.ORGANIZATION_ADMIN)
     response = client.get(reverse("console:release_promote", args=[release.pk]))
     assert response.status_code == 405

@@ -111,7 +111,6 @@ _DOCUMENT_MANAGER_ROLES = frozenset(
         Role.SCENARIO_EDITOR,
     }
 )
-_RELEASE_MANAGER_ROLES = frozenset({Role.ORGANIZATION_ADMIN, Role.RELEASE_MANAGER})
 
 
 def user_roles_in_org(user: UserLike, organization_id: int) -> set[str]:
@@ -313,13 +312,37 @@ def remove_organization_membership(
         )
 
 
-def can_manage_releases(user: UserLike, organization_id: int) -> bool:
-    """Promote/canary/rollback requires ``release_manager`` (or platform admin)."""
-    if not _organization_accepts_mutations(organization_id):
+def can_manage_scenario_releases(user: UserLike, organization_id: int) -> bool:
+    """Return whether ``user`` has central scenario-release authority."""
+    organization = Organization.objects.filter(pk=organization_id).first()
+    if organization is None or organization.status != OrganizationStatus.ACTIVE:
         return False
-    return is_platform_admin(user) or bool(
-        _RELEASE_MANAGER_ROLES & user_roles_in_org(user, organization_id)
-    )
+
+    # Local import avoids making the tenant visibility module part of identity's
+    # model-import cycle while this compatibility facade is migrated caller by caller.
+    from apps.identity.authorization import Capability, authorize
+
+    return authorize(
+        user=user,
+        capability=Capability.SCENARIO_RELEASE,
+        organization=organization,
+    ).allowed
+
+
+def can_manage_document_set_operations(user: UserLike, document_set: Any) -> bool:
+    """Return whether ``user`` may operate the exact active document set."""
+    organization = document_set.organization
+    if organization.status != OrganizationStatus.ACTIVE:
+        return False
+
+    from apps.identity.authorization import Capability, authorize
+
+    return authorize(
+        user=user,
+        capability=Capability.DOCUMENT_SET_OPERATIONS_MANAGE,
+        organization=organization,
+        document_set=document_set,
+    ).allowed
 
 
 def admin_organization_ids(user: UserLike) -> set[int] | None:

@@ -17,6 +17,7 @@ from apps.documents import services as document_services
 from apps.documents import storage
 from apps.documents.models import DocumentSet, DocumentSetVersionStatus, DocumentVersion
 from apps.documents.services import bind_scenario_document_set
+from apps.identity.models import DocumentSetManagerAssignment
 from apps.identity.roles import Role
 from apps.ingestion.automation import ConnectorAutomationError, claim_connector_automation
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
@@ -541,11 +542,17 @@ def test_schedule_does_not_queue_behind_manual_pending_run(
 
 
 @pytest.mark.django_db
-def test_release_manager_can_select_exact_safe_promotion_target(governed_rest: Any) -> None:
+def test_document_set_manager_can_select_exact_safe_promotion_target(governed_rest: Any) -> None:
     platform, _, organization, document_set, source = governed_rest
     manager = get_user_model().objects.create_user(username="release-manager")
     OrganizationMembership.objects.create(
-        organization=organization, user=manager, role=Role.RELEASE_MANAGER
+        organization=organization, user=manager, role=Role.AUDITOR
+    )
+    assignment = DocumentSetManagerAssignment.objects.create(
+        organization=organization,
+        document_set=document_set,
+        user=manager,
+        assigned_by=platform,
     )
     project = AIProject.objects.create(organization=organization, slug="p", name="P")
     scenario = Scenario.objects.create(
@@ -605,7 +612,7 @@ def test_release_manager_can_select_exact_safe_promotion_target(governed_rest: A
     document_services.add_document_to_set_version(
         set_version=candidate, document_version=version, actor="operator"
     )
-    OrganizationMembership.objects.filter(organization=organization, user=manager).delete()
+    assignment.delete()
 
     with pytest.raises(RuntimeError, match="AUTOMATION_RELEASE_MANAGER_REVOKED"):
         apply_connector_automation_task.run(schedule.pk, candidate.pk, organization.pk)

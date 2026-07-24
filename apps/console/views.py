@@ -153,8 +153,9 @@ from apps.tenancy.services import (
     can_admin_org,
     can_author_scenarios,
     can_create_organization,
+    can_manage_document_set_operations,
     can_manage_documents,
-    can_manage_releases,
+    can_manage_scenario_releases,
     change_organization_membership,
     create_console_organization,
     is_platform_admin,
@@ -194,7 +195,9 @@ _CREATE_CONSUMER_REASON = (
 _AUTHOR_REASON = (
     "Bu işlem için senaryo düzenleyici (scenario_editor) veya üzeri bir yazma rolü gerekir."
 )
-_RELEASE_MANAGER_REASON = "Bu işlem için release yöneticisi (release_manager) rolü gerekir."
+_RELEASE_AUTHORITY_REASON = (
+    "Bu işlem için Global Administrator veya organizasyon yöneticisi yetkisi gerekir."
+)
 _ADMIN_REASON = "Bu işlem için organizasyon yöneticisi (organization_admin) rolü gerekir."
 
 # --- Dashboard run-status buckets (Scope C/H) --------------------------------
@@ -1190,10 +1193,10 @@ def scenario_detail(
             .exclude(id__in=bound_set_ids)
             .order_by("name", "logical_id"),
             "can_write": can_author_scenarios(request.user, organization_id),
-            "can_compile_release": can_manage_releases(request.user, organization_id),
+            "can_compile_release": can_manage_scenario_releases(request.user, organization_id),
             # Role-honest affordances (Scope D): reasons shown on disabled authoring controls.
             "author_reason": _AUTHOR_REASON,
-            "release_reason": _RELEASE_MANAGER_REASON,
+            "release_reason": _RELEASE_AUTHORITY_REASON,
         },
     )
 
@@ -1203,7 +1206,7 @@ def scenario_detail(
 def scenario_compile_candidate(request: HttpRequest, public_id: object) -> HttpResponse:
     scenario = _scoped_scenario(request.user, public_id=public_id)
     organization_id = scenario.organization_id
-    if not can_manage_releases(request.user, organization_id):
+    if not can_manage_scenario_releases(request.user, organization_id):
         raise PermissionDenied
     if scenario.organization.status != OrganizationStatus.ACTIVE:
         raise PermissionDenied
@@ -1708,7 +1711,7 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
             "manifest_json": "" if manifest_too_large else manifest_json,
             "manifest_too_large": manifest_too_large,
             "canaries": release.canaries.select_related("consumer").order_by("-created_at")[:100],
-            "can_manage": can_manage_releases(request.user, release.organization_id),
+            "can_manage": can_manage_scenario_releases(request.user, release.organization_id),
             "is_disabled": release.organization.status == OrganizationStatus.DISABLED,
         },
     )
@@ -1716,7 +1719,7 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
 
 def _manageable_release(user: UserLike, release_id: int) -> ScenarioRelease:
     release = _scoped_release(user, release_id)
-    if not can_manage_releases(user, release.scenario.project.organization_id):
+    if not can_manage_scenario_releases(user, release.scenario.project.organization_id):
         raise PermissionDenied
     return release
 
@@ -1792,7 +1795,7 @@ def canary_stop(request: HttpRequest, canary_id: int) -> HttpResponse:
     )
     if canary is None:
         raise Http404
-    if not can_manage_releases(request.user, canary.scenario.project.organization_id):
+    if not can_manage_scenario_releases(request.user, canary.scenario.project.organization_id):
         raise PermissionDenied
     set_tenant_context(canary.organization_id)
     try:
@@ -2584,7 +2587,7 @@ def document_set_detail(
     document_set = _scoped_document_set(request.user, pk, public_id)
     request.session[console_context.SESSION_KEY] = document_set.organization_id
     can_write = can_manage_documents(request.user, document_set.organization_id)
-    can_promote_index = can_manage_releases(request.user, document_set.organization_id)
+    can_promote_index = can_manage_document_set_operations(request.user, document_set)
     worker_available = compatible_worker_available()
     job_labels: dict[str, tuple[str, str]] = {
         StagedIndexBuildJobStatus.DISPATCH_PENDING: (
@@ -3117,7 +3120,7 @@ def _connector_context(
     preview_valid: bool = False,
 ) -> dict[str, object]:
     can_write = can_manage_documents(request.user, document_set.organization_id)
-    can_promote = can_manage_releases(request.user, document_set.organization_id)
+    can_promote = can_manage_document_set_operations(request.user, document_set)
     sources: list[dict[str, object]] = []
     source_qs = (
         scoping.scoped_connector_sources(request.user)
@@ -3525,8 +3528,11 @@ def connector_source_run(request: HttpRequest, source_pk: int) -> HttpResponse:
 def connector_schedule_configure(request: HttpRequest, source_pk: int) -> HttpResponse:
     source = _scoped_connector_source(request.user, source_pk)
     set_tenant_context(source.organization_id)
+    document_set = source.document_set
+    if document_set is None:
+        raise Http404
     can_author = can_manage_documents(request.user, source.organization_id)
-    can_promote = can_manage_releases(request.user, source.organization_id)
+    can_promote = can_manage_document_set_operations(request.user, document_set)
     if not can_author and not can_promote:
         raise PermissionDenied
     requested_mode = request.POST.get(f"schedule-{source.pk}-automation_mode", "")
@@ -3534,9 +3540,6 @@ def connector_schedule_configure(request: HttpRequest, source_pk: int) -> HttpRe
         raise PermissionDenied
     if requested_mode != ScheduleAutomationMode.PROMOTE_IF_SAFE and not can_author:
         raise PermissionDenied
-    document_set = source.document_set
-    if document_set is None:
-        raise Http404
     form = ConnectorScheduleForm(
         request.POST,
         document_set=document_set,
@@ -3790,7 +3793,10 @@ def document_set_promote_index(request: HttpRequest, index_pk: int) -> HttpRespo
     if index is None or index.document_set_version is None:
         raise Http404
     set_tenant_context(index.organization_id)
-    if not can_manage_releases(request.user, index.organization_id):
+    if not can_manage_document_set_operations(
+        request.user,
+        index.document_set_version.document_set,
+    ):
         raise PermissionDenied
     try:
         promote_staged_index(index, actor=request.user.get_username())

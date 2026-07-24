@@ -1,8 +1,8 @@
 # AgentHub — Phase 2.8 Plan
 
 > **Status: In progress.** Parts 1–2 were verified and owner-accepted on 2026-07-22; Part 1 is
-> archived and Part 2 completion evidence is recorded. Part 2.1 is **In progress** with Slices 1–3
-> implemented and automatically verified; Slices 4–5 and Parts 3–7 remain. This is a program plan:
+> archived and Part 2 completion evidence is recorded. Part 2.1 is **In progress** with Slices 1–4
+> implemented and automatically verified; Slice 5 and Parts 3–7 remain. This is a program plan:
 > every remaining part owns a
 > separate plan, threat model, verification record and acceptance gate. Planned behavior must not
 > be described as current behavior before its part is implemented and verified.
@@ -31,13 +31,11 @@ observability and migrations, and therefore has its own staged acceptance gates.
 2. **Part 2 — Organization, user and access management — Verified.** Removed the cross-organization
    workspace state, add organization creation and user-role assignment, introduce the single-role
    document manager, and make creation forms derive their parent scope from trusted context.
-3. **Part 2.1 — Scoped authorization and superadmin recovery — In progress.** Slices 1–3 add the
+3. **Part 2.1 — Scoped authorization and superadmin recovery — In progress.** Slices 1–4 add the
    central capability service, delegated assignments and live scenario-to-document-set grants.
-   Slices 4–5 still need to replace broad
-   organization-level content roles with Global/Organization/Project Admin, object-scoped Scenario
-   Editor and Document Set Manager authority; authorize document-set retrieval to scenarios; keep
-   publishing with Global/Organization Admin; separate daily Global Admin from the superadmin
-   recovery identity; add no elevation or temporary-access workflow. See the
+   Slice 5 still needs the responsive Access UI, superadmin alert/runbook and final compatibility
+   cleanup. The implemented slices already centralize release, delegated-object and live
+   scenario-to-document-set authority. See the
    [Part 2.1 plan](../tasks/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery/plan.md).
 4. **Part 3 — Unified workflow engine — Planned.** One `workflow_definition`, compiler, runtime,
    Run/Event model and public run surface; RAG and agent become governed workflow presets/nodes.
@@ -231,8 +229,8 @@ cleanup never shares a single approval.
 
 ## Status and completion
 
-**In progress.** Parts 1–2 are complete. Part 2.1 Slices 1–3 are implemented and automatically
-verified but are not complete current behavior until Slices 4–5 land. Parts 3–7 remain planned.
+**In progress.** Parts 1–2 are complete. Part 2.1 Slices 1–4 are implemented and automatically
+verified but Part 2.1 is not complete current behavior until Slice 5 lands. Parts 3–7 remain planned.
 
 Phase 2.8 completes only after all seven parts are implemented and verified, required ADRs and
 current-state documentation are updated, destructive operations have their separate approvals and

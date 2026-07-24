@@ -22,6 +22,13 @@ supersedes the intended long-term use of organization-wide
 Current behavior remains authoritative until an implementing task is approved, migrated and
 verified.
 
+Slice 4 is complete. Scenario compile/evaluate, promote, canary and rollback entry points use
+`scenario.release`; document-set index and connector automation promotion use exact
+`document_set.operations.manage`; tool-approval compatibility role resolution uses
+`platform.manage`. The broad `can_manage_releases` runtime predicate has been removed while legacy
+role values remain only for the Slice 5 reset/compatibility gate. Disabled-organization denial and
+existing console/CLI error contracts remain stable.
+
 ## Scope
 
 - Introduce application-level `global_admin`, delegated `organization_admin`, `project_admin`,
@@ -47,7 +54,7 @@ verified.
 - Impersonation, silent login-as-user or mutable/deletable audit evidence.
 - Application-managed temporary privilege, approval or impersonation workflows.
 
-## Current state
+## Baseline before Part 2.1
 
 - `OrganizationMembership` stores one role per user per organization and supports membership in
   several organizations.
@@ -380,7 +387,7 @@ the repository change policy. That approval was given by the owner on 2026-07-23
   and deny-by-default decisions for Global/Organization Admin and superadmin recovery.
 - [x] Slice 2: project/scenario/document-set assignments and audited mutation services.
 - [x] Slice 3: scenario-to-document-set request/grant/revocation model and live enforcement.
-- [ ] Slice 4: release and existing endpoint migration away from broad legacy roles.
+- [x] Slice 4: release and existing endpoint migration away from broad legacy roles.
 - [ ] Slice 5: responsive access UI, superadmin alerting/runbook and final compatibility cleanup.
 
 ## Testing strategy
