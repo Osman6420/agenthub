@@ -193,7 +193,28 @@ path changed. Migrations `0009` through `0011` were not applied to the live deve
 Celery task is registered yet, so broker redelivery/crash integration and full graph execution remain
 pending despite the verified persistence boundary.
 
+## Gate 2 worker-admission evidence
+
+Worker admission now verifies that the Run and WorkflowVersion both use the locally supported
+`workflow-compiler/v5`, that their checksums match, and that the release manifest pins the same
+workflow checksum. Delivery-carried revision metadata is not authority. The existing global/tenant
+runtime kill switch is checked after tenant context is installed and before claim ownership; it is
+also rechecked at every ordinary claimed transition. Suspension preserves queued state and allows an
+already-running owner only to converge to recovery, cancellation or timeout.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Worker-admission PostgreSQL | Compose web `python -m pytest -q apps/workflows/tests/test_unified_run.py` | 23 passed, including compiler/checksum drift and claim/transition kill-switch races |
+| Admission affected regression | Compose web `python -m pytest -q apps/workflows/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py apps/agents/tests/test_governed_loop.py` | 296 passed |
+| Migration drift | Compose web `python manage.py makemigrations --check --dry-run` | Passed: no changes detected |
+| Focused Ruff/Mypy | Compose web focused `ruff check --no-cache` and `mypy` on background claims/transitions | Passed |
+| Diff whitespace | `git diff --check` | Passed |
+
+Codebase Memory data-flow tracing confirmed that the legacy `execute_graph` writes
+WorkflowRun-specific branch/wait/recovery tables. It is therefore not registered as the unified Run
+executor. A Run-native node-step adapter and fleet-revision-safe Celery task remain pending.
+
 ## Final status
 
-**In progress — Gate 2 persistence and background claim/delivery boundary verified; Celery/full
-executor integration, shared consumers and cutover remain pending.**
+**In progress — Gate 2 persistence, background claim/delivery and worker admission verified;
+Run-native Celery execution, shared consumers and cutover remain pending.**

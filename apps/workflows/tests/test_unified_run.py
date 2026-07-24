@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, close_old_connections, connection
 from django.utils import timezone
 
+from apps.agents.services import set_runtime_suspension
 from apps.audit.models import AuditEvent
 from apps.workflows.background_claims import (
     BackgroundClaimError,
@@ -219,6 +220,110 @@ def test_background_delivery_is_identifier_only_and_tenant_scoped(workflow_fixtu
             body={"run_id": str(run.id), "delivery_token": str(uuid4())},
             headers={"organization_id": run.organization_id + 99_999},
         )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("field", "value", "error_code"),
+    [
+        (
+            "compiler_version",
+            "workflow-compiler/stale",
+            "RUN_BACKGROUND_COMPILER_INCOMPATIBLE",
+        ),
+        ("compiled_checksum", "b" * 64, "RUN_BACKGROUND_CHECKSUM_MISMATCH"),
+    ],
+)
+def test_background_claim_rejects_stale_worker_pins(
+    workflow_fixture,
+    field: str,
+    value: str,
+    error_code: str,
+) -> None:
+    run = _queued_background_run(workflow_fixture, key=f"background-pin-{field}")
+    Run.objects.filter(pk=run.id).update(**{field: value})
+
+    with pytest.raises(BackgroundClaimError, match=error_code):
+        claim_background_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            claim_token=uuid4(),
+            lease_seconds=30,
+        )
+    run.refresh_from_db()
+    assert run.background_claim_token is None
+
+
+@pytest.mark.django_db
+def test_background_claim_and_transition_recheck_kill_switch(workflow_fixture) -> None:
+    run = _queued_background_run(workflow_fixture, key="background-kill-switch")
+    set_runtime_suspension(
+        organization_id=run.organization_id,
+        suspended=True,
+        actor="test-operator",
+        reason="test",
+    )
+    token = uuid4()
+    blocked = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+        lease_seconds=30,
+    )
+    assert blocked.outcome == "suspended"
+    run.refresh_from_db()
+    assert run.background_claim_token is None
+
+    set_runtime_suspension(
+        organization_id=run.organization_id,
+        suspended=False,
+        actor="test-operator",
+        reason="test",
+    )
+    claim = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+        lease_seconds=30,
+    )
+    transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=claim.checkpoint_version,
+        expected_status="queued",
+        target_status="running",
+        background_claim_token=token,
+    )
+    set_runtime_suspension(
+        organization_id=run.organization_id,
+        suspended=True,
+        actor="test-operator",
+        reason="test",
+    )
+    run.refresh_from_db()
+    with pytest.raises(RunTransitionError, match="RUN_RUNTIME_SUSPENDED"):
+        transition_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            transition_token=uuid4(),
+            expected_checkpoint_version=run.checkpoint_version,
+            expected_status="running",
+            target_status="completed",
+            background_claim_token=token,
+        )
+    recovery = transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status="running",
+        target_status="recovery_required",
+        awaiting_reference="runtime-suspended",
+        reason_code="RUN_RUNTIME_SUSPENDED",
+        background_claim_token=token,
+    )
+    assert recovery.status == "recovery_required"
 
 
 @pytest.mark.django_db(transaction=True)

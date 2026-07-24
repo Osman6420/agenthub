@@ -50,6 +50,8 @@ tenant tables.
 | Broker/task/audit logging leaks confidential state | Task carries identifiers only; events/audit use closed safe reason codes; logs/metrics exclude task bodies, checkpoint, prompt, model/tool results, credentials and raw tokens |
 | Stale worker reads new DSL/checkpoint | Atomic fleet cutover and explicit compiler/checkpoint versions |
 | Kill-switch race admits/resumes work | Check authoritative control at admission and each transition claim |
+| Broker forges a compatible worker/compiler revision | Treat delivery revision as diagnostic only; reload Run/WorkflowVersion checksum and compiler pins and compare with locally supported versions before claim |
+| Legacy WorkflowRun executor mutates side tables for a unified Run | Do not register the unified Celery task until branch/wait/recovery persistence is Run-native; fail closed at the adapter boundary |
 | Destructive migration deletes real state | Immediate pre-cutover zero-state/consumer proof and separate exact migration approval |
 | Rollback cannot restore removed schema | Tested previous-code + empty-database rebuild; stop cutover if environment is not disposable |
 

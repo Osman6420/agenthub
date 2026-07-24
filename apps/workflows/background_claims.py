@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from apps.audit.services import record_event
 from apps.tenancy.context import set_tenant_context
+from apps.workflows.compiler import COMPILER_VERSION
 from apps.workflows.models import (
     WORKFLOW_TERMINAL_STATUSES,
     Run,
@@ -88,6 +89,20 @@ def _validate_claim_request(
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_DURATION_INVALID")
 
 
+def _validate_run_pins(run: Run) -> None:
+    release_manifest = run.release.manifest if isinstance(run.release.manifest, dict) else {}
+    if (
+        run.compiler_version != COMPILER_VERSION
+        or run.workflow_version.compiler_version != COMPILER_VERSION
+    ):
+        raise BackgroundClaimError("RUN_BACKGROUND_COMPILER_INCOMPATIBLE")
+    if (
+        run.compiled_checksum != run.workflow_version.checksum
+        or release_manifest.get("workflow_checksum") != run.compiled_checksum
+    ):
+        raise BackgroundClaimError("RUN_BACKGROUND_CHECKSUM_MISMATCH")
+
+
 @transaction.atomic
 def claim_background_run(
     *,
@@ -102,12 +117,14 @@ def claim_background_run(
     _validate_claim_request(claim_token=claim_token, lease_seconds=lease_seconds)
     claimed_at = now or timezone.now()
     set_tenant_context(organization_id)
-    run = Run.objects.select_for_update().get(
-        pk=run_id,
-        organization_id=organization_id,
+    run = (
+        Run.objects.select_for_update()
+        .select_related("workflow_version", "release")
+        .get(pk=run_id, organization_id=organization_id)
     )
     if run.execution_mode != RunExecutionMode.BACKGROUND:
         raise BackgroundClaimError("RUN_BACKGROUND_MODE_REQUIRED")
+    _validate_run_pins(run)
     if run.status in WORKFLOW_TERMINAL_STATUSES:
         return BackgroundClaimResult(
             "terminal", str(run.status), run.checkpoint_version, None
@@ -119,6 +136,12 @@ def claim_background_run(
     if claimed_at >= run.deadline_at:
         return BackgroundClaimResult(
             "deadline_exceeded", str(run.status), run.checkpoint_version, None
+        )
+    from apps.agents.services import runtime_suspended
+
+    if runtime_suspended(organization_id):
+        return BackgroundClaimResult(
+            "suspended", str(run.status), run.checkpoint_version, None
         )
 
     if run.background_claim_token == claim_token:

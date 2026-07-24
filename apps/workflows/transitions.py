@@ -284,6 +284,15 @@ def transition_run(
             )
         ):
             raise RunTransitionError("RUN_BACKGROUND_CLAIM_EXPIRED")
+        if target not in {
+            WorkflowRunStatus.CANCELLED,
+            WorkflowRunStatus.RECOVERY_REQUIRED,
+            WorkflowRunStatus.TIMED_OUT,
+        }:
+            from apps.agents.services import runtime_suspended
+
+            if runtime_suspended(organization_id):
+                raise RunTransitionError("RUN_RUNTIME_SUSPENDED")
     if run.checkpoint_version != expected_checkpoint_version or (
         expected_status is not None and run.status != expected_status
     ):

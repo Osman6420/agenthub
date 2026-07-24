@@ -110,6 +110,14 @@ it does not authorize an unreviewed destructive migration.
   Logs and metric labels use safe Run IDs or counts, never raw claim tokens, task bodies, checkpoints,
   prompts, model/tool results or credentials. Audit persistence follows the existing operation-level
   fail-closed contract before externally visible work proceeds.
+- Worker admission reloads the exact Run, WorkflowVersion and release pins and rejects compiler or
+  checksum drift against the locally supported unified compiler before claim ownership is granted.
+  Broker-carried service/compiler revisions are diagnostic only and can never override stored pins.
+- The existing global/tenant runtime kill switch is checked under tenant context before claim and at
+  every claimed background transition. Suspension preserves queued state and grants no claim; an
+  already-running owner may only converge to cancellation, timeout or explicit recovery while
+  suspended. Full graph execution is not connected until legacy WorkflowRun-only branch/wait/recovery
+  writes are replaced with unified Run persistence.
 
 ### Explicit synchronous disconnect and cancellation semantics
 
@@ -262,8 +270,10 @@ verified output of this part.
    identifier-only delivery, UUID claim ownership, checkpoint-bound transition authorization,
    duplicate/stale delivery handling, deadline/cancellation guards and crash-to-recovery semantics.
    Additive migration `0011` owns the claim fields and constraint. It does not connect public routes,
-   register a new Celery task or replace the old worker. Disconnect transport hooks, general recovery
-   tooling, delivery scheduling and full graph execution remain pending.
+   register a new Celery task or replace the old worker. Worker admission also enforces exact
+   compiler/checksum compatibility and kill-switch revalidation before any Celery registration.
+   Disconnect transport hooks, general recovery tooling, delivery scheduling and full graph execution
+   remain pending.
 3. **Consumer migration:** move Responses, Chat Completions, GET/cancel, MCP, evaluation, console,
    metrics, approvals, children, recovery and kill-switch checks to the unified engine; convert demo
    and fixtures; run semantic parity, concurrency, restart and load/soak tests.
