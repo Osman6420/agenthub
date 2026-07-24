@@ -14,6 +14,11 @@
 | Idle stability | Inspect supervisor signature log after controlled edit and repeated polls | Passed | One change, one committed signature, then zero additional changes/commits/warnings | Native Git stderr is excluded and malformed Windows status JSON is handled |
 | WAL stability | Inspect canonical DB sidecars | Passed | Final WAL size 0 bytes | Canonical DB is about 32.5 MB |
 | UI | HTTP request and listener inspection | Passed | HTTP 200 on loopback port 9749 | Loopback-only binding |
+| Stale committed graph reproduction | Git diff, project inventory, and scoped graph searches | Failed freshness gate as expected | Project metadata reported HEAD `be7958c` and 10,197 nodes while new committed symbols were absent | Confirmed v0.9.0 incremental success was a false freshness signal |
+| Commit-aware clean rebuild | Supervisor restart without prior indexed-HEAD state | Passed | Exact HEAD `be7958c`, 10,263 nodes, 44,684 edges | State is persisted only after repository-path, HEAD, and non-zero-count verification |
+| New-symbol freshness | Scoped `search_graph` over the rebuilt graph | Passed | `renew_sync_lease` and `_transition_checksum` are present with current signatures | Both symbols were absent before the clean rebuild |
+| Single-writer MCP topology | Codex config and live process inspection | Passed | Codex uses `http://127.0.0.1:9749/rpc`; supervisor owns the only graph process | Removed per-session `--ui=false` SQLite writers |
+| Rebuild WAL | Inspect canonical SQLite sidecars after rebuild | Passed | WAL is 0 bytes | Canonical database is about 32.6 MB |
 | Startup persistence | Windows scheduled task inspection | Passed | `AgentHub-CodebaseMemory-Supervisor`, user logon, limited run level, ignore duplicate instances | Named mutex also rejects duplicate supervisors |
 | Script validation | PowerShell parser and `git diff --check` | Passed | No syntax or whitespace errors | Application test suite not applicable |
 
@@ -45,7 +50,10 @@ No AgentHub application behavior change is intended.
 AgentHub application tests were not run because no application runtime behavior changed.
 
 ## Remaining risks
-Codebase Memory v0.9.0 incremental Markdown deletion left stale section nodes during probing. The final graph was rebuilt from source without the artifact, so it is clean now. The local supervisor remains a workaround until the upstream dirty-state signature fix is released.
+Codebase Memory v0.9.0 incremental Markdown deletion left stale section nodes
+during probing. The final graph was rebuilt from source without the artifact, so
+it is clean now. The local supervisor remains a workaround until upstream
+incremental commit freshness and Windows multi-process coordination are reliable.
 
 ## Human review required
 None.

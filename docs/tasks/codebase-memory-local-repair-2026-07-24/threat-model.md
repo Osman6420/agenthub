@@ -33,11 +33,20 @@ Binding the UI externally, deleting the wrong cache, or stopping unrelated proce
 ## Failure cases
 Process respawn during repair, incomplete cache move, failed re-index, runaway watcher, or continued WAL growth.
 
+Codebase Memory v0.9.0 can advance project Git metadata without applying committed
+structural changes. The supervisor must retry rather than persist the new HEAD
+unless a clean rebuild resolves the exact repository path, expected HEAD, and
+non-zero graph counts.
+
 ## Logging and audit risks
 Logs may contain local paths but must not contain repository contents or secrets in the task record.
 
 ## Mitigations
 Resolve exact executable paths and process names, preserve the complete cache via same-volume rename, bind only to loopback, avoid wildcard deletion, and verify after each state transition.
+
+Use one supervisor-owned Codebase Memory process. Codex sessions connect through
+its loopback HTTP MCP endpoint instead of spawning additional stdio processes that
+hold the Windows SQLite database open.
 
 ## Residual risks
 An upstream v0.9.0 coordination defect may remain after clean initialization.

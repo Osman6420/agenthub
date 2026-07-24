@@ -3,6 +3,14 @@
 ## Task summary
 Repair the local Codebase Memory MCP v0.9.0 runtime so one canonical AgentHub index stays current, the background watcher converges, SQLite WAL growth is bounded, and the graph UI listens on port 9749.
 
+## Follow-up: commit-aware refresh
+The first supervisor detected dirty-worktree changes, but v0.9.0 could report a
+successful incremental index after a commit while retaining the prior graph.
+Persist the last successfully rebuilt HEAD, use incremental updates only within
+that HEAD, and perform a clean full rebuild whenever HEAD changes or supervisor
+state is absent. Resolve and verify the rebuilt project by repository path, exact
+HEAD, and non-zero graph counts before recording success.
+
 ## Background
 The local cache contains duplicate indexes for the same repository, multiple long-lived MCP processes, no listener on port 9749, and a roughly 12 GB WAL beside a roughly 32 MB graph database. `detect_changes` reports 961 changed files after an explicit full index.
 
@@ -23,11 +31,14 @@ The local cache contains duplicate indexes for the same repository, multiple lon
 - No runaway index worker loop is present.
 - The active WAL remains bounded and does not grow by gigabytes during verification.
 - Obsolete cache, WAL, artifact, and diagnostic backups are removed after successful verification.
+- A committed HEAD change is not acknowledged until a clean full rebuild reports
+  the expected repository path, exact HEAD, and a non-empty graph.
 
 ## Affected components
 - Local Codebase Memory MCP process set.
 - Local Codebase Memory cache under `%LOCALAPPDATA%\codebase-memory-mcp`.
-- Codex MCP configuration already pointing to the v0.9.0 UI binary.
+- Codex MCP configuration pointing to the supervisor-owned loopback HTTP MCP
+  endpoint so interactive sessions do not open competing SQLite processes.
 - This task record only; no AgentHub source component.
 
 ## Interfaces affected
