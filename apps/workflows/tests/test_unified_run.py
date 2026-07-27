@@ -694,6 +694,7 @@ def test_bounded_unified_executor_rejects_unsupported_and_cyclic_graphs() -> Non
         )
 
 
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
 @pytest.mark.django_db(transaction=True)
 def test_concurrent_background_delivery_has_one_claim_owner(workflow_fixture) -> None:
     run = _queued_background_run(workflow_fixture, key="background-claim-race")
@@ -1536,8 +1537,13 @@ def test_unified_run_tables_are_protected_and_provisioned() -> None:
         encoding="utf-8"
     )
 
+    # Comments are stripped first: a rationale mentioning DELETE must not read as a grant of it.
+    statements = [
+        "\n".join(line for line in statement.splitlines() if not line.lstrip().startswith("--"))
+        for statement in sql.split(";")
+    ]
     delete_grants = [
-        statement for statement in sql.split(";") if "GRANT" in statement and "DELETE" in statement
+        statement for statement in statements if "GRANT" in statement and "DELETE" in statement
     ]
     for table_name in UNIFIED_RUN_GRANTS:
         assert inventory[table_name].tenant_column == "organization_id"

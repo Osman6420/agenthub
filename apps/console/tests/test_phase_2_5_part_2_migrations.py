@@ -35,6 +35,18 @@ def _state_apps(targets: list[tuple[str, str]]) -> Apps:
     return executor.loader.project_state(targets).apps
 
 
+@pytest.fixture(autouse=True)
+def restore_full_migration_state():
+    """Re-apply every leaf migration afterwards.
+
+    Reversing one app cascades to whatever depends on it, so a test left pinned at an old target
+    silently drops other apps' tables for the rest of the session.
+    """
+    yield
+    executor = MigrationExecutor(connection)
+    executor.migrate(executor.loader.graph.leaf_nodes())
+
+
 def test_public_id_migrations_backfill_preserve_and_reforward() -> None:
     old_apps = _state_apps(PRE_EXPAND)
     Organization = old_apps.get_model("tenancy", "Organization")

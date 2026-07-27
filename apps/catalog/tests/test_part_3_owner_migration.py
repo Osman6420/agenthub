@@ -17,6 +17,18 @@ def _state_apps(targets: list[tuple[str, str]]) -> Apps:
     return executor.loader.project_state(targets).apps
 
 
+@pytest.fixture(autouse=True)
+def restore_full_migration_state():
+    """Re-apply every leaf migration afterwards.
+
+    Reversing one app cascades to whatever depends on it, so a test left pinned at an old target
+    silently drops other apps' tables for the rest of the session.
+    """
+    yield
+    executor = MigrationExecutor(connection)
+    executor.migrate(executor.loader.graph.leaf_nodes())
+
+
 def test_owner_membership_backfill_preserves_legacy_text_and_reforwards() -> None:
     old_apps = _state_apps(BEFORE)
     User = old_apps.get_model("auth", "User")
