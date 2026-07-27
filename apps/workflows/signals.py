@@ -34,6 +34,51 @@ def resume_workflow_on_tool_decision(sender: Any, instance: ApprovalRequest, **k
     transaction.on_commit(lambda: execute_workflow_run.delay(run_id, organization_id))
 
 
+@receiver(post_save, sender=ApprovalRequest, dispatch_uid="workflows.unified_tool_approval_resume")
+def resume_unified_run_on_tool_decision(
+    sender: Any, instance: ApprovalRequest, **kwargs: Any
+) -> None:
+    """Re-admit a unified Run parked on this approval, then redeliver it after commit."""
+    if instance.status not in _DECIDED:
+        return
+
+    from apps.workflows.models import Run
+    from apps.workflows.run_waits import (
+        RunWaitError,
+        resume_run_for_approval,
+        run_id_from_tool_idempotency_key,
+    )
+    from apps.workflows.tasks import dispatch_unified_background_run
+    from apps.workflows.unified_executor import UnifiedExecutorError
+
+    run_id = run_id_from_tool_idempotency_key(instance.invocation.idempotency_key)
+    if run_id is None:
+        return
+    organization_id = instance.organization_id
+
+    def _resume() -> None:
+        # Deferred to commit for two reasons: the deciding transaction only moves the invocation
+        # out of ``pending_approval`` after this signal fires, and a rolled-back decision must
+        # never re-admit the Run.
+        try:
+            resume_run_for_approval(
+                organization_id=organization_id,
+                run_id=run_id,
+                invocation_id=instance.invocation_id,
+            )
+        except (RunWaitError, Run.DoesNotExist):
+            # A Run that is not parked on exactly this invocation has already converged, so the
+            # decision must not move it.
+            return
+        try:
+            dispatch_unified_background_run(run_id=run_id, organization_id=organization_id)
+        except UnifiedExecutorError:
+            # The Run is queued and durable; a disabled executor only delays its next delivery.
+            return
+
+    transaction.on_commit(_resume)
+
+
 def _run_id_from_invocation_key(approval: ApprovalRequest) -> int | None:
     # Workflow tool invocations use a "wf:<run_id>:<node_id>" idempotency key.
     key = approval.invocation.idempotency_key

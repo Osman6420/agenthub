@@ -63,6 +63,70 @@ class RunWaitResume:
     checkpoint_version: int
 
 
+RUN_TOOL_KEY_PREFIX = "run"
+
+
+def run_tool_idempotency_key(run_id: uuid.UUID, node_id: str) -> str:
+    """The invocation key binding one governed tool call to one unified Run node."""
+    return f"{RUN_TOOL_KEY_PREFIX}:{run_id}:{node_id}"
+
+
+def run_id_from_tool_idempotency_key(key: str) -> uuid.UUID | None:
+    parts = key.split(":", 2)
+    if len(parts) != 3 or parts[0] != RUN_TOOL_KEY_PREFIX:
+        return None
+    try:
+        return uuid.UUID(parts[1])
+    except ValueError:
+        return None
+
+
+@transaction.atomic
+def resume_run_for_approval(
+    *,
+    organization_id: int,
+    run_id: uuid.UUID,
+    invocation_id: int,
+) -> RunWaitResume:
+    """Re-admit a Run parked on a tool approval once that approval has been decided.
+
+    The authority is durable state rather than a token: only a Run parked on exactly this
+    invocation, whose invocation has actually left ``pending_approval``, is re-queued. The
+    decision itself stays with the Sprint 9 approval boundary.
+    """
+
+    from apps.tools.models import ToolInvocation, ToolInvocationStatus
+
+    set_tenant_context(organization_id)
+    run = Run.objects.select_for_update().get(pk=run_id, organization_id=organization_id)
+    if (
+        run.status != WorkflowRunStatus.WAITING_APPROVAL
+        or run.awaiting_kind != RunAwaitingKind.APPROVAL
+        or run.awaiting_reference != str(invocation_id)
+    ):
+        raise RunWaitError("RUN_WAIT_NOT_FOUND")
+    decided = (
+        ToolInvocation.objects.filter(pk=invocation_id, organization_id=organization_id)
+        .exclude(status=ToolInvocationStatus.PENDING_APPROVAL)
+        .exists()
+    )
+    if not decided:
+        raise RunWaitError("RUN_WAIT_NOT_FOUND")
+    transitioned = transition_run(
+        organization_id=organization_id,
+        run_id=run.id,
+        transition_token=uuid.uuid5(run.id, f"approval-resume:{invocation_id}"),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status=WorkflowRunStatus.WAITING_APPROVAL,
+        target_status=WorkflowRunStatus.QUEUED,
+    )
+    return RunWaitResume(
+        transitioned.outcome,
+        transitioned.status,
+        transitioned.checkpoint_version,
+    )
+
+
 def _token_hash(token: uuid.UUID) -> str:
     return hashlib.sha256(str(token).encode("ascii")).hexdigest()
 

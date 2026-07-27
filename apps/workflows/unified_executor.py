@@ -22,9 +22,14 @@ from apps.workflows.background_claims import (
 )
 from apps.workflows.compiler import COMPILED_WORKFLOW_API_VERSION
 from apps.workflows.models import Run, RunAwaitingKind, RunCancellationState, WorkflowRunStatus
-from apps.workflows.run_waits import RunWaitError, suspend_run_for_wait
+from apps.workflows.run_waits import RunWaitError, run_tool_idempotency_key, suspend_run_for_wait
 from apps.workflows.runtime import WorkflowRuntimeError, _execute_node, _validate_output_policy
 from apps.workflows.services import WorkflowRequestError, _assert_state_size
+from apps.workflows.state_mapping import (
+    MappingError,
+    apply_output_mapping,
+    build_input_envelope,
+)
 from apps.workflows.transitions import RunTransitionResult, transition_run
 
 _WAIT_KIND_BY_NODE_TYPE = {
@@ -32,8 +37,19 @@ _WAIT_KIND_BY_NODE_TYPE = {
     "human_task": RunAwaitingKind.HUMAN,
     "timer": RunAwaitingKind.TIMER,
 }
+# Nodes whose result is an envelope projected into state through the mapping contract, rather
+# than a direct state write performed by the node itself.
+_ENVELOPE_NODE_TYPES = frozenset({"tool"})
 _SUPPORTED_NODE_TYPES = frozenset(
-    {"condition", "end", "format_output", "input", "validate_contract", *_WAIT_KIND_BY_NODE_TYPE}
+    {
+        "condition",
+        "end",
+        "format_output",
+        "input",
+        "validate_contract",
+        *_ENVELOPE_NODE_TYPES,
+        *_WAIT_KIND_BY_NODE_TYPE,
+    }
 )
 _TRANSITION_NAMESPACE = uuid.UUID("d7297f29-2050-48d4-905b-a5f08971e900")
 
@@ -248,6 +264,93 @@ def _suspend_at_wait(
     )
 
 
+def _invoke_tool(*, run: Run, node: dict[str, Any], state: dict[str, Any]) -> Any:
+    """Drive one governed tool call, returning the completed invocation or a pending approval."""
+
+    from apps.tools.approvals import ToolApprovalError, execute_invocation, request_tool_invocation
+    from apps.tools.models import ToolInvocationStatus
+
+    config = node["config"]
+    input_mapping = node.get("input_mapping")
+    try:
+        envelope = build_input_envelope(state, input_mapping) if input_mapping else None
+    except MappingError as exc:
+        raise WorkflowRuntimeError(exc.code) from None
+    if envelope is None:
+        raw = state.get(config["input_key"]) if "input_key" in config else None
+        envelope = raw if isinstance(raw, dict) else {}
+    context = run.execution_context if isinstance(run.execution_context, dict) else {}
+    capabilities = [str(item) for item in context.get("capabilities", [])]
+    try:
+        invocation = request_tool_invocation(
+            release=run.release,
+            consumer=run.consumer,
+            role=config["binding_role"],
+            tool_input=envelope,
+            idempotency_key=run_tool_idempotency_key(run.id, str(node["id"])),
+            consumer_capabilities=capabilities,
+            requested_by=run.consumer.subject,
+        )
+        if invocation.status == ToolInvocationStatus.APPROVED:
+            invocation = execute_invocation(
+                invocation_id=invocation.id,
+                tool_input=envelope,
+                consumer_capabilities=capabilities,
+            )
+    except ToolApprovalError as exc:
+        raise WorkflowRuntimeError(f"TOOL_{exc.code}") from None
+    if invocation.status in {
+        ToolInvocationStatus.PENDING_APPROVAL,
+        ToolInvocationStatus.COMPLETED,
+    }:
+        return invocation
+    # Rejection and every unresolved outcome fail the Run closed; a dispatched-but-unconfirmed
+    # call is never retried.
+    raise WorkflowRuntimeError(f"TOOL_{str(invocation.status).upper()}")
+
+
+def _project_envelope(
+    node: dict[str, Any], state: dict[str, Any], envelope: dict[str, Any]
+) -> dict[str, Any]:
+    output_mapping = node.get("output_mapping")
+    if output_mapping:
+        try:
+            return apply_output_mapping(state, envelope, output_mapping)
+        except MappingError as exc:
+            raise WorkflowRuntimeError(exc.code) from None
+    return {**state, str(node["config"]["output_key"]): envelope}
+
+
+def _suspend_for_approval(
+    *,
+    run: Run,
+    node: dict[str, Any],
+    state: dict[str, Any],
+    invocation_id: int,
+    claim_token: uuid.UUID,
+    step_delta: int,
+    tool_call_delta: int,
+) -> RunExecution:
+    """Park the Run on a pending approval, re-entering the same node once it is decided."""
+
+    run.refresh_from_db()
+    return _execution(
+        transition_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            transition_token=_transition_token(claim_token, f"approval:{node['id']}"),
+            expected_checkpoint_version=run.checkpoint_version,
+            expected_status=WorkflowRunStatus.RUNNING,
+            target_status=WorkflowRunStatus.WAITING_APPROVAL,
+            checkpoint={**state, _CURSOR_KEY: str(node["id"])},
+            awaiting_reference=str(invocation_id),
+            step_delta=step_delta,
+            tool_call_delta=tool_call_delta,
+            background_claim_token=claim_token,
+        )
+    )
+
+
 def execute_claimed_bounded_run(
     *,
     organization_id: int,
@@ -298,6 +401,7 @@ def execute_claimed_bounded_run(
     if isinstance(cursor, str) and cursor in nodes:
         current = cursor
     executed: list[str] = []
+    tool_calls = 0
     try:
         while True:
             guarded = _guard_transition(run, claim_token)
@@ -313,12 +417,31 @@ def execute_claimed_bounded_run(
                     claim_token=claim_token,
                     step_delta=len(executed) + 1,
                 )
-            decision = _execute_node(
-                node=node,
-                state=state,
-                release=run.release,
-                run=run,
-            )
+            decision: bool | None = None
+            if node["type"] in _ENVELOPE_NODE_TYPES:
+                from apps.tools.models import ToolInvocationStatus
+
+                invocation = _invoke_tool(run=run, node=node, state=state)
+                if invocation.status == ToolInvocationStatus.PENDING_APPROVAL:
+                    return _suspend_for_approval(
+                        run=run,
+                        node=node,
+                        state=state,
+                        invocation_id=invocation.id,
+                        claim_token=claim_token,
+                        step_delta=len(executed) + 1,
+                        tool_call_delta=tool_calls,
+                    )
+                tool_calls += 1
+                output = invocation.redacted_output
+                state = _project_envelope(node, state, output if isinstance(output, dict) else {})
+            else:
+                decision = _execute_node(
+                    node=node,
+                    state=state,
+                    release=run.release,
+                    run=run,
+                )
             try:
                 _assert_state_size(state)
             except WorkflowRequestError:
@@ -354,6 +477,7 @@ def execute_claimed_bounded_run(
                 checkpoint=state,
                 error_code=exc.code,
                 step_delta=len(executed),
+                tool_call_delta=tool_calls,
                 background_claim_token=claim_token,
             )
         )
@@ -368,6 +492,7 @@ def execute_claimed_bounded_run(
             target_status=WorkflowRunStatus.COMPLETED,
             checkpoint=state,
             step_delta=len(executed),
+            tool_call_delta=tool_calls,
             background_claim_token=claim_token,
         )
     )

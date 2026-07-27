@@ -666,9 +666,11 @@ def test_bounded_unified_executor_rejects_unsupported_and_cyclic_graphs() -> Non
                 "input_node": "request",
                 "nodes": [
                     {"id": "request", "type": "input", "config": {}},
-                    {"id": "tool", "type": "tool", "config": {}},
+                    # The executor's node allowlist is deny-by-default: a type it does not
+                    # implement is refused rather than skipped or guessed at.
+                    {"id": "later", "type": "not_yet_implemented", "config": {}},
                 ],
-                "edges": [{"from": "request", "to": "tool"}],
+                "edges": [{"from": "request", "to": "later"}],
             }
         )
     with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_GRAPH_UNBOUNDED"):
