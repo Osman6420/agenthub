@@ -264,12 +264,8 @@ def compile_release(
     if workflow_checksum:
         manifest["workflow_checksum"] = workflow_checksum
         if compiled_workflow_graph is not None:
-            manifest["execution_mode_analysis"] = compiled_workflow_graph.get(
-                "execution_mode_analysis",
-                {
-                    "supported_execution_modes": ["background"],
-                    "sync_blockers": [{"code": "compiled_mode_analysis_missing", "node_ids": []}],
-                },
+            manifest["execution_mode_analysis"] = _release_execution_mode_analysis(
+                compiled_workflow_graph, artifacts_manifest
             )
     if agent_checksum:
         manifest["agent_checksum"] = agent_checksum
@@ -324,6 +320,96 @@ def _assert_transform_profiles_pinned(
             raise CompileError(
                 f"transform node references an unpinned transform_profile role: {role!r}"
             )
+
+
+_MISSING_ANALYSIS = {
+    "supported_execution_modes": ["background"],
+    "sync_blockers": [{"code": "compiled_mode_analysis_missing", "node_ids": []}],
+    "sync_budget_seconds": 0,
+}
+
+
+def _tool_sync_evidence(
+    node: object, manifest: dict[str, dict[str, object]]
+) -> tuple[str | None, int]:
+    """Decide whether one pinned ``tool`` node is safe for a synchronous request."""
+
+    from apps.tools.tool_schema import MAX_TIMEOUT_SECONDS
+
+    if not isinstance(node, dict) or node.get("type") != "tool":
+        return "tool_pause_policy_unproven", 0
+    config = node.get("config")
+    role = config.get("binding_role") if isinstance(config, dict) else None
+    entry = manifest.get(role) if isinstance(role, str) else None
+    pin = entry.get("tool") if isinstance(entry, dict) else None
+    if not isinstance(pin, dict):
+        return "tool_not_pinned", 0
+    if pin.get("approval_required"):
+        # An approval is a durable pause; a synchronous request can never wait for one.
+        return "tool_requires_approval", 0
+    timeout = pin.get("timeout_seconds")
+    if isinstance(timeout, bool) or not isinstance(timeout, int):
+        return "tool_timeout_unpinned", 0
+    if not 1 <= timeout <= MAX_TIMEOUT_SECONDS:
+        return "tool_timeout_unpinned", 0
+    return None, timeout
+
+
+def _release_execution_mode_analysis(
+    graph: dict[str, object], manifest: dict[str, dict[str, object]]
+) -> dict[str, object]:
+    """Re-decide synchronous support against the release's pinned tool evidence.
+
+    The workflow compiler cannot see a binding, so every ``tool`` node is unproven there. Here the
+    pin is exact: a bounded transport timeout with no approval pause makes the call safe to run
+    inside a request, and the summed timeouts give admission a finite wall-clock budget.
+    """
+
+    analysis = graph.get("execution_mode_analysis")
+    if not isinstance(analysis, dict):
+        return dict(_MISSING_ANALYSIS)
+    raw_blockers = analysis.get("sync_blockers")
+    raw_nodes = graph.get("nodes")
+    if not isinstance(raw_blockers, list) or not isinstance(raw_nodes, list):
+        return dict(_MISSING_ANALYSIS)
+    nodes_by_id = {
+        node["id"]: node
+        for node in raw_nodes
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
+
+    blocker_nodes: dict[str, list[str]] = {}
+    budget = 0
+    for entry in raw_blockers:
+        if not isinstance(entry, dict):
+            return dict(_MISSING_ANALYSIS)
+        code = entry.get("code")
+        node_ids = entry.get("node_ids")
+        if not isinstance(code, str) or not isinstance(node_ids, list):
+            return dict(_MISSING_ANALYSIS)
+        if code != "tool_pause_policy_unproven":
+            # Only the tool blocker carries release-pinned evidence. Everything else — durable
+            # waits, fan-out, child runs, unproven agent/custom bounds — stays background-only.
+            blocker_nodes.setdefault(code, []).extend(str(node_id) for node_id in node_ids)
+            continue
+        for node_id in node_ids:
+            resolved, seconds = _tool_sync_evidence(nodes_by_id.get(str(node_id)), manifest)
+            if resolved is not None:
+                blocker_nodes.setdefault(resolved, []).append(str(node_id))
+            else:
+                budget += seconds
+
+    blockers = [
+        {"code": code, "node_ids": sorted(blocker_nodes[code])} for code in sorted(blocker_nodes)
+    ]
+    supported = ["background"]
+    if not blockers:
+        supported.append("sync")
+    return {
+        "supported_execution_modes": supported,
+        "sync_blockers": blockers,
+        "sync_budget_seconds": budget if not blockers else 0,
+    }
 
 
 def _assert_agent_loop_tools_pinned(

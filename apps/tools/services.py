@@ -13,6 +13,7 @@ from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import Scenario
 from apps.tools.models import ToolBinding, ToolDefinition, ToolStatus
+from apps.tools.tool_schema import MAX_TIMEOUT_SECONDS
 
 
 class ToolRegistryError(ValueError):
@@ -114,6 +115,14 @@ def resolve_pinned_tool_binding(*, scenario: Scenario, artifact: ArtifactVersion
     definition = binding.tool_definition
     if definition.status != ToolStatus.ACTIVE:
         raise ToolRegistryError("TOOL_DEFINITION_DISABLED")
+    spec = definition.manifest.get("spec", {})
+    timeout_seconds = spec.get("timeout_seconds") if isinstance(spec, dict) else None
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or not 1 <= timeout_seconds <= MAX_TIMEOUT_SECONDS
+    ):
+        raise ToolRegistryError("TOOL_TIMEOUT_UNBOUNDED")
     return {
         "binding_ref": f"{binding.logical_id}:v{binding.version}",
         "binding_checksum": binding.checksum,
@@ -123,6 +132,9 @@ def resolve_pinned_tool_binding(*, scenario: Scenario, artifact: ArtifactVersion
         "risk": definition.risk,
         "side_effecting": definition.side_effecting,
         "approval_required": binding.approval_required,
+        # Pinned so synchronous admission can bound a call from the manifest alone, without
+        # re-reading a definition the release has already checksum-matched.
+        "timeout_seconds": timeout_seconds,
     }
 
 
