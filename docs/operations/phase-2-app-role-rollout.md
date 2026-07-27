@@ -25,6 +25,16 @@ tables retain delete only where current services expose an authorized delete/pur
 Bootstrap identity tables remain outside tenant RLS and therefore require especially narrow
 queries, parameterization and application authorization.
 
+Authorization-bearing tables are deliberately held at `SELECT, INSERT, UPDATE` with **no** `DELETE`:
+the document-plane `documents_scenariodocumentsetaccessrequest` and
+`documents_scenariodocumentsetgrant`, and the delegated operator assignments
+`identity_projectadministratorassignment`, `identity_scenarioeditorassignment` and
+`identity_documentsetmanagerassignment`. Revocation on all five is a status change that records
+`revoked_by`/`revoked_at`, so who held which authority stays reconstructable from the table itself
+rather than only from the audit trail, and a compromised application role cannot erase that evidence.
+Granting `DELETE` on any of them would silently weaken that property and must not be done to work
+around an application error; a missing privilege here fails closed and should be diagnosed instead.
+
 Before deploying the worker signature change, drain or explicitly discard old workflow, agent and
 ingestion messages that do not carry `organization_id`. Workflow/agent handlers treat a legacy
 message as a safe no-op under the non-owner role; ingestion rejects the obsolete signature. Runtime

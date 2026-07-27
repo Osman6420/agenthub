@@ -2,8 +2,8 @@
 
 ## Status
 
-**Planned.** Owner approval is required before implementation: this task expands the privileges of
-the production database role over authorization-bearing tables.
+**Implemented.** The owner reviewed options A and B and chose **B**: `DELETE` is denied on all three
+assignment tables and assignment removal is a soft revoke. See "Owner decision" below.
 
 ## Problem
 
@@ -55,9 +55,9 @@ assumed from the model shape:
 | --- | --- | --- |
 | `documents_scenariodocumentsetaccessrequest` | `SELECT, INSERT, UPDATE` | `access_services.py` creates a request and decides it under `select_for_update`; no delete path |
 | `documents_scenariodocumentsetgrant` | `SELECT, INSERT, UPDATE` | `update_or_create` on approval; revocation is a **status change** (`status=REVOKED` + `revoked_by`/`revoked_at`), not a row delete, so lineage is retained |
-| `identity_projectadministratorassignment` | `SELECT, INSERT, UPDATE, DELETE` | `assignment_services.py:328` removes an assignment with `locked.delete()` after an authorization check |
-| `identity_scenarioeditorassignment` | `SELECT, INSERT, UPDATE, DELETE` | same removal path |
-| `identity_documentsetmanagerassignment` | `SELECT, INSERT, UPDATE, DELETE` | same removal path |
+| `identity_projectadministratorassignment` | `SELECT, INSERT, UPDATE` | removal is a soft revoke under option B; no delete path remains |
+| `identity_scenarioeditorassignment` | `SELECT, INSERT, UPDATE` | same removal path |
+| `identity_documentsetmanagerassignment` | `SELECT, INSERT, UPDATE` | same removal path |
 
 The three `DELETE` grants are the part that genuinely needs owner judgement. Two options:
 
@@ -71,21 +71,39 @@ The three `DELETE` grants are the part that genuinely needs owner judgement. Two
 
 Recommend deciding A vs B explicitly; do not let the grant silently define the semantics.
 
+## Owner decision
+
+**Option B.** No `DELETE` is granted on any of the five tables. Assignment removal became a soft
+revoke, so the assignment plane now matches how the document plane already revokes a grant, and the
+application role cannot erase the record of who held which authority.
+
+Two consequences that were not obvious from the option statement and shaped the implementation:
+
+- Model validation requires the target to be an active organization member. A `save()`-based revoke
+  would therefore have made it **impossible to withdraw a departed user's authority**, so revocation
+  uses a queryset `update()` that bypasses model validation deliberately.
+- The unique constraint still matches a revoked row, so re-granting after a revoke would have failed
+  as `ASSIGNMENT_ALREADY_EXISTS`. `_create_or_reinstate` reuses the revoked row and re-runs model
+  validation, which re-proves eligibility at reinstatement rather than trusting the old row.
+
 ## Acceptance criteria
 
-- [ ] Owner records a decision on option A or B for the three assignment tables.
-- [ ] `provision-app-role.sql` names all five tables at the approved privilege level, in the existing
+- [x] Owner records a decision on option A or B for the three assignment tables — **B**.
+- [x] `provision-app-role.sql` names all five tables at the approved privilege level, in the existing
       grouped-by-intent structure with a comment stating why each level was chosen.
-- [ ] `test_provisioning_sql_names_every_protected_table` passes, i.e. the inventory has **no**
+- [x] `test_provisioning_sql_names_every_protected_table` passes, i.e. the inventory has **no**
       remaining gap — not just these five.
-- [ ] A PostgreSQL test proves the grants are sufficient and bounded, following the pattern of
+- [x] A PostgreSQL test proves the grants are sufficient and bounded, following the pattern of
       `test_unified_run_grants_make_a_non_owner_role_rls_ready_without_delete`: a
       `NOSUPERUSER NOBYPASSRLS` probe role granted exactly the inventory privileges reports
       `inspect_rls_readiness(...).ready is True` with no issues, and `has_table_privilege(..., 'DELETE')`
-      is false for every table where `DELETE` was denied.
-- [ ] If option B is chosen: an additive migration, updated `authorization.py` filters that exclude
-      revoked assignments, and a test proving a revoked assignment denies the capability.
-- [ ] `docs/operations/phase-2-app-role-rollout.md` reflects the new grants so an operator rolling out
+      is false for every table where `DELETE` was denied —
+      `test_access_authority_grants_make_a_non_owner_role_rls_ready_without_delete`.
+- [x] Option B: additive migration `identity.0009_delegated_assignment_revocation`, `authorization.py`
+      filters that exclude revoked assignments, and tests proving a revoked assignment denies the
+      capability, that revocation survives the target leaving the organization, and that reinstatement
+      re-proves eligibility.
+- [x] `docs/operations/phase-2-app-role-rollout.md` reflects the new grants so an operator rolling out
       the role does not reproduce the gap.
 
 ## Verification plan

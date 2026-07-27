@@ -38,9 +38,12 @@ GRANT SELECT ON
     catalog_aiproject, catalog_scenario, catalog_scenarioalias,
     documents_document, documents_documentset, documents_documentsetgrant,
     documents_documentsetmembership, documents_documentsetversion, documents_documentversion,
-    documents_scenariodocumentsetbinding,
+    documents_scenariodocumentsetaccessrequest, documents_scenariodocumentsetbinding,
+    documents_scenariodocumentsetgrant,
     evaluations_evalcaseresult, evaluations_evalrun,
     gateway_idempotencyrecord, identity_consumerbinding,
+    identity_documentsetmanagerassignment, identity_projectadministratorassignment,
+    identity_scenarioeditorassignment,
     ingestion_chunk, ingestion_confluencedocumentcursor, ingestion_confluencesyncrun,
     ingestion_connectorschedulepromotiontarget, ingestion_connectorsyncschedule,
     ingestion_documentocrjob, ingestion_indexeddocument, ingestion_indexversion,
@@ -70,12 +73,17 @@ GRANT INSERT ON
     workflows_workflowversion
 TO :"app_role";
 
--- Mutable state without application delete paths.
+-- Mutable state without application delete paths. The document-plane access requests/grants and the
+-- delegated operator assignments are authorization-bearing: revocation is a status change that keeps
+-- who held which authority reconstructable, so DELETE is withheld deliberately.
 GRANT INSERT, UPDATE ON
     agents_agentrun, agents_agentruntimecontrol,
     catalog_aiproject, catalog_scenario, catalog_scenarioalias,
+    documents_scenariodocumentsetaccessrequest, documents_scenariodocumentsetgrant,
     evaluations_evalrun,
     gateway_idempotencyrecord, identity_consumerbinding,
+    identity_documentsetmanagerassignment, identity_projectadministratorassignment,
+    identity_scenarioeditorassignment,
     ingestion_confluencedocumentcursor, ingestion_confluencesyncrun,
     ingestion_connectorschedulepromotiontarget, ingestion_connectorsyncschedule,
     ingestion_documentocrjob, ingestion_indexversion, ingestion_ingestionrun,

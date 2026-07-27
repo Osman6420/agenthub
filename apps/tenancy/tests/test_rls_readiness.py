@@ -68,6 +68,71 @@ def test_provisioning_sql_names_every_protected_table() -> None:
     assert "UPDATE ON auth_user" not in sql
 
 
+# The owner-approved inventory for the authorization-bearing access/assignment tables. Revocation on
+# all five is a status change, never a row delete, so who held which authority stays reconstructable
+# from the table itself and the role never needs DELETE.
+ACCESS_AUTHORITY_GRANTS = {
+    "documents_scenariodocumentsetaccessrequest": ("SELECT", "INSERT", "UPDATE"),
+    "documents_scenariodocumentsetgrant": ("SELECT", "INSERT", "UPDATE"),
+    "identity_projectadministratorassignment": ("SELECT", "INSERT", "UPDATE"),
+    "identity_scenarioeditorassignment": ("SELECT", "INSERT", "UPDATE"),
+    "identity_documentsetmanagerassignment": ("SELECT", "INSERT", "UPDATE"),
+}
+
+
+def test_access_authority_tables_are_provisioned_without_delete() -> None:
+    inventory = {table.table_name: table for table in protected_tenant_tables()}
+    sql = (settings.BASE_DIR / "deploy" / "postgres" / "provision-app-role.sql").read_text(
+        encoding="utf-8"
+    )
+    # Comments are stripped first: a rationale mentioning DELETE must not read as a grant of it.
+    statements = [
+        "\n".join(line for line in statement.splitlines() if not line.lstrip().startswith("--"))
+        for statement in sql.split(";")
+    ]
+    delete_grants = [
+        statement for statement in statements if "GRANT" in statement and "DELETE" in statement
+    ]
+
+    for table_name in ACCESS_AUTHORITY_GRANTS:
+        assert inventory[table_name].tenant_column == "organization_id"
+        assert table_name in sql
+        assert not any(table_name in statement for statement in delete_grants)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="role grants require PostgreSQL")
+def test_access_authority_grants_make_a_non_owner_role_rls_ready_without_delete() -> None:
+    role = f"access_grant_{uuid.uuid4().hex[:12]}"
+    tables = tuple(
+        table for table in protected_tenant_tables() if table.table_name in ACCESS_AUTHORITY_GRANTS
+    )
+    assert len(tables) == len(ACCESS_AUTHORITY_GRANTS)
+
+    with connection.cursor() as cursor:
+        cursor.execute(f'CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN')  # noqa: S608
+        cursor.execute(  # noqa: S608
+            f'GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) TO "{role}"'
+        )
+        for table_name, privileges in ACCESS_AUTHORITY_GRANTS.items():
+            cursor.execute(  # noqa: S608
+                f'GRANT {", ".join(privileges)} ON "{table_name}" TO "{role}"'
+            )
+    try:
+        report = inspect_rls_readiness(app_role=role, tables=tables)
+        assert report.ready is True
+        assert report.issues == ()
+
+        with connection.cursor() as cursor:
+            for table_name in ACCESS_AUTHORITY_GRANTS:
+                cursor.execute("SELECT has_table_privilege(%s, %s, 'DELETE')", [role, table_name])
+                assert cursor.fetchone()[0] is False
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute(f'DROP OWNED BY "{role}"')  # noqa: S608
+            cursor.execute(f'DROP ROLE "{role}"')  # noqa: S608
+
+
 def test_readiness_fails_closed_off_postgresql() -> None:
     if connection.vendor == "postgresql":
         pytest.skip("non-PostgreSQL behavior is covered by the SQLite suite")

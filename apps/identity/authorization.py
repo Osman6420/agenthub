@@ -14,6 +14,7 @@ from enum import StrEnum
 from typing import Any
 
 from apps.identity.models import (
+    DelegatedAssignmentStatus,
     DocumentSetManagerAssignment,
     GlobalAdministrator,
     ProjectAdministratorAssignment,
@@ -177,6 +178,7 @@ def authorize(
             organization_id=effective_organization.pk,
             project_id=effective_project.pk,
             user_id=user.pk,
+            status=DelegatedAssignmentStatus.ACTIVE,
         ).exists()
     ):
         if capability in {
@@ -197,6 +199,7 @@ def authorize(
             organization_id=effective_organization.pk,
             scenario_id=scenario.pk,
             user_id=user.pk,
+            status=DelegatedAssignmentStatus.ACTIVE,
         ).exists()
     ):
         if capability in {
@@ -212,6 +215,7 @@ def authorize(
             organization_id=effective_organization.pk,
             document_set_id=document_set.pk,
             user_id=user.pk,
+            status=DelegatedAssignmentStatus.ACTIVE,
         ).exists()
     ):
         if capability in {

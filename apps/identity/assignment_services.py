@@ -6,10 +6,12 @@ from typing import Any
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from apps.audit.services import record_event
 from apps.identity.authorization import Capability, authorize
 from apps.identity.models import (
+    DelegatedAssignmentStatus,
     DocumentSetManagerAssignment,
     ProjectAdministratorAssignment,
     ScenarioEditorAssignment,
@@ -68,6 +70,39 @@ def _validate_target_user(
         raise AssignmentError("ELIGIBLE_ORGANIZATION_MEMBER_REQUIRED")
 
 
+def _create_or_reinstate(
+    model: Any,
+    *,
+    organization: Organization,
+    target_user: Any,
+    actor: Any,
+    **scope: Any,
+) -> Any:
+    """Grant the assignment, reusing a revoked row so revocation history survives re-grant."""
+    existing = (
+        model.objects.select_for_update()
+        .filter(organization=organization, user=target_user, **scope)
+        .first()
+    )
+    if existing is None:
+        return model.objects.create(
+            organization=organization,
+            user=target_user,
+            assigned_by=actor,
+            **scope,
+        )
+    if existing.status == DelegatedAssignmentStatus.ACTIVE:
+        raise AssignmentError("ASSIGNMENT_ALREADY_EXISTS")
+    existing.status = DelegatedAssignmentStatus.ACTIVE
+    existing.revoked_by = None
+    existing.revoked_at = None
+    existing.assigned_by = actor
+    # `save()` re-runs model validation here on purpose: reinstating must re-prove the target is
+    # still an eligible, active member of the organization.
+    existing.save()
+    return existing
+
+
 def assign_project_administrator(
     *,
     project: Any,
@@ -90,11 +125,12 @@ def assign_project_administrator(
             if not decision.allowed:
                 raise AssignmentError(decision.reason)
             _validate_target_user(organization=organization, target_user=target_user)
-            assignment = ProjectAdministratorAssignment.objects.create(
+            assignment = _create_or_reinstate(
+                ProjectAdministratorAssignment,
                 organization=organization,
+                target_user=target_user,
+                actor=actor,
                 project=project,
-                user=target_user,
-                assigned_by=actor,
             )
             _audit(
                 actor=actor,
@@ -161,11 +197,12 @@ def assign_scenario_editor(
             if not organization_decision.allowed and not project_decision.allowed:
                 raise AssignmentError("SCENARIO_EDITOR_DELEGATION_DENIED")
             _validate_target_user(organization=organization, target_user=target_user)
-            assignment = ScenarioEditorAssignment.objects.create(
+            assignment = _create_or_reinstate(
+                ScenarioEditorAssignment,
                 organization=organization,
+                target_user=target_user,
+                actor=actor,
                 scenario=scenario,
-                user=target_user,
-                assigned_by=actor,
             )
             _audit(
                 actor=actor,
@@ -227,11 +264,12 @@ def assign_document_set_manager(
             if not decision.allowed:
                 raise AssignmentError(decision.reason)
             _validate_target_user(organization=organization, target_user=target_user)
-            assignment = DocumentSetManagerAssignment.objects.create(
+            assignment = _create_or_reinstate(
+                DocumentSetManagerAssignment,
                 organization=organization,
+                target_user=target_user,
+                actor=actor,
                 document_set=document_set,
-                user=target_user,
-                assigned_by=actor,
             )
             _audit(
                 actor=actor,
@@ -276,7 +314,11 @@ def remove_delegated_assignment(
     request_id: str = "",
     trace_id: str = "",
 ) -> None:
-    """Remove one exact assignment; required audit failure restores the row."""
+    """Revoke one exact assignment; required audit failure restores its active state.
+
+    The row is never deleted, so who held which authority stays reconstructable from the
+    table itself rather than only from the audit trail.
+    """
 
     model = type(assignment)
     if model is ProjectAdministratorAssignment:
@@ -304,6 +346,7 @@ def remove_delegated_assignment(
             locked = model.objects.select_for_update().get(
                 pk=assignment_id,
                 organization_id=organization.pk,
+                status=DelegatedAssignmentStatus.ACTIVE,
             )
             organization_decision = authorize(
                 user=actor,
@@ -325,7 +368,13 @@ def remove_delegated_assignment(
                 project_decision is not None and project_decision.allowed
             ):
                 raise AssignmentError("ASSIGNMENT_REMOVAL_DENIED")
-            locked.delete()
+            # A queryset update, not `save()`: model validation requires an active member, and an
+            # assignment must stay revocable after the user leaves the organization.
+            model.objects.filter(pk=locked.pk).update(
+                status=DelegatedAssignmentStatus.REVOKED,
+                revoked_by=actor,
+                revoked_at=timezone.now(),
+            )
             _audit(
                 actor=actor,
                 organization_id=organization.pk,

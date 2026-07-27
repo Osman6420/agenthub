@@ -11,6 +11,7 @@ from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.services import create_document_set
 from apps.identity.models import (
+    DelegatedAssignmentStatus,
     DocumentSetManagerAssignment,
     ProjectAdministratorAssignment,
     ScenarioEditorAssignment,
@@ -134,7 +135,9 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
         )
     )
     assert removed.status_code == 302
-    assert not ProjectAdministratorAssignment.objects.filter(pk=project_assignment.pk).exists()
+    project_assignment.refresh_from_db()
+    assert project_assignment.status == DelegatedAssignmentStatus.REVOKED
+    assert project_assignment.revoked_by_id == admin.pk
     assert AuditEvent.objects.filter(
         action="delegated_assignment.project_administrator.delete",
         outcome="success",
@@ -169,6 +172,32 @@ def test_access_assignment_remove_is_tenant_scoped(client: Client) -> None:
 
     assert response.status_code == 404
     assert ProjectAdministratorAssignment.objects.filter(pk=assignment.pk).exists()
+
+
+def test_access_page_hides_a_revoked_assignment_and_refuses_to_remove_it_twice(
+    client: Client,
+) -> None:
+    organization = Organization.objects.create(slug="revoked-access", name="Revoked")
+    admin = _member(organization, "revoked-admin", Role.ORGANIZATION_ADMIN)
+    target = _member(organization, "revoked-target", Role.AUDITOR)
+    project = AIProject.objects.create(organization=organization, slug="project", name="Project")
+    assignment = ProjectAdministratorAssignment.objects.create(
+        organization=organization, project=project, user=target, assigned_by=admin
+    )
+    client.force_login(admin)
+    remove_url = reverse(
+        "console:delegated_assignment_remove",
+        args=["project_administrator", assignment.pk],
+    )
+
+    assert client.post(remove_url).status_code == 302
+    assert client.post(remove_url).status_code == 404
+
+    page = client.get(reverse("console:organization_members"))
+    target_row = next(
+        membership for membership in page.context["memberships"] if membership.user_id == target.pk
+    )
+    assert target_row.delegated_counts == {"projects": 0, "scenarios": 0, "document_sets": 0}
 
 
 def test_object_details_show_exact_assignments_without_foreign_members(client: Client) -> None:

@@ -100,6 +100,7 @@ from apps.identity.models import (
     Consumer,
     ConsumerBinding,
     ConsumerStatus,
+    DelegatedAssignmentStatus,
     DocumentSetManagerAssignment,
     ProjectAdministratorAssignment,
     ScenarioEditorAssignment,
@@ -814,18 +815,29 @@ def organization_members(request: HttpRequest) -> HttpResponse:
         .order_by("user__username", "pk")[:201]
     )
     visible_memberships = memberships[:200]
+    # Revoked rows are retained for lineage but carry no authority, so the operator view and its
+    # delegation counts must show active assignments only.
     project_assignments = list(
-        ProjectAdministratorAssignment.objects.filter(organization=organization)
+        ProjectAdministratorAssignment.objects.filter(
+            organization=organization,
+            status=DelegatedAssignmentStatus.ACTIVE,
+        )
         .select_related("user", "project")
         .order_by("user__username", "project__name", "pk")[:201]
     )
     scenario_assignments = list(
-        ScenarioEditorAssignment.objects.filter(organization=organization)
+        ScenarioEditorAssignment.objects.filter(
+            organization=organization,
+            status=DelegatedAssignmentStatus.ACTIVE,
+        )
         .select_related("user", "scenario__project")
         .order_by("user__username", "scenario__name", "pk")[:201]
     )
     document_set_assignments = list(
-        DocumentSetManagerAssignment.objects.filter(organization=organization)
+        DocumentSetManagerAssignment.objects.filter(
+            organization=organization,
+            status=DelegatedAssignmentStatus.ACTIVE,
+        )
         .select_related("user", "document_set")
         .order_by("user__username", "document_set__name", "pk")[:201]
     )
@@ -994,7 +1006,11 @@ def delegated_assignment_remove(
     if model is None:
         raise Http404
     assignment = (
-        model.objects.filter(pk=assignment_id, organization=organization)
+        model.objects.filter(
+            pk=assignment_id,
+            organization=organization,
+            status=DelegatedAssignmentStatus.ACTIVE,
+        )
         .select_related("user")
         .first()
     )
@@ -1084,9 +1100,11 @@ def project_detail(
             "can_create_scenario": project.organization.status == OrganizationStatus.ACTIVE
             and can_author_scenarios(request.user, project.organization_id),
             "create_scenario_reason": _CREATE_SCENARIO_REASON,
-            "administrator_assignments": project.administrator_assignments.select_related(
-                "user"
-            ).order_by("user__username", "user_id"),
+            "administrator_assignments": project.administrator_assignments.filter(
+                status=DelegatedAssignmentStatus.ACTIVE
+            )
+            .select_related("user")
+            .order_by("user__username", "user_id"),
             "can_manage_access": can_admin_org(request.user, project.organization_id),
         },
     )
@@ -1326,9 +1344,11 @@ def scenario_detail(
             .order_by("name", "logical_id"),
             "can_write": can_author_scenarios(request.user, organization_id),
             "can_compile_release": can_manage_scenario_releases(request.user, organization_id),
-            "editor_assignments": scenario.editor_assignments.select_related("user").order_by(
-                "user__username", "user_id"
-            ),
+            "editor_assignments": scenario.editor_assignments.filter(
+                status=DelegatedAssignmentStatus.ACTIVE
+            )
+            .select_related("user")
+            .order_by("user__username", "user_id"),
             "can_manage_access": can_admin_org(request.user, organization_id),
             # Role-honest affordances (Scope D): reasons shown on disabled authoring controls.
             "author_reason": _AUTHOR_REASON,
@@ -3047,9 +3067,11 @@ def document_set_detail(
             ).order_by("name", "subject"),
             "can_write": can_write,
             "can_promote_index": can_promote_index,
-            "manager_assignments": document_set.manager_assignments.select_related("user").order_by(
-                "user__username", "user_id"
-            ),
+            "manager_assignments": document_set.manager_assignments.filter(
+                status=DelegatedAssignmentStatus.ACTIVE
+            )
+            .select_related("user")
+            .order_by("user__username", "user_id"),
             "can_manage_access": can_admin_org(request.user, document_set.organization_id),
             "max_batch_files": int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20)),
         },

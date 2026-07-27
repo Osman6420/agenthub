@@ -63,6 +63,30 @@ class GlobalAdministrator(TimeStampedModel):
         return f"global-administrator:{self.user_id}"
 
 
+class DelegatedAssignmentStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    REVOKED = "revoked", "Revoked"
+
+
+def _revocation_constraint(name: str) -> models.CheckConstraint:
+    """A revoked assignment must record who withdrew it and when; an active one must not."""
+    return models.CheckConstraint(
+        condition=(
+            models.Q(
+                status=DelegatedAssignmentStatus.ACTIVE,
+                revoked_at__isnull=True,
+                revoked_by__isnull=True,
+            )
+            | models.Q(
+                status=DelegatedAssignmentStatus.REVOKED,
+                revoked_at__isnull=False,
+                revoked_by__isnull=False,
+            )
+        ),
+        name=name,
+    )
+
+
 class ProjectAdministratorAssignment(TimeStampedModel):
     """Delegates administration of one project to one organization member."""
 
@@ -86,13 +110,27 @@ class ProjectAdministratorAssignment(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="created_project_administrator_assignments",
     )
+    status = models.CharField(
+        max_length=16,
+        choices=DelegatedAssignmentStatus.choices,
+        default=DelegatedAssignmentStatus.ACTIVE,
+    )
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="revoked_project_administrator_assignments",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["project", "user"],
                 name="uniq_project_administrator_assignment",
-            )
+            ),
+            _revocation_constraint("project_administrator_assignment_revocation_complete"),
         ]
         ordering = ["organization_id", "project_id", "user_id"]
 
@@ -131,13 +169,27 @@ class ScenarioEditorAssignment(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="created_scenario_editor_assignments",
     )
+    status = models.CharField(
+        max_length=16,
+        choices=DelegatedAssignmentStatus.choices,
+        default=DelegatedAssignmentStatus.ACTIVE,
+    )
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="revoked_scenario_editor_assignments",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["scenario", "user"],
                 name="uniq_scenario_editor_assignment",
-            )
+            ),
+            _revocation_constraint("scenario_editor_assignment_revocation_complete"),
         ]
         ordering = ["organization_id", "scenario_id", "user_id"]
 
@@ -176,13 +228,27 @@ class DocumentSetManagerAssignment(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="created_document_set_manager_assignments",
     )
+    status = models.CharField(
+        max_length=16,
+        choices=DelegatedAssignmentStatus.choices,
+        default=DelegatedAssignmentStatus.ACTIVE,
+    )
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="revoked_document_set_manager_assignments",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["document_set", "user"],
                 name="uniq_document_set_manager_assignment",
-            )
+            ),
+            _revocation_constraint("document_set_manager_assignment_revocation_complete"),
         ]
         ordering = ["organization_id", "document_set_id", "user_id"]
 

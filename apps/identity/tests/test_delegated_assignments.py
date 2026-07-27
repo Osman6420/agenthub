@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.contrib.auth.base_user import AbstractBaseUser
 from django.core.exceptions import ValidationError
 
 from apps.audit.models import AuditEvent
@@ -17,8 +18,10 @@ from apps.identity.assignment_services import (
 )
 from apps.identity.authorization import AuthoritySource, Capability, authorize
 from apps.identity.models import (
+    DelegatedAssignmentStatus,
     DocumentSetManagerAssignment,
     ProjectAdministratorAssignment,
+    ScenarioEditorAssignment,
 )
 from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -30,11 +33,11 @@ pytestmark = pytest.mark.django_db
 class AssignmentFixture:
     organization: Organization
     foreign_organization: Organization
-    administrator: object
-    project_admin: object
-    editor: object
-    document_manager: object
-    outsider: object
+    administrator: AbstractBaseUser
+    project_admin: AbstractBaseUser
+    editor: AbstractBaseUser
+    document_manager: AbstractBaseUser
+    outsider: AbstractBaseUser
     project: AIProject
     other_project: AIProject
     scenario: Scenario
@@ -280,11 +283,151 @@ def test_project_admin_removes_scenario_editor_but_audit_failure_restores_row(
             assignment=editor_assignment,
             actor=fixture.project_admin,
         )
-    assert type(editor_assignment).objects.filter(pk=editor_assignment.pk).exists()
+    editor_assignment.refresh_from_db()
+    assert editor_assignment.status == DelegatedAssignmentStatus.ACTIVE
+    assert editor_assignment.revoked_by_id is None
+    assert editor_assignment.revoked_at is None
 
     monkeypatch.undo()
     remove_delegated_assignment(
         assignment=editor_assignment,
         actor=fixture.project_admin,
     )
-    assert not type(editor_assignment).objects.filter(pk=editor_assignment.pk).exists()
+    editor_assignment.refresh_from_db()
+    assert editor_assignment.status == DelegatedAssignmentStatus.REVOKED
+    assert editor_assignment.revoked_by_id == fixture.project_admin.pk
+    assert editor_assignment.revoked_at is not None
+
+
+def test_revoked_assignment_row_survives_but_grants_no_capability(
+    assignment_fixture: AssignmentFixture,
+) -> None:
+    fixture = assignment_fixture
+    assignment = assign_scenario_editor(
+        scenario=fixture.scenario,
+        target_user=fixture.editor,
+        actor=fixture.administrator,
+    )
+    assert authorize(
+        user=fixture.editor,
+        capability=Capability.SCENARIO_EDIT,
+        scenario=fixture.scenario,
+    ).allowed
+
+    remove_delegated_assignment(assignment=assignment, actor=fixture.administrator)
+
+    assert ScenarioEditorAssignment.objects.filter(pk=assignment.pk).exists()
+    denied = authorize(
+        user=fixture.editor,
+        capability=Capability.SCENARIO_EDIT,
+        scenario=fixture.scenario,
+    )
+    assert not denied.allowed
+    assert denied.source == AuthoritySource.NONE
+    assert denied.reason == "CAPABILITY_NOT_GRANTED"
+
+
+def test_removing_an_already_revoked_assignment_is_denied(
+    assignment_fixture: AssignmentFixture,
+) -> None:
+    fixture = assignment_fixture
+    assignment = assign_scenario_editor(
+        scenario=fixture.scenario,
+        target_user=fixture.editor,
+        actor=fixture.administrator,
+    )
+    remove_delegated_assignment(assignment=assignment, actor=fixture.administrator)
+
+    with pytest.raises(AssignmentError) as exc:
+        remove_delegated_assignment(assignment=assignment, actor=fixture.administrator)
+    assert exc.value.code == "ASSIGNMENT_NOT_FOUND"
+    assert AuditEvent.objects.filter(
+        action="delegated_assignment.scenario_editor.delete",
+        outcome="deny",
+        reason="ASSIGNMENT_NOT_FOUND",
+    ).exists()
+
+
+def test_authority_stays_revocable_after_the_target_leaves_the_organization(
+    assignment_fixture: AssignmentFixture,
+) -> None:
+    fixture = assignment_fixture
+    assignment = assign_scenario_editor(
+        scenario=fixture.scenario,
+        target_user=fixture.editor,
+        actor=fixture.administrator,
+    )
+    OrganizationMembership.objects.filter(
+        organization=fixture.organization,
+        user_id=fixture.editor.pk,
+    ).delete()
+
+    remove_delegated_assignment(assignment=assignment, actor=fixture.administrator)
+
+    assignment.refresh_from_db()
+    assert assignment.status == DelegatedAssignmentStatus.REVOKED
+    assert assignment.revoked_by_id == fixture.administrator.pk
+
+
+def test_reinstating_a_revoked_assignment_reuses_the_row_and_reproves_eligibility(
+    assignment_fixture: AssignmentFixture,
+) -> None:
+    fixture = assignment_fixture
+    original = assign_scenario_editor(
+        scenario=fixture.scenario,
+        target_user=fixture.editor,
+        actor=fixture.administrator,
+    )
+    remove_delegated_assignment(assignment=original, actor=fixture.administrator)
+
+    reinstated = assign_scenario_editor(
+        scenario=fixture.scenario,
+        target_user=fixture.editor,
+        actor=fixture.administrator,
+    )
+
+    assert reinstated.pk == original.pk
+    assert reinstated.status == DelegatedAssignmentStatus.ACTIVE
+    assert reinstated.revoked_by_id is None
+    assert reinstated.revoked_at is None
+    assert ScenarioEditorAssignment.objects.count() == 1
+    assert authorize(
+        user=fixture.editor,
+        capability=Capability.SCENARIO_EDIT,
+        scenario=fixture.scenario,
+    ).allowed
+
+    # A second grant while active must still be rejected, not silently reinstated again.
+    with pytest.raises(AssignmentError) as exc:
+        assign_scenario_editor(
+            scenario=fixture.scenario,
+            target_user=fixture.editor,
+            actor=fixture.administrator,
+        )
+    assert exc.value.code == "ASSIGNMENT_ALREADY_EXISTS"
+
+
+def test_reinstatement_is_refused_after_the_target_leaves_the_organization(
+    assignment_fixture: AssignmentFixture,
+) -> None:
+    fixture = assignment_fixture
+    assignment = assign_scenario_editor(
+        scenario=fixture.scenario,
+        target_user=fixture.editor,
+        actor=fixture.administrator,
+    )
+    remove_delegated_assignment(assignment=assignment, actor=fixture.administrator)
+    OrganizationMembership.objects.filter(
+        organization=fixture.organization,
+        user_id=fixture.editor.pk,
+    ).delete()
+
+    with pytest.raises(AssignmentError) as exc:
+        assign_scenario_editor(
+            scenario=fixture.scenario,
+            target_user=fixture.editor,
+            actor=fixture.administrator,
+        )
+    assert exc.value.code == "ELIGIBLE_ORGANIZATION_MEMBER_REQUIRED"
+    assignment.refresh_from_db()
+    assert assignment.status == DelegatedAssignmentStatus.REVOKED
