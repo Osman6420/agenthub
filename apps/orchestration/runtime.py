@@ -18,12 +18,11 @@ from apps.orchestration.providers import (
     ModelProviderError,
     get_model_provider,
 )
+from apps.orchestration.rag_steps import DEFAULT_FALLBACK_ANSWER
 from apps.orchestration.resolver import ReleaseBundle, resolve_bundle
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.retrieval.providers import RetrievalProvider, get_retrieval_provider
 from apps.retrieval.types import RetrievedChunk
-
-_DEFAULT_FALLBACK = "Bu soru icin guvenilir bir yanit uretemedim; lutfen destek ekibine basvurun."
 
 
 class RuntimeReleaseError(RuntimeError):
@@ -60,7 +59,7 @@ def _fallback_output(bundle: ReleaseBundle) -> dict[str, Any]:
     fallback = bundle.policy.get("fallback", {}) if isinstance(bundle.policy, dict) else {}
     answer = fallback.get("answer") if isinstance(fallback, dict) else None
     return {
-        "answer": answer or _DEFAULT_FALLBACK,
+        "answer": answer or DEFAULT_FALLBACK_ANSWER,
         "sources": [],
         "fallback_used": True,
     }

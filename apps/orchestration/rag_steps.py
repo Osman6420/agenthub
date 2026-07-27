@@ -19,6 +19,53 @@ from apps.orchestration.resolver import resolve_bundle
 from apps.retrieval.providers import get_retrieval_provider
 from apps.retrieval.types import RetrievedChunk
 
+DEFAULT_FALLBACK_ANSWER = (
+    "Bu soru icin guvenilir bir yanit uretemedim; lutfen destek ekibine basvurun."
+)
+
+CITATION_FIELDS = ("source_id", "source_uri", "title", "score")
+
+
+def citations_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project retrieved chunks down to citation provenance.
+
+    Chunk text stays inside the run state and never reaches a caller: a citation carries where an
+    answer came from, not what the document said.
+    """
+    retrieval = state.get("retrieval") if isinstance(state, dict) else None
+    raw = retrieval.get("chunks") if isinstance(retrieval, dict) else None
+    return [
+        {field: item.get(field) for field in CITATION_FIELDS}
+        for item in (raw if isinstance(raw, list) else [])
+        if isinstance(item, dict)
+    ]
+
+
+def grounding_fallback_answer(*, release: Any, state: dict[str, Any]) -> str | None:
+    """Return the release fallback answer when the grounding gate refuses generation.
+
+    Mirrors ``run_rag``: when the pinned policy requires grounding and retrieval did not clear the
+    score floor, the model is never called and a server-controlled answer is returned instead.
+    """
+    bundle = resolve_bundle(release)
+    policy = bundle.policy if isinstance(bundle.policy, dict) else {}
+    grounding = policy.get("grounding")
+    if not isinstance(grounding, dict) or not grounding.get("required"):
+        return None
+    retrieval = state.get("retrieval") if isinstance(state, dict) else None
+    chunks = retrieval.get("chunks") if isinstance(retrieval, dict) else None
+    top_score = 0.0
+    if isinstance(retrieval, dict):
+        try:
+            top_score = float(retrieval.get("top_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            top_score = 0.0
+    if chunks and top_score >= float(grounding.get("min_top_score", 0.0)):
+        return None
+    fallback = policy.get("fallback")
+    answer = fallback.get("answer") if isinstance(fallback, dict) else None
+    return str(answer) if answer else DEFAULT_FALLBACK_ANSWER
+
 
 def chunk_to_dict(chunk: RetrievedChunk) -> dict[str, Any]:
     return {

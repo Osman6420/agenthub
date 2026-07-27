@@ -52,6 +52,8 @@ def test_respond_uses_authored_system_prompt(monkeypatch: pytest.MonkeyPatch) ->
         return SimpleNamespace(text="ok", input_tokens=1, output_tokens=1)
 
     monkeypatch.setattr(rag_steps, "generate_for_release", fake_generate)
+    # The grounding gate reads the pinned policy before generating, so the bundle must resolve.
+    monkeypatch.setattr(rag_steps, "resolve_bundle", lambda release: SimpleNamespace(policy={}))
     config = {"system_prompt": "You are a helpful returns agent."}
     runtime._respond("what is the return policy", {"retrieval": {"chunks": []}}, config, object())
     # The authored persona is the prompt; the objective drove retrieval, not the system message.
@@ -68,5 +70,6 @@ def test_respond_falls_back_to_objective_without_system_prompt(
         return SimpleNamespace(text="ok", input_tokens=1, output_tokens=1)
 
     monkeypatch.setattr(rag_steps, "generate_for_release", fake_generate)
+    monkeypatch.setattr(rag_steps, "resolve_bundle", lambda release: SimpleNamespace(policy={}))
     runtime._respond("the objective", {}, {"system_prompt": ""}, object())
     assert captured["prompt"] == "the objective"

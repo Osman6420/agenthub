@@ -804,13 +804,20 @@ def _respond(
     # Generate over the governed model provider using the retrieved context (P5). The prompt is the
     # authored, release-pinned agent system prompt when present (P6), else the user objective; the
     # objective still drives retrieval. The system prompt is input, never authorization.
-    from apps.orchestration.rag_steps import chunks_from_state, generate_for_release
+    from apps.orchestration.rag_steps import (
+        chunks_from_state,
+        citations_from_state,
+        generate_for_release,
+        grounding_fallback_answer,
+    )
 
+    fallback = grounding_fallback_answer(release=release, state=state)
+    if fallback is not None:
+        return {"answer": fallback, "sources": []}, 0, 0
     context = chunks_from_state(state)
     prompt = config.get("system_prompt") or objective or ""
     response = generate_for_release(release=release, context=context, prompt=prompt)
-    sources = state.get("retrieval", {}).get("chunks", []) if isinstance(state, dict) else []
-    output = {"answer": response.text, "sources": sources if isinstance(sources, list) else []}
+    output = {"answer": response.text, "sources": citations_from_state(state)}
     return output, response.input_tokens, response.output_tokens
 
 

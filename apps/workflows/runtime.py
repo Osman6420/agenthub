@@ -651,9 +651,18 @@ def _execute_eligible_node(
         }
     if node_type == "generate":
         from apps.orchestration.providers import ModelProviderError
-        from apps.orchestration.rag_steps import chunks_from_state, generate_for_release
+        from apps.orchestration.rag_steps import (
+            chunks_from_state,
+            citations_from_state,
+            generate_for_release,
+            grounding_fallback_answer,
+        )
 
-        context = chunks_from_state(input_env if input_env is not None else state)
+        source = input_env if input_env is not None else state
+        fallback = grounding_fallback_answer(release=release, state=source)
+        if fallback is not None:
+            return {"answer": fallback, "sources": []}
+        context = chunks_from_state(source)
         prompt, model_profile = _generate_bindings(config, release)
         try:
             response = generate_for_release(
@@ -661,12 +670,7 @@ def _execute_eligible_node(
             )
         except ModelProviderError as exc:
             raise WorkflowRuntimeError("WORKFLOW_GENERATION_FAILED") from exc
-        source = input_env if input_env is not None else state
-        retrieval = source.get("retrieval") if isinstance(source.get("retrieval"), dict) else {}
-        return {
-            "answer": response.text,
-            "sources": retrieval.get("chunks", []) if isinstance(retrieval, dict) else [],
-        }
+        return {"answer": response.text, "sources": citations_from_state(source)}
     if node_type == "custom":
         if config.get("execution_class", "managed") == "python":
             from apps.workflows.python_nodes import PythonNodeError, execute_configured_python_node
