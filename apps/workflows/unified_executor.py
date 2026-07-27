@@ -52,8 +52,10 @@ def _validated_graph(
     raw_nodes = graph.get("nodes")
     raw_edges = graph.get("edges")
     input_node = graph.get("input_node")
-    if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list) or not isinstance(
-        input_node, str
+    if (
+        not isinstance(raw_nodes, list)
+        or not isinstance(raw_edges, list)
+        or not isinstance(input_node, str)
     ):
         raise UnifiedExecutorError("RUN_EXECUTOR_GRAPH_INVALID")
     nodes: dict[str, dict[str, Any]] = {}

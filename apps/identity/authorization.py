@@ -113,9 +113,7 @@ def authorize(
         )
 
     target_organizations = [
-        target.organization
-        for target in (project, scenario, document_set)
-        if target is not None
+        target.organization for target in (project, scenario, document_set) if target is not None
     ]
     effective_organization = organization
     if effective_organization is None and target_organizations:
@@ -173,11 +171,14 @@ def authorize(
             )
 
     effective_project = project or (scenario.project if scenario is not None else None)
-    if effective_project is not None and ProjectAdministratorAssignment.objects.filter(
-        organization_id=effective_organization.pk,
-        project_id=effective_project.pk,
-        user_id=user.pk,
-    ).exists():
+    if (
+        effective_project is not None
+        and ProjectAdministratorAssignment.objects.filter(
+            organization_id=effective_organization.pk,
+            project_id=effective_project.pk,
+            user_id=user.pk,
+        ).exists()
+    ):
         if capability in {
             Capability.PROJECT_MANAGE,
             Capability.SCENARIO_EDIT,
@@ -190,11 +191,14 @@ def authorize(
                 "PROJECT_ADMINISTRATOR",
             )
 
-    if scenario is not None and ScenarioEditorAssignment.objects.filter(
-        organization_id=effective_organization.pk,
-        scenario_id=scenario.pk,
-        user_id=user.pk,
-    ).exists():
+    if (
+        scenario is not None
+        and ScenarioEditorAssignment.objects.filter(
+            organization_id=effective_organization.pk,
+            scenario_id=scenario.pk,
+            user_id=user.pk,
+        ).exists()
+    ):
         if capability in {
             Capability.SCENARIO_EDIT,
             Capability.SCENARIO_TEST,
@@ -202,11 +206,14 @@ def authorize(
         }:
             return AuthorizationDecision(True, AuthoritySource.SCENARIO_EDITOR, "SCENARIO_EDITOR")
 
-    if document_set is not None and DocumentSetManagerAssignment.objects.filter(
-        organization_id=effective_organization.pk,
-        document_set_id=document_set.pk,
-        user_id=user.pk,
-    ).exists():
+    if (
+        document_set is not None
+        and DocumentSetManagerAssignment.objects.filter(
+            organization_id=effective_organization.pk,
+            document_set_id=document_set.pk,
+            user_id=user.pk,
+        ).exists()
+    ):
         if capability in {
             Capability.DOCUMENT_SET_METADATA_READ,
             Capability.DOCUMENT_SET_RETRIEVE_GRANT,

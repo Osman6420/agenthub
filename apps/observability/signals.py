@@ -114,9 +114,7 @@ def release_audit_saved(sender: Any, instance: AuditEvent, created: bool, **kwar
 
 
 @receiver(post_save, sender=AuditEvent, dispatch_uid="observability.superadmin_event")
-def superadmin_audit_saved(
-    sender: Any, instance: AuditEvent, created: bool, **kwargs: Any
-) -> None:
+def superadmin_audit_saved(sender: Any, instance: AuditEvent, created: bool, **kwargs: Any) -> None:
     if not created or not instance.action.startswith("superadmin."):
         return
     kind = "login" if instance.action == "superadmin.login" else "action"

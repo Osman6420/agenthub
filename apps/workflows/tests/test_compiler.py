@@ -142,9 +142,7 @@ def test_agent_loop_is_gated_and_reuses_the_closed_agent_policy_contract() -> No
     assert len(agent["config"]["policy_checksum"]) == 64
     assert compiled.graph["execution_mode_analysis"] == {
         "supported_execution_modes": ["background"],
-        "sync_blockers": [
-            {"code": "agent_loop_pause_policy_unproven", "node_ids": ["agent"]}
-        ],
+        "sync_blockers": [{"code": "agent_loop_pause_policy_unproven", "node_ids": ["agent"]}],
     }
 
     body["spec"]["nodes"][1]["config"]["endpoint"] = "https://attacker.example"

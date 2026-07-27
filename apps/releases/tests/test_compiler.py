@@ -252,7 +252,5 @@ def test_release_pins_agent_loop_execution_mode_analysis(scenario: Scenario) -> 
 
     assert release.manifest["execution_mode_analysis"] == {
         "supported_execution_modes": ["background"],
-        "sync_blockers": [
-            {"code": "agent_loop_pause_policy_unproven", "node_ids": ["agent"]}
-        ],
+        "sync_blockers": [{"code": "agent_loop_pause_policy_unproven", "node_ids": ["agent"]}],
     }

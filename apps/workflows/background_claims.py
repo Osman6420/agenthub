@@ -63,9 +63,7 @@ def parse_background_delivery(
         raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_HEADERS_INVALID")
     raw_organization_id = headers["organization_id"]
     raw_service_revision = headers["service_revision"]
-    if isinstance(raw_organization_id, bool) or not isinstance(
-        raw_organization_id, (int, str)
-    ):
+    if isinstance(raw_organization_id, bool) or not isinstance(raw_organization_id, (int, str)):
         raise BackgroundClaimError("RUN_BACKGROUND_DELIVERY_IDENTIFIER_INVALID")
     if (
         not isinstance(raw_service_revision, str)
@@ -106,9 +104,7 @@ def claim_background_delivery(
     )
 
 
-def _validate_claim_request(
-    *, claim_token: uuid.UUID, lease_seconds: int
-) -> None:
+def _validate_claim_request(*, claim_token: uuid.UUID, lease_seconds: int) -> None:
     if not isinstance(claim_token, uuid.UUID):
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_TOKEN_INVALID")
     if (
@@ -157,9 +153,7 @@ def claim_background_run(
         raise BackgroundClaimError("RUN_BACKGROUND_MODE_REQUIRED")
     _validate_run_pins(run)
     if run.status in WORKFLOW_TERMINAL_STATUSES:
-        return BackgroundClaimResult(
-            "terminal", str(run.status), run.checkpoint_version, None
-        )
+        return BackgroundClaimResult("terminal", str(run.status), run.checkpoint_version, None)
     if run.cancellation_state == RunCancellationState.REQUESTED:
         return BackgroundClaimResult(
             "cancellation_requested", str(run.status), run.checkpoint_version, None
@@ -171,23 +165,14 @@ def claim_background_run(
     from apps.agents.services import runtime_suspended
 
     if runtime_suspended(organization_id):
-        return BackgroundClaimResult(
-            "suspended", str(run.status), run.checkpoint_version, None
-        )
+        return BackgroundClaimResult("suspended", str(run.status), run.checkpoint_version, None)
 
     if run.background_claim_token == claim_token:
         if run.background_claim_checkpoint_version != run.checkpoint_version:
             raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_STALE")
-        if (
-            run.background_claim_expires_at is None
-            or run.background_claim_expires_at <= claimed_at
-        ):
+        if run.background_claim_expires_at is None or run.background_claim_expires_at <= claimed_at:
             return BackgroundClaimResult(
-                (
-                    "expired"
-                    if run.status == WorkflowRunStatus.QUEUED
-                    else "recovery_required"
-                ),
+                ("expired" if run.status == WorkflowRunStatus.QUEUED else "recovery_required"),
                 str(run.status),
                 run.checkpoint_version,
                 run.background_claim_expires_at,
@@ -280,10 +265,7 @@ def renew_background_claim(
         or run.checkpoint_version != expected_checkpoint_version
     ):
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_STALE")
-    if (
-        run.background_claim_expires_at is None
-        or run.background_claim_expires_at <= renewed_at
-    ):
+    if run.background_claim_expires_at is None or run.background_claim_expires_at <= renewed_at:
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_EXPIRED")
     if run.status in WORKFLOW_TERMINAL_STATUSES:
         raise BackgroundClaimError("RUN_TERMINAL")
@@ -310,9 +292,7 @@ def resolve_expired_background_claim(
 ) -> str:
     """Converge an expired running claim without assigning a replacement worker."""
 
-    if not isinstance(claim_token, uuid.UUID) or not isinstance(
-        transition_token, uuid.UUID
-    ):
+    if not isinstance(claim_token, uuid.UUID) or not isinstance(transition_token, uuid.UUID):
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_TOKEN_INVALID")
     resolved_at = now or timezone.now()
     set_tenant_context(organization_id)
@@ -324,10 +304,7 @@ def resolve_expired_background_claim(
         raise BackgroundClaimError("RUN_BACKGROUND_MODE_REQUIRED")
     if run.background_claim_token != claim_token:
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_STALE")
-    if (
-        run.background_claim_expires_at is None
-        or run.background_claim_expires_at > resolved_at
-    ):
+    if run.background_claim_expires_at is None or run.background_claim_expires_at > resolved_at:
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_NOT_EXPIRED")
     if run.status == WorkflowRunStatus.QUEUED:
         run.background_claim_token = None

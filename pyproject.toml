@@ -42,7 +42,9 @@ dependencies = [
 dev = [
     "pytest>=8.2",
     "pytest-django>=4.9",
-    "ruff>=0.6",
+    # Pinned: the formatter's line-joining behavior changes between minor releases, so an
+    # unpinned range makes `ruff format --check` non-deterministic across CI and developer hosts.
+    "ruff==0.15.21",
     "mypy>=1.11",
     "django-stubs[compatible-mypy]>=5.1",
     "pre-commit>=3.8",

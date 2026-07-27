@@ -65,9 +65,7 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
         reverse("console:delegated_assignment_add"),
         {
             "responsibility": "project_administrator",
-            "member": OrganizationMembership.objects.get(
-                organization=organization, user=target
-            ).pk,
+            "member": OrganizationMembership.objects.get(organization=organization, user=target).pk,
             "project": project.pk,
         },
     )
@@ -82,9 +80,7 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
         reverse("console:delegated_assignment_add"),
         {
             "responsibility": "scenario_editor",
-            "member": OrganizationMembership.objects.get(
-                organization=organization, user=target
-            ).pk,
+            "member": OrganizationMembership.objects.get(organization=organization, user=target).pk,
             "scenario": scenario.pk,
         },
     )
@@ -92,9 +88,7 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
         reverse("console:delegated_assignment_add"),
         {
             "responsibility": "document_set_manager",
-            "member": OrganizationMembership.objects.get(
-                organization=organization, user=target
-            ).pk,
+            "member": OrganizationMembership.objects.get(organization=organization, user=target).pk,
             "document_set": document_set.pk,
         },
     )
@@ -111,9 +105,7 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
         reverse("console:delegated_assignment_add"),
         {
             "responsibility": "project_administrator",
-            "member": OrganizationMembership.objects.get(
-                organization=organization, user=target
-            ).pk,
+            "member": OrganizationMembership.objects.get(organization=organization, user=target).pk,
             "project": foreign_project.pk,
         },
     )
@@ -218,9 +210,7 @@ def test_object_details_show_exact_assignments_without_foreign_members(client: C
 
 
 def test_superadmin_console_use_is_audited_before_view(client: Client) -> None:
-    superadmin = User.objects.create_superuser(
-        username="recovery-admin", password=None
-    )
+    superadmin = User.objects.create_superuser(username="recovery-admin", password=None)
     client.force_login(superadmin)
 
     response = client.get(reverse("console:dashboard"))
@@ -237,9 +227,7 @@ def test_superadmin_console_use_is_audited_before_view(client: Client) -> None:
 
 
 def test_superadmin_console_request_fails_closed_when_audit_write_fails(client: Client) -> None:
-    superadmin = User.objects.create_superuser(
-        username="recovery-audit-failure", password=None
-    )
+    superadmin = User.objects.create_superuser(username="recovery-audit-failure", password=None)
     client.force_login(superadmin)
 
     with patch(

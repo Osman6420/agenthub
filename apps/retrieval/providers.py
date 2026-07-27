@@ -168,11 +168,7 @@ class PgvectorRetrievalProvider:
         """
         from django.db import connection
 
-        if (
-            connection.vendor != "postgresql"
-            or not document_set_version_ids
-            or consumer_id is None
-        ):
+        if connection.vendor != "postgresql" or not document_set_version_ids or consumer_id is None:
             return []
         from apps.documents.models import (
             DocumentSetGrant,

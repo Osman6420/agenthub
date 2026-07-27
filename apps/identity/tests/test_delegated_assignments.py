@@ -159,10 +159,13 @@ def test_organization_admin_assigns_each_scope_and_capabilities_are_exact(
     )
     assert not forged_lineage.allowed
     assert forged_lineage.reason == "TARGET_SCOPE_MISMATCH"
-    assert AuditEvent.objects.filter(
-        action__startswith="delegated_assignment.",
-        outcome="success",
-    ).count() == 3
+    assert (
+        AuditEvent.objects.filter(
+            action__startswith="delegated_assignment.",
+            outcome="success",
+        ).count()
+        == 3
+    )
 
 
 def test_project_admin_delegates_editor_only_inside_assigned_project(

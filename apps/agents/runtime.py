@@ -39,7 +39,6 @@ from apps.agents.limits import (
     resolve_limits,
 )
 from apps.agents.models import AgentRunEvent, AgentRunStatus
-from apps.agents.policy import resolve_runtime_policy
 from apps.agents.planner import (
     AGENT_DECISION_SCHEMA_VERSION,
     DECISION_ESCALATE,
@@ -53,6 +52,7 @@ from apps.agents.planner import (
     ObservationSummary,
     get_configured_planner,
 )
+from apps.agents.policy import resolve_runtime_policy
 from apps.agents.services import (
     AgentRequestError,
     _assert_checkpoint_size,

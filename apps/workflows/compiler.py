@@ -160,9 +160,7 @@ def compile_workflow(
 
     nodes: dict[str, dict[str, Any]] = {}
     for raw in raw_nodes:
-        node = _validate_node(
-            raw, allowed_custom_nodes, composition_enabled, agent_loop_enabled
-        )
+        node = _validate_node(raw, allowed_custom_nodes, composition_enabled, agent_loop_enabled)
         node_id = node["id"]
         if node_id in nodes:
             raise WorkflowCompileError("node ids must be unique")
@@ -217,9 +215,7 @@ def _execution_mode_analysis(
         if code is not None:
             blocker_nodes.setdefault(code, []).append(node_id)
 
-    blockers = [
-        {"code": code, "node_ids": blocker_nodes[code]} for code in sorted(blocker_nodes)
-    ]
+    blockers = [{"code": code, "node_ids": blocker_nodes[code]} for code in sorted(blocker_nodes)]
     supported = ["background"]
     if not blockers:
         supported.append("sync")
@@ -383,9 +379,7 @@ def _validate_node(
             "policy_checksum": compiled_agent.checksum,
         }
         if input_mapping is None or output_mapping is None:
-            raise WorkflowCompileError(
-                "agent_loop node requires input_mapping and output_mapping"
-            )
+            raise WorkflowCompileError("agent_loop node requires input_mapping and output_mapping")
     elif node_type == "generate":
         # Optional per-node prompt/model binding (P5.2): names of manifest roles pinned into the
         # release. The runtime resolves them; a missing role falls back to the release defaults.

@@ -67,9 +67,7 @@ def request_scenario_document_set_access(
         if not normalized_purpose or len(normalized_purpose) > 500:
             raise ScenarioDocumentSetAccessError("INVALID_REQUEST_PURPOSE")
         with transaction.atomic():
-            organization = Organization.objects.select_for_update().get(
-                pk=scenario.organization_id
-            )
+            organization = Organization.objects.select_for_update().get(pk=scenario.organization_id)
             decision = authorize(
                 user=actor,
                 capability=Capability.SCENARIO_EDIT,

@@ -220,18 +220,14 @@ def test_can_manage_scenario_releases_uses_scoped_capability() -> None:
     OrganizationMembership.objects.create(
         organization=org, user=legacy_manager, role=Role.RELEASE_MANAGER
     )
-    OrganizationMembership.objects.create(
-        organization=org, user=project_admin, role=Role.AUDITOR
-    )
+    OrganizationMembership.objects.create(organization=org, user=project_admin, role=Role.AUDITOR)
     ProjectAdministratorAssignment.objects.create(
         organization=org,
         project=project,
         user=project_admin,
         assigned_by=org_admin,
     )
-    OrganizationMembership.objects.create(
-        organization=org, user=scenario_editor, role=Role.AUDITOR
-    )
+    OrganizationMembership.objects.create(organization=org, user=scenario_editor, role=Role.AUDITOR)
     ScenarioEditorAssignment.objects.create(
         organization=org,
         scenario=scenario,

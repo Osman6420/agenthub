@@ -61,13 +61,9 @@ def test_organization_administrator_is_tenant_bound_and_content_excluded() -> No
     user = _user("org-admin")
     own = Organization.objects.create(slug="own", name="Own")
     foreign = Organization.objects.create(slug="foreign", name="Foreign")
-    OrganizationMembership.objects.create(
-        organization=own, user=user, role=Role.ORGANIZATION_ADMIN
-    )
+    OrganizationMembership.objects.create(organization=own, user=user, role=Role.ORGANIZATION_ADMIN)
 
-    assert authorize(
-        user=user, capability=Capability.SCENARIO_RELEASE, organization=own
-    ).allowed
+    assert authorize(user=user, capability=Capability.SCENARIO_RELEASE, organization=own).allowed
     assert not authorize(
         user=user, capability=Capability.SCENARIO_RELEASE, organization=foreign
     ).allowed

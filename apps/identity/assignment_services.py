@@ -144,9 +144,7 @@ def assign_scenario_editor(
     resource_id = str(scenario.public_id)
     try:
         with transaction.atomic():
-            organization = Organization.objects.select_for_update().get(
-                pk=scenario.organization_id
-            )
+            organization = Organization.objects.select_for_update().get(pk=scenario.organization_id)
             organization_decision = authorize(
                 user=actor,
                 capability=Capability.ORGANIZATION_MANAGE,
@@ -341,9 +339,7 @@ def remove_delegated_assignment(
                 trace_id=trace_id,
             )
     except (AssignmentError, ObjectDoesNotExist) as exc:
-        reason = (
-            exc.code if isinstance(exc, AssignmentError) else "ASSIGNMENT_NOT_FOUND"
-        )
+        reason = exc.code if isinstance(exc, AssignmentError) else "ASSIGNMENT_NOT_FOUND"
         _audit(
             actor=actor,
             organization_id=organization_id,
