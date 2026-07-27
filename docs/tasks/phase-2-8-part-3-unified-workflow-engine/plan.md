@@ -348,10 +348,13 @@ not implementation choices left to the engineer.
 
 ## Status
 
-**In progress — Gate 1 inventory/contract.** The owner approved starting Part 3 and explicitly waived
-legacy workflow/run data compatibility on 2026-07-24. ADR-0014 and additive compiler-contract work
-may proceed. Public API/authorization changes and the exact destructive migration/reset remain
-separate approval gates under repository policy.
+**In progress — Gate 2 unified persistence/runtime.** The owner approved starting Part 3 and
+explicitly waived legacy workflow/run data compatibility on 2026-07-24. ADR-0014, additive
+compiler/runtime persistence and internal delivery work may proceed. The current reviewable slice is
+an additive Run-native one-shot durable-wait/checkpoint boundary with tenant-scoped persistence,
+locked create/resume/expiry semantics and no public producer or executor-node enablement. Public
+API/authorization changes and the exact destructive migration/reset remain separate approval gates
+under repository policy.
 
 ## Completion criteria
 

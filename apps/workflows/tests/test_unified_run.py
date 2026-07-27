@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import timedelta
 from threading import Barrier, Thread
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, close_old_connections, connection
 from django.test import override_settings
@@ -12,6 +13,8 @@ from django.utils import timezone
 
 from apps.agents.services import set_runtime_suspension
 from apps.audit.models import AuditEvent
+from apps.tenancy.models import Organization
+from apps.tenancy.rls import inspect_rls_readiness, protected_tenant_tables
 from apps.workflows.background_claims import (
     BackgroundClaimError,
     claim_background_delivery,
@@ -25,15 +28,24 @@ from apps.workflows.models import (
     RunEvent,
     RunEventType,
     RunExecutionMode,
+    RunWait,
+    RunWaitStatus,
     WorkflowVersion,
 )
 from apps.workflows.run_events import append_run_event, validate_run_event_payload
+from apps.workflows.run_waits import (
+    RunWaitCreation,
+    RunWaitError,
+    resume_run_wait,
+    suspend_run_for_wait,
+)
 from apps.workflows.tasks import (
     dispatch_unified_background_run,
     execute_unified_background_run,
 )
 from apps.workflows.transitions import (
     RunTransitionError,
+    RunTransitionResult,
     renew_sync_lease,
     request_run_cancellation,
     resolve_expired_sync_lease,
@@ -46,6 +58,40 @@ from apps.workflows.unified_executor import (
     execute_claimed_bounded_run,
     service_revision,
 )
+
+
+def _suspended(creation: RunWaitCreation) -> tuple[UUID, UUID]:
+    """Narrow a successful suspension to its resume authority."""
+    assert creation.outcome == "suspended"
+    assert creation.wait_id is not None
+    assert creation.resume_token is not None
+    return creation.wait_id, creation.resume_token
+
+
+def _claimed_background_run(
+    workflow_fixture,
+    *,
+    key: str,
+) -> tuple[Run, UUID, RunTransitionResult]:
+    run = _queued_background_run(workflow_fixture, key=key)
+    claim_token = uuid4()
+    claim = claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=claim_token,
+        lease_seconds=30,
+    )
+    started = transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=claim.checkpoint_version,
+        expected_status="queued",
+        target_status="running",
+        background_claim_token=claim_token,
+    )
+    run.refresh_from_db()
+    return run, claim_token, started
 
 
 def _run(
@@ -219,9 +265,7 @@ def test_background_delivery_is_identifier_only_and_tenant_scoped(workflow_fixtu
     )
     assert claimed.outcome == "claimed"
 
-    with pytest.raises(
-        BackgroundClaimError, match="RUN_BACKGROUND_DELIVERY_BODY_INVALID"
-    ):
+    with pytest.raises(BackgroundClaimError, match="RUN_BACKGROUND_DELIVERY_BODY_INVALID"):
         claim_background_delivery(
             body={
                 "run_id": str(run.id),
@@ -486,10 +530,13 @@ def test_delivery_redelivery_converges_expired_queued_and_running_claims(
         )
         == "completed"
     )
-    assert AuditEvent.objects.filter(
-        action="workflow.run.background_claim_released",
-        resource_id=str(queued.id),
-    ).count() == 1
+    assert (
+        AuditEvent.objects.filter(
+            action="workflow.run.background_claim_released",
+            resource_id=str(queued.id),
+        ).count()
+        == 1
+    )
 
     running = _queued_background_run(workflow_fixture, key="celery-expired-running")
     running_token = uuid4()
@@ -758,9 +805,7 @@ def test_background_claim_observes_cancellation_and_deadline_before_work(
             reason_code="CLIENT_REQUESTED",
         )
     else:
-        Run.objects.filter(pk=run.id).update(
-            deadline_at=timezone.now() - timedelta(seconds=1)
-        )
+        Run.objects.filter(pk=run.id).update(deadline_at=timezone.now() - timedelta(seconds=1))
 
     claim = claim_background_run(
         organization_id=run.organization_id,
@@ -1149,13 +1194,302 @@ def test_concurrent_duplicate_transition_token_replays_one_event(workflow_fixtur
     assert run.events.count() == 1
 
 
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
+@pytest.mark.django_db
+def test_run_wait_suspends_and_resumes_once_without_legacy_wait_rows(workflow_fixture) -> None:
+    run, claim_token, started = _claimed_background_run(
+        workflow_fixture,
+        key="unified-wait-resume",
+    )
+    created = suspend_run_for_wait(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=claim_token,
+        expected_checkpoint_version=started.checkpoint_version,
+        node_id="approval",
+        kind="human",
+        checkpoint={"cursor": "approval", "decisions": {}},
+        deadline_at=timezone.now() + timedelta(minutes=1),
+        payload_schema={
+            "type": "object",
+            "properties": {"approved": {"type": "boolean"}},
+            "required": ["approved"],
+            "additionalProperties": False,
+        },
+        output_mapping=[{"from": "/payload/approved", "to": "/decisions/approved"}],
+        allowed_roles=["approver"],
+    )
+
+    run.refresh_from_db()
+    wait_id, resume_token = _suspended(created)
+    wait = RunWait.objects.get(pk=wait_id)
+    assert run.status == "waiting_human"
+    assert run.awaiting_reference == str(wait.id)
+    assert run.background_claim_token is None
+    assert wait.checkpoint_version_snapshot == run.checkpoint_version
+
+    resumed = resume_run_wait(
+        organization_id=run.organization_id,
+        resume_token=resume_token,
+        actor_id="operator:approver",
+        actor_roles={"approver"},
+        payload={"approved": True},
+    )
+    replayed = resume_run_wait(
+        organization_id=run.organization_id,
+        resume_token=resume_token,
+        actor_id="operator:approver",
+        actor_roles={"approver"},
+        payload={"approved": True},
+    )
+
+    run.refresh_from_db()
+    wait.refresh_from_db()
+    assert resumed.outcome == "committed"
+    assert replayed.outcome == "replayed"
+    assert replayed.checkpoint_version == resumed.checkpoint_version
+    assert run.status == "queued"
+    assert run.awaiting_kind == ""
+    assert run.awaiting_reference == ""
+    assert run.background_claim_token is None
+    assert run.checkpoint["decisions"] == {"approved": True}
+    assert wait.status == RunWaitStatus.RESUMED
+    assert wait.redacted_payload == {"approved": True}
+    assert wait.consumed_by == "operator:approver"
+    assert not hasattr(run, "workflowrun")
+    assert (
+        AuditEvent.objects.filter(
+            action="workflow.run_wait_resume",
+            outcome="success",
+            reason="RUN_WAIT_RESUMED",
+        ).count()
+        == 1
+    )
+    # One resume signal produces exactly one waiting and one resumed transition.
+    assert [event.event_type for event in run.events.order_by("sequence")][-2:] == [
+        RunEventType.WAITING,
+        RunEventType.QUEUED,
+    ]
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
+@pytest.mark.django_db
+def test_run_wait_denies_forgery_roles_payload_conflict_and_cross_tenant(
+    workflow_fixture,
+) -> None:
+    run, claim_token, started = _claimed_background_run(
+        workflow_fixture,
+        key="unified-wait-denials",
+    )
+    other_organization = Organization.objects.create(slug="other-wait-org", name="Other Wait Org")
+    created = suspend_run_for_wait(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=claim_token,
+        expected_checkpoint_version=started.checkpoint_version,
+        node_id="approval",
+        kind="approval",
+        checkpoint={"cursor": "approval"},
+        deadline_at=timezone.now() + timedelta(minutes=1),
+        payload_schema={
+            "type": "object",
+            "properties": {"approved": {"type": "boolean"}},
+            "required": ["approved"],
+            "additionalProperties": False,
+        },
+        allowed_roles=["approver"],
+    )
+    wait_id, resume_token = _suspended(created)
+    # Every denial reports the same code: a token holder learns nothing about why it failed.
+    denials: tuple[tuple[str, UUID, int, str, set[str]], ...] = (
+        ("RUN_WAIT_NOT_FOUND", uuid4(), run.organization_id, "operator:approver", {"approver"}),
+        (
+            "RUN_WAIT_NOT_FOUND",
+            resume_token,
+            other_organization.id,
+            "operator:approver",
+            {"approver"},
+        ),
+        (
+            "RUN_WAIT_NOT_FOUND",
+            resume_token,
+            run.organization_id,
+            "operator:viewer",
+            {"viewer"},
+        ),
+        (
+            "RUN_WAIT_NOT_FOUND",
+            resume_token,
+            run.organization_id,
+            "operator:approver",
+            set(),
+        ),
+        # Separation of duties: the run's own actor cannot decide its approval.
+        (
+            "RUN_WAIT_NOT_FOUND",
+            resume_token,
+            run.organization_id,
+            "test-actor",
+            {"approver"},
+        ),
+    )
+    for code, token, organization_id, actor_id, roles in denials:
+        with pytest.raises(RunWaitError, match=code):
+            resume_run_wait(
+                organization_id=organization_id,
+                resume_token=token,
+                actor_id=actor_id,
+                actor_roles=roles,
+                payload={"approved": True},
+            )
+    with pytest.raises(RunWaitError, match="RUN_WAIT_PAYLOAD_INVALID"):
+        resume_run_wait(
+            organization_id=run.organization_id,
+            resume_token=resume_token,
+            actor_id="operator:approver",
+            actor_roles={"approver"},
+            payload={"approved": "yes"},
+        )
+
+    run.refresh_from_db()
+    wait = RunWait.objects.get(pk=wait_id)
+    # Every denial is audited and none of them consumed the one-shot authority.
+    assert wait.status == RunWaitStatus.PENDING
+    assert run.status == "waiting_approval"
+    assert AuditEvent.objects.filter(action="workflow.run_wait_resume", outcome="deny").count() == 6
+
+    resume_run_wait(
+        organization_id=run.organization_id,
+        resume_token=resume_token,
+        actor_id="operator:approver",
+        actor_roles={"approver"},
+        payload={"approved": True},
+    )
+    with pytest.raises(RunWaitError, match="RUN_WAIT_REPLAY_CONFLICT"):
+        resume_run_wait(
+            organization_id=run.organization_id,
+            resume_token=resume_token,
+            actor_id="operator:approver",
+            actor_roles={"approver"},
+            payload={"approved": False},
+        )
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
+@pytest.mark.django_db
+def test_expired_run_wait_closes_the_run_instead_of_leaving_it_waiting(
+    workflow_fixture,
+) -> None:
+    run, claim_token, started = _claimed_background_run(
+        workflow_fixture,
+        key="unified-wait-expired",
+    )
+    created = suspend_run_for_wait(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=claim_token,
+        expected_checkpoint_version=started.checkpoint_version,
+        node_id="event",
+        kind="event",
+        checkpoint={"cursor": "event"},
+        deadline_at=timezone.now() + timedelta(minutes=1),
+    )
+    wait_id, resume_token = _suspended(created)
+    RunWait.objects.filter(pk=wait_id).update(deadline_at=timezone.now() - timedelta(seconds=1))
+
+    with pytest.raises(RunWaitError, match="RUN_WAIT_NOT_FOUND"):
+        resume_run_wait(
+            organization_id=run.organization_id,
+            resume_token=resume_token,
+            actor_id="consumer:signal",
+            payload={},
+        )
+
+    run.refresh_from_db()
+    assert RunWait.objects.get(pk=wait_id).status == RunWaitStatus.EXPIRED
+    assert run.status == "failed"
+    assert run.error_code == "RUN_WAIT_EXPIRED"
+    assert run.awaiting_reference == ""
+    assert AuditEvent.objects.filter(
+        action="workflow.run_wait_resume",
+        outcome="deny",
+        reason="RUN_WAIT_EXPIRED",
+    ).exists()
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
+@pytest.mark.django_db
+def test_run_wait_rejects_protected_output_mapping_and_reports_cancelled_run(
+    workflow_fixture,
+) -> None:
+    run, claim_token, started = _claimed_background_run(
+        workflow_fixture,
+        key="unified-wait-protected",
+    )
+    with pytest.raises(RunWaitError, match="RUN_WAIT_CONFIG_INVALID"):
+        suspend_run_for_wait(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            claim_token=claim_token,
+            expected_checkpoint_version=started.checkpoint_version,
+            node_id="approval",
+            kind="human",
+            checkpoint={"cursor": "approval"},
+            deadline_at=timezone.now() + timedelta(minutes=1),
+            output_mapping=[{"from": "/payload/role", "to": "/authorization/role"}],
+            allowed_roles=["approver"],
+        )
+
+    request_run_cancellation(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        reason_code="OPERATOR_REQUESTED",
+    )
+    created = suspend_run_for_wait(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=claim_token,
+        expected_checkpoint_version=started.checkpoint_version,
+        node_id="approval",
+        kind="human",
+        checkpoint={"cursor": "approval"},
+        deadline_at=timezone.now() + timedelta(minutes=1),
+        allowed_roles=["approver"],
+    )
+
+    run.refresh_from_db()
+    # Cancellation won the race: the committed terminal transition is reported, never rolled
+    # back, and no resume authority exists for a run that can no longer continue.
+    assert created.outcome == "converged"
+    assert created.wait_id is None
+    assert created.resume_token is None
+    assert run.status == "cancelled"
+    assert not RunWait.objects.filter(run=run).exists()
+
+
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="FORCE RLS requires PostgreSQL")
 @pytest.mark.django_db
 def test_unified_run_tables_force_rls_for_non_owner_role(workflow_fixture) -> None:
     run = _run(workflow_fixture)
     event = append_run_event(run_id=run.id, event_type=RunEventType.REQUESTED)
+    waiting_run, claim_token, started = _claimed_background_run(
+        workflow_fixture,
+        key="unified-wait-rls",
+    )
+    created = suspend_run_for_wait(
+        organization_id=waiting_run.organization_id,
+        run_id=waiting_run.id,
+        claim_token=claim_token,
+        expected_checkpoint_version=started.checkpoint_version,
+        node_id="approval",
+        kind="event",
+        checkpoint={"cursor": "event"},
+        deadline_at=timezone.now() + timedelta(minutes=1),
+    )
+    wait_id, _resume_token = _suspended(created)
     role = "rls_probe_unified_run"
-    tables = (Run._meta.db_table, RunEvent._meta.db_table)
+    tables = (Run._meta.db_table, RunEvent._meta.db_table, RunWait._meta.db_table)
+    rows = ((tables[0], run.id), (tables[1], event.id), (tables[2], wait_id))
 
     with connection.cursor() as cursor:
         cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [role])
@@ -1173,15 +1507,74 @@ def test_unified_run_tables_force_rls_for_non_owner_role(workflow_fixture) -> No
             [str(workflow_fixture.organization.id)],
         )
         cursor.execute(f"SET ROLE {role}")
-        for table, row_id in ((tables[0], run.id), (tables[1], event.id)):
+        for table, row_id in rows:
             cursor.execute(f'SELECT COUNT(*) FROM "{table}" WHERE id = %s', [row_id])  # noqa: S608
             assert cursor.fetchone()[0] == 1
         cursor.execute("RESET ROLE")
         cursor.execute("SELECT set_config('app.tenant_scope', %s, true)", ["99999999"])
         cursor.execute(f"SET ROLE {role}")
-        for table, row_id in ((tables[0], run.id), (tables[1], event.id)):
+        for table, row_id in rows:
             cursor.execute(f'SELECT COUNT(*) FROM "{table}" WHERE id = %s', [row_id])  # noqa: S608
             assert cursor.fetchone()[0] == 0
         cursor.execute("RESET ROLE")
         cursor.execute(f"DROP OWNED BY {role}")
         cursor.execute(f"DROP ROLE {role}")
+
+
+# The owner-approved application-role inventory for the unified Run plane. `Run` and `RunWait` carry
+# mutable state; `RunEvent` is append-only. None of them has an application delete path.
+UNIFIED_RUN_GRANTS = {
+    "workflows_run": ("SELECT", "INSERT", "UPDATE"),
+    "workflows_runevent": ("SELECT", "INSERT"),
+    "workflows_runwait": ("SELECT", "INSERT", "UPDATE"),
+}
+
+
+def test_unified_run_tables_are_protected_and_provisioned() -> None:
+    inventory = {table.table_name: table for table in protected_tenant_tables()}
+    sql = (settings.BASE_DIR / "deploy" / "postgres" / "provision-app-role.sql").read_text(
+        encoding="utf-8"
+    )
+
+    delete_grants = [
+        statement for statement in sql.split(";") if "GRANT" in statement and "DELETE" in statement
+    ]
+    for table_name in UNIFIED_RUN_GRANTS:
+        assert inventory[table_name].tenant_column == "organization_id"
+        assert table_name in sql
+        assert not any(table_name in statement for statement in delete_grants)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="role grants require PostgreSQL")
+def test_unified_run_grants_make_a_non_owner_role_rls_ready_without_delete() -> None:
+    role = f"unified_grant_{uuid4().hex[:12]}"
+    tables = tuple(
+        table for table in protected_tenant_tables() if table.table_name in UNIFIED_RUN_GRANTS
+    )
+    assert len(tables) == len(UNIFIED_RUN_GRANTS)
+
+    with connection.cursor() as cursor:
+        cursor.execute(f'CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN')  # noqa: S608
+        cursor.execute(  # noqa: S608
+            f'GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) TO "{role}"'
+        )
+        for table_name, privileges in UNIFIED_RUN_GRANTS.items():
+            cursor.execute(  # noqa: S608
+                f'GRANT {", ".join(privileges)} ON "{table_name}" TO "{role}"'
+            )
+    try:
+        report = inspect_rls_readiness(app_role=role, tables=tables)
+        assert report.ready is True
+        assert report.issues == ()
+
+        with connection.cursor() as cursor:
+            for table_name in UNIFIED_RUN_GRANTS:
+                # Least privilege: no application code deletes these rows, so the role must not be
+                # able to erase run lineage or a consumed wait authority.
+                cursor.execute("SELECT has_table_privilege(%s, %s, 'DELETE')", [role, table_name])
+                assert cursor.fetchone()[0] is False
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute(f'DROP OWNED BY "{role}"')  # noqa: S608
+            cursor.execute(f'DROP ROLE "{role}"')  # noqa: S608

@@ -52,7 +52,8 @@ GRANT SELECT ON
     releases_releasecanary, releases_scenariorelease,
     tools_approvalrequest, tools_mcpcatalogcandidate, tools_mcpcatalogsource,
     tools_toolbinding, tools_tooldefinition, tools_toolinvocation,
-    workflows_customnodedefinition, workflows_workflowbranch, workflows_workflowjoin,
+    workflows_customnodedefinition, workflows_run, workflows_runevent, workflows_runwait,
+    workflows_workflowbranch, workflows_workflowjoin,
     workflows_workflowrun, workflows_workflowchildlink, workflows_workflowrunevent,
     workflows_workflowwait, workflows_workflowversion,
     workflows_workflownodeattempt, workflows_workflowcompensationentry,
@@ -65,7 +66,8 @@ GRANT INSERT ON
     artifacts_artifactversion,
     evaluations_evalcaseresult,
     tools_toolbinding, tools_tooldefinition,
-    workflows_customnodedefinition, workflows_workflowrunevent, workflows_workflowversion
+    workflows_customnodedefinition, workflows_runevent, workflows_workflowrunevent,
+    workflows_workflowversion
 TO :"app_role";
 
 -- Mutable state without application delete paths.
@@ -85,6 +87,7 @@ GRANT INSERT, UPDATE ON
     releases_releasecanary, releases_scenariorelease,
     tools_approvalrequest, tools_mcpcatalogcandidate, tools_mcpcatalogsource,
     tools_toolinvocation,
+    workflows_run, workflows_runwait,
     workflows_workflowbranch, workflows_workflowjoin, workflows_workflowrun,
     workflows_workflowwait, workflows_workflowchildlink,
     workflows_workflownodeattempt, workflows_workflowcompensationentry,

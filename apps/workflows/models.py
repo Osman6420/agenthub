@@ -136,6 +136,21 @@ class RunCancellationState(models.TextChoices):
     ACKNOWLEDGED = "acknowledged", "Acknowledged"
 
 
+class RunWaitStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RESUMED = "resumed", "Resumed"
+    EXPIRED = "expired", "Expired"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class RunWaitKind(models.TextChoices):
+    APPROVAL = "approval", "Approval"
+    EVENT = "event", "Event"
+    HUMAN = "human", "Human"
+    TIMER = "timer", "Timer"
+    CHILD = "child", "Child"
+
+
 class RunEventType(models.TextChoices):
     REQUESTED = "run.requested", "Run requested"
     QUEUED = "run.queued", "Run queued"
@@ -156,21 +171,15 @@ class Run(TimeStampedModel):
     """Canonical persistence root for synchronous and background workflow execution."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    organization = models.ForeignKey(
-        Organization, on_delete=models.CASCADE, related_name="runs"
-    )
-    scenario = models.ForeignKey(
-        "catalog.Scenario", on_delete=models.CASCADE, related_name="runs"
-    )
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="runs")
+    scenario = models.ForeignKey("catalog.Scenario", on_delete=models.CASCADE, related_name="runs")
     release = models.ForeignKey(
         "releases.ScenarioRelease", on_delete=models.PROTECT, related_name="runs"
     )
     workflow_version = models.ForeignKey(
         WorkflowVersion, on_delete=models.PROTECT, related_name="unified_runs"
     )
-    consumer = models.ForeignKey(
-        "identity.Consumer", on_delete=models.PROTECT, related_name="runs"
-    )
+    consumer = models.ForeignKey("identity.Consumer", on_delete=models.PROTECT, related_name="runs")
     actor_id = models.CharField(max_length=200)
     response_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
     idempotency_key = models.CharField(max_length=128)
@@ -183,9 +192,7 @@ class Run(TimeStampedModel):
     checkpoint = models.JSONField(default=dict)
     checkpoint_version = models.PositiveIntegerField(default=1)
     next_event_sequence = models.PositiveBigIntegerField(default=1)
-    awaiting_kind = models.CharField(
-        max_length=16, choices=RunAwaitingKind.choices, blank=True
-    )
+    awaiting_kind = models.CharField(max_length=16, choices=RunAwaitingKind.choices, blank=True)
     awaiting_reference = models.CharField(max_length=200, blank=True)
     deadline_at = models.DateTimeField()
     sync_lease_token = models.UUIDField(null=True, blank=True)
@@ -281,6 +288,88 @@ class Run(TimeStampedModel):
             raise ValidationError(
                 "background claim token, expiry and checkpoint version must be set together"
             )
+
+
+class RunWait(TimeStampedModel):
+    """One-shot, direct-tenant durable resume authority for a unified Run."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="run_waits"
+    )
+    run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="waits")
+    kind = models.CharField(max_length=16, choices=RunWaitKind.choices)
+    node_id = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=16, choices=RunWaitStatus.choices, default=RunWaitStatus.PENDING
+    )
+    resume_token_hash = models.CharField(max_length=64, unique=True)
+    pending_checksum = models.CharField(max_length=64)
+    checkpoint_version_snapshot = models.PositiveIntegerField()
+    release_id_snapshot = models.PositiveBigIntegerField()
+    compiled_checksum = models.CharField(max_length=64)
+    compiler_version = models.CharField(max_length=32)
+    payload_schema = models.JSONField(default=dict, blank=True)
+    output_mapping = models.JSONField(default=list, blank=True)
+    requester_actor_id = models.CharField(max_length=200)
+    allowed_roles = models.JSONField(default=list, blank=True)
+    deny_self_decision = models.BooleanField(default=True)
+    deadline_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    consumed_by = models.CharField(max_length=200, blank=True)
+    resume_checksum = models.CharField(max_length=64, blank=True)
+    result_checkpoint_version = models.PositiveIntegerField(null=True, blank=True)
+    redacted_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run"],
+                condition=models.Q(status=RunWaitStatus.PENDING),
+                name="uniq_pending_run_wait",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status=RunWaitStatus.PENDING,
+                        consumed_at__isnull=True,
+                        consumed_by="",
+                        resume_checksum="",
+                        result_checkpoint_version__isnull=True,
+                    )
+                    | models.Q(
+                        status=RunWaitStatus.RESUMED,
+                        consumed_at__isnull=False,
+                        resume_checksum__gt="",
+                        result_checkpoint_version__isnull=False,
+                    )
+                    | models.Q(
+                        status__in=[RunWaitStatus.EXPIRED, RunWaitStatus.CANCELLED],
+                        consumed_at__isnull=False,
+                        result_checkpoint_version__isnull=True,
+                    )
+                ),
+                name="run_wait_consumption_complete",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "status", "deadline_at"]),
+            models.Index(fields=["run", "created_at"]),
+        ]
+
+    def clean(self) -> None:
+        if self.kind not in {
+            RunAwaitingKind.APPROVAL,
+            RunAwaitingKind.EVENT,
+            RunAwaitingKind.HUMAN,
+            RunAwaitingKind.TIMER,
+            RunAwaitingKind.CHILD,
+        }:
+            raise ValidationError("unsupported unified run wait kind")
+        if self.run_id and self.organization_id != self.run.organization_id:
+            raise ValidationError("run wait organization must match run organization")
+        if self.run_id and self.release_id_snapshot != self.run.release_id:
+            raise ValidationError("run wait release must match run release")
 
 
 class WorkflowRun(TimeStampedModel):

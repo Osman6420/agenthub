@@ -262,8 +262,96 @@ Live broker smoke was not run: migrations `0009` through `0011` remain unapplied
 runtime worker predates this task registration. The default-off gate and absence of a public producer
 prevent accidental unified execution in that state.
 
+## Gate 2 Run-native durable wait evidence
+
+`workflows.0012` adds the tenant-scoped `RunWait` authority (UUID PK, direct `organization` FK, FORCE
+ROW LEVEL SECURITY plus the shared `agenthub_tenant_scope_contains` policy) under two DB-enforced
+invariants: at most one `pending` wait per Run, and a consumption CHECK that keeps `pending` rows free
+of consumption fields while requiring `consumed_at`/`resume_checksum`/`result_checkpoint_version` on
+`resumed` and `consumed_at` without a result version on `expired`/`cancelled`.
+
+`suspend_run_for_wait` releases the background claim and stores a hashed one-shot resume token with a
+lineage snapshot (checkpoint version, release, compiled checksum, compiler version). The output
+mapping is compiled with `restrict_destination=True` at creation, so a protected write root fails
+closed as `RUN_WAIT_CONFIG_INVALID` before a resume authority exists rather than failing a valid
+payload later. The deadline is clamped to the Run deadline. If cancellation or timeout already
+converged the Run, suspension returns `converged` and preserves that committed evidence instead of
+raising and rolling it back.
+
+`resume_run_wait` locks the Run and the wait with `select_for_update`, then audits every branch before
+reporting it: unknown token, replayed/consumed token, lineage mismatch, expiry, role denial,
+self-decision denial, invalid payload and terminal convergence. Denials are audited inside the
+transaction and raised after it commits, matching the existing `decide_approval` pattern, so evidence
+is never discarded. An expired wait closes the Run as well (`failed` / `RUN_WAIT_EXPIRED`) so no Run is
+left waiting on an authority that can never be consumed.
+
+`transitions.py` gains `DURABLE_WAIT_STATUSES`; a background Run in one of those statuses may move to
+`queued`/`failed`/`timed_out`/`cancelled` without a claim token, because suspension already released
+the claim and there is no owner to displace. `running` and `recovery_required` are excluded, so reaching
+execution still requires a fresh background claim and claim-ownership proof is unchanged everywhere
+else.
+
+There is no public producer, no executor node enablement and no consumer route: the boundary is
+additive and reachable only from internal tests.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Durable wait + RLS PostgreSQL | `pytest --ds=config.settings.local apps/workflows/tests/test_unified_run.py -k "wait or rls"` | 6 passed, 30 deselected — suspend/resume-once, forged/cross-tenant/role/self-decision/payload denials, expiry closing the Run, protected-mapping rejection, converged-cancel suspension and non-owner FORCE RLS over `workflows_run`/`workflows_runevent`/`workflows_runwait` |
+| Affected regression PostgreSQL | `pytest --ds=config.settings.local --create-db apps/workflows/tests apps/tenancy/tests apps/builder/tests/test_api.py apps/releases/tests/test_compiler.py apps/agents/tests/test_governed_loop.py` | 323 passed, 3 skipped, 1 pre-existing failure (see gaps) |
+| Full SQLite suite | `DJANGO_SETTINGS_MODULE=config.settings.test pytest` | 1062 passed, 51 skipped, 1 failure + 2 errors — byte-identical to the unmodified HEAD baseline (1061 passed, 46 skipped, same failure and errors), so this slice introduces no regression |
+| Repository Ruff format | `ruff format --check .` | 438 files already formatted |
+| Repository Ruff lint | `ruff check .` | All checks passed |
+| Repository Mypy | `mypy apps config` | 13 errors in 4 files — identical to the unmodified HEAD baseline |
+| Django check | `python manage.py check` | System check identified no issues |
+| Migration drift | `python manage.py makemigrations --check --dry-run` | No changes detected |
+| Diff whitespace | `git diff --check` | Passed |
+
+### Application-role grants (owner approved)
+
+`deploy/postgres/provision-app-role.sql` now names the three unified tables at least privilege:
+`SELECT, INSERT, UPDATE` on `workflows_run` and `workflows_runwait` (mutable state), `SELECT, INSERT`
+on `workflows_runevent` (append-only). No `DELETE` is granted anywhere, matching the code: `rg` finds
+no delete path in `apps/workflows`, so the role cannot erase run lineage or a consumed wait authority.
+
+Evidence is enforced by two tests rather than review alone:
+
+- `test_unified_run_tables_are_protected_and_provisioned` asserts the three tables are classified as
+  direct-tenant `PROTECTED` in `protected_tenant_tables()`, are named in the provisioning SQL, and
+  appear in no `GRANT ... DELETE` statement.
+- `test_unified_run_grants_make_a_non_owner_role_rls_ready_without_delete` (PostgreSQL) creates a
+  `NOSUPERUSER NOBYPASSRLS` probe role, applies exactly the inventory grants, and asserts
+  `inspect_rls_readiness` reports `ready` with no issues — proving table presence, `FORCE` RLS, the
+  canonical `tenant_isolation` policy and `SELECT` for all three — then asserts
+  `has_table_privilege(..., 'DELETE')` is false for each.
+
+Before the edit, `protected_tenant_tables()` reported `workflows_run`, `workflows_runevent` and
+`workflows_runwait` as missing from the provisioning SQL; after it, exactly those three disappear from
+the missing set.
+
+Checks not run and gaps:
+
+- **Pre-existing, outside this slice's approval:** `test_provisioning_sql_names_every_protected_table`
+  still fails on five Phase 2.8 Part 2.1 tables that were never added to the grant inventory —
+  `documents_scenariodocumentsetaccessrequest`, `documents_scenariodocumentsetgrant`,
+  `identity_documentsetmanagerassignment`, `identity_projectadministratorassignment` and
+  `identity_scenarioeditorassignment`. This failure reproduces on the unmodified HEAD. Four of them are
+  authorization-assignment tables, so the grant level needs owner review of its own; they were not
+  added here.
+- Migration `0012` has not been applied to the running Compose database and no live broker or worker
+  smoke was run.
+
+### Repository formatting gate repair
+
+`ruff format --check .` was failing on the unmodified HEAD for 19 files: `pyproject.toml` declared
+`ruff>=0.6` while `requirements.lock` pinned `ruff==0.15.21`, and CI installs the unpinned range, so
+the formatter's line-joining behavior differed between the baseline and every current install. The dev
+extra is now pinned to `ruff==0.15.21` (matching the lock) and the repository was reformatted with it.
+One pre-existing `I001` import-order error in `apps/agents/runtime.py` was auto-fixed. This is
+mechanical: no behavior, signature or control-flow change, confirmed by the identical full-suite
+baseline above.
+
 ## Final status
 
 **In progress — Gate 2 persistence, background claim/delivery and worker admission verified;
-bounded Run-native execution and internal Celery delivery are verified; Run-native durable waits,
-shared consumers and cutover remain pending.**
+bounded Run-native execution, internal Celery delivery and the Run-native durable wait boundary are
+verified; shared consumers and cutover remain pending.**

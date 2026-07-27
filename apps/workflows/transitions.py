@@ -44,6 +44,27 @@ _WAITING_KIND_BY_STATUS = {
     WorkflowRunStatus.WAITING_CHILD: RunAwaitingKind.CHILD,
     WorkflowRunStatus.RECOVERY_REQUIRED: RunAwaitingKind.RECOVERY,
 }
+# A durable wait has no background owner, so an external resume signal may re-admit it.
+# `recovery_required` is deliberately excluded: it is never automatically re-queued.
+DURABLE_WAIT_STATUSES = frozenset(
+    {
+        WorkflowRunStatus.WAITING_APPROVAL,
+        WorkflowRunStatus.WAITING_EVENT,
+        WorkflowRunStatus.WAITING_HUMAN,
+        WorkflowRunStatus.WAITING_TIMER,
+        WorkflowRunStatus.WAITING_CHILD,
+    }
+)
+# An unowned durable wait may be re-queued or closed, but never executed directly: reaching
+# `running` always requires a fresh background claim.
+_UNOWNED_WAIT_TARGETS = frozenset(
+    {
+        WorkflowRunStatus.QUEUED,
+        WorkflowRunStatus.FAILED,
+        WorkflowRunStatus.TIMED_OUT,
+        WorkflowRunStatus.CANCELLED,
+    }
+)
 _ALLOWED_TRANSITIONS = {
     WorkflowRunStatus.REQUESTED: {
         WorkflowRunStatus.QUEUED,
@@ -73,6 +94,7 @@ _ALLOWED_TRANSITIONS = {
             WorkflowRunStatus.FAILED,
             WorkflowRunStatus.TIMED_OUT,
             WorkflowRunStatus.CANCELLED,
+            *({WorkflowRunStatus.QUEUED} if waiting_status in DURABLE_WAIT_STATUSES else set()),
         }
         for waiting_status in _WAITING_KIND_BY_STATUS
     },
@@ -259,10 +281,19 @@ def transition_run(
         )
         or (transition_now >= run.deadline_at and target == WorkflowRunStatus.TIMED_OUT)
     )
+    # A durable wait released its claim at suspension, so there is no owner to displace and a
+    # resume/expiry signal cannot prove one. Ownership proof stays mandatory everywhere else.
+    unowned_wait = (
+        background_claim_token is None
+        and run.background_claim_token is None
+        and run.status in DURABLE_WAIT_STATUSES
+        and target in _UNOWNED_WAIT_TARGETS
+    )
     if (
         run.execution_mode == RunExecutionMode.BACKGROUND
         and not admission_queue
         and not guard_convergence
+        and not unowned_wait
     ):
         if not isinstance(background_claim_token, uuid.UUID):
             raise RunTransitionError("RUN_BACKGROUND_CLAIM_REQUIRED")
@@ -276,12 +307,8 @@ def transition_run(
             WorkflowRunStatus.RECOVERY_REQUIRED,
             WorkflowRunStatus.TIMED_OUT,
         }
-        if (
-            run.background_claim_expires_at is None
-            or (
-                run.background_claim_expires_at <= transition_now
-                and not claim_may_be_expired
-            )
+        if run.background_claim_expires_at is None or (
+            run.background_claim_expires_at <= transition_now and not claim_may_be_expired
         ):
             raise RunTransitionError("RUN_BACKGROUND_CLAIM_EXPIRED")
         if target not in {
