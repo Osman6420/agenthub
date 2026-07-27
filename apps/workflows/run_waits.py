@@ -126,6 +126,7 @@ def suspend_run_for_wait(
     output_mapping: list[dict[str, Any]] | None = None,
     allowed_roles: list[str] | None = None,
     deny_self_decision: bool = True,
+    step_delta: int = 0,
 ) -> RunWaitCreation:
     """Atomically checkpoint a claimed background Run and create one resume authority."""
 
@@ -176,6 +177,7 @@ def suspend_run_for_wait(
         target_status=wait_status,
         checkpoint=checkpoint,
         awaiting_reference=str(wait_id),
+        step_delta=step_delta,
         background_claim_token=claim_token,
     )
     if transitioned.outcome != "committed" or transitioned.status != wait_status:

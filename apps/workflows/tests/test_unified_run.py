@@ -1584,3 +1584,212 @@ def test_unified_run_grants_make_a_non_owner_role_rls_ready_without_delete() -> 
         with connection.cursor() as cursor:
             cursor.execute(f'DROP OWNED BY "{role}"')  # noqa: S608
             cursor.execute(f'DROP ROLE "{role}"')  # noqa: S608
+
+
+_START_NODE = {"id": "start", "type": "input"}
+_FORMAT_NODE = {"id": "format", "type": "format_output", "config": {"template_ref": "ok"}}
+_END_NODE = {"id": "done", "type": "end"}
+_DECISION_SCHEMA = {
+    "type": "object",
+    "properties": {"approved": {"type": "boolean"}},
+    "required": ["approved"],
+    "additionalProperties": False,
+}
+
+
+def _human_node(**config) -> dict:
+    return {
+        "id": "review",
+        "type": "human_task",
+        "config": {
+            "allowed_decision_roles": ["approver"],
+            "decision_schema": _DECISION_SCHEMA,
+            "timeout_seconds": 60,
+            **config,
+        },
+        "output_mapping": [{"from": "/payload/approved", "to": "/decisions/approved"}],
+    }
+
+
+def _install_graph(workflow_fixture, nodes: list[dict], edges: list[dict]) -> None:
+    """Compile an authored graph onto the pinned version, leaving its release checksum intact."""
+    from apps.workflows.compiler import compile_workflow
+
+    compiled = compile_workflow(
+        {
+            "api_version": "agenthub/v1",
+            "kind": "Workflow",
+            "metadata": {"id": "wait_flow.v1"},
+            "spec": {"input_node": "start", "nodes": nodes, "edges": edges},
+        }
+    )
+    WorkflowVersion.objects.filter(scenario=workflow_fixture.scenario).update(
+        compiled_graph=compiled.graph
+    )
+
+
+def _execute_queued(run: Run):
+    token = uuid4()
+    claim_background_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+        lease_seconds=30,
+    )
+    return execute_claimed_bounded_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+    )
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_executor_suspends_at_a_human_task_and_resumes_at_the_successor(
+    workflow_fixture,
+    monkeypatch,
+) -> None:
+    from apps.workflows import unified_executor
+
+    _install_graph(
+        workflow_fixture,
+        [_START_NODE, _human_node(), _FORMAT_NODE, _END_NODE],
+        [
+            {"from": "start", "to": "review"},
+            {"from": "review", "to": "format"},
+            {"from": "format", "to": "done"},
+        ],
+    )
+    run = _queued_background_run(workflow_fixture, key="executor-human-task")
+    seen: list[tuple[str, list[str]]] = []
+    original = unified_executor._execute_node
+
+    def record(**kwargs):
+        seen.append((kwargs["node"]["id"], sorted(kwargs["state"])))
+        return original(**kwargs)
+
+    monkeypatch.setattr(unified_executor, "_execute_node", record)
+
+    suspended = _execute_queued(run)
+    assert suspended.status == "waiting_human"
+    assert suspended.resume_token is not None
+    run.refresh_from_db()
+    assert run.awaiting_reference == str(suspended.wait_id)
+    assert run.step_count == 2
+    assert run.background_claim_token is None
+    wait = RunWait.objects.get(pk=suspended.wait_id, run_id=run.id)
+    assert wait.status == RunWaitStatus.PENDING
+    assert wait.node_id == "review"
+    # The resume cursor is server-owned state, so it must survive the pause on the durable
+    # checkpoint and never be handed to a node.
+    assert run.checkpoint["__resume_node"] == "format"
+
+    resume_run_wait(
+        organization_id=run.organization_id,
+        resume_token=suspended.resume_token,
+        actor_id="reviewer",
+        payload={"approved": True},
+        actor_roles={"approver"},
+    )
+    run.refresh_from_db()
+    assert run.status == "queued"
+
+    completed = _execute_queued(run)
+    assert completed.status == "completed"
+    run.refresh_from_db()
+    assert run.checkpoint["decisions"] == {"approved": True}
+    assert run.checkpoint["output"] == {"answer": "ok", "sources": []}
+    assert "__resume_node" not in run.checkpoint
+    # The wait node ran once and the pre-wait prefix was not replayed.
+    assert [node_id for node_id, _ in seen] == ["start", "format", "done"]
+    assert all("__resume_node" not in state for _, state in seen)
+    assert run.step_count == 4
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_executor_suspends_at_event_and_timer_waits(workflow_fixture) -> None:
+    _install_graph(
+        workflow_fixture,
+        [
+            _START_NODE,
+            {
+                "id": "external",
+                "type": "event_wait",
+                "config": {
+                    "event_role": "evidence_ready",
+                    "payload_schema": _DECISION_SCHEMA,
+                    "timeout_seconds": 60,
+                },
+                "output_mapping": [{"from": "/payload/approved", "to": "/decisions/approved"}],
+            },
+            {"id": "delay", "type": "timer", "config": {"delay_seconds": 30}},
+            _FORMAT_NODE,
+            _END_NODE,
+        ],
+        [
+            {"from": "start", "to": "external"},
+            {"from": "external", "to": "delay"},
+            {"from": "delay", "to": "format"},
+            {"from": "format", "to": "done"},
+        ],
+    )
+    run = _queued_background_run(workflow_fixture, key="executor-event-timer")
+
+    event_wait = _execute_queued(run)
+    assert event_wait.status == "waiting_event"
+    assert RunWait.objects.get(pk=event_wait.wait_id).kind == "event"
+    assert event_wait.resume_token is not None
+    resume_run_wait(
+        organization_id=run.organization_id,
+        resume_token=event_wait.resume_token,
+        actor_id="consumer:producer",
+        payload={"approved": True},
+    )
+    run.refresh_from_db()
+
+    timer_wait = _execute_queued(run)
+    assert timer_wait.status == "waiting_timer"
+    assert RunWait.objects.get(pk=timer_wait.wait_id).kind == "timer"
+    assert timer_wait.resume_token is not None
+    run.refresh_from_db()
+    assert run.checkpoint["__resume_node"] == "format"
+    resume_run_wait(
+        organization_id=run.organization_id,
+        resume_token=timer_wait.resume_token,
+        actor_id="system:timer",
+        payload={},
+    )
+    run.refresh_from_db()
+
+    assert _execute_queued(run).status == "completed"
+    run.refresh_from_db()
+    assert run.checkpoint["output"] == {"answer": "ok", "sources": []}
+    assert run.step_count == 5
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_executor_refuses_an_authored_escalation_it_cannot_honour(
+    workflow_fixture,
+) -> None:
+    _install_graph(
+        workflow_fixture,
+        [
+            _START_NODE,
+            _human_node(escalation_role="manager", escalation_timeout_seconds=120),
+            _FORMAT_NODE,
+            _END_NODE,
+        ],
+        [
+            {"from": "start", "to": "review"},
+            {"from": "review", "to": "format"},
+            {"from": "format", "to": "done"},
+        ],
+    )
+    run = _queued_background_run(workflow_fixture, key="executor-escalation")
+    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_NODE_UNSUPPORTED"):
+        _execute_queued(run)
+    run.refresh_from_db()
+    assert run.status == "queued"
+    assert RunWait.objects.filter(run_id=run.id).count() == 0
