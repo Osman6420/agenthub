@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -23,7 +24,8 @@ class NodeExecutionContext:
     organization_id: int
     scenario_id: int
     release_id: int
-    run_id: int
+    # Legacy WorkflowRun ids are integers; the unified Run aggregate is addressed by UUID.
+    run_id: int | uuid.UUID
 
 
 class CustomNodeExecutor(Protocol):

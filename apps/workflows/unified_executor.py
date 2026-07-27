@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -23,7 +24,14 @@ from apps.workflows.background_claims import (
 from apps.workflows.compiler import COMPILED_WORKFLOW_API_VERSION
 from apps.workflows.models import Run, RunAwaitingKind, RunCancellationState, WorkflowRunStatus
 from apps.workflows.run_waits import RunWaitError, run_tool_idempotency_key, suspend_run_for_wait
-from apps.workflows.runtime import WorkflowRuntimeError, _execute_node, _validate_output_policy
+from apps.workflows.runtime import (
+    MAX_NODE_SECONDS,
+    WorkflowRuntimeError,
+    _apply_default_output,
+    _execute_eligible_node,
+    _execute_node,
+    _validate_output_policy,
+)
 from apps.workflows.services import WorkflowRequestError, _assert_state_size
 from apps.workflows.state_mapping import (
     MappingError,
@@ -37,9 +45,10 @@ _WAIT_KIND_BY_NODE_TYPE = {
     "human_task": RunAwaitingKind.HUMAN,
     "timer": RunAwaitingKind.TIMER,
 }
-# Nodes whose result is an envelope projected into state through the mapping contract, rather
-# than a direct state write performed by the node itself.
-_ENVELOPE_NODE_TYPES = frozenset({"tool"})
+# Governed nodes that produce an output envelope through the shared runtime seams. They are
+# projected into state by the mapping contract, never by the node writing state itself.
+_ELIGIBLE_NODE_TYPES = frozenset({"custom", "generate", "retrieve", "transform"})
+_ENVELOPE_NODE_TYPES = frozenset({"tool"}) | _ELIGIBLE_NODE_TYPES
 _SUPPORTED_NODE_TYPES = frozenset(
     {
         "condition",
@@ -264,6 +273,33 @@ def _suspend_at_wait(
     )
 
 
+def _node_input(node: dict[str, Any], state: dict[str, Any]) -> dict[str, Any] | None:
+    """Build the node-local input envelope, so a node never sees state it did not select."""
+
+    input_mapping = node.get("input_mapping")
+    if not input_mapping:
+        return None
+    try:
+        return build_input_envelope(state, input_mapping)
+    except MappingError as exc:
+        raise WorkflowRuntimeError(exc.code) from None
+
+
+def _run_eligible(*, run: Run, node: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Produce one governed node envelope through the shared runtime seam, bounded in time."""
+
+    started = time.monotonic()
+    envelope = _execute_eligible_node(
+        node=node,
+        state=state,
+        input_env=_node_input(node, state),
+        run=run,
+    )
+    if time.monotonic() - started > MAX_NODE_SECONDS:
+        raise WorkflowRuntimeError("WORKFLOW_NODE_TIMED_OUT")
+    return envelope
+
+
 def _invoke_tool(*, run: Run, node: dict[str, Any], state: dict[str, Any]) -> Any:
     """Drive one governed tool call, returning the completed invocation or a pending approval."""
 
@@ -271,11 +307,7 @@ def _invoke_tool(*, run: Run, node: dict[str, Any], state: dict[str, Any]) -> An
     from apps.tools.models import ToolInvocationStatus
 
     config = node["config"]
-    input_mapping = node.get("input_mapping")
-    try:
-        envelope = build_input_envelope(state, input_mapping) if input_mapping else None
-    except MappingError as exc:
-        raise WorkflowRuntimeError(exc.code) from None
+    envelope = _node_input(node, state)
     if envelope is None:
         raw = state.get(config["input_key"]) if "input_key" in config else None
         envelope = raw if isinstance(raw, dict) else {}
@@ -318,7 +350,9 @@ def _project_envelope(
             return apply_output_mapping(state, envelope, output_mapping)
         except MappingError as exc:
             raise WorkflowRuntimeError(exc.code) from None
-    return {**state, str(node["config"]["output_key"]): envelope}
+    projected = dict(state)
+    _apply_default_output(node, projected, envelope)
+    return projected
 
 
 def _suspend_for_approval(
@@ -418,7 +452,7 @@ def execute_claimed_bounded_run(
                     step_delta=len(executed) + 1,
                 )
             decision: bool | None = None
-            if node["type"] in _ENVELOPE_NODE_TYPES:
+            if node["type"] == "tool":
                 from apps.tools.models import ToolInvocationStatus
 
                 invocation = _invoke_tool(run=run, node=node, state=state)
@@ -435,6 +469,10 @@ def execute_claimed_bounded_run(
                 tool_calls += 1
                 output = invocation.redacted_output
                 state = _project_envelope(node, state, output if isinstance(output, dict) else {})
+            elif node["type"] in _ELIGIBLE_NODE_TYPES:
+                state = _project_envelope(
+                    node, state, _run_eligible(run=run, node=node, state=state)
+                )
             else:
                 decision = _execute_node(
                     node=node,

@@ -1795,3 +1795,126 @@ def test_bounded_executor_refuses_an_authored_escalation_it_cannot_honour(
     run.refresh_from_db()
     assert run.status == "queued"
     assert RunWait.objects.filter(run_id=run.id).count() == 0
+
+
+_RETRIEVE_NODE = {"id": "recall", "type": "retrieve"}
+_GENERATE_NODE = {"id": "answer", "type": "generate"}
+_RAG_EDGES = [
+    {"from": "start", "to": "recall"},
+    {"from": "recall", "to": "answer"},
+    {"from": "answer", "to": "done"},
+]
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_executor_runs_retrieve_and_generate_through_the_governed_seams(
+    workflow_fixture,
+) -> None:
+    _install_graph(
+        workflow_fixture, [_START_NODE, _RETRIEVE_NODE, _GENERATE_NODE, _END_NODE], _RAG_EDGES
+    )
+    run = _queued_background_run(workflow_fixture, key="executor-rag")
+    run.redacted_state = {"input": {"query": "what is the policy"}}
+    run.save(update_fields=["redacted_state"])
+
+    assert _execute_queued(run).status == "completed"
+    run.refresh_from_db()
+    # Default per-node writes: retrieval evidence stays in its own root and never leaks into output.
+    assert isinstance(run.checkpoint["retrieval"], dict)
+    assert set(run.checkpoint["output"]) == {"answer", "sources"}
+    assert run.step_count == 4
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_executor_routes_rag_nodes_through_typed_mappings(workflow_fixture) -> None:
+    _install_graph(
+        workflow_fixture,
+        [
+            _START_NODE,
+            {
+                **_RETRIEVE_NODE,
+                "input_mapping": [{"from": "/input/query", "to": "/query"}],
+                "output_mapping": [{"from": "/chunks", "to": "/retrieval/chunks"}],
+            },
+            {
+                **_GENERATE_NODE,
+                "output_mapping": [
+                    {"from": "/answer", "to": "/output/answer"},
+                    {"from": "/sources", "to": "/output/sources"},
+                ],
+            },
+            _END_NODE,
+        ],
+        _RAG_EDGES,
+    )
+    run = _queued_background_run(workflow_fixture, key="executor-rag-mapped")
+    run.redacted_state = {"input": {"query": "what is the policy"}}
+    run.save(update_fields=["redacted_state"])
+
+    assert _execute_queued(run).status == "completed"
+    run.refresh_from_db()
+    # Only the selected fields are written; the retrieval envelope's other keys are dropped.
+    assert set(run.checkpoint["retrieval"]) == {"chunks"}
+    assert set(run.checkpoint["output"]) == {"answer", "sources"}
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_executor_fails_closed_on_an_unpinned_transform_profile(workflow_fixture) -> None:
+    _install_graph(
+        workflow_fixture,
+        [
+            _START_NODE,
+            {
+                "id": "shape",
+                "type": "transform",
+                "config": {"transform_profile_ref": "not_pinned"},
+                "input_mapping": [{"from": "/input", "to": "/documents"}],
+                "output_mapping": [{"from": "/result", "to": "/evidence/shaped"}],
+            },
+            _FORMAT_NODE,
+            _END_NODE,
+        ],
+        [
+            {"from": "start", "to": "shape"},
+            {"from": "shape", "to": "format"},
+            {"from": "format", "to": "done"},
+        ],
+    )
+    run = _queued_background_run(workflow_fixture, key="executor-transform")
+    run.redacted_state = {"input": {"query": "shape me"}}
+    run.save(update_fields=["redacted_state"])
+
+    assert _execute_queued(run).status == "failed"
+    run.refresh_from_db()
+    # There is no ambient profile fallback: an unpinned governed transform stops the Run.
+    assert run.error_code == "WORKFLOW_TRANSFORM_PROFILE_UNRESOLVED"
+
+
+@pytest.mark.django_db
+@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_executor_denies_a_custom_node_the_organization_never_allowlisted(
+    workflow_fixture,
+) -> None:
+    _install_graph(
+        workflow_fixture,
+        [
+            _START_NODE,
+            {"id": "plugin", "type": "custom", "config": {"node_ref": "unknown_plugin.v1"}},
+            _FORMAT_NODE,
+            _END_NODE,
+        ],
+        [
+            {"from": "start", "to": "plugin"},
+            {"from": "plugin", "to": "format"},
+            {"from": "format", "to": "done"},
+        ],
+    )
+    run = _queued_background_run(workflow_fixture, key="executor-custom")
+
+    assert _execute_queued(run).status == "failed"
+    run.refresh_from_db()
+    # The unified executor reaches the same deny-by-default custom-node registry as the legacy one.
+    assert run.error_code == "CUSTOM_NODE_NOT_ALLOWED"
