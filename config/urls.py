@@ -10,6 +10,7 @@ The authenticated public product API is `/v1/responses` with the synchronous
 from __future__ import annotations
 
 from django.conf import settings
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.urls import include, path
 from django.views.generic import RedirectView
 
@@ -29,3 +30,10 @@ if getattr(settings, "ENABLE_DJANGO_ADMIN", False):
     from django.contrib import admin
 
     urlpatterns.append(path("admin/", admin.site.urls))
+
+# Uvicorn does not provide Django's ``runserver`` static-file convenience.
+# Serve app static assets only in local DEBUG mode so the Compose development
+# stack can load the workflow-builder bundle. Production remains responsible
+# for serving static files through its deployment-owned web tier.
+if settings.DEBUG:
+    urlpatterns += staticfiles_urlpatterns()

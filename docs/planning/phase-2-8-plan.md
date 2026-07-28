@@ -236,3 +236,16 @@ Phase 2.8 completes only after all seven parts are implemented and verified, req
 current-state documentation are updated, destructive operations have their separate approvals and
 evidence, residual risks receive owner acceptance, and completed task records are archived under the
 planning policy.
+
+## Production promotion gate
+
+Before Phase 2.8 is promoted to production, the immutable deployment pipeline must build the
+workflow-builder frontend with the pinned lockfile, run Django `collectstatic`, and publish
+`STATIC_ROOT` at `STATIC_URL` through the deployment-owned web tier or CDN. Production must keep
+`DEBUG=False`; Django's development static-file route is not an acceptable production fallback.
+
+Staging-equivalent evidence must show that the authenticated builder page loads its generated
+JavaScript and CSS with successful responses and correct content types, while a production-settings
+URL resolution check confirms that Django does not expose the development static-file route. The
+release must fail before promotion when the frontend bundle or collected static output is missing,
+and rollback must restore the previous immutable application and matching static-asset set.
