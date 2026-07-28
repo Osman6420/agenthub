@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [Phase 2.8 Part 3 — unified workflow engine (completed 2026-07-28)](phase-2-8-part-3-unified-workflow-engine-2026-07-28/plan.md);
+  [verification](phase-2-8-part-3-unified-workflow-engine-2026-07-28/verification.md).
+
 - [Phase 2.8 Part 2.1 — scoped authorization and superadmin recovery (completed 2026-07-24)](phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md);
   [verification](phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/verification.md).
 

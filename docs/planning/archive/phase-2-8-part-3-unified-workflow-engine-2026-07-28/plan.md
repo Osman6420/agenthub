@@ -257,48 +257,12 @@ verified output of this part.
 
 ## Implementation gates and delivery order
 
-1. **Inventory and contract — In progress:** refreshed dependency/data/API inventory and live
-   Compose baseline; ADR-0014 drafted; compiled-workflow v5 now carries execution-mode
-   analysis/reasons; the closed `agent_loop` compiler/Studio/AI-authoring contract reuses current
-   agent policy validation and is deployment-gated off until runtime integration. RAG invariants,
-   protected-field rules and remaining parity tests continue. Release compilation now pins the
-   compiler mode analysis into the manifest/checksum and fails closed unless every embedded agent
-   tool/verification role resolves to an exact safe tool binding; positive sync proof for bounded
-   tool/agent calls remains pending because pinned transport timeouts are not yet in the manifest.
-   The first runtime adapter now executes only tool-free embedded policies behind the same
-   deployment gate, using a persistence-independent policy resolver shared with AgentRun.
-   Tool/approval policies remain rejected until unified pause/checkpoint ownership exists.
-2. **Unified persistence/state machine — In progress:** additive UUID `Run` and direct-tenant
-   `RunEvent` tables, compiler/release pins, lifecycle/checkpoint/lease/cancellation/counter fields,
-   closed event types, bounded/redacted payload validation, database-locked monotonic event
-   allocation, constraints/indexes and FORCE RLS are implemented. The shared locked transition
-   service now enforces legal state edges, checkpoint compare-and-swap, bounded monotonic counters,
-   terminal immutability and stale/late-result evidence. A unique transition token and request
-   checksum on `RunEvent` (avoiding a second receipt authority), exact token replay without side
-   effects, conflicting-token rejection, one-time cooperative cancellation and expired sync-lease
-   resolution without background takeover are implemented.
-   The persistence foundation now includes the PostgreSQL-authoritative background claim/delivery
-   boundary:
-   identifier-only delivery, UUID claim ownership, checkpoint-bound transition authorization,
-   duplicate/stale delivery handling, deadline/cancellation guards and crash-to-recovery semantics.
-   Additive migration `0011` owns the claim fields and constraint. It does not connect public routes,
-   register a new Celery task or replace the old worker. Worker admission also enforces exact
-   compiler/checksum compatibility and kill-switch revalidation before any Celery registration.
-   The internal executor is limited to side-effect-free bounded linear/conditional graphs behind a
-   default-off deployment gate. The next slice attaches identifier-only Celery delivery and bounded
-   worker-loss convergence without adding a public producer. Disconnect transport hooks, general
-   recovery tooling and full graph execution remain pending.
-3. **Consumer migration:** move Responses, Chat Completions, GET/cancel, MCP, evaluation, console,
-   metrics, approvals, children, recovery and kill-switch checks to the unified engine; convert demo
-   and fixtures; run semantic parity, concurrency, restart and load/soak tests.
-4. **Destructive readiness:** confirm the target is disposable/non-production, record counts,
-   stop/drain the live `running` workflow and old workers, check configured old API consumers, run
-   and record the empty-database rollback drill, and obtain manual approval for the exact
-   destructive migration/reset diff.
-5. **Atomic cutover:** remove Agent/RAG runtimes, old tables/artifacts/type field/endpoints, apply one
-   contract version, rebuild seed/configuration and run end-to-end/static acceptance.
-6. **Documentation closure:** update master plan, ADR status, current architecture/user/manual docs
-   and verification evidence only after behavior is proven.
+1. **Inventory and contract — Verified:** ADR-0014 accepted; exact legacy inventory, disposable data scope and authority boundaries recorded.
+2. **Unified persistence/state machine — Verified:** canonical Run/Event, waits, parallel/join, child links, retry, compensation and recovery implemented with direct tenant lineage and PostgreSQL FORCE RLS.
+3. **Consumer migration — Verified:** Responses, Chat, MCP, evaluation, console, metrics, presets and seed use canonical Runs; old routes and dispatch are removed.
+4. **Destructive readiness — Verified:** local/non-production target confirmed, old workers stopped, row state recorded, previous-code empty-database rollback drill passed and owner approved deletion of all demo consumer/user/scenario data.
+5. **Atomic cutover — Verified:** migrations through workflows.0017 applied, authorized demo state reset, old tables removed, canonical seed rebuilt and live Responses smoke passed.
+6. **Documentation closure — Verified:** ADR, current architecture/user/manual guidance, master status, verification and archive index updated.
 
 ## Test plan
 
@@ -348,13 +312,9 @@ not implementation choices left to the engineer.
 
 ## Status
 
-**In progress — Gate 2 unified persistence/runtime.** The owner approved starting Part 3 and
-explicitly waived legacy workflow/run data compatibility on 2026-07-24. ADR-0014, additive
-compiler/runtime persistence and internal delivery work may proceed. The current reviewable slice is
-an additive Run-native one-shot durable-wait/checkpoint boundary with tenant-scoped persistence,
-locked create/resume/expiry semantics and no public producer or executor-node enablement. Public
-API/authorization changes and the exact destructive migration/reset remain separate approval gates
-under repository policy.
+**Verified and completed 2026-07-28.** All implementation, destructive-readiness, local cutover,
+rollback, PostgreSQL authorization/RLS, full regression, frontend build and live smoke gates passed.
+Production was not accessed or modified.
 
 ## Completion criteria
 

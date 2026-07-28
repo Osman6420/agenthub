@@ -115,7 +115,7 @@ class ProjectForm(forms.ModelForm):
 class ScenarioForm(forms.ModelForm):
     class Meta:
         model = Scenario
-        fields = ["name", "type", "visibility", "risk_level", "status"]
+        fields = ["name", "visibility", "risk_level", "status"]
         labels = {"name": "Senaryo adı"}
         help_texts = {"name": "Kalıcı kimlik ve ilk API alias'ı otomatik oluşturulur."}
 

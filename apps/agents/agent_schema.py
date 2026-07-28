@@ -1,4 +1,4 @@
-"""Structural validation for the ``agent_definition`` artifact type (Sprint 10).
+"""Structural validation for the embedded ``agent_loop`` workflow policy.
 
 An agent definition is *data, not code*: it declares an objective source, an optional
 retrieval step, an optional authored **system prompt** (bounded, redaction-safe text — the
@@ -28,12 +28,7 @@ class AgentArtifactError(ValueError):
     """Raised for safe, content-free agent-artifact validation diagnostics."""
 
 
-def validate_agent_artifact_body(artifact_type: str, body: dict[str, Any]) -> None:
-    if artifact_type == "agent_definition":
-        validate_agent_definition_body(body)
-
-
-def validate_agent_definition_body(body: dict[str, Any]) -> None:
+def validate_agent_loop_policy(body: dict[str, Any]) -> None:
     _require_exact_keys(body, {"api_version", "kind", "metadata", "spec"}, "agent definition")
     if body.get("api_version") != "agenthub/v1" or body.get("kind") != "Agent":
         raise AgentArtifactError("unsupported agent api_version or kind")

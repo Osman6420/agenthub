@@ -92,8 +92,8 @@ def evaluate_assertion(assertion: dict[str, Any], result: RunResult) -> tuple[bo
         )
         return ok, "escalated" if ok else "not_escalated"
     # --- P2.6.11 durable workflow-structure evidence -------------------------------------
-    # These read redacted summary metadata the workflow candidate seam attaches from durable
-    # branch/join/wait/retry/compensation/child records (see run_workflow_candidate). Values
+    # These read redacted summary metadata attached from durable
+    # branch/join/wait/retry/compensation/child records. Values
     # are bounded, content-free identifiers (region/branch/node/child ids), never payloads.
     if kind == "workflow_branch_completed":
         ok = assertion["value"] in _meta_list(result, "branches_completed")

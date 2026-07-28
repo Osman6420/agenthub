@@ -6,31 +6,22 @@ from typing import Any
 
 TOOLS: tuple[dict[str, Any], ...] = (
     {
-        "name": "agenthub__invoke",
-        "description": "Invoke an authorized AgentHub scenario.",
+        "name": "agenthub__responses",
+        "description": "Run an authorized AgentHub workflow through the canonical Responses API.",
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["scenario_alias", "input"],
+            "required": ["model", "input", "idempotency_key"],
             "properties": {
-                "scenario_alias": {"type": "string", "minLength": 1, "maxLength": 200},
-                "input": {"type": "object"},
-                "options": {"type": "object"},
-            },
-        },
-    },
-    {
-        "name": "agenthub__query",
-        "description": "Query an authorized AgentHub RAG scenario.",
-        "inputSchema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["scenario_alias", "query"],
-            "properties": {
-                "scenario_alias": {"type": "string", "minLength": 1, "maxLength": 200},
-                "query": {"type": "string", "minLength": 1, "maxLength": 100000},
-                "conversation_id": {"type": "string", "maxLength": 255},
-                "return_sources": {"type": "boolean"},
+                "model": {"type": "string", "minLength": 1, "maxLength": 200},
+                "input": {
+                    "oneOf": [
+                        {"type": "string", "minLength": 1, "maxLength": 100000},
+                        {"type": "array", "minItems": 1, "maxItems": 128},
+                    ]
+                },
+                "background": {"type": "boolean"},
+                "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128},
             },
         },
     },

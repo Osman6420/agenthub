@@ -17,6 +17,7 @@ from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership
+from apps.workflows.presets import empty_workflow
 
 User = get_user_model()
 
@@ -51,6 +52,16 @@ def _scenario(org: Organization) -> tuple[AIProject, Scenario]:
     project = AIProject.objects.create(organization=org, slug="assistant", name="Assistant")
     scenario = Scenario.objects.create(project=project, slug="policy", name="Policy Assistant")
     return project, scenario
+
+
+def _workflow_artifact(org: Organization, logical_id: str = "empty_flow") -> Any:
+    return create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id=logical_id,
+        body=empty_workflow(logical_id=logical_id),
+        created_by="author",
+    )
 
 
 @pytest.mark.django_db
@@ -200,6 +211,7 @@ def test_candidate_compile_rolls_back_when_audit_fails(
         body={"type": "object"},
         created_by="author",
     )
+    workflow = _workflow_artifact(org)
     client.force_login(_member("manager-audit", org, Role.ORGANIZATION_ADMIN))
 
     def fail_audit(**_kwargs: Any) -> None:
@@ -210,8 +222,9 @@ def test_candidate_compile_rolls_back_when_audit_fails(
         client.post(
             reverse("console:scenario_compile_candidate", args=[scenario.public_id]),
             {
-                "artifact_ids": [str(artifact.pk)],
+                "artifact_ids": [str(artifact.pk), str(workflow.pk)],
                 f"role_{artifact.pk}": "input_contract",
+                f"role_{workflow.pk}": "workflow_definition",
             },
         )
     assert not ScenarioRelease.objects.exists()
@@ -235,9 +248,15 @@ def test_artifact_detail_is_scoped_escaped_and_lists_release_pin(
         },
         created_by="gitops",
     )
+    workflow = _workflow_artifact(org)
     release = compile_release(
         scenario=scenario,
-        refs=[ArtifactRef("input_contract", ArtifactType.INPUT_CONTRACT, "input", 1)],
+        refs=[
+            ArtifactRef(
+                "workflow_definition", workflow.type, workflow.logical_id, workflow.version
+            ),
+            ArtifactRef("input_contract", ArtifactType.INPUT_CONTRACT, "input", 1),
+        ],
         runtime_version="runtime:v1",
         created_by="release",
     )

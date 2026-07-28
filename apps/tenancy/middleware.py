@@ -9,15 +9,26 @@ from apps.tenancy.context import set_tenant_scope
 from apps.tenancy.models import Organization
 from apps.tenancy.services import allowed_organization_ids
 
+_DURABLE_API_PREFIXES = (
+    "/v1/chat/completions",
+    "/v1/responses",
+    "/v1/runs/",
+)
+
 
 class TenantContextMiddleware:
-    """Wrap each request in a transaction and install a trusted operator tenant scope."""
+    """Install operator scope without enclosing durable API execution in one transaction."""
 
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
         self.get_response = get_response
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
-        if connection.vendor != "postgresql" or request.path.endswith("/health/live"):
+        path = request.path_info
+        if (
+            connection.vendor != "postgresql"
+            or path.endswith("/health/live")
+            or path.startswith(_DURABLE_API_PREFIXES)
+        ):
             return self.get_response(request)
         with transaction.atomic():
             set_tenant_scope(())

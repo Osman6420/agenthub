@@ -248,13 +248,14 @@ The published artifact then follows the normal compile → eval → promote path
 ## 3. Consumer API — RAG query (synchronous)
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/v1/query \
+curl -i -s -X POST http://127.0.0.1:8000/v1/responses \
   -H "Authorization: Bearer <REST_TOKEN>" -H "Content-Type: application/json" \
-  -d '{"scenario_alias":"customer-information","query":"What are your opening hours?"}'
+  -H "Idempotency-Key: response-1" \
+  -d '{"model":"empty-workflow","input":"hello","background":false}'
 ```
 
-Expected: `HTTP 200`, `"status":"completed"`, an `output.answer` and `usage` token counts.
-(The answer is a deterministic stub — no real LLM is wired yet.)
+Expected: `HTTP 200`, `"status":"completed"`, a `resp_...` response ID, and an
+`X-AgentHub-Run-Id` UUID header. A canonical `Run` and ordered `RunEvent` trail remain persisted.
 
 Negative checks:
 - Omit the `Authorization` header → `401`.
@@ -297,13 +298,14 @@ is rejected on these HTTPS routes.
 **Invoke** (needs `Idempotency-Key`):
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/v1/invoke \
+curl -s -X POST http://127.0.0.1:8000/v1/responses \
   -H "Authorization: Bearer <REST_TOKEN>" -H "Content-Type: application/json" \
   -H "Idempotency-Key: wf-1" \
-  -d '{"scenario_alias":"support-flow","input":{"query":"hello"}}'
+  -d '{"model":"support-flow","input":{"query":"hello"},"background":true}'
 ```
 
-Expected: `HTTP 202`, `"status":"queued"`, a numeric `run_id`.
+Expected: `HTTP 202`, `"status":"queued"`, a `resp_...` response ID and a UUID
+`metadata.run_id`.
 
 **Poll** (after the worker runs it):
 
@@ -332,19 +334,18 @@ You can also approve in the console: log in as `approver` → **Tool approvals**
 ## 5. Consumer API — agent (async)
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/v1/invoke \
+curl -s -X POST http://127.0.0.1:8000/v1/responses \
   -H "Authorization: Bearer <REST_TOKEN>" -H "Content-Type: application/json" \
   -H "Idempotency-Key: agent-1" \
-  -d '{"scenario_alias":"assistant","input":{"query":"Summarize the refund policy."}}'
+  -d '{"model":"agent-loop","input":{"query":"Summarize the refund policy."},"background":true}'
 ```
 
-Expected: `HTTP 202` + an **opaque UUID** `run_id` (agent ids never collide with workflow
-ids). Poll `GET /v1/runs/<uuid>` → `completed`.
+Expected: `HTTP 202` with one canonical **opaque UUID** Run ID. Poll
+`GET /v1/runs/<uuid>` until a terminal status.
 
 Operator side:
-- Console → **Agent runs** → open the run → redacted trace (no raw prompt/objective); Cancel.
-- CLI: `python manage.py list_agent_runs --organization demo`;
-  `python manage.py cancel_agent_run --organization demo --run <uuid>`.
+- Console → **Runs** → open the run → redacted trace (no raw prompt/objective); Cancel.
+- Consumer API: `POST /v1/runs/<uuid>/cancel` with the same REST bearer token.
 
 ---
 

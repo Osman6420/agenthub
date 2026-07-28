@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from datetime import timedelta
 from threading import Barrier, Thread
+from types import SimpleNamespace
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, close_old_connections, connection
-from django.test import override_settings
 from django.utils import timezone
 
 from apps.agents.services import set_runtime_suspension
 from apps.audit.models import AuditEvent
+from apps.gateway.execution_context import issue_execution_context
 from apps.tenancy.models import Organization
 from apps.tenancy.rls import inspect_rls_readiness, protected_tenant_tables
 from apps.workflows.background_claims import (
@@ -24,21 +26,29 @@ from apps.workflows.background_claims import (
 )
 from apps.workflows.models import (
     Run,
+    RunBranch,
     RunCancellationState,
+    RunCompensationEntry,
+    RunCompensationStatus,
     RunEvent,
     RunEventType,
     RunExecutionMode,
+    RunJoin,
+    RunStatus,
     RunWait,
     RunWaitStatus,
     WorkflowVersion,
 )
 from apps.workflows.run_events import append_run_event, validate_run_event_payload
+from apps.workflows.run_recovery import RunRecoveryError, resolve_run_recovery
 from apps.workflows.run_waits import (
     RunWaitCreation,
     RunWaitError,
+    decide_run_human_task,
     resume_run_wait,
     suspend_run_for_wait,
 )
+from apps.workflows.services import WorkflowRequestError, request_unified_run
 from apps.workflows.tasks import (
     dispatch_unified_background_run,
     execute_unified_background_run,
@@ -392,7 +402,6 @@ def test_background_claim_and_transition_recheck_kill_switch(workflow_fixture) -
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_bounded_unified_executor_completes_without_legacy_side_tables(
     workflow_fixture,
 ) -> None:
@@ -418,8 +427,8 @@ def test_bounded_unified_executor_completes_without_legacy_side_tables(
 
 
 @pytest.mark.django_db
-def test_bounded_unified_executor_is_default_off(workflow_fixture) -> None:
-    run = _queued_background_run(workflow_fixture, key="bounded-executor-disabled")
+def test_bounded_unified_executor_is_the_default_runtime(workflow_fixture) -> None:
+    run = _queued_background_run(workflow_fixture, key="bounded-executor-default")
     token = uuid4()
     claim_background_run(
         organization_id=run.organization_id,
@@ -427,24 +436,16 @@ def test_bounded_unified_executor_is_default_off(workflow_fixture) -> None:
         claim_token=token,
         lease_seconds=30,
     )
-    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_DISABLED"):
-        execute_claimed_bounded_run(
-            organization_id=run.organization_id,
-            run_id=run.id,
-            claim_token=token,
-        )
-    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_DISABLED"):
-        dispatch_unified_background_run(
-            run_id=run.id,
-            organization_id=run.organization_id,
-            delivery_token=token,
-        )
+    result = execute_claimed_bounded_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        claim_token=token,
+    )
     run.refresh_from_db()
-    assert run.status == "queued"
+    assert result.status == run.status == "completed"
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_bounded_unified_executor_observes_cancellation_between_nodes(
     workflow_fixture,
     monkeypatch,
@@ -483,13 +484,12 @@ def test_bounded_unified_executor_observes_cancellation_between_nodes(
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_identifier_only_delivery_executes_and_rejects_stale_revision(
     workflow_fixture,
 ) -> None:
     run = _queued_background_run(workflow_fixture, key="celery-delivery")
     token = uuid4()
-    body = {"run_id": str(run.id), "delivery_token": str(token)}
+    body: dict[str, object] = {"run_id": str(run.id), "delivery_token": str(token)}
     headers = {
         "organization_id": run.organization_id,
         "service_revision": "stale-revision",
@@ -504,7 +504,6 @@ def test_identifier_only_delivery_executes_and_rejects_stale_revision(
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_delivery_redelivery_converges_expired_queued_and_running_claims(
     workflow_fixture,
 ) -> None:
@@ -573,7 +572,6 @@ def test_delivery_redelivery_converges_expired_queued_and_running_claims(
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_delivery_redelivery_continues_after_worker_crash_post_start(
     workflow_fixture,
     monkeypatch,
@@ -582,7 +580,7 @@ def test_delivery_redelivery_continues_after_worker_crash_post_start(
 
     run = _queued_background_run(workflow_fixture, key="celery-crash-after-start")
     token = uuid4()
-    body = {"run_id": str(run.id), "delivery_token": str(token)}
+    body: dict[str, object] = {"run_id": str(run.id), "delivery_token": str(token)}
     headers = {
         "organization_id": run.organization_id,
         "service_revision": service_revision(),
@@ -605,7 +603,6 @@ def test_delivery_redelivery_continues_after_worker_crash_post_start(
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_unified_dispatch_is_on_commit_identifier_only(
     workflow_fixture,
     django_capture_on_commit_callbacks,
@@ -642,7 +639,6 @@ def test_unified_dispatch_is_on_commit_identifier_only(
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_unified_celery_task_executes_with_closed_headers(workflow_fixture) -> None:
     run = _queued_background_run(workflow_fixture, key="celery-task")
     token = uuid4()
@@ -869,7 +865,7 @@ def test_event_payload_rejects_sensitive_oversized_and_deep_values(workflow_fixt
         )
     with pytest.raises(ValidationError, match="16 KiB"):
         validate_run_event_payload({"safe_value": "x" * (16 * 1024)})
-    nested = {"safe": {}}
+    nested: dict[str, Any] = {"safe": {}}
     cursor = nested["safe"]
     for _ in range(8):
         cursor["safe"] = {}
@@ -927,6 +923,60 @@ def test_transition_commits_checkpoint_counters_and_terminal_guard(workflow_fixt
         (2, "run.completed"),
         (3, "run.late_result_discarded"),
     ]
+
+
+@pytest.mark.django_db
+def test_sync_transition_requires_the_exact_live_lease_after_admission(
+    workflow_fixture,
+) -> None:
+    run = _run(workflow_fixture, execution_mode=RunExecutionMode.SYNC)
+    transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status=RunStatus.REQUESTED,
+        target_status=RunStatus.QUEUED,
+    )
+    run.refresh_from_db()
+    lease_token = uuid4()
+    renew_sync_lease(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        lease_token=lease_token,
+        expires_at=timezone.now() + timedelta(seconds=30),
+    )
+
+    with pytest.raises(RunTransitionError, match="RUN_SYNC_LEASE_REQUIRED"):
+        transition_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            transition_token=uuid4(),
+            expected_checkpoint_version=run.checkpoint_version,
+            expected_status=RunStatus.QUEUED,
+            target_status=RunStatus.RUNNING,
+        )
+    with pytest.raises(RunTransitionError, match="RUN_SYNC_LEASE_STALE"):
+        transition_run(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            transition_token=uuid4(),
+            expected_checkpoint_version=run.checkpoint_version,
+            expected_status=RunStatus.QUEUED,
+            target_status=RunStatus.RUNNING,
+            sync_lease_token=uuid4(),
+        )
+
+    started = transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status=RunStatus.QUEUED,
+        target_status=RunStatus.RUNNING,
+        sync_lease_token=lease_token,
+    )
+    assert started.outcome == "committed"
 
 
 @pytest.mark.django_db
@@ -1079,6 +1129,54 @@ def test_expired_sync_lease_enters_recovery_without_background_takeover(
     assert result.status == "recovery_required"
     assert run.execution_mode == RunExecutionMode.SYNC
     assert run.awaiting_kind == "recovery"
+
+
+@pytest.mark.django_db
+def test_operator_recovery_resolution_is_explicit_terminal_and_audited(
+    workflow_fixture,
+) -> None:
+    run = _run(workflow_fixture, key="operator-recovery")
+    transition_run(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        transition_token=uuid4(),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status=RunStatus.REQUESTED,
+        target_status=RunStatus.RECOVERY_REQUIRED,
+        awaiting_reference="ambiguous-provider-result",
+        error_code="OUTCOME_UNKNOWN",
+    )
+    run.refresh_from_db()
+
+    with pytest.raises(RunRecoveryError, match="RUN_RECOVERY_DECISION_INVALID"):
+        resolve_run_recovery(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            actor_id="operator",
+            decision="retry",
+        )
+    resolved = resolve_run_recovery(
+        organization_id=run.organization_id,
+        run_id=run.id,
+        actor_id="operator",
+        decision="confirm_failed",
+    )
+
+    assert resolved.status == RunStatus.FAILED
+    run.refresh_from_db()
+    assert (run.error_code, run.reason_code) == (
+        "OUTCOME_UNKNOWN",
+        "OPERATOR_CONFIRMED_FAILED",
+    )
+    assert (
+        AuditEvent.objects.filter(
+            organization_id=run.organization_id,
+            resource_id=str(run.id),
+            action="workflow.run.recovery.resolve",
+            actor_id="operator",
+        ).count()
+        == 1
+    )
     assert run.sync_lease_token is None
 
 
@@ -1112,6 +1210,109 @@ def test_expired_cancelled_sync_lease_becomes_cancelled(workflow_fixture) -> Non
     assert result.status == "cancelled"
     assert run.cancellation_state == RunCancellationState.ACKNOWLEDGED
     assert run.sync_lease_token is None
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_unified_admission_creates_one_exact_run(workflow_fixture) -> None:
+    workflow_version = WorkflowVersion.objects.get(scenario=workflow_fixture.scenario)
+    context = issue_execution_context(
+        organization_id=workflow_fixture.organization.id,
+        project_id=workflow_fixture.scenario.project_id,
+        scenario_id=workflow_fixture.scenario.id,
+        scenario_alias=workflow_fixture.alias,
+        consumer_id=workflow_fixture.consumer.id,
+        capabilities=["workflow_run"],
+        release_id=workflow_fixture.release.id,
+        request_id="concurrent-unified-admission",
+    )
+    barrier = Barrier(2)
+    results: list[tuple[UUID, bool, str | None]] = []
+    errors: list[BaseException] = []
+
+    def attempt() -> None:
+        close_old_connections()
+        try:
+            barrier.wait()
+            admitted, created = request_unified_run(
+                release=workflow_fixture.release,
+                consumer=workflow_fixture.consumer,
+                workflow_version=workflow_version,
+                execution_context=context,
+                input_payload={"query": "same"},
+                idempotency_key="concurrent-unified-admission",
+                execution_mode=RunExecutionMode.BACKGROUND,
+            )
+            results.append((admitted.id, created, admitted.response_id))
+        except BaseException as exc:  # pragma: no cover - asserted by parent thread
+            errors.append(exc)
+        finally:
+            close_old_connections()
+
+    threads = [Thread(target=attempt), Thread(target=attempt)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert not errors
+    assert len(results) == 2
+    assert {item[0] for item in results} == {Run.objects.get().id}
+    assert sorted(item[1] for item in results) == [False, True]
+    assert len({item[2] for item in results}) == 1
+    assert list(RunEvent.objects.values_list("sequence", "event_type")) == [
+        (1, RunEventType.REQUESTED),
+        (2, RunEventType.QUEUED),
+    ]
+
+
+@pytest.mark.django_db
+def test_unified_admission_rejects_mismatched_or_unprivileged_signed_context(
+    workflow_fixture,
+) -> None:
+    workflow_version = WorkflowVersion.objects.get(scenario=workflow_fixture.scenario)
+
+    def context(*, consumer_id: int, capabilities: list[str]) -> dict:
+        return issue_execution_context(
+            organization_id=workflow_fixture.organization.id,
+            project_id=workflow_fixture.scenario.project_id,
+            scenario_id=workflow_fixture.scenario.id,
+            scenario_alias=workflow_fixture.alias,
+            consumer_id=consumer_id,
+            capabilities=capabilities,
+            release_id=workflow_fixture.release.id,
+            request_id="unified-context-boundary",
+        )
+
+    for key, signed_context in (
+        (
+            "wrong-consumer-context",
+            context(
+                consumer_id=workflow_fixture.consumer.id + 1,
+                capabilities=["workflow_run"],
+            ),
+        ),
+        (
+            "missing-capability-context",
+            context(
+                consumer_id=workflow_fixture.consumer.id,
+                capabilities=[],
+            ),
+        ),
+    ):
+        with pytest.raises(WorkflowRequestError, match="EXECUTION_CONTEXT_INVALID"):
+            request_unified_run(
+                release=workflow_fixture.release,
+                consumer=workflow_fixture.consumer,
+                workflow_version=workflow_version,
+                execution_context=signed_context,
+                input_payload={"query": "same"},
+                idempotency_key=key,
+                execution_mode=RunExecutionMode.BACKGROUND,
+            )
+
+    assert not Run.objects.exists()
 
 
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
@@ -1490,9 +1691,43 @@ def test_unified_run_tables_force_rls_for_non_owner_role(workflow_fixture) -> No
         deadline_at=timezone.now() + timedelta(minutes=1),
     )
     wait_id, _resume_token = _suspended(created)
+    join = RunJoin.objects.create(
+        organization=run.organization,
+        run=run,
+        region_node_id="rls-region",
+        join_node_id="rls-join",
+        compiled_checksum=run.compiled_checksum,
+        mode="all",
+        required_count=1,
+        branch_count=1,
+        max_concurrency=1,
+        max_duration_seconds=60,
+        max_state_bytes=1024,
+        deadline_at=run.deadline_at,
+    )
+    branch = RunBranch.objects.create(
+        organization=run.organization,
+        run=run,
+        region_node_id=join.region_node_id,
+        branch_name="rls",
+        compiled_checksum=run.compiled_checksum,
+        input_state={},
+    )
     role = "rls_probe_unified_run"
-    tables = (Run._meta.db_table, RunEvent._meta.db_table, RunWait._meta.db_table)
-    rows = ((tables[0], run.id), (tables[1], event.id), (tables[2], wait_id))
+    tables = (
+        Run._meta.db_table,
+        RunEvent._meta.db_table,
+        RunWait._meta.db_table,
+        RunBranch._meta.db_table,
+        RunJoin._meta.db_table,
+    )
+    rows = (
+        (tables[0], run.id),
+        (tables[1], event.id),
+        (tables[2], wait_id),
+        (tables[3], branch.id),
+        (tables[4], join.id),
+    )
 
     with connection.cursor() as cursor:
         cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [role])
@@ -1524,12 +1759,17 @@ def test_unified_run_tables_force_rls_for_non_owner_role(workflow_fixture) -> No
         cursor.execute(f"DROP ROLE {role}")
 
 
-# The owner-approved application-role inventory for the unified Run plane. `Run` and `RunWait` carry
-# mutable state; `RunEvent` is append-only. None of them has an application delete path.
+# The owner-approved application-role inventory for the unified Run plane. `Run`, `RunWait`,
+# branches, joins, child links and compensation intent carry mutable state; RunEvent is
+# append-only. None has a delete path.
 UNIFIED_RUN_GRANTS = {
     "workflows_run": ("SELECT", "INSERT", "UPDATE"),
     "workflows_runevent": ("SELECT", "INSERT"),
     "workflows_runwait": ("SELECT", "INSERT", "UPDATE"),
+    "workflows_runbranch": ("SELECT", "INSERT", "UPDATE"),
+    "workflows_runjoin": ("SELECT", "INSERT", "UPDATE"),
+    "workflows_runchildlink": ("SELECT", "INSERT", "UPDATE"),
+    "workflows_runcompensationentry": ("SELECT", "INSERT", "UPDATE"),
 }
 
 
@@ -1646,7 +1886,6 @@ def _execute_queued(run: Run):
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_bounded_executor_suspends_at_a_human_task_and_resumes_at_the_successor(
     workflow_fixture,
     monkeypatch,
@@ -1695,7 +1934,6 @@ def test_bounded_executor_suspends_at_a_human_task_and_resumes_at_the_successor(
     )
     run.refresh_from_db()
     assert run.status == "queued"
-
     completed = _execute_queued(run)
     assert completed.status == "completed"
     run.refresh_from_db()
@@ -1709,7 +1947,37 @@ def test_bounded_executor_suspends_at_a_human_task_and_resumes_at_the_successor(
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_authorized_operator_decides_human_wait_without_resume_token(
+    workflow_fixture,
+) -> None:
+    _install_graph(
+        workflow_fixture,
+        [_START_NODE, _human_node(), _FORMAT_NODE, _END_NODE],
+        [
+            {"from": "start", "to": "review"},
+            {"from": "review", "to": "format"},
+            {"from": "format", "to": "done"},
+        ],
+    )
+    run = _queued_background_run(workflow_fixture, key="operator-human-task")
+    suspended = _execute_queued(run)
+    assert suspended.wait_id is not None
+
+    decided = decide_run_human_task(
+        organization_id=run.organization_id,
+        wait_id=suspended.wait_id,
+        actor_id="reviewer",
+        actor_roles={"approver"},
+        payload={"approved": True},
+    )
+
+    assert decided.outcome == "committed"
+    run.refresh_from_db()
+    assert run.status == RunStatus.QUEUED
+    assert RunWait.objects.get(pk=suspended.wait_id).consumed_by == "reviewer"
+
+
+@pytest.mark.django_db
 def test_bounded_executor_suspends_at_event_and_timer_waits(workflow_fixture) -> None:
     _install_graph(
         workflow_fixture,
@@ -1771,7 +2039,6 @@ def test_bounded_executor_suspends_at_event_and_timer_waits(workflow_fixture) ->
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_bounded_executor_refuses_an_authored_escalation_it_cannot_honour(
     workflow_fixture,
 ) -> None:
@@ -1807,7 +2074,6 @@ _RAG_EDGES = [
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_bounded_executor_runs_retrieve_and_generate_through_the_governed_seams(
     workflow_fixture,
 ) -> None:
@@ -1815,8 +2081,9 @@ def test_bounded_executor_runs_retrieve_and_generate_through_the_governed_seams(
         workflow_fixture, [_START_NODE, _RETRIEVE_NODE, _GENERATE_NODE, _END_NODE], _RAG_EDGES
     )
     run = _queued_background_run(workflow_fixture, key="executor-rag")
-    run.redacted_state = {"input": {"query": "what is the policy"}}
-    run.save(update_fields=["redacted_state"])
+    run.checkpoint = {"input": {"query": "what is the policy"}}
+    run.redacted_state = {"input": {"query": "[redacted]"}}
+    run.save(update_fields=["checkpoint", "redacted_state"])
 
     assert _execute_queued(run).status == "completed"
     run.refresh_from_db()
@@ -1827,7 +2094,6 @@ def test_bounded_executor_runs_retrieve_and_generate_through_the_governed_seams(
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_bounded_executor_routes_rag_nodes_through_typed_mappings(workflow_fixture) -> None:
     _install_graph(
         workflow_fixture,
@@ -1850,8 +2116,9 @@ def test_bounded_executor_routes_rag_nodes_through_typed_mappings(workflow_fixtu
         _RAG_EDGES,
     )
     run = _queued_background_run(workflow_fixture, key="executor-rag-mapped")
-    run.redacted_state = {"input": {"query": "what is the policy"}}
-    run.save(update_fields=["redacted_state"])
+    run.checkpoint = {"input": {"query": "what is the policy"}}
+    run.redacted_state = {"input": {"query": "[redacted]"}}
+    run.save(update_fields=["checkpoint", "redacted_state"])
 
     assert _execute_queued(run).status == "completed"
     run.refresh_from_db()
@@ -1861,7 +2128,6 @@ def test_bounded_executor_routes_rag_nodes_through_typed_mappings(workflow_fixtu
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
 def test_bounded_executor_fails_closed_on_an_unpinned_transform_profile(workflow_fixture) -> None:
     _install_graph(
         workflow_fixture,
@@ -1884,8 +2150,9 @@ def test_bounded_executor_fails_closed_on_an_unpinned_transform_profile(workflow
         ],
     )
     run = _queued_background_run(workflow_fixture, key="executor-transform")
-    run.redacted_state = {"input": {"query": "shape me"}}
-    run.save(update_fields=["redacted_state"])
+    run.checkpoint = {"input": {"query": "shape me"}}
+    run.redacted_state = {"input": {"query": "[redacted]"}}
+    run.save(update_fields=["checkpoint", "redacted_state"])
 
     assert _execute_queued(run).status == "failed"
     run.refresh_from_db()
@@ -1894,7 +2161,140 @@ def test_bounded_executor_fails_closed_on_an_unpinned_transform_profile(workflow
 
 
 @pytest.mark.django_db
-@override_settings(UNIFIED_BACKGROUND_EXECUTOR_ENABLED=True)
+def test_bounded_executor_retries_only_declared_transient_idempotent_nodes(
+    workflow_fixture, monkeypatch
+) -> None:
+    _install_graph(
+        workflow_fixture,
+        [
+            _START_NODE,
+            {
+                "id": "recall",
+                "type": "retrieve",
+                "retry_policy": {
+                    "max_attempts": 2,
+                    "backoff_seconds": 0,
+                    "retry_on": ["transient"],
+                    "idempotent": True,
+                },
+            },
+            _FORMAT_NODE,
+            _END_NODE,
+        ],
+        [
+            {"from": "start", "to": "recall"},
+            {"from": "recall", "to": "format"},
+            {"from": "format", "to": "done"},
+        ],
+    )
+    attempts = 0
+
+    def flaky_node(**_kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            from apps.workflows.runtime import WorkflowRuntimeError
+
+            raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_FAILED")
+        return {"chunks": [], "citations": []}
+
+    monkeypatch.setattr("apps.workflows.unified_executor._execute_eligible_node", flaky_node)
+    run = _queued_background_run(workflow_fixture, key="executor-retry")
+    run.checkpoint = {"input": {"query": "retry"}}
+    run.save(update_fields=["checkpoint"])
+
+    assert _execute_queued(run).status == "completed"
+    assert attempts == 2
+    assert (
+        RunEvent.objects.filter(
+            run=run,
+            event_type=RunEventType.NODE_RETRIED,
+            node_id="recall",
+            reason_code="WORKFLOW_RETRIEVAL_FAILED",
+        ).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_bounded_executor_compensates_completed_side_effects_in_reverse_intent_order(
+    workflow_fixture, monkeypatch
+) -> None:
+    from apps.tools.models import ToolInvocationStatus
+    from apps.workflows.runtime import WorkflowRuntimeError
+
+    _install_graph(
+        workflow_fixture,
+        [
+            _START_NODE,
+            {
+                "id": "act",
+                "type": "tool",
+                "config": {"binding_role": "tool_binding.act", "output_key": "tool_result"},
+                "compensation": "undo",
+            },
+            {
+                "id": "fail",
+                "type": "transform",
+                "config": {"transform_profile_ref": "missing"},
+                "input_mapping": [{"from": "/input", "to": "/documents"}],
+                "output_mapping": [{"from": "/result", "to": "/evidence/fail"}],
+            },
+            _FORMAT_NODE,
+            _END_NODE,
+            {
+                "id": "undo",
+                "type": "transform",
+                "config": {"transform_profile_ref": "undo"},
+                "input_mapping": [{"from": "/tool_result", "to": "/documents"}],
+                "output_mapping": [{"from": "/result", "to": "/evidence/undo"}],
+            },
+        ],
+        [
+            {"from": "start", "to": "act"},
+            {"from": "act", "to": "fail"},
+            {"from": "fail", "to": "format"},
+            {"from": "format", "to": "done"},
+        ],
+    )
+    monkeypatch.setattr(
+        "apps.workflows.unified_executor._invoke_tool",
+        lambda **_kwargs: SimpleNamespace(
+            status=ToolInvocationStatus.COMPLETED,
+            redacted_output={"status": "created"},
+        ),
+    )
+
+    def transform(**kwargs):
+        if kwargs["node"]["id"] == "fail":
+            raise WorkflowRuntimeError("WORKFLOW_TRANSFORM_PROFILE_UNRESOLVED")
+        return {"result": {"status": "reverted"}}
+
+    monkeypatch.setattr("apps.workflows.unified_executor._execute_eligible_node", transform)
+    run = _queued_background_run(workflow_fixture, key="executor-compensation")
+    run.checkpoint = {"input": {"query": "act"}}
+    run.save(update_fields=["checkpoint"])
+
+    assert _execute_queued(run).status == "failed"
+    run.refresh_from_db()
+    assert run.error_code == "WORKFLOW_TRANSFORM_PROFILE_UNRESOLVED"
+    entry = RunCompensationEntry.objects.get(run=run, source_node_id="act")
+    assert (entry.compensation_node_id, entry.status) == (
+        "undo",
+        RunCompensationStatus.COMPLETED,
+    )
+    assert (
+        RunEvent.objects.filter(
+            run=run,
+            event_type=RunEventType.COMPENSATION,
+            node_id="undo",
+            outcome=RunCompensationStatus.COMPLETED,
+        ).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
 def test_bounded_executor_denies_a_custom_node_the_organization_never_allowlisted(
     workflow_fixture,
 ) -> None:

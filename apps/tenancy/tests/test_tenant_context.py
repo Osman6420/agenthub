@@ -133,3 +133,30 @@ def test_operator_middleware_derives_membership_scope_under_non_owner_role() -> 
                 f'REVOKE EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) FROM "{role}"'
             )
             cursor.execute(f'DROP ROLE "{role}"')  # noqa: S608
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/v1/responses",
+        "/v1/chat/completions",
+        f"/v1/runs/{uuid.uuid4()}",
+        f"/v1/runs/{uuid.uuid4()}/cancel",
+    ),
+)
+def test_durable_api_routes_are_not_wrapped_in_request_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    request = RequestFactory().get(path)
+    observed: list[bool] = []
+
+    def response_for_scope(_request):
+        observed.append(connection.in_atomic_block)
+        return HttpResponse("ok")
+
+    monkeypatch.setattr(connection, "vendor", "postgresql")
+    response = TenantContextMiddleware(response_for_scope)(request)
+
+    assert response.status_code == 200
+    assert observed == [False]

@@ -15,14 +15,8 @@ app_name = "gateway"
 urlpatterns = [
     path("health/live", health.live, name="health-live"),
     path("health/ready", health.ready, name="health-ready"),
-    path("invoke", views.InvokeView.as_view(), name="invoke"),
-    path("query", views.QueryView.as_view(), name="query"),
     path("chat/completions", views.ChatCompletionsView.as_view(), name="chat-completions"),
     path("responses", views.ResponsesView.as_view(), name="responses"),
-    path("runs/<str:run_id>", views.RunStatusView.as_view(), name="run-status"),
-    path(
-        "workflow-waits/<str:correlation>/resume",
-        views.WorkflowEventResumeView.as_view(),
-        name="workflow-event-resume",
-    ),
+    path("runs/<uuid:run_id>/cancel", views.RunCancelView.as_view(), name="run-cancel"),
+    path("runs/<uuid:run_id>", views.RunStatusView.as_view(), name="run-status"),
 ]

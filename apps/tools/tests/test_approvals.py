@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer, ConsumerProtocol
 from apps.releases.compiler import ArtifactRef, compile_release
@@ -30,6 +30,7 @@ from apps.tools.models import (
     ToolInvocationStatus,
 )
 from apps.tools.services import register_tool_binding, register_tool_definition
+from apps.workflows.presets import empty_workflow
 
 ORG_SLUG = "tool-org"
 PUBLIC_IP = "93.184.216.34"
@@ -95,9 +96,7 @@ def _binding_body(*, required: bool) -> dict:
 def _setup(*, risk: str, side_effecting: bool, required: bool):
     org = Organization.objects.create(slug=ORG_SLUG, name="Tool Org")
     project = AIProject.objects.create(organization=org, slug="cx", name="CX")
-    scenario = Scenario.objects.create(
-        project=project, slug="flow", name="Flow", type=ScenarioType.RAG
-    )
+    scenario = Scenario.objects.create(project=project, slug="flow", name="Flow")
     create_artifact_version(
         organization=org,
         artifact_type=ArtifactType.INPUT_CONTRACT,
@@ -138,12 +137,22 @@ def _setup(*, risk: str, side_effecting: bool, required: bool):
         created_by="editor",
     )
     register_tool_binding(artifact=binding_artifact)
+    workflow = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="tool_workflow",
+        body=empty_workflow(logical_id="tool_workflow"),
+        created_by="editor",
+    )
     release = compile_release(
         scenario=scenario,
         refs=[
             ArtifactRef(
+                "workflow_definition", workflow.type, workflow.logical_id, workflow.version
+            ),
+            ArtifactRef(
                 "tool_binding.search", binding_artifact.type, binding_artifact.logical_id, 1
-            )
+            ),
         ],
         runtime_version="rt:9.0.0",
         created_by="editor",

@@ -79,7 +79,6 @@ oluşturulabilir. Mevcut runtime’ın doğrudan aradığı standart roller:
 | `input_contract` | Gateway input doğrulaması ve runtime bundle |
 | `output_contract` | Workflow/agent output doğrulaması |
 | `workflow_definition` | Workflow scenario compiler/runtime |
-| `agent_definition` | Agent scenario compiler/runtime |
 | `prompt` | Default RAG/model prompt’u |
 | `model_profile` | Default model profile artifact’i |
 | `retrieval_profile` | Default retrieval provider ayarları |
@@ -268,7 +267,6 @@ customer_query:v3
 | `custom_node_definition` | Preinstalled custom node manifesti | Sıkı validator + registration/runtime kontrolleri |
 | `tool_definition` | Governed outbound tool | Sıkı validator |
 | `tool_binding` | Release/scenario tool daraltması | Sıkı validator + registry resolution |
-| `agent_definition` | Bounded agent config | Sıkı validator/compiler |
 | `memory_policy` | Memory politikası için registry türü | Henüz tipe özel sıkı şema yok |
 | `eval_suite` | Promotion/eval vakaları | Sıkı bounded assertion allowlist’i |
 
@@ -499,24 +497,15 @@ endpoint, url, entrypoint, package, python, code, secret
 
 ### 8.4 Built-in node türleri
 
-`agent_loop` Part 3 geçiş düğümüdür ve `WORKFLOW_AGENT_LOOP_ENABLED` varsayılanı kapalıdır. Gate
-kapalıyken compiler düğümü reddeder; Studio yalnız gated olarak gösterir. Açık olduğunda config
-zorunlu `tool_binding_roles` ile yalnız `retrieval`, `limits`, `objective_key`, `output_key`,
-`system_prompt` ve `actions` alanlarını kabul eder. Mevcut agent güvenlik şeması ve limit
-normalizasyonu aynen yeniden kullanılır; bilinmeyen/korumalı alanlar reddedilir. Düğüm hem
-`input_mapping` hem `output_mapping` ister ve runtime entegrasyonu tamamlanana kadar
-`agent_loop_pause_policy_unproven` nedeniyle yalnız background destekler.
-Release compiler, policy içindeki her araç rolünün aynı release manifestinde exact ve aktif bir
-`tool_binding` olarak pinlenmesini zorunlu kılar. Verification rolleri side-effect veya approval
-gerektiren binding kullanamaz. Compiler’ın `execution_mode_analysis` çıktısı release manifestine ve
-checksum’una dahil edilir; runtime daha sonra yalnız bu exact analizi yeniden doğrulayabilir.
-
-İlk gated runtime diliminde yalnız tool-free `agent_loop` policy yürütülür. Ortak
-`resolve_runtime_policy` çekirdeği limitleri, verification/escalation kurallarını ve child
-attenuation’ı hem AgentRun hem workflow adapter’ı için aynı şekilde hesaplar. Workflow runtime gate’i
-yeniden kontrol eder ve outer workflow transition sonucu persist eder. Tool ilan eden embedded
-policy, approval pause/checkpoint sahipliği birleşik Run modeline taşınana kadar
-`AGENT_EMBEDDED_TOOLS_UNAVAILABLE` ile fail-closed reddedilir.
+`agent_loop` is the canonical governed agent node. Its closed config requires
+`tool_binding_roles` and accepts only the documented retrieval, limits, objective/output,
+system-prompt and action-policy fields. Unknown and protected authority fields are rejected.
+Release compilation resolves every declared tool/verification role to an exact active
+`tool_binding`, computes immutable execution-mode analysis, and includes that analysis in the
+release checksum. Runtime independently reloads those pins, derives tenant/consumer capabilities,
+and persists approval pauses and the internal agent checkpoint on the same canonical `Run`.
+Tool, model, retrieval and approval operations therefore share the workflow transition,
+cancellation, usage, audit and terminal-state boundaries.
 
 #### `input`
 
@@ -1222,7 +1211,8 @@ Yalnız JSON döndür; açıklama veya Markdown fence ekleme.
   A release manager can assign unique manifest roles and compile an exact candidate pin; selection
   never edits or clones the artifact and never promotes the candidate.
 - Reserved artifact-type roles and their dotted variants accept only the matching artifact type.
-  `workflow_definition` and `agent_definition` must use their canonical reserved roles. The release
+  `workflow_definition` must use its canonical reserved role. Agent behavior is authored inside
+  a workflow's closed `agent_loop` node rather than a separate artifact type. The release
   compiler repeats this validation and remains authoritative for version/checksum resolution.
 - Draft, published artifact, candidate release and active release are separate lifecycle states.
   Only the existing evaluated promotion path changes served runtime behavior.

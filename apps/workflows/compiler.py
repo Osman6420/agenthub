@@ -6,8 +6,6 @@ import ast
 from dataclasses import dataclass
 from typing import Any
 
-from django.conf import settings
-
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
 from apps.workflows.state_mapping import MappingError, compile_mappings
@@ -25,16 +23,10 @@ MAX_WAIT_SECONDS = 2_592_000
 MAX_DECISION_ROLES = 16
 
 # Pinned child-composition bounds (P2.6.5 / ADR-0009). A call-site may only *lower* the
-# nesting depth; the closed agent-call action vocabulary maps to attenuated capabilities at
-# admission. These are compile-time bounds; the runtime re-enforces them plus cumulative
-# budgets and an ancestry/depth guard.
+# nesting depth. This is a compile-time bound; the runtime re-enforces it plus
+# cumulative budgets and an ancestry/depth guard.
 MAX_CHILD_DEPTH = 3
-MAX_AGENT_CALL_DECISIONS = 20
-# The governed agent decision kinds a parent may authorize a child agent to take (P2.6.6).
-# A parent compiled before ``verify``/``escalate`` existed cannot list them, so the child
-# runtime denies those kinds by default (fail-closed composition attenuation).
-AGENT_CALL_ACTIONS = frozenset({"retrieve", "tool", "verify", "respond", "escalate"})
-COMPOSITION_NODE_TYPES = frozenset({"subworkflow", "agent_call"})
+COMPOSITION_NODE_TYPES = frozenset({"subworkflow"})
 
 # Compiled-contract version (ADR-0008/ADR-0014). V5 adds compiler-owned execution-mode evidence;
 # stale graphs or checkpoints can never be resumed under changed semantics.
@@ -51,14 +43,12 @@ _SYNC_BLOCKER_BY_NODE_TYPE = {
     "parallel": "durable_fan_out",
     "for_each": "durable_fan_out",
     "subworkflow": "durable_child_run",
-    "agent_call": "durable_child_run",
 }
 
 FAILURE_CLASSES = frozenset(
     {"validation", "authorization", "permanent", "transient", "outcome_unknown"}
 )
 MAX_RETRY_ATTEMPTS = 3
-MAX_RETRY_BACKOFF_SECONDS = 300
 
 BUILTIN_NODE_TYPES = frozenset(
     {
@@ -79,7 +69,6 @@ BUILTIN_NODE_TYPES = frozenset(
         "human_task",
         "timer",
         "subworkflow",
-        "agent_call",
         "agent_loop",
     }
 )
@@ -97,7 +86,6 @@ MAPPING_ELIGIBLE_NODE_TYPES = frozenset(
         "event_wait",
         "human_task",
         "subworkflow",
-        "agent_call",
         "agent_loop",
     }
 )
@@ -124,13 +112,13 @@ def validate_artifact_body(artifact_type: str, body: dict[str, Any]) -> None:
 def _composition_enabled(explicit: bool | None) -> bool:
     if explicit is not None:
         return explicit
-    return bool(getattr(settings, "WORKFLOW_COMPOSITION_ENABLED", False))
+    return True
 
 
 def _agent_loop_enabled(explicit: bool | None) -> bool:
     if explicit is not None:
         return explicit
-    return bool(getattr(settings, "WORKFLOW_AGENT_LOOP_ENABLED", False))
+    return True
 
 
 def compile_workflow(
@@ -187,7 +175,7 @@ def compile_workflow(
         success_edges = [
             edge for edge in edges if edge["from"] == node_id and "on_error" not in edge
         ]
-        if node["type"] != "end" and not success_edges:
+        if node["type"] != "end" and node_id not in compensation_targets and not success_edges:
             raise WorkflowCompileError("every non-end node requires an outgoing edge")
         if node["type"] == "end" and success_edges:
             raise WorkflowCompileError("end nodes cannot have outgoing edges")
@@ -454,15 +442,6 @@ def _validate_node(
         _validate_child_depth(config.get("max_depth"))
         if input_mapping is None or output_mapping is None:
             raise WorkflowCompileError("subworkflow node requires input_mapping and output_mapping")
-    elif node_type == "agent_call":
-        _require_exact_keys(
-            config, {"agent_role", "max_decisions", "allowed_actions"}, "agent_call config"
-        )
-        _identifier(config.get("agent_role"), "agent_call agent_role")
-        _validate_agent_call_decisions(config.get("max_decisions"))
-        config = {**config, "allowed_actions": _validate_agent_call_actions(config)}
-        if input_mapping is None or output_mapping is None:
-            raise WorkflowCompileError("agent_call node requires input_mapping and output_mapping")
     elif node_type == "retrieve" and config:
         raise WorkflowCompileError("retrieve node does not accept config")
     elif node_type == "parallel":
@@ -642,18 +621,7 @@ def _validate_compensations(
 
 
 def _validate_retry_policy(value: Any, node_type: str) -> dict[str, Any]:
-    if node_type in {
-        "input",
-        "end",
-        "condition",
-        "parallel",
-        "for_each",
-        "join",
-        "event_wait",
-        "human_task",
-        "timer",
-        "tool",
-    }:
+    if node_type not in {"retrieve", "generate", "custom", "transform"}:
         raise WorkflowCompileError("WORKFLOW_RETRY_POLICY_INVALID")
     policy = _mapping(value, "retry_policy")
     _require_exact_keys(
@@ -673,7 +641,7 @@ def _validate_retry_policy(value: Any, node_type: str) -> dict[str, Any]:
     if (
         isinstance(backoff_seconds, bool)
         or not isinstance(backoff_seconds, int)
-        or not 0 <= backoff_seconds <= MAX_RETRY_BACKOFF_SECONDS
+        or backoff_seconds != 0
     ):
         raise WorkflowCompileError("WORKFLOW_RETRY_POLICY_INVALID")
     if retry_on != ["transient"] or policy.get("idempotent") is not True:
@@ -813,34 +781,6 @@ def _validate_condition(expression: Any) -> None:
 def _validate_child_depth(value: Any) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= MAX_CHILD_DEPTH:
         raise WorkflowCompileError(f"subworkflow max_depth must be 1..{MAX_CHILD_DEPTH}")
-
-
-def _validate_agent_call_decisions(value: Any) -> None:
-    if (
-        not isinstance(value, int)
-        or isinstance(value, bool)
-        or not 1 <= value <= MAX_AGENT_CALL_DECISIONS
-    ):
-        raise WorkflowCompileError(
-            f"agent_call max_decisions must be 1..{MAX_AGENT_CALL_DECISIONS}"
-        )
-
-
-def _validate_agent_call_actions(config: dict[str, Any]) -> list[str]:
-    actions = config.get("allowed_actions")
-    if not isinstance(actions, list) or not actions:
-        raise WorkflowCompileError("agent_call allowed_actions must be a non-empty list")
-    if any(not isinstance(item, str) for item in actions):
-        raise WorkflowCompileError("agent_call allowed_actions must be strings")
-    unique = set(actions)
-    if len(unique) != len(actions):
-        raise WorkflowCompileError("agent_call allowed_actions must be unique")
-    if not unique <= AGENT_CALL_ACTIONS:
-        raise WorkflowCompileError("agent_call allowed_actions contains an unknown action")
-    if "respond" not in unique:
-        # A call must be able to produce output the parent can map back.
-        raise WorkflowCompileError("agent_call allowed_actions must include respond")
-    return sorted(unique)
 
 
 def _validate_custom_node(body: dict[str, Any]) -> None:

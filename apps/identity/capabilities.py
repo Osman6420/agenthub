@@ -11,11 +11,7 @@ from django.db import models
 
 
 class Capability(models.TextChoices):
-    QUERY = "query", "Synchronous RAG/prompt query"
-    QUERY_STREAM = "query_stream", "Streaming (SSE) answer"
     WORKFLOW_RUN = "workflow_run", "Start a defined workflow"
-    AGENT_INVOKE = "agent_invoke", "Start a defined agent run"
-    AGENT_RESUME = "agent_resume", "Resume an owned/permitted run"
     TOOL_CALL = "tool_call", "Read-only tool call"
     TOOL_CALL_SIDE_EFFECT = "tool_call_side_effect", "Side-effecting tool call"
     TOOL_APPROVE = "tool_approve", "Decide tool approvals"

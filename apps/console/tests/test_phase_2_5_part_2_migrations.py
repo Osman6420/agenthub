@@ -59,7 +59,7 @@ def test_public_id_migrations_backfill_preserve_and_reforward() -> None:
     organization = Organization.objects.create(slug="migration-org", name="Migration Org")
     project = Project.objects.create(organization=organization, slug="project", name="Project")
     Scenario.objects.create(
-        organization=organization, project=project, slug="scenario", name="Scenario", type="rag"
+        organization=organization, project=project, slug="scenario", name="Scenario"
     )
     Document.objects.create(organization=organization, logical_id="document")
     DocumentSet.objects.create(organization=organization, logical_id="set", name="Set")

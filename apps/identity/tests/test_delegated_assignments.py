@@ -1,12 +1,12 @@
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.contrib.auth.base_user import AbstractBaseUser
 from django.core.exceptions import ValidationError
 
 from apps.audit.models import AuditEvent
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet
 from apps.identity import assignment_services
 from apps.identity.assignment_services import (
@@ -33,11 +33,11 @@ pytestmark = pytest.mark.django_db
 class AssignmentFixture:
     organization: Organization
     foreign_organization: Organization
-    administrator: AbstractBaseUser
-    project_admin: AbstractBaseUser
-    editor: AbstractBaseUser
-    document_manager: AbstractBaseUser
-    outsider: AbstractBaseUser
+    administrator: Any
+    project_admin: Any
+    editor: Any
+    document_manager: Any
+    outsider: Any
     project: AIProject
     other_project: AIProject
     scenario: Scenario
@@ -80,14 +80,12 @@ def assignment_fixture() -> AssignmentFixture:
         project=project,
         slug="scenario",
         name="Scenario",
-        type=ScenarioType.RAG,
     )
     other_scenario = Scenario.objects.create(
         organization=organization,
         project=other_project,
         slug="other-scenario",
         name="Other Scenario",
-        type=ScenarioType.RAG,
     )
     document_set = DocumentSet.objects.create(
         organization=organization,

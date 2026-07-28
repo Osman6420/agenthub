@@ -33,7 +33,7 @@ def test_imports_control_plane_graph_idempotently() -> None:
         _doc(
             "Scenario",
             {"organization": "mcm", "project": "support", "slug": "faq"},
-            {"name": "FAQ", "type": "rag"},
+            {"name": "FAQ"},
         ),
         _doc(
             "ScenarioAlias",
@@ -53,7 +53,7 @@ def test_imports_control_plane_graph_idempotently() -> None:
                 "project": "support",
                 "scenario": "faq",
             },
-            {"capabilities": ["query"]},
+            {"capabilities": ["workflow_run"]},
         ),
     ]
 
@@ -66,7 +66,7 @@ def test_imports_control_plane_graph_idempotently() -> None:
     assert AIProject.objects.count() == 1
     assert Scenario.objects.count() == 1
     assert Consumer.objects.count() == 1
-    assert ConsumerBinding.objects.get().capabilities == ["query"]
+    assert ConsumerBinding.objects.get().capabilities == ["workflow_run"]
 
 
 @pytest.mark.django_db
@@ -74,7 +74,7 @@ def test_import_rejects_unknown_org_and_cross_org_binding() -> None:
     org_a = Organization.objects.create(slug="a", name="A")
     org_b = Organization.objects.create(slug="b", name="B")
     project = AIProject.objects.create(organization=org_b, slug="support", name="Support")
-    Scenario.objects.create(project=project, slug="faq", name="FAQ", type="rag")
+    Scenario.objects.create(project=project, slug="faq", name="FAQ")
     Consumer.objects.create(organization=org_a, subject="portal", name="Portal", protocol="rest")
 
     with pytest.raises(ControlPlaneGitOpsError, match="unknown consumer or scenario"):
@@ -87,7 +87,7 @@ def test_import_rejects_unknown_org_and_cross_org_binding() -> None:
                     "project": "support",
                     "scenario": "faq",
                 },
-                {"capabilities": ["query"]},
+                {"capabilities": ["workflow_run"]},
             )
         )
 

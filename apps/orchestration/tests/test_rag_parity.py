@@ -147,6 +147,7 @@ def test_workflow_generate_redacts_document_text_from_sources(
     assert envelope == {
         "answer": "generated",
         "sources": [{"source_id": "s1", "source_uri": "u1", "title": "T1", "score": 0.9}],
+        "fallback_used": False,
     }
 
 
@@ -164,7 +165,7 @@ def test_workflow_generate_never_calls_the_model_when_ungrounded(
     envelope = _execute_eligible_node(
         node=_generate_node(), state=dict(GROUNDED), input_env=None, run=_run()
     )
-    assert envelope == {"answer": "pinned fallback", "sources": []}
+    assert envelope == {"answer": "pinned fallback", "sources": [], "fallback_used": True}
 
 
 # --- agent respond step --------------------------------------------------------------------

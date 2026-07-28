@@ -9,8 +9,6 @@
   </div>
 </div>
 <div class="relationship-grid">
-  <section class="card"><h2>Agent çalıştırmaları</h2><p class="muted">Agent çalışmalarının durumunu ve güvenli özetini görün.</p><a class="button secondary" href="{% url 'console:agent_runs' %}">Agent çalışmalarını aç</a></section>
-  <section class="card"><h2>Workflow çalıştırmaları</h2><p class="muted">Workflow adımlarını, beklemeleri ve çalışma izlerini inceleyin.</p><a class="button secondary" href="{% url 'console:workflow_runs' %}">Workflow çalışmalarını aç</a></section>
-  <section class="card"><h2>Kurtarma kararları</h2><p class="muted">Başarısız workflow çalışmaları için yetkili operatör kararlarını yönetin.</p><a class="button secondary" href="{% url 'console:workflow_recoveries' %}">Karar bekleyenleri aç</a></section>
+  <section class="card"><h2>Birleşik çalıştırmalar</h2><p class="muted">Tüm senaryo adımlarını, beklemeleri, onayları ve güvenli çalışma izlerini tek listede inceleyin.</p><a class="button secondary" href="{% url 'console:workflow_runs' %}">Çalıştırmaları aç</a></section>
 </div>
 {% endblock %}

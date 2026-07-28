@@ -28,7 +28,7 @@ def _member(username: str, org: Organization, role: str) -> Any:
 
 def _scenario(org: Organization, slug: str = "rag") -> Scenario:
     project = AIProject.objects.create(organization=org, slug=f"p-{slug}", name="P")
-    return Scenario.objects.create(project=project, slug=slug, name=slug, type="rag")
+    return Scenario.objects.create(project=project, slug=slug, name=slug)
 
 
 def _consumer(org: Organization, subject: str = "client") -> Consumer:

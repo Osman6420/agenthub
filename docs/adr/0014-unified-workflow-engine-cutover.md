@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for the Gate 1 contract; destructive/public-API cutover requires approval of the exact diff.
+Accepted on 2026-07-28 after the approved local/disposable destructive cutover.
 
 ## Context
 
@@ -97,10 +97,24 @@ After it, rollback costs an empty rebuild and loses run history by design. Any p
 undrained work, configured old consumer, failed rollback drill or unapproved migration diff stops
 the cutover.
 
+## Implementation outcome
+
+The decision is implemented by migrations through `workflows.0017`: one direct-tenant UUID `Run`,
+ordered `RunEvent`, Run-native waits, parallel regions, child links and compensation entries. The
+canonical executor supports sync/background execution, bounded retry, durable compensation and
+explicit operator recovery. Child workflows run as separately authorized, capability-attenuated
+Runs. RAG and agent behavior are workflow presets; agent policy is a closed `agent_loop` node.
+
+The local Compose target was confirmed non-production, old workers were stopped, the migrations
+were applied, and the owner-authorized demo consumer/user/scenario/runtime rows were removed.
+Canonical demo data was reseeded and `/v1/responses` completed an end-to-end smoke call. The old
+runtime tables and routes are absent. A previous-code plus empty-database migration/seed rollback
+drill passed before cutover; in-place downgrade remains intentionally unsupported.
+
 ## References
 
-- [Phase 2.8 Part 3 plan](../tasks/phase-2-8-part-3-unified-workflow-engine/plan.md)
-- [Phase 2.8 Part 3 threat model](../tasks/phase-2-8-part-3-unified-workflow-engine/threat-model.md)
+- [Phase 2.8 Part 3 plan](../planning/archive/phase-2-8-part-3-unified-workflow-engine-2026-07-28/plan.md)
+- [Phase 2.8 Part 3 threat model](../planning/archive/phase-2-8-part-3-unified-workflow-engine-2026-07-28/threat-model.md)
 - [ADR-0008: durable workflow transition state machine](0008-durable-workflow-transition-state-machine.md)
 - [ADR-0009: child-run capability attenuation](0009-child-run-capability-attenuation.md)
 - [ADR-0010: workflow dataflow, join, wait and human-task contract](0010-workflow-dataflow-join-wait-and-human-task-contract.md)

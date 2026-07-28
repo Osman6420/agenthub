@@ -26,31 +26,24 @@ const compositionSchema: NodeSchema = {
   can_write: true,
   dsl: { api_version: "agenthub/v1", kind: "Workflow" },
   limits: { max_nodes: 50, max_edges: 100, max_parallel_branches: 16 },
-  gates: { composition_enabled: false },
+  gates: { composition_enabled: true },
   retry_policy: {
     max_attempts: { min: 1, max: 3 },
-    backoff_seconds: { min: 0, max: 300 },
+    backoff_seconds: { min: 0, max: 0 },
     retry_on: ["transient"],
     idempotent_required: true,
   },
   node_types: [
     {
-      type: "agent_call",
-      label: "Ajan çağrısı",
+      type: "subworkflow",
+      label: "Alt iş akışı",
       category: "composition",
       composition: true,
       supports_mapping: true,
       mapping_required: true,
-      supports_retry: true,
       fields: [
-        { name: "agent_role", kind: "identifier", required: true },
-        { name: "max_decisions", kind: "integer", required: true, min: 1, max: 20 },
-        {
-          name: "allowed_actions",
-          kind: "list",
-          required: true,
-          options: ["escalate", "respond", "retrieve", "tool", "verify"],
-        },
+        { name: "workflow_role", kind: "identifier", required: true },
+        { name: "max_depth", kind: "integer", required: true, min: 1, max: 3 },
       ],
     },
   ],
@@ -60,14 +53,14 @@ const compositionSchema: NodeSchema = {
 };
 
 describe("node config panel", () => {
-  it("renders a gated composition node with integer, list and mapping editors", () => {
+  it("renders a canonical child workflow with bounded depth and mapping editors", () => {
     const onChange = vi.fn();
     const onPatchData = vi.fn();
     const node = {
       id: "review",
       type: "builderNode",
       position: { x: 0, y: 0 },
-      data: { nodeType: "agent_call", config: { max_decisions: 5 } },
+      data: { nodeType: "subworkflow", config: { workflow_role: "review", max_depth: 2 } },
     } as Node<BuilderNodeData>;
     render(
       <NodeConfigPanel
@@ -80,24 +73,15 @@ describe("node config panel", () => {
       />,
     );
 
-    // Gated (composition disabled) note is shown but the node is still authorable.
-    expect(screen.getByRole("note")).toBeInTheDocument();
-    // Integer field carries its numeric value.
-    expect(screen.getByLabelText("max_decisions")).toHaveValue(5);
-    // Closed-option list renders as checkboxes; toggling emits the array.
-    fireEvent.click(screen.getByLabelText("allowed_actions:verify"));
-    expect(onChange).toHaveBeenLastCalledWith("review", { max_decisions: 5, allowed_actions: ["verify"] });
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("workflow_role")).toHaveValue("review");
+    expect(screen.getByLabelText("max_depth")).toHaveValue(2);
     // Mapping-required node exposes input/output mapping editors.
     expect(screen.getByLabelText("input_mapping")).toBeInTheDocument();
     expect(screen.getByLabelText("output_mapping")).toBeInTheDocument();
     // Adding an input mapping row patches node-level data (not config).
     fireEvent.click(screen.getByText("+ eşleme ekle", { selector: "fieldset[aria-label='input_mapping'] button" }));
     expect(onPatchData).toHaveBeenLastCalledWith("review", { input_mapping: [{ from: "", to: "" }] });
-    // Retry editor toggles a compiler-valid default policy.
-    fireEvent.click(screen.getByLabelText("retry_enabled"));
-    expect(onPatchData).toHaveBeenLastCalledWith("review", {
-      retry_policy: { max_attempts: 1, backoff_seconds: 0, retry_on: ["transient"], idempotent: true },
-    });
   });
 
   it("renders generate bindings and omits a cleared optional identifier", () => {

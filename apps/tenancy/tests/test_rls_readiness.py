@@ -30,13 +30,14 @@ def test_inventory_classifies_direct_tenant_tables() -> None:
     assert inventory["audit.auditevent"].classification == TenantTableClass.TELEMETRY
     assert inventory["catalog.scenario"].classification == TenantTableClass.PROTECTED
     assert inventory["catalog.scenario"].tenant_column == "organization_id"
-    assert inventory["workflows.workflownodeattempt"].tenant_column == "organization_id"
-    assert inventory["workflows.workflowcompensationentry"].tenant_column == "organization_id"
-    assert inventory["workflows.workflowrecoverycase"].tenant_column == "organization_id"
-    assert inventory["workflows.workflowrecoveryapproval"].tenant_column == "organization_id"
+    assert inventory["workflows.run"].tenant_column == "organization_id"
+    assert inventory["workflows.runevent"].tenant_column == "organization_id"
+    assert inventory["workflows.runwait"].tenant_column == "organization_id"
     assert inventory["identity.consumertoken"].classification == TenantTableClass.BOOTSTRAP
-    assert inventory["workflows.workflowbranch"].classification == TenantTableClass.PROTECTED
-    assert inventory["workflows.workflowjoin"].classification == TenantTableClass.PROTECTED
+    assert inventory["workflows.runbranch"].classification == TenantTableClass.PROTECTED
+    assert inventory["workflows.runjoin"].classification == TenantTableClass.PROTECTED
+    assert inventory["workflows.runchildlink"].classification == TenantTableClass.PROTECTED
+    assert inventory["workflows.runcompensationentry"].classification == TenantTableClass.PROTECTED
     assert "tenancy.organization" not in inventory
 
 

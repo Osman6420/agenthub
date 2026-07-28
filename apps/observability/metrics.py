@@ -88,6 +88,18 @@ TOKENS = Counter(
     ("operation", "direction"),
     registry=REGISTRY,
 )
+UNIFIED_RUN_ADMISSIONS = Counter(
+    "agenthub_unified_run_admissions_total",
+    "Canonical unified Run admissions by bounded execution mode.",
+    ("execution_mode",),
+    registry=REGISTRY,
+)
+UNIFIED_RUN_EVENTS = Counter(
+    "agenthub_unified_run_events_total",
+    "Canonical unified Run lifecycle events by closed event type.",
+    ("event_type",),
+    registry=REGISTRY,
+)
 WORKFLOW_RUNS = Counter(
     "agenthub_workflow_runs_total",
     "Durable workflow run state transitions.",

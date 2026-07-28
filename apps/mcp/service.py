@@ -9,7 +9,7 @@ from typing import Any
 import jsonschema
 
 from apps.gateway.errors import ApiError, ErrorCode
-from apps.gateway.views import InvokeView, QueryView
+from apps.gateway.views import ResponsesView
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer, ConsumerProtocol
 from apps.identity.services import resolve_active_binding
@@ -30,8 +30,8 @@ def visible_tools(consumer: Consumer) -> list[dict[str, Any]]:
     for binding in consumer.bindings.filter(status="active").only("capabilities"):
         capabilities.update(binding.capabilities)
     allowed = {"agenthub__run_status"}
-    if Capability.QUERY in capabilities:
-        allowed.update({"agenthub__invoke", "agenthub__query"})
+    if Capability.WORKFLOW_RUN in capabilities:
+        allowed.add("agenthub__responses")
     if Capability.INGESTION_READ in capabilities:
         allowed.add("agenthub__ingestion_status")
     if consumer.protocol == ConsumerProtocol.MCP and Capability.RETRIEVE_DEBUG in capabilities:
@@ -67,20 +67,10 @@ def _validate(name: str, arguments: Any) -> dict[str, Any]:
 
 def call_tool(name: str, arguments: Any, context: McpRequestContext) -> dict[str, Any]:
     args = _validate(name, arguments)
-    if name == "agenthub__invoke":
-        return _invoke(args, context, InvokeView(), "invoke")
-    if name == "agenthub__query":
-        payload: dict[str, Any] = {"query": args["query"]}
-        if "conversation_id" in args:
-            payload["conversation_id"] = args["conversation_id"]
-        return _invoke(
-            {"scenario_alias": args["scenario_alias"], "input": payload},
-            context,
-            QueryView(),
-            "query",
-        )
+    if name == "agenthub__responses":
+        return _responses(args, context)
     if name == "agenthub__run_status":
-        raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
+        return _run_status(args, context)
     if name == "agenthub__ingestion_status":
         return _ingestion_status(args, context.consumer)
     if name == "agenthub__retrieve_debug":
@@ -88,22 +78,64 @@ def call_tool(name: str, arguments: Any, context: McpRequestContext) -> dict[str
     raise AssertionError("validated MCP tool has no handler")
 
 
-def _invoke(
-    args: dict[str, Any], context: McpRequestContext, view: Any, operation: str
-) -> dict[str, Any]:
-    # Reuse the gateway's authorization, Sprint 6 release routing, contract,
-    # idempotency, runtime, usage, and success-audit path. No release/tenant is
-    # accepted from MCP arguments.
-    response = view._process(  # noqa: SLF001 - intentional shared policy seam
-        context.request,
-        context.consumer,
-        context.request_id,
-        args["scenario_alias"],
-        args["input"],
-    )
-    result = dict(response.data)
+def _responses(args: dict[str, Any], context: McpRequestContext) -> dict[str, Any]:
+    """Reuse canonical admission/execution without accepting tenant or release authority."""
+
+    class _McpResponsesView(ResponsesView):
+        required_protocol = ConsumerProtocol.MCP
+
+    view = _McpResponsesView()
+    view._idempotency_key = args["idempotency_key"]  # noqa: SLF001
+    request_body = {
+        "model": args["model"],
+        "input": args["input"],
+        "background": args.get("background", False),
+    }
+    original_data = context.request._full_data  # noqa: SLF001
+    context.request._full_data = request_body  # noqa: SLF001
+    try:
+        admitted = view._admit(context.request)  # noqa: SLF001
+        if args.get("background", False):
+            body = dict(admitted.data)
+            body["_http_status"] = admitted.status_code
+            result = view._adapt_success(body)  # noqa: SLF001
+        else:
+            response = view._complete_sync_run(context.request, admitted)  # noqa: SLF001
+            result = dict(response.data)
+    finally:
+        context.request._full_data = original_data  # noqa: SLF001
     result["transport"] = "mcp"
-    result["operation"] = operation
+    result["operation"] = "responses"
+    return result
+
+
+def _run_status(args: dict[str, Any], context: McpRequestContext) -> dict[str, Any]:
+    from uuid import UUID
+
+    from apps.tenancy.context import set_tenant_context
+    from apps.workflows.models import Run, RunStatus
+
+    try:
+        run_id = UUID(args["run_id"])
+    except (TypeError, ValueError):
+        raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404) from None
+    set_tenant_context(context.consumer.organization_id)
+    run = Run.objects.filter(
+        pk=run_id,
+        organization_id=context.consumer.organization_id,
+        consumer=context.consumer,
+    ).first()
+    if run is None:
+        raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
+    result: dict[str, Any] = {
+        "run_id": str(run.id),
+        "response_id": run.response_id,
+        "status": str(run.status),
+        "release_id": run.release_id,
+    }
+    output = run.redacted_state.get("output")
+    if run.status == RunStatus.COMPLETED and isinstance(output, dict):
+        result["output"] = output
     return result
 
 

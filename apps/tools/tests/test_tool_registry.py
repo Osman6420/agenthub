@@ -6,7 +6,7 @@ import pytest
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.releases.compiler import ArtifactRef, CompileError, compile_release
 from apps.tenancy.models import Organization
 from apps.tools.models import ToolBinding, ToolDefinition, ToolStatus
@@ -15,6 +15,7 @@ from apps.tools.services import (
     register_tool_binding,
     register_tool_definition,
 )
+from apps.workflows.presets import empty_workflow
 
 ORG_SLUG = "tool-org"
 
@@ -64,7 +65,7 @@ def _org(slug: str = ORG_SLUG) -> Organization:
 
 def _scenario(org: Organization) -> Scenario:
     project = AIProject.objects.create(organization=org, slug="cx", name="CX")
-    return Scenario.objects.create(project=project, slug="flow", name="Flow", type=ScenarioType.RAG)
+    return Scenario.objects.create(project=project, slug="flow", name="Flow")
 
 
 def _make_definition(org: Organization, body: dict) -> ToolDefinition:
@@ -85,6 +86,22 @@ def _make_binding_artifact(org: Organization, body: dict):
         logical_id="search_binding",
         body=body,
         created_by="editor",
+    )
+
+
+def _workflow_ref(org: Organization) -> ArtifactRef:
+    artifact = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="tool_workflow",
+        body=empty_workflow(logical_id="tool_workflow"),
+        created_by="editor",
+    )
+    return ArtifactRef(
+        "workflow_definition",
+        artifact.type,
+        artifact.logical_id,
+        artifact.version,
     )
 
 
@@ -155,7 +172,10 @@ def test_compile_release_pins_registered_binding() -> None:
 
     release = compile_release(
         scenario=scenario,
-        refs=[ArtifactRef("tool_binding.search", artifact.type, artifact.logical_id, 1)],
+        refs=[
+            _workflow_ref(org),
+            ArtifactRef("tool_binding.search", artifact.type, artifact.logical_id, 1),
+        ],
         runtime_version="rt:9.0.0",
         created_by="editor",
     )
@@ -175,7 +195,10 @@ def test_compile_release_fails_when_binding_not_registered() -> None:
     with pytest.raises(CompileError, match="TOOL_BINDING_NOT_REGISTERED"):
         compile_release(
             scenario=scenario,
-            refs=[ArtifactRef("tool_binding.search", artifact.type, artifact.logical_id, 1)],
+            refs=[
+                _workflow_ref(org),
+                ArtifactRef("tool_binding.search", artifact.type, artifact.logical_id, 1),
+            ],
             runtime_version="rt:9.0.0",
             created_by="editor",
         )
@@ -193,7 +216,10 @@ def test_compile_release_fails_when_definition_disabled() -> None:
     with pytest.raises(CompileError, match="TOOL_DEFINITION_DISABLED"):
         compile_release(
             scenario=scenario,
-            refs=[ArtifactRef("tool_binding.search", artifact.type, artifact.logical_id, 1)],
+            refs=[
+                _workflow_ref(org),
+                ArtifactRef("tool_binding.search", artifact.type, artifact.logical_id, 1),
+            ],
             runtime_version="rt:9.0.0",
             created_by="editor",
         )

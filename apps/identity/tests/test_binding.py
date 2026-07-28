@@ -11,7 +11,6 @@ from apps.catalog.models import (
     LifecycleStatus,
     Scenario,
     ScenarioAlias,
-    ScenarioType,
 )
 from apps.identity.models import (
     BindingStatus,
@@ -31,7 +30,6 @@ def _scenario(org: Organization, *, active: bool = True) -> Scenario:
         project=project,
         slug="s",
         name="S",
-        type=ScenarioType.RAG,
         status=LifecycleStatus.ACTIVE if active else LifecycleStatus.DRAFT,
     )
 
@@ -53,7 +51,7 @@ def test_binding_rejects_unknown_capability() -> None:
     consumer = _consumer(org)
     with pytest.raises(ValidationError):
         ConsumerBinding(
-            consumer=consumer, scenario=scenario, capabilities=["query", "bogus"]
+            consumer=consumer, scenario=scenario, capabilities=["workflow_run", "bogus"]
         ).save()
 
 
@@ -64,7 +62,9 @@ def test_binding_rejects_cross_organization() -> None:
     scenario_b = _scenario(org_b)
     consumer_a = _consumer(org_a)
     with pytest.raises(ValidationError):
-        ConsumerBinding(consumer=consumer_a, scenario=scenario_b, capabilities=["query"]).save()
+        ConsumerBinding(
+            consumer=consumer_a, scenario=scenario_b, capabilities=["workflow_run"]
+        ).save()
 
 
 @pytest.mark.django_db
@@ -79,7 +79,7 @@ def test_direct_identity_lineage_rejects_explicit_mismatch() -> None:
             organization=org_b,
             consumer=consumer_a,
             scenario=scenario_a,
-            capabilities=["query"],
+            capabilities=["workflow_run"],
         ).save()
     with pytest.raises(ValueError, match="token organization must match"):
         ConsumerToken(
@@ -102,7 +102,7 @@ def test_resolve_happy_path_and_denials() -> None:
     ConsumerBinding.objects.create(
         consumer=consumer,
         scenario=scenario,
-        capabilities=["query"],
+        capabilities=["workflow_run"],
         status=BindingStatus.ACTIVE,
     )
 
@@ -110,7 +110,7 @@ def test_resolve_happy_path_and_denials() -> None:
         organization_id=org.id, subject="svc-1", alias="customer-information"
     )
     assert resolved is not None
-    assert resolved.capabilities == frozenset({"query"})
+    assert resolved.capabilities == frozenset({"workflow_run"})
 
     # Unknown alias -> deny.
     assert resolve_active_binding(organization_id=org.id, subject="svc-1", alias="nope") is None
@@ -122,7 +122,9 @@ def test_resolve_denies_disabled_consumer() -> None:
     scenario = _scenario(org)
     ScenarioAlias.objects.create(scenario=scenario, alias="a")
     consumer = _consumer(org, active=False)  # disabled
-    ConsumerBinding.objects.create(consumer=consumer, scenario=scenario, capabilities=["query"])
+    ConsumerBinding.objects.create(
+        consumer=consumer, scenario=scenario, capabilities=["workflow_run"]
+    )
 
     assert resolve_active_binding(organization_id=org.id, subject="svc-1", alias="a") is None
 
@@ -136,7 +138,7 @@ def test_resolve_denies_disabled_binding() -> None:
     ConsumerBinding.objects.create(
         consumer=consumer,
         scenario=scenario,
-        capabilities=["query"],
+        capabilities=["workflow_run"],
         status=BindingStatus.DISABLED,
     )
 

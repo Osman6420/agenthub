@@ -2,7 +2,7 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from apps.audit.models import AuditEvent
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.documents import access_services
 from apps.documents.access_services import (
     ScenarioDocumentSetAccessError,
@@ -58,7 +58,6 @@ def access_fixture():
         project=project,
         slug="scenario",
         name="Scenario",
-        type=ScenarioType.RAG,
     )
     document_set = DocumentSet.objects.create(
         organization=organization,

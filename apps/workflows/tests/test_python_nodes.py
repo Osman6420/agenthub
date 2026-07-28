@@ -278,27 +278,29 @@ def test_duplicate_redelivery_is_deterministic_and_uses_same_authority_key() -> 
 
 
 def test_persisted_workflow_audit_uses_only_safe_existing_fields() -> None:
-    run = SimpleNamespace(id=12, organization_id=7)
+    saved: list[list[str]] = []
+    run = SimpleNamespace(
+        id=12,
+        organization_id=7,
+        save=lambda update_fields: saved.append(update_fields),
+    )
     event: dict[str, str | int | bool] = {
         "event": "python_node.execute",
         "outcome": "denied",
         "reason_code": "PYTHON_NODE_REJECTED",
         "source_checksum": "a" * 64,
     }
-    with (
-        patch("apps.workflows.services._next_sequence", return_value=9),
-        patch("apps.workflows.models.WorkflowRunEvent.objects.create") as create,
-    ):
+    with patch("apps.workflows.run_events.append_locked_run_event") as create:
         _emit_safe_audit(run, event, "python-node")
     create.assert_called_once_with(
         run=run,
-        organization_id=7,
-        sequence=9,
-        event_type="python_node_execution",
+        event_type="run.checkpointed",
         node_id="python-node",
         outcome="denied",
         reason_code="PYTHON_NODE_REJECTED",
+        payload={"kind": "python_node_execution"},
     )
+    assert saved == [["next_event_sequence", "updated_at"]]
 
 
 def _workflow_custom(config: dict[str, Any], *, output_mapping: bool = True) -> dict[str, Any]:

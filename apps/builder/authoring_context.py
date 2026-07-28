@@ -195,7 +195,6 @@ def build_authoring_context(*, project: AIProject, scenario: Scenario) -> dict[s
         "scenario": {
             "slug": scenario.slug,
             "name": scenario.name,
-            "type": scenario.type,
             "risk_level": scenario.risk_level,
             "status": scenario.status,
         },

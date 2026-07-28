@@ -105,7 +105,7 @@ def _build_graph() -> Any:
     graph.add_edge(DECISION_VERIFY, END)
     graph.add_edge(DECISION_RESPOND, END)
     # The checkpointer demonstrates agent-local state keyed by the tenant run id; the
-    # authoritative durable checkpoint remains AgentHub's ``AgentRun`` row.
+    # authoritative durable checkpoint remains the enclosing workflow ``Run`` row.
     return graph.compile(checkpointer=MemorySaver())
 
 

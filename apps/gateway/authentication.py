@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.db import transaction
 from rest_framework import authentication, exceptions
 
 from apps.identity.models import Consumer
@@ -47,10 +48,14 @@ class ConsumerTokenAuthentication(authentication.BaseAuthentication):
         if len(parts) != 2:
             raise exceptions.AuthenticationFailed("Invalid authorization header.")
 
-        consumer = resolve_consumer(parts[1])
-        if consumer is None:
-            raise exceptions.AuthenticationFailed("Invalid token.")
-        set_tenant_context(consumer.organization_id)
+        # Canonical durable API routes run outside the request-wide tenant
+        # transaction. Authentication owns only this short token lookup scope;
+        # admission and transitions install fresh transaction-local scopes.
+        with transaction.atomic():
+            consumer = resolve_consumer(parts[1])
+            if consumer is None:
+                raise exceptions.AuthenticationFailed("Invalid token.")
+            set_tenant_context(consumer.organization_id)
         return ConsumerPrincipal(consumer), consumer
 
     def authenticate_header(self, request: Any) -> str:

@@ -9,26 +9,30 @@ from django.core.management.base import CommandError
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.evaluations.models import EvalRun
 from apps.evaluations.services import run_eval
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus, ScenarioRelease
-from apps.retrieval.providers import StaticRetrievalProvider
-from apps.retrieval.types import RetrievedChunk
 from apps.tenancy.models import Organization, OrganizationMembership
+from apps.workflows.presets import empty_workflow
 
-CHUNK = RetrievedChunk(text="ok 14", source_id="s", source_uri="u", title="t", score=0.9)
-SUITE = {"cases": [{"id": "c1", "input": {"query": "q"}, "assertions": [{"type": "grounded"}]}]}
+SUITE = {
+    "cases": [
+        {
+            "id": "c1",
+            "input": {"query": "q"},
+            "assertions": [{"type": "workflow_completed"}],
+        }
+    ]
+}
 
 
 def _evaluated_release() -> tuple[Organization, ScenarioRelease]:
     org = Organization.objects.create(slug="mcm", name="MCM")
     project = AIProject.objects.create(organization=org, slug="cx", name="CX")
-    scenario = Scenario.objects.create(
-        project=project, slug="info", name="Info", type=ScenarioType.RAG
-    )
+    scenario = Scenario.objects.create(project=project, slug="info", name="Info")
     create_artifact_version(
         organization=org,
         artifact_type=ArtifactType.EVAL_SUITE,
@@ -36,15 +40,28 @@ def _evaluated_release() -> tuple[Organization, ScenarioRelease]:
         body=SUITE,
         created_by="alice",
     )
+    create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="workflow",
+        body=empty_workflow(logical_id="workflow"),
+        created_by="alice",
+    )
     release = compile_release(
         scenario=scenario,
-        refs=[ArtifactRef("eval_suite", ArtifactType.EVAL_SUITE, "s", 1)],
+        refs=[
+            ArtifactRef("eval_suite", ArtifactType.EVAL_SUITE, "s", 1),
+            ArtifactRef(
+                "workflow_definition",
+                ArtifactType.WORKFLOW_DEFINITION,
+                "workflow",
+                1,
+            ),
+        ],
         runtime_version="rt:3",
         created_by="alice",
     )
-    run_eval(
-        release=release, created_by="alice", retrieval_provider=StaticRetrievalProvider([CHUNK])
-    )
+    run_eval(release=release, created_by="alice")
     return org, release
 
 

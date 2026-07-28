@@ -14,14 +14,14 @@ from django.utils import timezone
 from apps.artifacts.validation import compute_checksum
 from apps.tenancy.context import set_tenant_context
 from apps.workflows.models import (
-    WORKFLOW_TERMINAL_STATUSES,
+    RUN_TERMINAL_STATUSES,
     Run,
     RunAwaitingKind,
     RunCancellationState,
     RunEvent,
     RunEventType,
     RunExecutionMode,
-    WorkflowRunStatus,
+    RunStatus,
 )
 from apps.workflows.run_events import append_locked_run_event
 
@@ -37,75 +37,75 @@ _CANCELLATION_REASON_CODES = frozenset(
     }
 )
 _WAITING_KIND_BY_STATUS = {
-    WorkflowRunStatus.WAITING_APPROVAL: RunAwaitingKind.APPROVAL,
-    WorkflowRunStatus.WAITING_EVENT: RunAwaitingKind.EVENT,
-    WorkflowRunStatus.WAITING_HUMAN: RunAwaitingKind.HUMAN,
-    WorkflowRunStatus.WAITING_TIMER: RunAwaitingKind.TIMER,
-    WorkflowRunStatus.WAITING_CHILD: RunAwaitingKind.CHILD,
-    WorkflowRunStatus.RECOVERY_REQUIRED: RunAwaitingKind.RECOVERY,
+    RunStatus.WAITING_APPROVAL: RunAwaitingKind.APPROVAL,
+    RunStatus.WAITING_EVENT: RunAwaitingKind.EVENT,
+    RunStatus.WAITING_HUMAN: RunAwaitingKind.HUMAN,
+    RunStatus.WAITING_TIMER: RunAwaitingKind.TIMER,
+    RunStatus.WAITING_CHILD: RunAwaitingKind.CHILD,
+    RunStatus.RECOVERY_REQUIRED: RunAwaitingKind.RECOVERY,
 }
 # A durable wait has no background owner, so an external resume signal may re-admit it.
 # `recovery_required` is deliberately excluded: it is never automatically re-queued.
 DURABLE_WAIT_STATUSES = frozenset(
     {
-        WorkflowRunStatus.WAITING_APPROVAL,
-        WorkflowRunStatus.WAITING_EVENT,
-        WorkflowRunStatus.WAITING_HUMAN,
-        WorkflowRunStatus.WAITING_TIMER,
-        WorkflowRunStatus.WAITING_CHILD,
+        RunStatus.WAITING_APPROVAL,
+        RunStatus.WAITING_EVENT,
+        RunStatus.WAITING_HUMAN,
+        RunStatus.WAITING_TIMER,
+        RunStatus.WAITING_CHILD,
     }
 )
 # An unowned durable wait may be re-queued or closed, but never executed directly: reaching
 # `running` always requires a fresh background claim.
 _UNOWNED_WAIT_TARGETS = frozenset(
     {
-        WorkflowRunStatus.QUEUED,
-        WorkflowRunStatus.FAILED,
-        WorkflowRunStatus.TIMED_OUT,
-        WorkflowRunStatus.CANCELLED,
+        RunStatus.QUEUED,
+        RunStatus.FAILED,
+        RunStatus.TIMED_OUT,
+        RunStatus.CANCELLED,
     }
 )
 _ALLOWED_TRANSITIONS = {
-    WorkflowRunStatus.REQUESTED: {
-        WorkflowRunStatus.QUEUED,
-        WorkflowRunStatus.RUNNING,
-        WorkflowRunStatus.RECOVERY_REQUIRED,
-        WorkflowRunStatus.FAILED,
-        WorkflowRunStatus.TIMED_OUT,
-        WorkflowRunStatus.CANCELLED,
+    RunStatus.REQUESTED: {
+        RunStatus.QUEUED,
+        RunStatus.RUNNING,
+        RunStatus.RECOVERY_REQUIRED,
+        RunStatus.FAILED,
+        RunStatus.TIMED_OUT,
+        RunStatus.CANCELLED,
     },
-    WorkflowRunStatus.QUEUED: {
-        WorkflowRunStatus.RUNNING,
-        WorkflowRunStatus.RECOVERY_REQUIRED,
-        WorkflowRunStatus.FAILED,
-        WorkflowRunStatus.TIMED_OUT,
-        WorkflowRunStatus.CANCELLED,
+    RunStatus.QUEUED: {
+        RunStatus.RUNNING,
+        RunStatus.RECOVERY_REQUIRED,
+        RunStatus.FAILED,
+        RunStatus.TIMED_OUT,
+        RunStatus.CANCELLED,
     },
-    WorkflowRunStatus.RUNNING: {
+    RunStatus.RUNNING: {
         *_WAITING_KIND_BY_STATUS,
-        WorkflowRunStatus.COMPLETED,
-        WorkflowRunStatus.FAILED,
-        WorkflowRunStatus.TIMED_OUT,
-        WorkflowRunStatus.CANCELLED,
+        RunStatus.COMPLETED,
+        RunStatus.FAILED,
+        RunStatus.TIMED_OUT,
+        RunStatus.CANCELLED,
     },
     **{
         waiting_status: {
-            WorkflowRunStatus.RUNNING,
-            WorkflowRunStatus.FAILED,
-            WorkflowRunStatus.TIMED_OUT,
-            WorkflowRunStatus.CANCELLED,
-            *({WorkflowRunStatus.QUEUED} if waiting_status in DURABLE_WAIT_STATUSES else set()),
+            RunStatus.RUNNING,
+            RunStatus.FAILED,
+            RunStatus.TIMED_OUT,
+            RunStatus.CANCELLED,
+            *({RunStatus.QUEUED} if waiting_status in DURABLE_WAIT_STATUSES else set()),
         }
         for waiting_status in _WAITING_KIND_BY_STATUS
     },
 }
 _EVENT_BY_TARGET = {
-    WorkflowRunStatus.QUEUED: RunEventType.QUEUED,
-    WorkflowRunStatus.COMPLETED: RunEventType.COMPLETED,
-    WorkflowRunStatus.FAILED: RunEventType.FAILED,
-    WorkflowRunStatus.TIMED_OUT: RunEventType.TIMED_OUT,
-    WorkflowRunStatus.CANCELLED: RunEventType.CANCELLED,
-    WorkflowRunStatus.RECOVERY_REQUIRED: RunEventType.RECOVERY_REQUIRED,
+    RunStatus.QUEUED: RunEventType.QUEUED,
+    RunStatus.COMPLETED: RunEventType.COMPLETED,
+    RunStatus.FAILED: RunEventType.FAILED,
+    RunStatus.TIMED_OUT: RunEventType.TIMED_OUT,
+    RunStatus.CANCELLED: RunEventType.CANCELLED,
+    RunStatus.RECOVERY_REQUIRED: RunEventType.RECOVERY_REQUIRED,
 }
 
 
@@ -141,10 +141,8 @@ def _validate_checkpoint(checkpoint: dict[str, Any]) -> dict[str, Any]:
     return dict(checkpoint)
 
 
-def _event_for_transition(
-    previous_status: WorkflowRunStatus, target_status: WorkflowRunStatus
-) -> str:
-    if target_status == WorkflowRunStatus.RUNNING:
+def _event_for_transition(previous_status: RunStatus, target_status: RunStatus) -> str:
+    if target_status == RunStatus.RUNNING:
         return (
             RunEventType.RESUMED
             if previous_status in _WAITING_KIND_BY_STATUS
@@ -166,6 +164,7 @@ def _transition_checksum(
     error_code: str,
     deltas: tuple[int, int, int, int],
     background_claim_token: uuid.UUID | None,
+    sync_lease_token: uuid.UUID | None,
 ) -> str:
     content: dict[str, Any] = {
         "awaiting_reference": awaiting_reference,
@@ -179,6 +178,8 @@ def _transition_checksum(
     }
     if background_claim_token is not None:
         content["background_claim_token"] = str(background_claim_token)
+    if sync_lease_token is not None:
+        content["sync_lease_token"] = str(sync_lease_token)
     return compute_checksum(content)
 
 
@@ -211,6 +212,7 @@ def transition_run(
     input_token_delta: int = 0,
     output_token_delta: int = 0,
     background_claim_token: uuid.UUID | None = None,
+    sync_lease_token: uuid.UUID | None = None,
 ) -> RunTransitionResult:
     """Commit one legal transition or safely record a stale/terminal late result."""
 
@@ -222,7 +224,7 @@ def transition_run(
     if len(reason_code) > 64 or len(error_code) > 64:
         raise RunTransitionError("RUN_REASON_CODE_INVALID")
     try:
-        target = WorkflowRunStatus(target_status)
+        target = RunStatus(target_status)
     except ValueError:
         raise RunTransitionError("RUN_TRANSITION_INVALID") from None
     clean_checkpoint = _validate_checkpoint(checkpoint) if checkpoint is not None else None
@@ -238,6 +240,7 @@ def transition_run(
         error_code=error_code,
         deltas=deltas,
         background_claim_token=background_claim_token,
+        sync_lease_token=sync_lease_token,
     )
     set_tenant_context(organization_id)
     run = Run.objects.select_for_update().get(
@@ -247,7 +250,7 @@ def transition_run(
     replay = run.events.filter(transition_token=transition_token).first()
     if replay is not None:
         return _replayed_transition(replay, transition_checksum)
-    if run.status in WORKFLOW_TERMINAL_STATUSES:
+    if run.status in RUN_TERMINAL_STATUSES:
         event = append_locked_run_event(
             run=run,
             event_type=RunEventType.LATE_RESULT_DISCARDED,
@@ -270,16 +273,13 @@ def transition_run(
         )
     transition_now = timezone.now()
     admission_queue = (
-        run.status == WorkflowRunStatus.REQUESTED
-        and target == WorkflowRunStatus.QUEUED
+        run.status == RunStatus.REQUESTED
+        and target == RunStatus.QUEUED
         and background_claim_token is None
     )
     guard_convergence = background_claim_token is None and (
-        (
-            run.cancellation_state == RunCancellationState.REQUESTED
-            and target == WorkflowRunStatus.CANCELLED
-        )
-        or (transition_now >= run.deadline_at and target == WorkflowRunStatus.TIMED_OUT)
+        (run.cancellation_state == RunCancellationState.REQUESTED and target == RunStatus.CANCELLED)
+        or (transition_now >= run.deadline_at and target == RunStatus.TIMED_OUT)
     )
     # A durable wait released its claim at suspension, so there is no owner to displace and a
     # resume/expiry signal cannot prove one. Ownership proof stays mandatory everywhere else.
@@ -289,6 +289,30 @@ def transition_run(
         and run.status in DURABLE_WAIT_STATUSES
         and target in _UNOWNED_WAIT_TARGETS
     )
+    expired_sync_recovery = (
+        run.execution_mode == RunExecutionMode.SYNC
+        and target
+        in {
+            RunStatus.CANCELLED,
+            RunStatus.RECOVERY_REQUIRED,
+            RunStatus.TIMED_OUT,
+        }
+        and run.sync_lease_expires_at is not None
+        and run.sync_lease_expires_at <= transition_now
+    )
+    if (
+        run.execution_mode == RunExecutionMode.SYNC
+        and run.status != RunStatus.REQUESTED
+        and (run.status == RunStatus.QUEUED or run.sync_lease_token is not None)
+        and not guard_convergence
+        and not expired_sync_recovery
+    ):
+        if not isinstance(sync_lease_token, uuid.UUID):
+            raise RunTransitionError("RUN_SYNC_LEASE_REQUIRED")
+        if run.sync_lease_token != sync_lease_token:
+            raise RunTransitionError("RUN_SYNC_LEASE_STALE")
+        if run.sync_lease_expires_at is None or run.sync_lease_expires_at <= transition_now:
+            raise RunTransitionError("RUN_SYNC_LEASE_EXPIRED")
     if (
         run.execution_mode == RunExecutionMode.BACKGROUND
         and not admission_queue
@@ -303,18 +327,18 @@ def transition_run(
         ):
             raise RunTransitionError("RUN_BACKGROUND_CLAIM_STALE")
         claim_may_be_expired = target in {
-            WorkflowRunStatus.CANCELLED,
-            WorkflowRunStatus.RECOVERY_REQUIRED,
-            WorkflowRunStatus.TIMED_OUT,
+            RunStatus.CANCELLED,
+            RunStatus.RECOVERY_REQUIRED,
+            RunStatus.TIMED_OUT,
         }
         if run.background_claim_expires_at is None or (
             run.background_claim_expires_at <= transition_now and not claim_may_be_expired
         ):
             raise RunTransitionError("RUN_BACKGROUND_CLAIM_EXPIRED")
         if target not in {
-            WorkflowRunStatus.CANCELLED,
-            WorkflowRunStatus.RECOVERY_REQUIRED,
-            WorkflowRunStatus.TIMED_OUT,
+            RunStatus.CANCELLED,
+            RunStatus.RECOVERY_REQUIRED,
+            RunStatus.TIMED_OUT,
         }:
             from apps.agents.services import runtime_suspended
 
@@ -344,21 +368,21 @@ def transition_run(
             event.sequence,
         )
     if run.cancellation_state == RunCancellationState.REQUESTED and target not in {
-        WorkflowRunStatus.CANCELLED,
-        WorkflowRunStatus.RECOVERY_REQUIRED,
+        RunStatus.CANCELLED,
+        RunStatus.RECOVERY_REQUIRED,
     }:
-        target = WorkflowRunStatus.CANCELLED
+        target = RunStatus.CANCELLED
         awaiting_reference = ""
         reason_code = "RUN_CANCELLATION_REQUESTED"
     elif transition_now >= run.deadline_at and target not in {
-        WorkflowRunStatus.CANCELLED,
-        WorkflowRunStatus.RECOVERY_REQUIRED,
-        WorkflowRunStatus.TIMED_OUT,
+        RunStatus.CANCELLED,
+        RunStatus.RECOVERY_REQUIRED,
+        RunStatus.TIMED_OUT,
     }:
-        target = WorkflowRunStatus.TIMED_OUT
+        target = RunStatus.TIMED_OUT
         awaiting_reference = ""
         reason_code = "RUN_DEADLINE_EXCEEDED"
-    current = WorkflowRunStatus(run.status)
+    current = RunStatus(run.status)
     if target not in _ALLOWED_TRANSITIONS.get(current, set()):
         raise RunTransitionError("RUN_TRANSITION_INVALID")
 
@@ -374,8 +398,10 @@ def transition_run(
     run.error_code = error_code
     run.checkpoint_version += 1
     if clean_checkpoint is not None:
+        from apps.workflows.services import redact_run_state
+
         run.checkpoint = clean_checkpoint
-        run.redacted_state = clean_checkpoint
+        run.redacted_state = redact_run_state(clean_checkpoint)
     run.step_count += step_delta
     run.tool_call_count += tool_call_delta
     run.input_token_count += input_token_delta
@@ -392,25 +418,25 @@ def transition_run(
         raise RunTransitionError("RUN_COUNTER_LIMIT_EXCEEDED")
 
     now = transition_now
-    if target == WorkflowRunStatus.RUNNING and run.started_at is None:
+    if target == RunStatus.RUNNING and run.started_at is None:
         run.started_at = now
-    if target in WORKFLOW_TERMINAL_STATUSES:
+    if target in RUN_TERMINAL_STATUSES:
         run.finished_at = now
         run.sync_lease_token = None
         run.sync_lease_expires_at = None
         run.background_claim_token = None
         run.background_claim_expires_at = None
         run.background_claim_checkpoint_version = None
-        if target == WorkflowRunStatus.CANCELLED:
+        if target == RunStatus.CANCELLED:
             run.cancellation_state = RunCancellationState.ACKNOWLEDGED
-    elif target == WorkflowRunStatus.RECOVERY_REQUIRED:
+    elif target == RunStatus.RECOVERY_REQUIRED:
         run.sync_lease_token = None
         run.sync_lease_expires_at = None
         run.background_claim_token = None
         run.background_claim_expires_at = None
         run.background_claim_checkpoint_version = None
     elif run.execution_mode == RunExecutionMode.BACKGROUND:
-        if target == WorkflowRunStatus.RUNNING:
+        if target == RunStatus.RUNNING:
             run.background_claim_checkpoint_version = run.checkpoint_version
         else:
             run.background_claim_token = None
@@ -462,7 +488,7 @@ def renew_sync_lease(
         raise RunTransitionError("RUN_SYNC_LEASE_INVALID")
     set_tenant_context(organization_id)
     run = Run.objects.select_for_update().get(pk=run_id, organization_id=organization_id)
-    if run.execution_mode != RunExecutionMode.SYNC or run.status in WORKFLOW_TERMINAL_STATUSES:
+    if run.execution_mode != RunExecutionMode.SYNC or run.status in RUN_TERMINAL_STATUSES:
         raise RunTransitionError("RUN_SYNC_LEASE_INVALID")
     if run.deadline_at <= now:
         raise RunTransitionError("RUN_SYNC_LEASE_INVALID")
@@ -488,7 +514,7 @@ def request_run_cancellation(
         raise RunTransitionError("RUN_REASON_CODE_INVALID")
     set_tenant_context(organization_id)
     run = Run.objects.select_for_update().get(pk=run_id, organization_id=organization_id)
-    if run.status in WORKFLOW_TERMINAL_STATUSES:
+    if run.status in RUN_TERMINAL_STATUSES:
         return RunTransitionResult("terminal", str(run.status), run.checkpoint_version, None)
     existing = run.events.filter(event_type=RunEventType.CANCELLATION_REQUESTED).first()
     if run.cancellation_state == RunCancellationState.REQUESTED:
@@ -511,6 +537,40 @@ def request_run_cancellation(
         payload={"current_status": str(run.status)},
     )
     run.save()
+    if run.status == RunStatus.WAITING_CHILD:
+        from apps.workflows.models import RunChildLink, RunChildStatus
+
+        child_link = (
+            RunChildLink.objects.select_for_update()
+            .filter(parent_run=run, status=RunChildStatus.ADMITTED)
+            .first()
+        )
+        if child_link is not None:
+            request_run_cancellation(
+                organization_id=organization_id,
+                run_id=child_link.child_run_id,
+                reason_code=reason_code,
+            )
+            child_link.status = RunChildStatus.CANCELLED
+            child_link.reason_code = "PARENT_CANCELLED"
+            child_link.save(update_fields=["status", "reason_code", "updated_at"])
+            purpose = "child-cancellation-converged"
+        else:
+            # A parallel region has no background owner while its parent is parked. Revoke the
+            # branch delivery capabilities and converge the unowned wait now.
+            from apps.workflows.run_parallel import _cancel_locked_run_parallel_work
+
+            _cancel_locked_run_parallel_work(run=run, now=timezone.now())
+            purpose = "parallel-cancellation-converged"
+        return transition_run(
+            organization_id=organization_id,
+            run_id=run.id,
+            transition_token=uuid.uuid5(run.id, purpose),
+            expected_checkpoint_version=run.checkpoint_version,
+            expected_status=RunStatus.WAITING_CHILD,
+            target_status=RunStatus.CANCELLED,
+            reason_code="RUN_CANCELLATION_REQUESTED",
+        )
     return RunTransitionResult("committed", str(run.status), run.checkpoint_version, event.sequence)
 
 
@@ -530,7 +590,7 @@ def resolve_expired_sync_lease(
         raise RunTransitionError("RUN_SYNC_LEASE_INVALID")
     set_tenant_context(organization_id)
     run = Run.objects.select_for_update().get(pk=run_id, organization_id=organization_id)
-    if run.status in WORKFLOW_TERMINAL_STATUSES:
+    if run.status in RUN_TERMINAL_STATUSES:
         return RunTransitionResult("terminal", str(run.status), run.checkpoint_version, None)
     if run.sync_lease_token != lease_token:
         raise RunTransitionError("RUN_SYNC_LEASE_CONFLICT")
@@ -544,9 +604,7 @@ def resolve_expired_sync_lease(
         expected_checkpoint_version=run.checkpoint_version,
         expected_status=str(run.status),
         target_status=(
-            WorkflowRunStatus.CANCELLED
-            if cancellation_requested
-            else WorkflowRunStatus.RECOVERY_REQUIRED
+            RunStatus.CANCELLED if cancellation_requested else RunStatus.RECOVERY_REQUIRED
         ),
         awaiting_reference="" if cancellation_requested else "sync-lease-expired",
         reason_code=(

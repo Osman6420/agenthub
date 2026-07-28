@@ -328,16 +328,14 @@ urlpatterns = [
         name="document_set_revoke_grant",
     ),
     path("runs/", views.runs, name="runs"),
-    path("agent-runs/", views.agent_runs, name="agent_runs"),
-    path("agent-runs/<str:public_id>/", views.agent_run_detail, name="agent_run_detail"),
-    path(
-        "agent-runs/<str:public_id>/cancel/",
-        views.agent_run_cancel,
-        name="agent_run_cancel",
-    ),
     path("retention/", views.retention_operations, name="retention_operations"),
     path("workflow-runs/", views.workflow_runs, name="workflow_runs"),
-    path("workflow-runs/<int:run_id>/", views.workflow_run_detail, name="workflow_run_detail"),
+    path("workflow-runs/<uuid:run_id>/", views.workflow_run_detail, name="workflow_run_detail"),
+    path(
+        "workflow-runs/<uuid:run_id>/recovery/",
+        views.workflow_run_recovery_decide,
+        name="workflow_run_recovery_decide",
+    ),
     path("tool-approvals/", views.tool_approvals, name="tool_approvals"),
     path(
         "tool-approvals/<int:approval_id>/decide/",
@@ -353,15 +351,5 @@ urlpatterns = [
         "workflow-human-tasks/<uuid:wait_id>/decide/",
         views.workflow_human_task_decide,
         name="workflow_human_task_decide",
-    ),
-    path(
-        "workflow-recoveries/",
-        views.workflow_recoveries,
-        name="workflow_recoveries",
-    ),
-    path(
-        "workflow-recoveries/<uuid:recovery_id>/decide/",
-        views.workflow_recovery_decide,
-        name="workflow_recovery_decide",
     ),
 ]

@@ -18,28 +18,23 @@ from django.utils import timezone
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, LifecycleStatus, Scenario, ScenarioType
+from apps.catalog.models import AIProject, LifecycleStatus, Scenario
 from apps.identity.models import Consumer, ConsumerProtocol
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release, promote_release
 from apps.tenancy.models import Organization, OrganizationMembership
 from apps.workflows.models import (
-    WorkflowBranch,
-    WorkflowBranchStatus,
-    WorkflowChildLink,
-    WorkflowCompensationEntry,
-    WorkflowCompensationStatus,
-    WorkflowJoin,
-    WorkflowJoinStatus,
-    WorkflowNodeAttempt,
-    WorkflowNodeAttemptStatus,
-    WorkflowRun,
-    WorkflowRunEvent,
-    WorkflowRunStatus,
+    Run,
+    RunBranch,
+    RunBranchStatus,
+    RunEvent,
+    RunJoin,
+    RunJoinStatus,
+    RunStatus,
+    RunWait,
+    RunWaitKind,
+    RunWaitStatus,
     WorkflowVersion,
-    WorkflowWait,
-    WorkflowWaitKind,
-    WorkflowWaitStatus,
 )
 
 User = get_user_model()
@@ -68,13 +63,12 @@ def _workflow_body() -> dict:
     }
 
 
-def _build_run(org: Organization) -> WorkflowRun:
+def _build_run(org: Organization) -> Run:
     project = AIProject.objects.create(organization=org, slug="ops", name="Ops")
     scenario = Scenario.objects.create(
         project=project,
         slug="flow",
         name="Flow",
-        type=ScenarioType.WORKFLOW,
         status=LifecycleStatus.ACTIVE,
     )
     input_contract = create_artifact_version(
@@ -134,98 +128,86 @@ def _build_run(org: Organization) -> WorkflowRun:
     consumer = Consumer.objects.create(
         organization=org, subject="wf-client", name="WF", protocol=ConsumerProtocol.REST
     )
-    run = WorkflowRun.objects.create(
+    run = Run.objects.create(
         organization=org,
         scenario=scenario,
         release=release,
         workflow_version=version,
         consumer=consumer,
+        actor_id=consumer.subject,
+        response_id=f"resp_{'a' * 32}",
         idempotency_key="k1",
+        compiled_checksum=version.checksum,
+        compiler_version=version.compiler_version,
+        execution_mode="background",
+        checkpoint={"leak": SECRET},
+        checkpoint_version=1,
         input_checksum="d" * 64,
         execution_context={"secret": SECRET},
         redacted_state={"leak": SECRET},
-        status=WorkflowRunStatus.FAILED,
+        status=RunStatus.FAILED,
         error_code="WORKFLOW_JOIN_POLICY_INVALID",
         deadline_at=timezone.now() + timedelta(hours=1),
     )
-    WorkflowBranch.objects.create(
+    RunBranch.objects.create(
         organization=org,
         run=run,
         region_node_id="fan",
         branch_name="left",
         item_ordinal=0,
-        workflow_checksum="e" * 64,
-        transition_version="t1",
-        status=WorkflowBranchStatus.SUCCEEDED,
+        compiled_checksum="e" * 64,
+        status=RunBranchStatus.SUCCEEDED,
         attempt_count=2,
         reason_code="branch_ok",
         result_checksum="f" * 64,
         input_state={"payload": SECRET},
         result_state={"payload": SECRET},
+        finished_at=timezone.now(),
     )
-    WorkflowJoin.objects.create(
+    RunJoin.objects.create(
         organization=org,
         run=run,
         region_node_id="fan",
         join_node_id="join",
-        workflow_checksum="e" * 64,
-        transition_version="t1",
+        compiled_checksum="e" * 64,
         mode="all",
         required_count=1,
         branch_count=1,
-        status=WorkflowJoinStatus.SUCCEEDED,
+        max_concurrency=1,
+        max_duration_seconds=60,
+        max_state_bytes=4096,
+        deadline_at=timezone.now() + timedelta(minutes=1),
+        status=RunJoinStatus.SUCCEEDED,
         merged_state={"payload": SECRET},
+        closed_at=timezone.now(),
     )
-    WorkflowWait.objects.create(
+    RunWait.objects.create(
         organization=org,
         run=run,
-        kind=WorkflowWaitKind.HUMAN,
+        kind=RunWaitKind.HUMAN,
         node_id="approve",
-        status=WorkflowWaitStatus.RESUMED,
-        correlation_hash="ab" * 16,
+        status=RunWaitStatus.RESUMED,
+        resume_token_hash="ab" * 32,
         pending_checksum="1" * 64,
-        workflow_checksum="e" * 64,
+        checkpoint_version_snapshot=1,
         release_id_snapshot=release.pk,
+        compiled_checksum="e" * 64,
         compiler_version="workflow-compiler/v5",
+        requester_actor_id="operator",
         redacted_payload={"payload": SECRET},
         deadline_at=timezone.now() + timedelta(hours=1),
+        consumed_at=timezone.now(),
+        consumed_by="operator",
+        resume_checksum="2" * 64,
+        result_checkpoint_version=2,
     )
-    WorkflowNodeAttempt.objects.create(
-        organization=org,
-        run=run,
-        node_id="format",
-        ordinal=1,
-        status=WorkflowNodeAttemptStatus.FAILED,
-        failure_class="transient",
-        reason_code="attempt_failed",
-    )
-    WorkflowCompensationEntry.objects.create(
+    RunEvent.objects.create(
         organization=org,
         run=run,
         sequence=1,
-        source_node_id="format",
-        compensation_node_id="undo",
-        status=WorkflowCompensationStatus.SUCCEEDED,
-        input_checksum="9" * 64,
-        reason_code="comp_done",
-        attempt_count=1,
-    )
-    WorkflowChildLink.objects.create(
-        organization=org,
-        parent_run=run,
-        call_site="child_call",
-        child_kind="workflow",
-        child_scenario=scenario,
-        child_release=release,
-        child_release_checksum="a" * 64,
-        child_artifact_checksum="b" * 64,
-        effective_capability_checksum="c" * 64,
-        depth=1,
-        status="completed",
-        reason_code="child_ok",
-    )
-    WorkflowRunEvent.objects.create(
-        organization=org, run=run, sequence=1, event_type="join_closed", node_id="join"
+        event_type="run.join_closed",
+        outcome="succeeded",
+        payload={"node_id": "join"},
     )
     return run
 
@@ -248,8 +230,6 @@ def test_authorized_member_sees_redacted_trace(client: Client) -> None:
     assert "WORKFLOW_JOIN_POLICY_INVALID" in text
     assert "branch_ok" in text
     assert "join_closed" in text
-    assert "comp_done" in text
-    assert "transient" in text
     # No payload/state/execution-context content leaks onto the screen.
     assert SECRET not in text
 

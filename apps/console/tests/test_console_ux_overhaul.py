@@ -35,7 +35,7 @@ from apps.identity.models import Consumer, ConsumerProtocol
 from apps.identity.roles import Role
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership
-from apps.workflows.models import WorkflowRun, WorkflowRunStatus, WorkflowVersion
+from apps.workflows.models import Run, RunStatus, WorkflowVersion
 
 User = get_user_model()
 pytestmark = pytest.mark.django_db
@@ -57,9 +57,7 @@ def _member(
 
 def _scenario(org: Organization, slug: str = "s") -> Scenario:
     project = AIProject.objects.create(organization=org, slug=f"p-{slug}", name=f"P {slug}")
-    return Scenario.objects.create(
-        organization=org, project=project, slug=slug, name=f"Senaryo {slug}", type="rag"
-    )
+    return Scenario.objects.create(project=project, slug=slug, name=f"Senaryo {slug}")
 
 
 # --------------------------------------------------------------------------- A/B
@@ -323,21 +321,28 @@ def _workflow_run(
     status: str,
     key: str,
     created_days_ago: int = 0,
-) -> WorkflowRun:
-    run = WorkflowRun.objects.create(
+) -> Run:
+    run = Run.objects.create(
         organization=org,
         scenario=scenario,
         release=release,
         workflow_version=version,
         consumer=consumer,
+        actor_id=consumer.subject,
+        response_id=f"resp_{key.zfill(32)}",
         idempotency_key=key,
+        compiled_checksum=version.checksum,
+        compiler_version=version.compiler_version,
+        execution_mode="background",
+        checkpoint={},
         input_checksum="d" * 64,
         execution_context={},
+        redacted_state={},
         status=status,
         deadline_at=timezone.now() + timedelta(hours=1),
     )
     if created_days_ago:
-        WorkflowRun.objects.filter(pk=run.pk).update(
+        Run.objects.filter(pk=run.pk).update(
             created_at=timezone.now() - timedelta(days=created_days_ago)
         )
     return run
@@ -380,22 +385,15 @@ def test_workflow_run_status_and_bucket_filters(client: Client) -> None:
     org = _org("org")
     scenario = _scenario(org)
     release, version, consumer = _workflow_run_fixture(org, scenario)
-    _workflow_run(
-        org, scenario, release, version, consumer, status=WorkflowRunStatus.RUNNING, key="1"
-    )
-    _workflow_run(
-        org, scenario, release, version, consumer, status=WorkflowRunStatus.FAILED, key="2"
-    )
-    _workflow_run(
-        org, scenario, release, version, consumer, status=WorkflowRunStatus.COMPLETED, key="3"
-    )
+    _workflow_run(org, scenario, release, version, consumer, status=RunStatus.RUNNING, key="1")
+    _workflow_run(org, scenario, release, version, consumer, status=RunStatus.FAILED, key="2")
+    _workflow_run(org, scenario, release, version, consumer, status=RunStatus.COMPLETED, key="3")
     client.force_login(_member("u", org))
-
     url = reverse("console:workflow_runs")
     all_body = client.get(url).content.decode()
     assert all_body.count("<tr data-href") == 3
 
-    failed = client.get(url, {"status": WorkflowRunStatus.FAILED}).content.decode()
+    failed = client.get(url, {"status": RunStatus.FAILED}).content.decode()
     assert failed.count("<tr data-href") == 1
 
     # The "attention" bucket includes failed/timed_out/recovery_required.
@@ -411,22 +409,20 @@ def test_run_filters_cannot_widen_beyond_tenant_scope(client: Client) -> None:
     foreign_scenario = _scenario(foreign, "fs")
     release, version, consumer = _workflow_run_fixture(org, scenario)
     f_release, f_version, f_consumer = _workflow_run_fixture(foreign, foreign_scenario)
-    _workflow_run(
-        org, scenario, release, version, consumer, status=WorkflowRunStatus.RUNNING, key="1"
-    )
+    _workflow_run(org, scenario, release, version, consumer, status=RunStatus.RUNNING, key="1")
     _workflow_run(
         foreign,
         foreign_scenario,
         f_release,
         f_version,
         f_consumer,
-        status=WorkflowRunStatus.RUNNING,
+        status=RunStatus.RUNNING,
         key="2",
     )
     # Member of ``org`` only; no filter (or any filter) can reveal the foreign run.
     client.force_login(_member("u", org))
     body = client.get(
-        reverse("console:workflow_runs"), {"status": WorkflowRunStatus.RUNNING}
+        reverse("console:workflow_runs"), {"status": RunStatus.RUNNING}
     ).content.decode()
     assert body.count("<tr data-href") == 1
     assert "<td>fs</td>" not in body  # the foreign scenario slug never renders as a row
@@ -443,7 +439,7 @@ def test_workflow_runs_paginate(client: Client) -> None:
             release,
             version,
             consumer,
-            status=WorkflowRunStatus.COMPLETED,
+            status=RunStatus.COMPLETED,
             key=str(n),
         )
     client.force_login(_member("u", org))

@@ -23,6 +23,18 @@
   </p>
 </div>
 
+{% if can_recover %}
+<div class="card">
+  <h2>Recovery kararı</h2>
+  <p class="muted">Belirsiz dış yan etki yeniden çalıştırılmaz. Çalıştırmayı açıkça failed veya cancelled olarak kapatın.</p>
+  <form method="post" action="{% url 'console:workflow_run_recovery_decide' run.id %}" class="actions">
+    {% csrf_token %}
+    <button type="submit" name="decision" value="confirm_failed">Failed olarak kapat</button>
+    <button type="submit" name="decision" value="confirm_cancelled" class="secondary">Cancelled olarak kapat</button>
+  </form>
+</div>
+{% endif %}
+
 <div class="card">
   <h2>Paralel dallar</h2>
   {% if branches %}

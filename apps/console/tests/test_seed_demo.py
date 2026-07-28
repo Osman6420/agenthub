@@ -21,7 +21,7 @@ def test_seed_demo_creates_a_complete_tenant() -> None:
 
     org = Organization.objects.get(slug="demo")
     slugs = set(Scenario.objects.filter(project__organization=org).values_list("slug", flat=True))
-    assert slugs == {"customer-information", "support-flow", "assistant"}
+    assert slugs == {"empty-workflow", "document-answer", "agent-loop"}
 
     # Every scenario has an active, promoted release.
     active = ScenarioRelease.objects.filter(

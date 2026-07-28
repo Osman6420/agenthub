@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.documents import services as document_services
 from apps.documents import storage
 from apps.documents.models import DocumentSet, DocumentSetVersionStatus, DocumentVersion
@@ -555,9 +555,7 @@ def test_document_set_manager_can_select_exact_safe_promotion_target(governed_re
         assigned_by=platform,
     )
     project = AIProject.objects.create(organization=organization, slug="p", name="P")
-    scenario = Scenario.objects.create(
-        project=project, slug="rag", name="RAG", type=ScenarioType.RAG
-    )
+    scenario = Scenario.objects.create(project=project, slug="rag", name="RAG")
     bind_scenario_document_set(scenario=scenario, document_set=document_set, actor=str(manager.pk))
     embedding_profile = register_embedding_profile(
         actor=platform,

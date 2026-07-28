@@ -17,12 +17,13 @@ from apps.artifacts.validation import compute_checksum
 from apps.audit.services import record_event
 from apps.tenancy.context import set_tenant_context
 from apps.workflows.models import (
-    WORKFLOW_TERMINAL_STATUSES,
+    RUN_TERMINAL_STATUSES,
     Run,
     RunAwaitingKind,
+    RunStatus,
     RunWait,
+    RunWaitKind,
     RunWaitStatus,
-    WorkflowRunStatus,
 )
 from apps.workflows.services import _redact
 from apps.workflows.state_mapping import MappingError, apply_output_mapping, compile_mappings
@@ -31,11 +32,11 @@ from apps.workflows.transitions import transition_run
 MAX_RESUME_PAYLOAD_BYTES = 64 * 1024
 MAX_WAIT_CONFIG_BYTES = 64 * 1024
 _WAIT_STATUS_BY_KIND: dict[str, str] = {
-    RunAwaitingKind.APPROVAL: WorkflowRunStatus.WAITING_APPROVAL,
-    RunAwaitingKind.EVENT: WorkflowRunStatus.WAITING_EVENT,
-    RunAwaitingKind.HUMAN: WorkflowRunStatus.WAITING_HUMAN,
-    RunAwaitingKind.TIMER: WorkflowRunStatus.WAITING_TIMER,
-    RunAwaitingKind.CHILD: WorkflowRunStatus.WAITING_CHILD,
+    RunAwaitingKind.APPROVAL: RunStatus.WAITING_APPROVAL,
+    RunAwaitingKind.EVENT: RunStatus.WAITING_EVENT,
+    RunAwaitingKind.HUMAN: RunStatus.WAITING_HUMAN,
+    RunAwaitingKind.TIMER: RunStatus.WAITING_TIMER,
+    RunAwaitingKind.CHILD: RunStatus.WAITING_CHILD,
 }
 
 
@@ -100,7 +101,7 @@ def resume_run_for_approval(
     set_tenant_context(organization_id)
     run = Run.objects.select_for_update().get(pk=run_id, organization_id=organization_id)
     if (
-        run.status != WorkflowRunStatus.WAITING_APPROVAL
+        run.status != RunStatus.WAITING_APPROVAL
         or run.awaiting_kind != RunAwaitingKind.APPROVAL
         or run.awaiting_reference != str(invocation_id)
     ):
@@ -117,8 +118,57 @@ def resume_run_for_approval(
         run_id=run.id,
         transition_token=uuid.uuid5(run.id, f"approval-resume:{invocation_id}"),
         expected_checkpoint_version=run.checkpoint_version,
-        expected_status=WorkflowRunStatus.WAITING_APPROVAL,
-        target_status=WorkflowRunStatus.QUEUED,
+        expected_status=RunStatus.WAITING_APPROVAL,
+        target_status=RunStatus.QUEUED,
+    )
+    return RunWaitResume(
+        transitioned.outcome,
+        transitioned.status,
+        transitioned.checkpoint_version,
+    )
+
+
+@transaction.atomic
+def resume_run_for_join(
+    *,
+    organization_id: int,
+    run_id: uuid.UUID,
+    region_node_id: str,
+) -> RunWaitResume:
+    """Re-admit a Run parked on a parallel region once that region's join has closed.
+
+    As with an approval, the authority is durable state rather than a token: only a Run
+    parked on exactly this region, whose join row has actually left ``open``, is re-queued.
+    """
+
+    from apps.workflows.models import RunJoin, RunJoinStatus
+
+    set_tenant_context(organization_id)
+    run = Run.objects.select_for_update().get(pk=run_id, organization_id=organization_id)
+    if (
+        run.status != RunStatus.WAITING_CHILD
+        or run.awaiting_kind != RunAwaitingKind.CHILD
+        or run.awaiting_reference != region_node_id
+    ):
+        raise RunWaitError("RUN_WAIT_NOT_FOUND")
+    closed = (
+        RunJoin.objects.filter(
+            run_id=run.id,
+            organization_id=organization_id,
+            region_node_id=region_node_id,
+        )
+        .exclude(status=RunJoinStatus.OPEN)
+        .exists()
+    )
+    if not closed:
+        raise RunWaitError("RUN_WAIT_NOT_FOUND")
+    transitioned = transition_run(
+        organization_id=organization_id,
+        run_id=run.id,
+        transition_token=uuid.uuid5(run.id, f"join-resume:{region_node_id}"),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status=RunStatus.WAITING_CHILD,
+        target_status=RunStatus.QUEUED,
     )
     return RunWaitResume(
         transitioned.outcome,
@@ -237,7 +287,7 @@ def suspend_run_for_wait(
         run_id=run.id,
         transition_token=uuid.uuid5(wait_id, "suspend"),
         expected_checkpoint_version=expected_checkpoint_version,
-        expected_status=WorkflowRunStatus.RUNNING,
+        expected_status=RunStatus.RUNNING,
         target_status=wait_status,
         checkpoint=checkpoint,
         awaiting_reference=str(wait_id),
@@ -361,7 +411,7 @@ def _consume_wait(
             transition_token=uuid.uuid5(wait.id, "expire"),
             expected_checkpoint_version=wait.checkpoint_version_snapshot,
             expected_status=expected_status,
-            target_status=WorkflowRunStatus.FAILED,
+            target_status=RunStatus.FAILED,
             error_code="RUN_WAIT_EXPIRED",
         )
         _audit(
@@ -412,10 +462,10 @@ def _consume_wait(
         transition_token=uuid.uuid5(wait.id, f"resume:{resume_checksum}"),
         expected_checkpoint_version=wait.checkpoint_version_snapshot,
         expected_status=expected_status,
-        target_status=WorkflowRunStatus.QUEUED,
+        target_status=RunStatus.QUEUED,
         checkpoint=checkpoint,
     )
-    if transitioned.outcome != "committed" or transitioned.status in WORKFLOW_TERMINAL_STATUSES:
+    if transitioned.outcome != "committed" or transitioned.status in RUN_TERMINAL_STATUSES:
         # Cancellation or the Run deadline won the race; the wait can never be consumed again.
         _close_wait(wait, RunWaitStatus.CANCELLED, actor_id, timezone.now())
         _audit(
@@ -527,6 +577,63 @@ def resume_run_wait(
                 roles=roles,
                 data=data,
                 resume_checksum=resume_checksum,
+            )
+    if error is not None:
+        raise RunWaitError(error)
+    if result is None:
+        raise RunWaitError("RUN_WAIT_NOT_FOUND")
+    return result
+
+
+def decide_run_human_task(
+    *,
+    organization_id: int,
+    wait_id: uuid.UUID,
+    actor_id: str,
+    actor_roles: set[str],
+    payload: dict[str, Any],
+) -> RunWaitResume:
+    """Consume one human wait by server-authorized operator identity, not by bearer token."""
+
+    if not actor_id or len(actor_id) > 200 or not isinstance(wait_id, uuid.UUID):
+        raise RunWaitError("RUN_WAIT_ACTOR_INVALID")
+    roles = _safe_roles(actor_roles)
+    data = _bounded_json(
+        payload,
+        error_code="RUN_WAIT_PAYLOAD_INVALID",
+        maximum=MAX_RESUME_PAYLOAD_BYTES,
+    )
+    if not isinstance(data, dict):
+        raise RunWaitError("RUN_WAIT_PAYLOAD_INVALID")
+    result: RunWaitResume | None = None
+    error: str | None = None
+    with transaction.atomic():
+        set_tenant_context(organization_id)
+        run = (
+            Run.objects.select_for_update()
+            .filter(
+                waits__id=wait_id,
+                waits__organization_id=organization_id,
+                waits__kind=RunWaitKind.HUMAN,
+                organization_id=organization_id,
+            )
+            .first()
+        )
+        if run is None:
+            error = "RUN_WAIT_NOT_FOUND"
+        else:
+            wait = RunWait.objects.select_for_update().get(
+                pk=wait_id,
+                organization_id=organization_id,
+                run_id=run.id,
+            )
+            result, error = _consume_wait(
+                run=run,
+                wait=wait,
+                actor_id=actor_id,
+                roles=roles,
+                data=data,
+                resume_checksum=compute_checksum(data),
             )
     if error is not None:
         raise RunWaitError(error)

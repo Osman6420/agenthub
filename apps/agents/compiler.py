@@ -1,4 +1,4 @@
-"""Strict deterministic compiler for the non-executable AgentHub agent definition.
+"""Strict deterministic compiler for an embedded workflow agent policy.
 
 Compilation validates the artifact and emits an immutable, checksummed ``AgentConfig``:
 the objective/output state keys, whether retrieval is enabled, the ordered allowlist of
@@ -12,10 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from apps.agents.agent_schema import AgentArtifactError, validate_agent_definition_body
+from apps.agents.agent_schema import AgentArtifactError, validate_agent_loop_policy
 from apps.agents.limits import resolve_limits
 from apps.agents.planner import AGENT_DECISION_SCHEMA_VERSION
-from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
 
 COMPILER_VERSION = "agent-compiler/v1"
@@ -37,14 +36,9 @@ class CompiledAgent:
         return tuple(self.config["tools"])
 
 
-def validate_artifact_body(artifact_type: str, body: dict[str, Any]) -> None:
-    if artifact_type == ArtifactType.AGENT_DEFINITION:
-        compile_agent(body)
-
-
 def compile_agent(body: dict[str, Any]) -> CompiledAgent:
     try:
-        validate_agent_definition_body(body)
+        validate_agent_loop_policy(body)
     except AgentArtifactError as exc:
         raise AgentCompileError(str(exc)) from exc
 

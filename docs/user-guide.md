@@ -152,8 +152,9 @@ unchanged.
 6. **Promote** (`promote_release`) — fail-closed: requires a passing eval bound to the
    pinned suite and ready, tenant-owned indexes. Or run a **consumer-scoped, time-bounded
    canary**.
-7. **Serve**: an authorized consumer calls `POST /v1/query`, `POST /v1/invoke`, or
-   `GET /v1/runs/{id}`. The gateway issues a signed short-lived execution context and the
+7. **Serve**: an authorized consumer calls `POST /v1/responses`,
+   `POST /v1/chat/completions`, or `GET /v1/runs/{uuid}`. The gateway issues a signed
+   short-lived execution context and the
    runtime answers with the active (or canary) release.
 8. **Rollback** (`rollback_release`) atomically restores the superseded release if needed.
 
@@ -215,20 +216,18 @@ Consumers authenticate with a **bearer token** (created by an operator via
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /v1/query` | Synchronous RAG query against the active release |
-| `POST /v1/invoke` | Invoke a workflow or agent scenario (returns `202` + `run_id`) |
-| `POST /v1/chat/completions` | OpenAI-compatible synchronous RAG; `model` is the bound scenario alias |
-| `POST /v1/responses` | OpenAI-compatible RAG or background workflow/agent invocation |
-| `GET /v1/runs/{id}` | Poll a workflow/agent run's redacted status/output |
-| `DELETE /v1/runs/{id}` | Cancel a run (consumer/tenant scoped) |
+| `POST /v1/responses` | Canonical sync/background workflow invocation; `model` is the bound scenario alias |
+| `POST /v1/chat/completions` | OpenAI-compatible synchronous adapter for sync-capable workflows |
+| `GET /v1/runs/{uuid}` | Poll a run's redacted status/output |
+| `POST /v1/runs/{uuid}/cancel` | Idempotently request cancellation (consumer/tenant scoped) |
 | `GET /v1/health/live` | Unauthenticated liveness probe |
 
-Workflow/agent invokes require an `Idempotency-Key` header. Every call is rate-limited per
+Background invokes require an `Idempotency-Key` header. Every call is rate-limited per
 consumer, validated against the release input contract, and recorded as a usage event and
 audit entry. REST credentials use HTTPS endpoints; MCP credentials use authenticated **MCP**
 ingress and cannot be exchanged across protocols. OpenAI-compatible history is text-only, bounded
-and not stored as a server-side conversation. Chat Completions is the default for RAG. Workflow and
-agent scenarios require Responses with `background: true` and an `Idempotency-Key`. Streaming,
+and not stored as a server-side conversation. Use Responses for every workflow; set
+`background: true` plus an `Idempotency-Key` when the compiled graph is background-only. Streaming,
 multimodal inputs, client tools/functions and request-side output-contract overrides are rejected.
 
 ### Human approval for high-risk tools

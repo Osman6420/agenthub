@@ -70,7 +70,8 @@ the [P11 index](../tasks/phase-2-p11-production-hardening/plan.md) and the broad
 - Sprint 3: the public `gateway` (DRF) — bearer-token consumer auth (`ConsumerToken`,
   hashed), alias+capability authorization, per-consumer rate limiting, idempotency,
   a standard error envelope, a signed short-lived `ExecutionContext`, and
-  `POST /v1/invoke` / `POST /v1/query` / `GET /v1/runs/{id}`. Input is validated
+  the original consumer execution endpoints (superseded by Phase 2.8 Part 3's canonical
+  `POST /v1/responses`, Chat adapter and UUID Run routes). Input is validated
   against the release input contract; a `UsageEvent` and audit are recorded. Verified
   on SQLite and PostgreSQL and live end-to-end. See
   [`sprint-3-gateway-execution-context`](../tasks/sprint-3-gateway-execution-context/plan.md).
@@ -137,21 +138,13 @@ Real egress (stdlib HTTPS/MCP adapters) is opt-in via `TOOL_ADAPTER`; the defaul
 no-egress deterministic adapter, so tests make no outbound call. No new production
 dependency was added. See [`sprint-9-tool-registry-approval`](../tasks/sprint-9-tool-registry-approval/plan.md).
 
-Sprint 10 is implemented and verified: `apps.agents` is a durable, bounded agent runtime.
-An `agent_definition` artifact (data, not code) compiles to an immutable checksummed
-config pinned into releases (fail-closed unless every declared tool resolves to a pinned
-`tool_binding` role). The tenant-scoped `AgentRun` (opaque `public_id` UUID) runs a
-guarded decision loop on the verified Sprint 8/9 Celery, tool-proxy, and approval
-contracts: step/tool-call/token/deadline/state-size/checkpoint-version caps fail closed,
-every planner decision is re-validated against the immutable compiled tool allowlist, a
-required tool approval pauses (`waiting_approval`) and auto-resumes on the decision
-signal, and output must pass contract + policy. LangGraph (`langgraph==1.2.9`, one
-approved pinned dependency) is integrated only as an `AgentPlanner` adapter via
-`AGENT_PLANNER`; the default is deterministic, so CI runs no graph code. `POST /v1/invoke`
-returns `202` + UUID `run_id`; `GET`/`DELETE /v1/runs/{id}` dual-dispatch workflow/agent.
-Trajectory eval assertions, a role-gated console agent-run list + redacted trace, and
-`list_agent_runs` / `cancel_agent_run` commands are included. No LangSmith/Cloud/hosted
-service or new public endpoint. See [`sprint-10-agent-runtime`](../tasks/sprint-10-agent-runtime/plan.md).
+Sprint 10 originally delivered the governed agent safety contract. Phase 2.8 Part 3 now
+executes that contract only as the closed `agent_loop` node inside a `workflow_definition` and
+persists it on the canonical UUID `Run`/`RunEvent` lifecycle. Tool allowlists, budgets, approval,
+checkpoint, output-policy and kill-switch protections remain; the separate agent artifact and run
+state machine were removed by ADR-0014. See the historical
+[`sprint-10-agent-runtime`](../tasks/sprint-10-agent-runtime/plan.md) record and the current
+[Part 3 verification](archive/phase-2-8-part-3-unified-workflow-engine-2026-07-28/verification.md).
 
 Sprint 11 is implemented and verified: the visual workflow builder. `apps.builder` adds a
 tenant-scoped mutable `WorkflowDraft` and an operator JSON API (`/console/api/builder/`) for
@@ -230,7 +223,7 @@ This plan does not claim target architecture is deployed or choose unresolved ve
 | Product coherence (Phase 2.5) | **Completed, verified and owner-accepted 2026-07-16** — all nine parts, authenticated Turkish journey, Scenario Studio JSON/graph/config/publish, REST/MCP/OpenAI smoke, credential disable/restore, audit and rollback passed; live environment evidence remains Phase 2 closure scope | Verified Phase 2 application scope | [phase-2-5-plan](phase-2-5-plan.md) + [Part 9](../tasks/phase-2-5-part-9-integrated-hardening/plan.md) | Part threat models complete; no unresolved Phase 2.5 high finding | [Part 9 evidence](../tasks/phase-2-5-part-9-integrated-hardening/verification.md) |
 | Phase 3 deferred security/identity/data/agents | **Discovery/planned; moved out of Phase 2/2.5/2.6** — Personal MCP identity/OBO, governed upload malware/type scanning, persistent server-side conversation history and optional bounded multi-agent supervision | IdP/OBO/downstream trust, scanner/conversation lifecycles, and proof that multi-agent adds value beyond Phase 2.6 composition | [phase-3-plan](phase-3-plan.md) | ADRs pending | Verification pending |
 | Advanced enterprise orchestration (Phase 2.6) | **Activation-closure wave integrated 2026-07-17** — waves 1–2, P2.6.4 and the P2.6.7/P2.6.8/P2.6.9/P2.6.10 activation closures are merged and gate-verified; MCP catalog quarantine has the owner-approved app-role grant inventory (live endpoints deployment-gated), the attested OpenShift runner stays inactive pending ADR-0011 target attestation, Studio AI activation and ingestion drills are closed. P2.6.6 then P2.6.11 remain | Phase 2.5 Parts 6–7, current workflow/tool/agent runtimes, durable state/resume and authorization decisions | [phase-2-6-plan](phase-2-6-plan.md) | [ADR-0008](../adr/0008-durable-workflow-transition-state-machine.md), [ADR-0009](../adr/0009-child-run-capability-attenuation.md), [ADR-0010](../adr/0010-workflow-dataflow-join-wait-and-human-task-contract.md), [ADR-0011](../adr/0011-reviewed-python-node-isolation-and-lifecycle.md) Proposed, [ADR-0012](../adr/0012-durable-ingestion-build-jobs-and-worker-readiness.md) Accepted | [Activation-wave gate evidence](../tasks/phase-2-6-wave-3-integration/verification.md) |
-| Task-oriented console and unified execution experience (Phase 2.8) | **In progress — Parts 1, 2 and 2.1 verified and owner-accepted; Parts 3–7 remain.** Scoped assignments, scenario-to-set grants, release/document-operation authorization, Access UX and exceptional superadmin recovery controls are complete. | Part 1 shell; Part 2 organization/access contract; existing Phase 2/2.5 document/release platform; Phase 2.6 workflow/agent safety contracts | [phase-2-8 plan](phase-2-8-plan.md), [Part 1 archive](archive/phase-2-8-part-1-console-information-architecture-2026-07-22/plan.md), [Part 2 archive](archive/phase-2-8-part-2-organization-access-management-2026-07-22/plan.md), [Part 2.1 archive](archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md), [Part 3](../tasks/phase-2-8-part-3-unified-workflow-engine/plan.md), [Part 4](../tasks/phase-2-8-part-4-scenario-authoring-release-experience/plan.md), [Part 5](../tasks/phase-2-8-part-5-document-profiles-index-automation/plan.md), [Part 6](../tasks/phase-2-8-part-6-question-sets-evaluation/plan.md), [Part 7](../tasks/phase-2-8-part-7-unified-runs-kill-switch/plan.md) | Parts 1–2.1 threat models complete; ADR-0013 accepted; Part 3 must add an ADR before destructive cutover | [Part 1 verification](archive/phase-2-8-part-1-console-information-architecture-2026-07-22/verification.md); [Part 2 verification](archive/phase-2-8-part-2-organization-access-management-2026-07-22/verification.md); [Part 2.1 verification](archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/verification.md) |
+| Task-oriented console and unified execution experience (Phase 2.8) | **In progress — Parts 1, 2, 2.1 and 3 verified and owner-accepted; Parts 4–7 remain.** Part 3 completed the single workflow product/runtime cutover, canonical Run lifecycle and Responses/Chat/MCP consumers. | Parts 1–2.1 access foundation; Phase 2.6 workflow/agent safety contracts | [phase-2-8 plan](phase-2-8-plan.md), [Part 3 archive](archive/phase-2-8-part-3-unified-workflow-engine-2026-07-28/plan.md), Parts 4–7 task plans | ADR-0013 and ADR-0014 accepted | [Part 3 verification](archive/phase-2-8-part-3-unified-workflow-engine-2026-07-28/verification.md) |
 
 ## Cross-cutting concerns
 

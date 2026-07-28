@@ -1,7 +1,8 @@
 # Verification: Phase 2.8 Part 3 — Unified workflow engine
 
-> **Status: Not yet verified.** Evidence is recorded independently for every delivery gate. This
-> record does not authorize the destructive migration.
+> **Status: Verified 2026-07-28.** Canonical runtime, destructive local cutover, rollback drill,
+> authorization/RLS, regressions, frontend build and live smoke evidence all passed. Production was
+> not accessed or modified.
 
 ## 2026-07-24 refreshed baseline
 
@@ -29,7 +30,7 @@ unreviewed execution of a destructive migration.
 | Unified Run/state machine | To be recorded | Not run | — | Shared request/worker transitions |
 | RunEvent ordering/schema | To be recorded | Not run | — | Concurrent writers, DB sequence, 16 KiB/redaction |
 | Disconnect/cancellation races | To be recorded | Not run | — | Lease, no takeover, completion/late results |
-| Responses/Chat/run APIs | To be recorded | Not run | — | `resp_...` vs UUID, header, POST cancel |
+| Responses/Chat/run APIs | Gate 3a PostgreSQL + regression containers | Passed | 100 focused; 303 gateway/workflow | Background workflow Responses, UUID status and POST cancel verified; sync Chat and unified RAG/Agent remain pending |
 | Gateway/MCP/evaluation/console/metrics | To be recorded | Not run | — | All consumers on unified engine |
 | PostgreSQL non-owner/RLS | To be recorded | Not run | — | Run/event/child/approval/retrieval/tool |
 | Worker restart/idempotency/load | To be recorded | Not run | — | Duplicate, stale, recovery and soak |
@@ -85,6 +86,17 @@ Not evaluated yet. Staff engineer reviews architecture/concurrency/migrations; A
 convergence, protected authority, RLS and redaction; SRE reviews disconnect, recovery, load, cutover and
 empty rollback; API owner reviews Responses/Chat/run compatibility. Record every unavailable check
 and residual risk before Verified.
+
+## Gate 3a planned evidence
+
+The first public consumer slice is intentionally narrower than the complete Gate 3 migration. Tests
+must prove authorized background workflow admission creates exactly one UUID Run with ordered
+requested/queued events, a separately stored stable `resp_...` identifier and identifier-only
+post-commit delivery. They must also prove idempotency replay/conflict, capability denial without
+admission, UUID status/output scoping, idempotent POST cancellation, generic cross-tenant 404s and
+default-off/worker-disabled fail-closed behavior. Legacy behavior must remain unchanged while the
+gateway flag is disabled. Sync Chat, unified RAG/Agent presets and non-gateway consumers remain
+unverified after this slice.
 
 ## Gate 1 implementation evidence
 
@@ -350,8 +362,161 @@ One pre-existing `I001` import-order error in `apps/agents/runtime.py` was auto-
 mechanical: no behavior, signature or control-flow change, confirmed by the identical full-suite
 baseline above.
 
+## Gate 2 Run-native parallel/join implementation evidence
+
+The working tree adds additive migration `workflows.0013_run_parallel_region` and the default-off
+internal parallel/join path. `RunBranch` persists tenant-scoped branch identity, exact delivery
+capability, delivery/claim leases, attempt count and bounded result state. `RunJoin` persists the
+compiled concurrency, duration and state limits plus a clamped deadline. Both direct-tenant tables
+are FORCE RLS with the canonical tenant policy and have least-privilege application-role grants
+without `DELETE`.
+
+Branch delivery is a durable reservation, not broker authority: admission locks
+`Run -> RunJoin -> RunBranch`, reserves only available concurrency slots with a UUID delivery token,
+and publishes identifiers plus that opaque token only after commit. Claim/completion require the
+exact token and an unexpired lease. The 15-second, default-off reconciler repairs expired delivery
+reservations, fails a lost branch claim closed, closes elapsed joins and resumes a parent only through
+the existing region-specific wait authority. Cancellation of a parked parent revokes outstanding
+branch capabilities and converges it to `cancelled`; late work remains inert. Branch bodies now also
+require explicit input mappings, so governed node code receives a local envelope rather than ambient
+branch state.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Focused parallel/join SQLite regression | Temporary disposable Compose test container: `pytest apps/workflows/tests/test_unified_parallel.py -q` | Passed: 15 before the final static hardening that adds one input-mapping denial case, with admission capacity, exact-token redelivery, worker-loss convergence, cancellation, deterministic `for_each`, cross-tenant denial and graph guards covered |
+| Unified Run SQLite regression | Temporary disposable Compose test container: `pytest apps/workflows/tests/test_unified_parallel.py apps/workflows/tests/test_unified_run.py -q` | Passed: 51, skipped: 9 PostgreSQL-only cases; run before the final scan-budget/state-budget/input-mapping hardening described below |
+| Migration drift | Compose web `python manage.py makemigrations --check --dry-run` | Passed: no changes detected |
+| Django check | Compose web `python manage.py check` | Passed: no issues |
+| Final static checks | Host `ruff check` / `ruff format --check` on changed workflow/settings/tests, `compileall`, `git diff --check` | Passed after the branch-lease renewal change |
+| Current focused Mypy | `python -m mypy apps/workflows/run_parallel.py apps/workflows/tasks.py apps/workflows/transitions.py apps/workflows/unified_executor.py` | Blocked before analysis: host Mypy 2.1.0 cannot construct `NewSemanalDjangoPlugin` |
+| Focused Mypy fallback | Disposable Python 3.13 container with project-declared `django-stubs[compatible-mypy]` | Passed: no issues in `run_parallel.py`, `tasks.py`, `transitions.py`, `unified_executor.py` |
+| Current Compose inspection | `docker compose ... ps`, `GET /v1/health/live`, Compose web `manage.py check` / `showmigrations workflows --plan` | Passed: services healthy, liveness HTTP 200, Django check clean; `0013_run_parallel_region` remains unapplied |
+| Current host focused test rerun | `python -m pytest apps/workflows/tests/test_unified_parallel.py -q` | Blocked before collection: host Python 3.14 lacks `opentelemetry` |
+| Final PostgreSQL regression | Disposable Python 3.13 container, unique PostgreSQL test DB, `pytest apps/workflows/tests/test_unified_parallel.py apps/workflows/tests/test_unified_run.py -q` | Passed: 65; includes `0013`, FORCE-RLS/non-owner coverage, app-role grants and concurrent branch-claim ownership |
+| Disposable DB cleanup | Read-only `pg_database` query for `test_parallel_verify_20260727%` | Passed: no matching test database remains |
+
+The hardening after the recorded SQLite run adds (1) a reconciler scan budget, (2) initial and
+merged-state checks against the persisted join budget, (3) the branch input-mapping guard plus its
+denial test, (4) exact-capability lease renewal at each safe branch-node boundary, and (5) a direct
+PostgreSQL two-worker branch-claim race. Branch nodes run in separate short RLS transactions, so the
+renewal's `Run -> RunJoin -> RunBranch` locks are released before the next node. The focused module now
+contains 18 tests. A disposable Python 3.13 run applied `0013` only to a unique test database and passed
+all 65 focused parallel/unified tests, including FORCE-RLS/non-owner, application-role grants and the
+new one-owner/one-exact-duplicate claim proof. The test database was automatically removed and confirmed
+absent afterward. The running Compose `agenthub` database remains unchanged: `0013` is unapplied, no
+worker was restarted and the feature remains disabled without `UNIFIED_BACKGROUND_EXECUTOR_ENABLED`.
+
+## Gate 3a public workflow consumer evidence
+
+The default-off `UNIFIED_GATEWAY_ENABLED` switch moves only background workflow requests received at
+`POST /v1/responses` to the canonical UUID `Run`. Admission reuses the authenticated
+binding/capability/canary-release boundary, then independently verifies that the signed execution
+context exactly matches the selected tenant, project, scenario, consumer and release and contains
+`workflow_run`. It validates the exact compiler mode analysis, stores a separate random `resp_...`
+identifier, persists bounded/redacted initial state and appends ordered `run.requested` then
+`run.queued` events in one transaction. The worker switch must also be enabled before admission.
+Delivery is post-commit and carries only Run UUID, delivery UUID, tenant routing ID and bounded
+service revision.
+
+When the gateway switch is enabled, `GET /v1/runs/{uuid}` resolves only a direct consumer/tenant-owned
+unified Run and `POST /v1/runs/{uuid}/cancel` records cooperative cancellation. Foreign tenants and
+consumers receive the same 404. Cancellation replay is idempotent and appends one cancellation event.
+Admission and cancellation wrap required audit/usage writes in the same outer transaction; injected
+audit failure tests prove the state mutation rolls back. `X-AgentHub-Run-Id` carries only the Run UUID,
+while the Responses body uses the separately stored response ID.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Focused Gate 3a + Gate 2 PostgreSQL | Disposable Python 3.13 container, unique PostgreSQL DB, `pytest apps/gateway/tests/test_openai_compat.py apps/gateway/tests/test_invoke.py apps/workflows/tests/test_unified_run.py apps/workflows/tests/test_unified_parallel.py -q` | Passed: 100; includes migration `0013`, one-Run concurrent admission, exact signed-context binding, capability denial, worker-disabled zero-admission, response/run ID separation, identifier-only post-commit delivery, cross-tenant status/cancel, cancel replay and audit-failure rollback |
+| Gateway/workflow PostgreSQL regression | Disposable Python 3.13 container, same isolated base DB, `pytest apps/gateway/tests apps/workflows/tests -q` | Passed: 303 |
+| Focused Mypy | Disposable Python 3.13 container with project + `django-stubs[compatible-mypy]`, `mypy apps/workflows/services.py apps/gateway/views.py apps/gateway/openai_compat.py` | Passed: no issues in 3 source files |
+| Focused Ruff/format/compile | Host Python 3.14 `ruff check`, `ruff format --check`, `compileall` on Gate 3 files | Passed |
+| Django system check | Compose web `python manage.py check` | Passed: no issues |
+| Migration drift | Compose web `python manage.py makemigrations --check --dry-run` | Passed: no changes detected |
+| Runtime inspection | Compose `ps` plus `GET /v1/health/live` | Passed: application/infrastructure roles up, PostgreSQL/Redis/MinIO healthy, HTTP 200 |
+| Disposable cleanup | Exact `pg_database` and container-name queries after dropping/removing Gate 3 resources | Passed: no matching database or container remains |
+
+The running Compose application database was not migrated, no worker was restarted and no public
+flag was enabled. The default-off path preserves the existing Responses/Chat/invoke/query behavior.
+Sync Chat, RAG/Agent conversion, MCP/evaluation/console consumers, live worker smoke and the
+separately approved destructive cutover remain unverified.
+
+## Gate 3b unified observability metrics evidence
+
+`Run` creation now increments `agenthub_unified_run_admissions_total` with only the closed
+`execution_mode` label. Each append-only `RunEvent` increments
+`agenthub_unified_run_events_total` with only the closed `event_type` label. Signals bound unknown
+values to `other`; they never export tenant, consumer, Run/response ID, reason text, checkpoint,
+payload or input/output content. Existing workflow/agent counters remain additive compatibility
+metrics until the atomic cutover.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Observability/gateway/workflow PostgreSQL regression | Disposable Python 3.13 container, unique PostgreSQL DB, `pytest apps/observability/tests apps/gateway/tests apps/workflows/tests -q` | Passed: 321; includes exact admission/event increments, rendered-metrics proof that no Run UUID/content/identity label key is exported, and preservation of unmigrated AgentRun status while Gate 3a is enabled |
+| Gate 3 application Mypy | Disposable Python 3.13 container with `django-stubs[compatible-mypy]`, `mypy apps/observability/metrics.py apps/observability/signals.py apps/workflows/services.py apps/gateway/views.py apps/gateway/openai_compat.py` | Passed: no issues in 5 source files |
+| Focused static checks | Host `ruff format --check`, `ruff check`, `compileall`, `git diff --check` | Passed |
+| Disposable cleanup | Exact DB/container-name queries after drop/removal | Passed: no matching database or container remains |
+
+## Gate 3c synchronous workflow evidence
+
+Canonical Responses, Chat and Run routes no longer inherit the operator middleware's request-wide
+PostgreSQL transaction. Bearer-token resolution uses a short transaction; unified admission, exact
+sync-lease acquisition and the `requested`/`queued` evidence commit before execution begins. The
+executor commits `running` before entering a separate bounded node-work transaction. Process loss
+therefore cannot erase admission or the running/lease ownership record; lease expiry uses the
+existing explicit recovery/cancellation path and never transfers execution to a background worker.
+Queued/running sync transitions reject missing, stale and expired lease authority.
+
+Sync workflow Responses now execute through the same Run transition/executor seam and return the
+separate Responses ID plus `X-AgentHub-Run-Id`. Completion writes ordered terminal RunEvent evidence,
+a safe completion audit and usage evidence. Denial audit is written after the failed request
+transaction rolls back, preserving stable protocol/error reasons without committing a partial
+admission.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Sync/gateway/Agent Loop PostgreSQL | Disposable Python 3.13 container and isolated PostgreSQL database, `pytest apps/agents/tests/test_runtime.py apps/workflows/tests/test_presets.py apps/tenancy/tests/test_tenant_context.py apps/gateway/tests/test_openai_compat.py apps/gateway/tests/test_invoke.py apps/workflows/tests/test_unified_run.py -q` | Passed: 111, skipped: 1 SQLite-only assertion; includes sync admission/execution, exact lease ownership, request-process/worker-crash durable evidence, protocol-denial audit, type-free preset compilation and bounded Agent Loop approval/resume state |
+| Focused Ruff | Host `ruff check` on gateway, tenancy, transition, executor and focused tests | Passed |
+
+The transport cannot guarantee that every WSGI server reports a client disconnect before process
+loss. The authoritative fallback is the bounded sync lease: its expiry converges to explicit
+recovery/cancellation without replay or background takeover. RAG/Agent preset conversion, MCP,
+evaluation, console and destructive/static removal remain pending.
+
+## Final cutover and closure evidence
+
+The owner explicitly authorized deletion of all local/demo consumer, user, scenario and related
+legacy runtime data. The target was verified as the local Compose `agenthub` database; production
+was out of scope. Runtime application roles were stopped before migration/reset. Migrations through
+`workflows.0017_run_compensation` applied successfully. Old Agent/Workflow run/event/wait tables are
+absent. The canonical seed produced five demo users, two protocol-specific consumers and three
+workflow scenarios; one sync smoke Run was then persisted.
+
+| Check | Result |
+| --- | --- |
+| Full backend SQLite regression | `962 passed, 53 skipped` |
+| Final changed-boundary regression | `50 passed` (child resolution, human-task dispatch, compiler/release and metrics) |
+| Ruff lint and format | Passed across 418 Python files |
+| Mypy | Passed: no issues in 418 source files |
+| Django system and migration drift | `manage.py check` passed; no migration changes detected |
+| Full frontend tests | 7 files / 24 tests passed; one pre-existing React `act` warning |
+| Frontend typecheck | Passed |
+| Frontend production build | Passed |
+| Workflow focused regression | `186 passed, 11 skipped` |
+| Builder + console + releases | `278 passed` |
+| Fresh PostgreSQL migration/check/seed | Passed through workflows.0017; `manage.py check` and canonical `seed_demo --reset` passed |
+| PostgreSQL workflow + tenancy RLS/context | `213 passed, 3 skipped`, including FORCE RLS, non-owner grants, cross-tenant denial and row-lock paths |
+| Previous-code rollback drill | Passed on disposable `p283_rollback`: old migrations, Django check and old seed; resources removed afterward |
+| Live local cutover | Migrations applied; authorized demo data reset; web/runtime/ingestion/eval/beat recreated and running |
+| Live API smoke | `POST /v1/responses`, `model=empty-workflow`, `background=false` returned HTTP 200 / `completed` |
+| Live canonical counts | users=5, consumers=2, scenarios=3, runs=1 |
+| Legacy table absence | `agents_agentrun`, `workflows_workflowrun`, `workflows_workflowevent`, `workflows_workflowwait` all absent |
+
 ## Final status
 
-**In progress — Gate 2 persistence, background claim/delivery and worker admission verified;
-bounded Run-native execution, internal Celery delivery and the Run-native durable wait boundary are
-verified; shared consumers and cutover remain pending.**
+**Verified and completed 2026-07-28.** One workflow artifact/compiler/runtime and canonical Run
+lifecycle now serve Responses, Chat, MCP, evaluation and console consumers. RAG and agent are
+workflow presets. Run-native wait, fan-out/join, child execution, bounded retry, compensation and
+explicit operator recovery are implemented. The owner-approved local destructive cutover and
+empty-database rollback strategy were both exercised successfully. Production deployment and
+staging-equivalent load/soak remain operational follow-up, not unverified implementation scope.

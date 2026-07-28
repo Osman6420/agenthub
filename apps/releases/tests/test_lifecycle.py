@@ -11,7 +11,7 @@ from django.utils import timezone
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.evaluations.services import run_eval
 from apps.identity.models import (
     Consumer,
@@ -32,34 +32,47 @@ from apps.releases.lifecycle import (
 )
 from apps.releases.models import CanaryStatus, ReleaseStatus, ScenarioRelease
 from apps.releases.routing import select_release
-from apps.retrieval.providers import StaticRetrievalProvider
-from apps.retrieval.types import RetrievedChunk
 from apps.tenancy.models import Organization, OrganizationMembership
 from apps.tenancy.services import can_manage_scenario_releases
+from apps.workflows.presets import empty_workflow
 
-CHUNK = RetrievedChunk(
-    text="Iade suresi 14 gundur.",
-    source_id="mcm",
-    source_uri="https://x/iade",
-    title="Iade",
-    score=0.9,
-)
 PASSING_SUITE = {
-    "cases": [{"id": "c1", "input": {"query": "iade"}, "assertions": [{"type": "grounded"}]}]
+    "cases": [
+        {
+            "id": "c1",
+            "input": {"query": "iade"},
+            "assertions": [{"type": "workflow_completed"}],
+        }
+    ]
 }
 
 
 def _scenario() -> Scenario:
     org = Organization.objects.create(slug="mcm", name="MCM")
     project = AIProject.objects.create(organization=org, slug="cx", name="CX")
-    return Scenario.objects.create(project=project, slug="info", name="Info", type=ScenarioType.RAG)
+    return Scenario.objects.create(project=project, slug="info", name="Info")
 
 
 def _release(
     scenario: Scenario, *, with_suite: bool = True, index_versions: list[int] | None = None
 ):
     org = scenario.project.organization
-    refs: list[ArtifactRef] = []
+    workflow_logical = f"workflow_{ScenarioRelease.objects.count()}"
+    create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id=workflow_logical,
+        body=empty_workflow(logical_id=workflow_logical),
+        created_by="alice",
+    )
+    refs: list[ArtifactRef] = [
+        ArtifactRef(
+            "workflow_definition",
+            ArtifactType.WORKFLOW_DEFINITION,
+            workflow_logical,
+            1,
+        )
+    ]
     if with_suite:
         # A fresh suite per release keeps checksums independent across releases.
         logical = f"suite_{ScenarioRelease.objects.count()}"
@@ -90,9 +103,7 @@ def _release(
 
 
 def _pass_eval(release: ScenarioRelease) -> None:
-    run_eval(
-        release=release, created_by="alice", retrieval_provider=StaticRetrievalProvider([CHUNK])
-    )
+    run_eval(release=release, created_by="alice")
 
 
 @pytest.mark.django_db
@@ -204,7 +215,6 @@ def test_can_manage_scenario_releases_uses_scoped_capability() -> None:
         project=project,
         slug="scoped",
         name="Scoped",
-        type=ScenarioType.RAG,
     )
     user_model = get_user_model()
     global_admin = user_model.objects.create_user(username="global", password="x")  # noqa: S106

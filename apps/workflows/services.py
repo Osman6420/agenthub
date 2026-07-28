@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import timedelta
 from typing import Any
 
@@ -13,19 +14,21 @@ from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
 from apps.catalog.models import Scenario
-from apps.gateway.execution_context import verify_execution_context
+from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
+from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer
 from apps.releases.models import ScenarioRelease
 from apps.releases.services import get_artifact_body_for_role, get_manifest_role
+from apps.tenancy.context import set_tenant_context
 from apps.workflows.compiler import COMPILER_VERSION, WorkflowCompileError, compile_workflow
 from apps.workflows.models import (
     CustomNodeDefinition,
     CustomNodeStatus,
-    WorkflowRun,
-    WorkflowRunEvent,
-    WorkflowRunStatus,
+    Run,
+    RunEventType,
+    RunExecutionMode,
+    RunStatus,
     WorkflowVersion,
-    WorkflowWaitStatus,
 )
 
 MAX_STATE_BYTES = 1_048_576
@@ -133,7 +136,7 @@ def resolve_release_workflow(release: ScenarioRelease) -> WorkflowVersion:
 
 
 @transaction.atomic
-def request_workflow_run(
+def request_unified_run(
     *,
     release: ScenarioRelease,
     consumer: Consumer,
@@ -141,109 +144,129 @@ def request_workflow_run(
     execution_context: dict[str, Any],
     input_payload: dict[str, Any],
     idempotency_key: str,
-) -> tuple[WorkflowRun, bool]:
+    execution_mode: str,
+) -> tuple[Run, bool]:
+    """Admit one exact-pinned Run without trusting client-carried authority."""
+
     if not idempotency_key or len(idempotency_key) > 128:
         raise WorkflowRequestError("IDEMPOTENCY_KEY_REQUIRED")
-    verify_execution_context(execution_context)
+    try:
+        mode = RunExecutionMode(execution_mode)
+    except ValueError:
+        raise WorkflowRequestError("UNSUPPORTED_EXECUTION_MODE") from None
+    analysis = workflow_version.compiled_graph.get("execution_mode_analysis")
+    supported_modes = (
+        analysis.get("supported_execution_modes") if isinstance(analysis, dict) else None
+    )
+    if (
+        not isinstance(supported_modes, list)
+        or any(not isinstance(item, str) for item in supported_modes)
+        or mode not in supported_modes
+    ):
+        raise WorkflowRequestError("UNSUPPORTED_EXECUTION_MODE")
+
+    organization_id = consumer.organization_id
+    set_tenant_context(organization_id)
+    try:
+        verified_context = verify_execution_context(execution_context)
+    except ExecutionContextInvalid:
+        raise WorkflowRequestError("EXECUTION_CONTEXT_INVALID") from None
+    scenario = release.scenario
+    context_capabilities = verified_context.get("capabilities")
+    if (
+        scenario.project.organization_id != organization_id
+        or workflow_version.organization_id != organization_id
+        or workflow_version.scenario_id != scenario.id
+        or verified_context.get("organization_id") != organization_id
+        or verified_context.get("project_id") != scenario.project_id
+        or verified_context.get("scenario_id") != scenario.id
+        or verified_context.get("consumer_id") != consumer.id
+        or verified_context.get("release_id") != release.id
+        or not isinstance(context_capabilities, list)
+        or any(not isinstance(item, str) for item in context_capabilities)
+        or Capability.WORKFLOW_RUN not in context_capabilities
+    ):
+        raise WorkflowRequestError("EXECUTION_CONTEXT_INVALID")
     input_checksum = compute_checksum(input_payload)
     existing = (
-        WorkflowRun.objects.select_for_update()
+        Run.objects.select_for_update()
         .filter(consumer=consumer, idempotency_key=idempotency_key)
         .first()
     )
     if existing is not None:
-        if existing.input_checksum != input_checksum or existing.release_id != release.id:
+        if (
+            existing.input_checksum != input_checksum
+            or existing.release_id != release.id
+            or existing.workflow_version_id != workflow_version.id
+            or existing.execution_mode != mode
+            or not existing.response_id
+        ):
             raise WorkflowRequestError("IDEMPOTENCY_CONFLICT")
         return existing, False
 
-    state = {"input": _redact(input_payload)}
+    state = {"input": input_payload}
     _assert_state_size(state)
-    run = WorkflowRun(
-        organization_id=consumer.organization_id,
+    run = Run(
+        organization_id=organization_id,
         scenario=release.scenario,
         release=release,
         workflow_version=workflow_version,
         consumer=consumer,
+        actor_id=consumer.subject,
+        response_id=f"resp_{uuid.uuid4().hex}",
         idempotency_key=idempotency_key,
+        compiled_checksum=workflow_version.checksum,
+        compiler_version=workflow_version.compiler_version,
+        execution_mode=mode,
+        checkpoint=state,
+        deadline_at=timezone.now() + timedelta(seconds=RUN_TIMEOUT_SECONDS),
         input_checksum=input_checksum,
         execution_context=execution_context,
-        redacted_state=state,
-        status=WorkflowRunStatus.QUEUED,
-        deadline_at=timezone.now() + timedelta(seconds=RUN_TIMEOUT_SECONDS),
+        redacted_state=redact_run_state(state),
     )
-    run.full_clean()
+    run.full_clean(validate_unique=False)
     try:
         with transaction.atomic():
             run.save()
     except IntegrityError:
-        winner = WorkflowRun.objects.get(consumer=consumer, idempotency_key=idempotency_key)
-        if winner.input_checksum != input_checksum or winner.release_id != release.id:
+        winner = (
+            Run.objects.select_for_update()
+            .filter(consumer=consumer, idempotency_key=idempotency_key)
+            .first()
+        )
+        if winner is None:
+            raise
+        if (
+            winner.input_checksum != input_checksum
+            or winner.release_id != release.id
+            or winner.workflow_version_id != workflow_version.id
+            or winner.execution_mode != mode
+            or not winner.response_id
+        ):
             raise WorkflowRequestError("IDEMPOTENCY_CONFLICT") from None
         return winner, False
-    WorkflowRunEvent.objects.create(
+
+    from apps.workflows.run_events import append_locked_run_event
+    from apps.workflows.transitions import transition_run
+
+    append_locked_run_event(
         run=run,
-        sequence=1,
-        event_type="run_queued",
-        outcome="queued",
+        event_type=RunEventType.REQUESTED,
+        outcome=RunStatus.REQUESTED,
         state_checksum=compute_checksum(state),
+        payload={"execution_mode": str(mode)},
     )
+    run.save(update_fields=["next_event_sequence", "updated_at"])
+    transition_run(
+        organization_id=organization_id,
+        run_id=run.id,
+        transition_token=uuid.uuid5(run.id, "admission:queued"),
+        expected_checkpoint_version=run.checkpoint_version,
+        expected_status=RunStatus.REQUESTED,
+        target_status=RunStatus.QUEUED,
+    )
+    run.refresh_from_db()
     return run, True
-
-
-@transaction.atomic
-def cancel_workflow_run(*, run: WorkflowRun, consumer: Consumer) -> WorkflowRun:
-    locked = WorkflowRun.objects.select_for_update().get(pk=run.pk)
-    if locked.consumer_id != consumer.id or locked.organization_id != consumer.organization_id:
-        raise WorkflowRequestError("RUN_NOT_FOUND")
-    if locked.status in {
-        WorkflowRunStatus.COMPLETED,
-        WorkflowRunStatus.FAILED,
-        WorkflowRunStatus.TIMED_OUT,
-    }:
-        return locked
-    if locked.status != WorkflowRunStatus.CANCELLED:
-        locked.status = WorkflowRunStatus.CANCELLED
-        locked.finished_at = timezone.now()
-        locked.save(update_fields=["status", "finished_at", "updated_at"])
-        WorkflowRunEvent.objects.create(
-            run=locked,
-            sequence=_next_sequence(locked),
-            event_type="run_cancelled",
-            outcome="cancelled",
-        )
-        # Typed branch/join records are durable work admission state. Cancellation closes them
-        # in the same transaction; late worker results then observe terminal guards.
-        from apps.workflows.parallel import cancel_parallel_work
-
-        cancel_parallel_work(organization_id=locked.organization_id, run_id=locked.id)
-        locked.waits.filter(status=WorkflowWaitStatus.PENDING).update(
-            status=WorkflowWaitStatus.CANCELLED,
-            consumed_at=timezone.now(),
-            updated_at=timezone.now(),
-        )
-        # Propagate cancellation to any pending pinned children (P2.6.5, bounded + idempotent).
-        from apps.workflows.composition import cancel_children
-
-        cancel_children(locked)
-        from apps.workflows.models import (
-            WorkflowCompensationStatus,
-            WorkflowNodeAttemptStatus,
-            WorkflowRecoveryStatus,
-        )
-
-        locked.node_attempts.filter(
-            status__in=[WorkflowNodeAttemptStatus.RUNNING, WorkflowNodeAttemptStatus.RETRY_WAIT]
-        ).update(status=WorkflowNodeAttemptStatus.CANCELLED, finished_at=timezone.now())
-        locked.compensation_entries.filter(
-            status__in=[WorkflowCompensationStatus.PENDING, WorkflowCompensationStatus.RUNNING]
-        ).update(status=WorkflowCompensationStatus.CANCELLED, finished_at=timezone.now())
-        locked.recovery_cases.filter(
-            status__in=[
-                WorkflowRecoveryStatus.OPEN,
-                WorkflowRecoveryStatus.AWAITING_SECOND_APPROVAL,
-            ]
-        ).update(status=WorkflowRecoveryStatus.CANCELLED)
-    return locked
 
 
 def _redact(value: Any) -> Any:
@@ -258,12 +281,24 @@ def _redact(value: Any) -> Any:
     return "[redacted]"
 
 
+def redact_run_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Project a checkpoint into the bounded operator/API-safe state view.
+
+    Governed terminal output is already contract/policy checked and must remain available to
+    callers. Input, evidence, branch state and internal resume cursors may contain prompts,
+    document text or tool/model bodies, so their string values are redacted recursively.
+    """
+
+    projected: dict[str, Any] = {}
+    for key, value in state.items():
+        if key == "output" and isinstance(value, dict):
+            projected[key] = value
+        else:
+            projected[key] = _redact(value)
+    return projected
+
+
 def _assert_state_size(state: dict[str, Any]) -> None:
     size = len(json.dumps(state, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     if size > MAX_STATE_BYTES:
         raise WorkflowRequestError("WORKFLOW_STATE_TOO_LARGE")
-
-
-def _next_sequence(run: WorkflowRun) -> int:
-    latest = run.events.order_by("-sequence").values_list("sequence", flat=True).first()
-    return int(latest or 0) + 1

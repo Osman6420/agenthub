@@ -32,8 +32,8 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.agents.models import AgentRun, AgentRunStatus, AgentRuntimeControl
-from apps.agents.services import AgentRequestError, operator_cancel_agent_run, runtime_suspended
+from apps.agents.models import AgentRuntimeControl
+from apps.agents.services import runtime_suspended
 from apps.artifacts.models import ArtifactVersion
 from apps.audit.services import record_event
 from apps.builder.models import WorkflowDraft
@@ -182,18 +182,15 @@ from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_ap
 from apps.tools.authz import resolve_actor_roles
 from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
 from apps.workflows.models import (
-    WorkflowChildLink,
-    WorkflowRecoveryCase,
-    WorkflowRecoveryStatus,
-    WorkflowRun,
-    WorkflowRunStatus,
-    WorkflowWait,
-    WorkflowWaitKind,
-    WorkflowWaitStatus,
+    Run,
+    RunStatus,
+    RunWait,
+    RunWaitKind,
+    RunWaitStatus,
 )
-from apps.workflows.recovery_services import WorkflowRecoveryError, decide_recovery_case
-from apps.workflows.tasks import execute_workflow_run
-from apps.workflows.waits import WorkflowWaitError, decide_human_task
+from apps.workflows.run_recovery import RunRecoveryError, resolve_run_recovery
+from apps.workflows.run_waits import RunWaitError, decide_run_human_task
+from apps.workflows.tasks import dispatch_unified_background_run
 
 # Role-honest affordance reasons (Scope D). When an action the user cannot perform is
 # rendered, it is shown disabled with one of these operator-facing reasons rather than
@@ -220,39 +217,27 @@ _ADMIN_REASON = "Bu işlem için organizasyon yöneticisi (organization_admin) r
 # --- Dashboard run-status buckets (Scope C/H) --------------------------------
 # Persisted statuses grouped into operator-facing buckets. Deep-links to the filtered
 # run lists (Scope H) use the same bucket names via the ``?bucket=`` query param.
-_AGENT_ACTIVE_STATUSES = (
-    AgentRunStatus.QUEUED,
-    AgentRunStatus.RUNNING,
-    AgentRunStatus.WAITING_APPROVAL,
+_RUN_ACTIVE_STATUSES = (
+    RunStatus.REQUESTED,
+    RunStatus.QUEUED,
+    RunStatus.RUNNING,
+    RunStatus.WAITING_APPROVAL,
+    RunStatus.WAITING_EVENT,
+    RunStatus.WAITING_HUMAN,
+    RunStatus.WAITING_TIMER,
+    RunStatus.WAITING_CHILD,
 )
-_AGENT_ATTENTION_STATUSES = (AgentRunStatus.FAILED, AgentRunStatus.TIMED_OUT)
-_AGENT_DONE_STATUSES = (AgentRunStatus.COMPLETED, AgentRunStatus.CANCELLED)
-_WORKFLOW_ACTIVE_STATUSES = (
-    WorkflowRunStatus.REQUESTED,
-    WorkflowRunStatus.QUEUED,
-    WorkflowRunStatus.RUNNING,
-    WorkflowRunStatus.WAITING_APPROVAL,
-    WorkflowRunStatus.WAITING_EVENT,
-    WorkflowRunStatus.WAITING_HUMAN,
-    WorkflowRunStatus.WAITING_TIMER,
-    WorkflowRunStatus.WAITING_CHILD,
+_RUN_ATTENTION_STATUSES = (
+    RunStatus.FAILED,
+    RunStatus.TIMED_OUT,
+    RunStatus.RECOVERY_REQUIRED,
 )
-_WORKFLOW_ATTENTION_STATUSES = (
-    WorkflowRunStatus.FAILED,
-    WorkflowRunStatus.TIMED_OUT,
-    WorkflowRunStatus.RECOVERY_REQUIRED,
-)
-_WORKFLOW_DONE_STATUSES = (WorkflowRunStatus.COMPLETED, WorkflowRunStatus.CANCELLED)
+_RUN_DONE_STATUSES = (RunStatus.COMPLETED, RunStatus.CANCELLED)
 # Bucket -> the concrete statuses it deep-links to on the run-monitoring screens (Scope H).
-AGENT_RUN_BUCKETS: dict[str, tuple[str, ...]] = {
-    "active": tuple(str(s) for s in _AGENT_ACTIVE_STATUSES),
-    "attention": tuple(str(s) for s in _AGENT_ATTENTION_STATUSES),
-    "done": tuple(str(s) for s in _AGENT_DONE_STATUSES),
-}
-WORKFLOW_RUN_BUCKETS: dict[str, tuple[str, ...]] = {
-    "active": tuple(str(s) for s in _WORKFLOW_ACTIVE_STATUSES),
-    "attention": tuple(str(s) for s in _WORKFLOW_ATTENTION_STATUSES),
-    "done": tuple(str(s) for s in _WORKFLOW_DONE_STATUSES),
+RUN_BUCKETS: dict[str, tuple[str, ...]] = {
+    "active": tuple(str(s) for s in _RUN_ACTIVE_STATUSES),
+    "attention": tuple(str(s) for s in _RUN_ATTENTION_STATUSES),
+    "done": tuple(str(s) for s in _RUN_DONE_STATUSES),
 }
 # How far back "completed" and "recent failures" look on the dashboard.
 _DASHBOARD_RECENT_HOURS = 24
@@ -465,54 +450,35 @@ def _dashboard_metrics(
         qs = queryset if allowed is None else queryset.filter(**{f"{field}__in": allowed})
         return scoping.narrow_to_active_organization(qs, active_organization, field=field)
 
-    agent_runs = scoping.narrow_to_active_organization(
-        scoping.scoped_agent_runs(user), active_organization, field="organization_id"
+    unified_runs = scoping.narrow_to_active_organization(
+        scoping.scoped_runs(user), active_organization, field="organization_id"
     )
-    workflow_runs = scoping.narrow_to_active_organization(
-        scoping.scoped_workflow_runs(user), active_organization, field="organization_id"
-    )
-    agent_agg = agent_runs.aggregate(
-        active=Count("id", filter=Q(status__in=_AGENT_ACTIVE_STATUSES)),
-        recent_failed=Count(
-            "id", filter=Q(status__in=_AGENT_ATTENTION_STATUSES, created_at__gte=cutoff)
-        ),
-        done=Count("id", filter=Q(status__in=_AGENT_DONE_STATUSES, created_at__gte=cutoff)),
-    )
-    workflow_agg = workflow_runs.aggregate(
-        active=Count("id", filter=Q(status__in=_WORKFLOW_ACTIVE_STATUSES)),
+    run_agg = unified_runs.aggregate(
+        active=Count("id", filter=Q(status__in=_RUN_ACTIVE_STATUSES)),
         recent_failed=Count(
             "id",
             filter=Q(
-                status__in=(WorkflowRunStatus.FAILED, WorkflowRunStatus.TIMED_OUT),
+                status__in=(RunStatus.FAILED, RunStatus.TIMED_OUT),
                 created_at__gte=cutoff,
             ),
         ),
-        recovery=Count("id", filter=Q(status=WorkflowRunStatus.RECOVERY_REQUIRED)),
-        done=Count("id", filter=Q(status__in=_WORKFLOW_DONE_STATUSES, created_at__gte=cutoff)),
+        recovery=Count("id", filter=Q(status=RunStatus.RECOVERY_REQUIRED)),
+        done=Count("id", filter=Q(status__in=_RUN_DONE_STATUSES, created_at__gte=cutoff)),
     )
     runs = {
-        "active": agent_agg["active"] + workflow_agg["active"],
-        "attention": (
-            agent_agg["recent_failed"] + workflow_agg["recent_failed"] + workflow_agg["recovery"]
-        ),
-        "done": agent_agg["done"] + workflow_agg["done"],
-        "agent_active": agent_agg["active"],
-        "workflow_active": workflow_agg["active"],
+        "active": run_agg["active"],
+        "attention": run_agg["recent_failed"] + run_agg["recovery"],
+        "done": run_agg["done"],
+        "agent_active": 0,
+        "workflow_active": run_agg["active"],
     }
 
     # Pending human decisions (only surfaces are counted; each list view re-authorizes).
     approvals = _org_scope(ApprovalRequest.objects.filter(status=ApprovalStatus.PENDING)).count()
     human_tasks = _org_scope(
-        WorkflowWait.objects.filter(kind=WorkflowWaitKind.HUMAN, status=WorkflowWaitStatus.PENDING)
+        RunWait.objects.filter(kind=RunWaitKind.HUMAN, status=RunWaitStatus.PENDING)
     ).count()
-    recoveries = _org_scope(
-        WorkflowRecoveryCase.objects.filter(
-            status__in=[
-                WorkflowRecoveryStatus.OPEN,
-                WorkflowRecoveryStatus.AWAITING_SECOND_APPROVAL,
-            ]
-        )
-    ).count()
+    recoveries = unified_runs.filter(status=RunStatus.RECOVERY_REQUIRED).count()
 
     # Serving / index health.
     scenarios_qs = scoping.narrow_to_active_organization(
@@ -2050,10 +2016,10 @@ def tool_invocation_cancel(request: HttpRequest, invocation_id: int) -> HttpResp
 @require_POST
 def workflow_human_task_decide(request: HttpRequest, wait_id: uuid.UUID) -> HttpResponse:
     allowed = allowed_organization_ids(request.user)
-    waits = WorkflowWait.objects.filter(
-        public_id=wait_id,
-        kind=WorkflowWaitKind.HUMAN,
-        status=WorkflowWaitStatus.PENDING,
+    waits = RunWait.objects.filter(
+        pk=wait_id,
+        kind=RunWaitKind.HUMAN,
+        status=RunWaitStatus.PENDING,
     )
     if allowed is not None:
         waits = waits.filter(organization_id__in=allowed)
@@ -2070,91 +2036,28 @@ def workflow_human_task_decide(request: HttpRequest, wait_id: uuid.UUID) -> Http
         return redirect("console:tool_approvals")
     set_tenant_context(wait.organization_id)
     try:
-        decided = decide_human_task(
-            user_id=cast(int, request.user.pk),
+        roles = resolve_actor_roles(
+            username=request.user.get_username(),
             organization_id=wait.organization_id,
-            wait_id=str(wait.public_id),
-            decision=decision,
         )
-    except WorkflowWaitError as exc:
+        decide_run_human_task(
+            organization_id=wait.organization_id,
+            wait_id=wait.id,
+            actor_id=request.user.get_username(),
+            actor_roles=set(roles or []),
+            payload=decision,
+        )
+    except RunWaitError as exc:
         messages.error(request, f"Karar reddedildi: {exc.code}")
     else:
         transaction.on_commit(
-            lambda: execute_workflow_run.delay(decided.run_id, decided.organization_id)
+            lambda: dispatch_unified_background_run(
+                run_id=wait.run_id,
+                organization_id=wait.organization_id,
+            )
         )
         messages.success(request, "İnsan görevi kararı kaydedildi.")
     return redirect("console:tool_approvals")
-
-
-@login_required
-def workflow_recoveries(request: HttpRequest) -> HttpResponse:
-    allowed = allowed_organization_ids(request.user)
-    cases = WorkflowRecoveryCase.objects.filter(
-        status__in=[
-            WorkflowRecoveryStatus.OPEN,
-            WorkflowRecoveryStatus.AWAITING_SECOND_APPROVAL,
-        ]
-    ).select_related("organization", "run")
-    if allowed is not None:
-        cases = cases.filter(organization_id__in=allowed)
-    rows = [
-        {
-            "public_id": case.public_id,
-            "org": case.organization.slug,
-            "node_id": case.node_id,
-            "failure_class": case.failure_class,
-            "reason_code": case.reason_code,
-            "revision": case.revision,
-            "state_checksum": case.state_checksum,
-            "approval_count": case.approvals.count(),
-            "required_approvals": case.required_approvals,
-            "can_decide": can_admin_org(request.user, case.organization_id),
-        }
-        for case in cases.order_by("created_at")
-    ]
-    return render(
-        request,
-        "console/workflow_recoveries.html",
-        {"title": "Workflow recovery", "rows": rows},
-    )
-
-
-@login_required
-@require_POST
-def workflow_recovery_decide(request: HttpRequest, recovery_id: uuid.UUID) -> HttpResponse:
-    allowed = allowed_organization_ids(request.user)
-    cases = WorkflowRecoveryCase.objects.filter(public_id=recovery_id)
-    if allowed is not None:
-        cases = cases.filter(organization_id__in=allowed)
-    case = cases.first()
-    if case is None:
-        raise Http404
-    if not can_admin_org(request.user, case.organization_id):
-        raise PermissionDenied
-    try:
-        revision = int(request.POST.get("revision", ""))
-    except ValueError:
-        messages.error(request, "Recovery kararı reddedildi: RECOVERY_STALE")
-        return redirect("console:workflow_recoveries")
-    set_tenant_context(case.organization_id)
-    try:
-        decided = decide_recovery_case(
-            recovery_public_id=case.public_id,
-            actor=request.user,
-            action=request.POST.get("action", ""),
-            reason=request.POST.get("reason", ""),
-            expected_revision=revision,
-            expected_state_checksum=request.POST.get("state_checksum", ""),
-        )
-    except WorkflowRecoveryError as exc:
-        messages.error(request, f"Recovery kararı reddedildi: {exc.code}")
-    else:
-        if decided.status == WorkflowRecoveryStatus.RESOLVED and decided.run.status == "queued":
-            transaction.on_commit(
-                lambda: execute_workflow_run.delay(decided.run_id, decided.organization_id)
-            )
-        messages.success(request, "Recovery kararı kaydedildi.")
-    return redirect("console:workflow_recoveries")
 
 
 _RUN_DAYS_CHOICES = (1, 7, 30, 90)
@@ -2203,91 +2106,12 @@ def _apply_run_filters(
 
 
 @login_required
-def agent_runs(request: HttpRequest) -> HttpResponse:
-    active_org = console_context.resolve_active_organization(request)
-    base = scoping.narrow_to_active_organization(
-        scoping.scoped_agent_runs(request.user), active_org, field="organization_id"
-    ).order_by("-created_at")
-    filtered, applied = _apply_run_filters(request, base, AGENT_RUN_BUCKETS)
-    page = Paginator(filtered, _RUN_PAGE_SIZE).get_page(request.GET.get("page"))
-    rows = [
-        {
-            "public_id": str(run.public_id),
-            "href": reverse("console:agent_run_detail", args=[str(run.public_id)]),
-            "org": run.organization.slug,
-            "scenario": run.scenario.slug,
-            "status": run.status,
-            "steps": run.step_count,
-            "tool_calls": run.tool_call_count,
-            "error": run.error_code,
-            "created": run.created_at,
-        }
-        for run in page
-    ]
-    return render(
-        request,
-        "console/agent_runs.html",
-        {
-            "title": "Agent çalıştırmaları",
-            "rows": rows,
-            "page": page,
-            "applied": applied,
-            "status_choices": AgentRunStatus.choices,
-            "days_choices": _RUN_DAYS_CHOICES,
-            "base_query": _query_without_page(request),
-        },
-    )
-
-
-@login_required
-def agent_run_detail(request: HttpRequest, public_id: str) -> HttpResponse:
-    run = _scoped_agent_run(request.user, public_id)
-    # Only bounded, already-redacted fields reach the template: the event trail carries
-    # allowlisted decision/outcome labels and checksums, never raw state or payloads.
-    events = [
-        {
-            "sequence": event.sequence,
-            "event_type": event.event_type,
-            "step_index": event.step_index,
-            "decision": event.decision,
-            "outcome": event.outcome,
-            "reason_code": event.reason_code,
-            "checksum": event.state_checksum[:12],
-            "occurred_at": event.occurred_at,
-        }
-        for event in run.events.order_by("sequence")
-    ]
-    public = str(run.public_id)
-    summary = {
-        "public_id": public,
-        "org": run.organization.slug,
-        "scenario": run.scenario.slug,
-        "status": run.status,
-        "error": run.error_code,
-        "steps": run.step_count,
-        "tool_calls": run.tool_call_count,
-        "input_tokens": run.input_tokens,
-        "output_tokens": run.output_tokens,
-        "awaiting_role": run.awaiting_role,
-        "created": run.created_at,
-        "finished": run.finished_at,
-        "can_cancel": run.organization.status == OrganizationStatus.ACTIVE
-        and run.status not in {"completed", "failed", "timed_out", "cancelled"},
-    }
-    return render(
-        request,
-        "console/agent_run_detail.html",
-        {"title": f"Agent çalıştırması {public[:8]}", "run": summary, "events": events},
-    )
-
-
-@login_required
 def workflow_runs(request: HttpRequest) -> HttpResponse:
     active_org = console_context.resolve_active_organization(request)
     base = scoping.narrow_to_active_organization(
-        scoping.scoped_workflow_runs(request.user), active_org, field="organization_id"
+        scoping.scoped_runs(request.user), active_org, field="organization_id"
     ).order_by("-created_at")
-    filtered, applied = _apply_run_filters(request, base, WORKFLOW_RUN_BUCKETS)
+    filtered, applied = _apply_run_filters(request, base, RUN_BUCKETS)
     page = Paginator(filtered, _RUN_PAGE_SIZE).get_page(request.GET.get("page"))
     rows = [
         {
@@ -2297,7 +2121,7 @@ def workflow_runs(request: HttpRequest) -> HttpResponse:
             "scenario": run.scenario.slug,
             "status": run.status,
             "error": run.error_code,
-            "awaiting_node": run.awaiting_node,
+            "awaiting_node": run.awaiting_reference,
             "created": run.created_at,
         }
         for run in page
@@ -2310,7 +2134,7 @@ def workflow_runs(request: HttpRequest) -> HttpResponse:
             "rows": rows,
             "page": page,
             "applied": applied,
-            "status_choices": WorkflowRunStatus.choices,
+            "status_choices": RunStatus.choices,
             "days_choices": _RUN_DAYS_CHOICES,
             "base_query": _query_without_page(request),
         },
@@ -2318,7 +2142,7 @@ def workflow_runs(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
-def workflow_run_detail(request: HttpRequest, run_id: int) -> HttpResponse:
+def workflow_run_detail(request: HttpRequest, run_id: uuid.UUID) -> HttpResponse:
     """Render a redacted, tenant-scoped workflow run trace (P2.6.11).
 
     Only bounded metadata reaches the template — statuses, reason codes, failure classes,
@@ -2327,7 +2151,7 @@ def workflow_run_detail(request: HttpRequest, run_id: int) -> HttpResponse:
     execution_context) are never read here, so no tenant content or secret can leak onto an
     operator screen.
     """
-    run = _scoped_workflow_run(request.user, run_id)
+    run = _scoped_run(request.user, run_id)
     branches = [
         {
             "region": b.region_node_id,
@@ -2359,46 +2183,42 @@ def workflow_run_detail(request: HttpRequest, run_id: int) -> HttpResponse:
             "kind": w.kind,
             "node": w.node_id,
             "status": w.status,
-            "correlation": w.correlation_hash[:12],
+            "correlation": w.resume_token_hash[:12],
             "deadline": w.deadline_at,
-            "escalated": w.escalated_at,
+            "escalated": None,
             "consumed": w.consumed_at,
         }
         for w in run.waits.order_by("created_at")
     ]
     attempts = [
         {
-            "node": a.node_id,
-            "ordinal": a.ordinal,
-            "status": a.status,
-            "failure_class": a.failure_class,
-            "reason": a.reason_code,
-            "retry_not_before": a.retry_not_before,
-            "finished": a.finished_at,
+            "node": event.node_id,
+            "ordinal": event.payload.get("attempt", ""),
+            "status": event.outcome,
+            "reason": event.reason_code,
         }
-        for a in run.node_attempts.order_by("node_id", "ordinal")
+        for event in run.events.filter(event_type="run.node_retried").order_by("sequence")
     ]
     compensations = [
         {
-            "sequence": c.sequence,
-            "source": c.source_node_id,
-            "compensation": c.compensation_node_id,
-            "status": c.status,
-            "attempts": c.attempt_count,
-            "reason": c.reason_code,
-            "finished": c.finished_at,
+            "sequence": item.sequence,
+            "source": item.source_node_id,
+            "compensation": item.compensation_node_id,
+            "status": item.status,
+            "reason": item.reason_code,
+            "finished": item.updated_at,
         }
-        for c in run.compensation_entries.order_by("sequence")
+        for item in run.compensations.order_by("sequence")
     ]
     children = [
         {
-            "call_site": link.call_site,
-            "depth": link.depth,
-            "status": link.status,
-            "reason": link.reason_code,
-            "kind": link.child_kind,
+            "call_site": item.call_site,
+            "depth": item.depth,
+            "kind": "workflow",
+            "status": item.status,
+            "reason": item.reason_code,
         }
-        for link in WorkflowChildLink.objects.filter(parent_run=run).order_by("call_site")
+        for item in run.child_links.order_by("created_at")
     ]
     events = [
         {
@@ -2414,7 +2234,7 @@ def workflow_run_detail(request: HttpRequest, run_id: int) -> HttpResponse:
         "scenario": run.scenario.slug,
         "status": run.status,
         "error": run.error_code,
-        "awaiting_node": run.awaiting_node,
+        "awaiting_node": run.awaiting_reference,
         "created": run.created_at,
         "started": run.started_at,
         "finished": run.finished_at,
@@ -2432,8 +2252,30 @@ def workflow_run_detail(request: HttpRequest, run_id: int) -> HttpResponse:
             "compensations": compensations,
             "children": children,
             "events": events,
+            "can_recover": run.status == RunStatus.RECOVERY_REQUIRED
+            and can_admin_org(request.user, run.organization_id),
         },
     )
+
+
+@login_required
+@require_POST
+def workflow_run_recovery_decide(request: HttpRequest, run_id: uuid.UUID) -> HttpResponse:
+    run = _scoped_run(request.user, run_id)
+    if not can_admin_org(request.user, run.organization_id):
+        raise PermissionDenied
+    try:
+        resolve_run_recovery(
+            organization_id=run.organization_id,
+            run_id=run.id,
+            actor_id=request.user.get_username(),
+            decision=request.POST.get("decision", ""),
+        )
+    except RunRecoveryError as exc:
+        messages.error(request, f"Recovery kararı reddedildi: {exc.code}")
+    else:
+        messages.success(request, "Recovery kararı kaydedildi.")
+    return redirect("console:workflow_run_detail", run_id=run.id)
 
 
 @login_required
@@ -2473,8 +2315,8 @@ def retention_operations(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _scoped_workflow_run(user: UserLike, run_id: int) -> WorkflowRun:
-    run = WorkflowRun.objects.select_related("organization", "scenario").filter(pk=run_id).first()
+def _scoped_run(user: UserLike, run_id: uuid.UUID) -> Run:
+    run = Run.objects.select_related("organization", "scenario").filter(pk=run_id).first()
     if run is None:
         raise Http404
     if not _operator_can_access_org(user, run.organization_id):
@@ -4170,44 +4012,6 @@ def document_set_revoke_grant(request: HttpRequest, grant_pk: int) -> HttpRespon
     return redirect("console:document_set_detail_public", public_id=document_set_public_id)
 
 
-@login_required
-@require_POST
-def agent_run_cancel(request: HttpRequest, public_id: str) -> HttpResponse:
-    run = _scoped_agent_run(request.user, public_id)
-    if not _operator_can_mutate_org(request.user, run.organization_id):
-        raise PermissionDenied
-    try:
-        operator_cancel_agent_run(
-            run=run,
-            organization_id=run.organization_id,
-            actor=request.user.get_username(),
-        )
-        messages.success(request, f"Agent çalıştırması {run.public_id} iptal edildi.")
-    except AgentRequestError as exc:
-        messages.error(request, f"İptal reddedildi: {exc.code}")
-    return redirect("console:agent_run_detail", public_id=str(run.public_id))
-
-
-def _scoped_agent_run(user: UserLike, public_id: str) -> AgentRun:
-    import uuid as _uuid
-
-    try:
-        parsed = _uuid.UUID(str(public_id))
-    except ValueError as exc:
-        raise Http404 from exc
-    run = (
-        AgentRun.objects.select_related("organization", "scenario", "consumer")
-        .filter(public_id=parsed)
-        .first()
-    )
-    if run is None:
-        raise Http404
-    if not _operator_can_access_org(user, run.organization_id):
-        raise PermissionDenied
-    set_tenant_context(run.organization_id)
-    return run
-
-
 def _operator_can_access_org(user: UserLike, organization_id: int) -> bool:
     allowed = allowed_organization_ids(user)
     return allowed is None or organization_id in allowed
@@ -4269,7 +4073,6 @@ def _create(
                     instance = create_console_scenario(
                         project=form.cleaned_data["project"],
                         name=form.cleaned_data["name"],
-                        type=form.cleaned_data["type"],
                         visibility=form.cleaned_data["visibility"],
                         risk_level=form.cleaned_data["risk_level"],
                         status=form.cleaned_data["status"],
@@ -4386,7 +4189,6 @@ def scenario_create(
                 scenario = create_console_scenario(
                     project=project,
                     name=form.cleaned_data["name"],
-                    type=form.cleaned_data["type"],
                     visibility=form.cleaned_data["visibility"],
                     risk_level=form.cleaned_data["risk_level"],
                     status=form.cleaned_data["status"],

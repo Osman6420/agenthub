@@ -142,8 +142,8 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 30.0,
         "options": {"queue": "ingestion"},
     },
-    "reconcile-durable-workflow-waits": {
-        "task": "apps.workflows.tasks.reconcile_workflow_waits",
+    "reconcile-unified-run-branches": {
+        "task": "apps.workflows.tasks.reconcile_unified_run_branches",
         "schedule": 15.0,
         "options": {"queue": "runtime"},
     },
@@ -223,13 +223,6 @@ RUNTIME_EMBEDDING_PROVIDER = env("RUNTIME_EMBEDDING_PROVIDER", default="")
 # "deterministic" (default) performs no outbound call; "http" enables the SSRF-safe
 # real HTTPS adapter. Egress remains gated by the release-pinned destination allowlist.
 TOOL_ADAPTER = env("TOOL_ADAPTER", default="deterministic")
-
-# --- Child composition (P2.6.5) ---------------------------------------------
-# Pinned sub-workflow / single agent-call composition (ADR-0009). Disabled by default:
-# the compiler rejects ``subworkflow``/``agent_call`` nodes and the runtime denies child
-# admission until a deployment explicitly enables it after the authorization/RLS/recovery
-# gates pass. No new public endpoint or production dependency is introduced.
-WORKFLOW_COMPOSITION_ENABLED = env.bool("WORKFLOW_COMPOSITION_ENABLED", default=False)
 
 # --- Reviewed Python nodes (P2.6.8) -----------------------------------------
 # Production execution remains disabled until ADR-0011 target-runtime isolation evidence and

@@ -41,13 +41,13 @@ explanation, endpoint, URL, credential, secret, executable code, Python, package
   immutable `transform_profile` artifact (the closed governed operation registry). It carries no
   inline operations, expressions or templates and **requires** both `input_mapping` and
   `output_mapping`.
-- `agent_loop`: deployment-gated and disabled by default. Use it only when authoring context reports
-  `gates.agent_loop_enabled=true`. Config requires `tool_binding_roles` and may contain only
+- `agent_loop`: canonical governed agent execution. Config requires `tool_binding_roles` and may contain only
   `retrieval`, `limits`, `objective_key`, `output_key`, `system_prompt`, and `actions`. It requires
   both mappings. Tool roles are release roles, never endpoints, secrets or artifact IDs.
 
 Allowed types: `input`, `retrieve`, `generate`, `condition`, `format_output`,
-`validate_contract`, `tool`, `custom`, `transform`, gated `agent_loop`, `end`.
+`validate_contract`, `tool`, `custom`, `transform`, `agent_loop`, `parallel`, `for_each`, `join`,
+`subworkflow`, durable wait nodes, and `end`.
 
 ## Typed state mapping
 

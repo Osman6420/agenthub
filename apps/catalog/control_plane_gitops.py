@@ -106,7 +106,6 @@ def import_control_plane_document(doc: Any) -> tuple[models.Model, bool, int]:
             },
             values={
                 "name": _required(spec, "name"),
-                "type": _required(spec, "type"),
                 "visibility": spec.get("visibility", "internal"),
                 "risk_level": spec.get("risk_level", "medium"),
                 "status": spec.get("status", "draft"),

@@ -107,7 +107,7 @@ def test_dashboard_health_keeps_only_kpis_and_links_to_filtered_lists(client: Cl
     org = Organization.objects.create(slug="acme", name="Acme")
     project = _project(org)
     scenario = Scenario.objects.create(
-        organization=org, project=project, slug="waiting", name="Waiting", type="rag"
+        organization=org, project=project, slug="waiting", name="Waiting"
     )
     client.force_login(_member(org))
 
@@ -136,14 +136,12 @@ def test_health_results_list_exact_scenarios_and_document_sets(client: Client) -
         project=unhealthy_project,
         slug="waiting",
         name="Waiting",
-        type="rag",
     )
     healthy_scenario = Scenario.objects.create(
         organization=org,
         project=healthy_project,
         slug="ready",
         name="Ready",
-        type="rag",
     )
     ScenarioRelease.objects.create(
         scenario=healthy_scenario,
@@ -246,9 +244,7 @@ def test_runs_landing_groups_existing_authorized_run_surfaces(client: Client) ->
 
     assert response.status_code == 200
     assert "Çalıştırmalar" in body
-    assert reverse("console:agent_runs") in body
     assert reverse("console:workflow_runs") in body
-    assert reverse("console:workflow_recoveries") in body
 
 
 def test_project_and_document_lists_put_object_name_before_organization(client: Client) -> None:
@@ -274,7 +270,6 @@ def test_project_is_scenario_entry_point_with_accessible_tabs(client: Client) ->
         project=project,
         slug="answer",
         name="Yanıt Senaryosu",
-        type="rag",
     )
     client.force_login(_member(org))
 
@@ -302,7 +297,6 @@ def test_scenario_breadcrumb_and_task_tabs_preserve_project_context(client: Clie
         project=project,
         slug="answer",
         name="Yanıt Senaryosu",
-        type="rag",
     )
     client.force_login(_member(org))
 

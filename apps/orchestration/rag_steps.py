@@ -1,7 +1,7 @@
 """Shared governed retrieve/generate steps for the workflow and agent runtimes (P5).
 
 Both the workflow ``retrieve``/``generate`` nodes and the agent loop's retrieve/respond steps run
-the **same** governed seams the standalone ``run_rag`` uses: the release-pinned retrieval provider
+the governed seams the unified Document Answer workflow uses: the release-pinned retrieval provider
 (P4 document-ACL retrieval) and the model provider (P1 chat), resolved from the release bundle.
 Chunks are carried through the durable, redacted run state as plain JSON dicts and rebuilt into
 ``RetrievedChunk`` objects for the model context, so nothing but JSON-safe metadata is persisted.
@@ -44,7 +44,7 @@ def citations_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
 def grounding_fallback_answer(*, release: Any, state: dict[str, Any]) -> str | None:
     """Return the release fallback answer when the grounding gate refuses generation.
 
-    Mirrors ``run_rag``: when the pinned policy requires grounding and retrieval did not clear the
+    When the pinned policy requires grounding and retrieval did not clear the
     score floor, the model is never called and a server-controlled answer is returned instead.
     """
     bundle = resolve_bundle(release)

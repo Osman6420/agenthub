@@ -20,25 +20,24 @@ summaries only.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
-from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import jsonschema
-from django.utils import timezone
 
 from apps.agents.limits import (
     CHECKPOINT_SCHEMA_VERSION,
     MAX_ARGUMENTS_BYTES,
+    MAX_CHECKPOINT_BYTES,
     MAX_OBSERVATION_BYTES,
     MAX_OBSERVATION_CONTEXT_BYTES,
     NO_PROGRESS_LIMIT,
     LimitError,
     resolve_limits,
 )
-from apps.agents.models import AgentRunEvent, AgentRunStatus
 from apps.agents.planner import (
     AGENT_DECISION_SCHEMA_VERSION,
     DECISION_ESCALATE,
@@ -53,22 +52,31 @@ from apps.agents.planner import (
     get_configured_planner,
 )
 from apps.agents.policy import resolve_runtime_policy
-from apps.agents.services import (
-    AgentRequestError,
-    _assert_checkpoint_size,
-    _next_sequence,
-    _redact,
-    resolve_release_agent,
-)
 from apps.artifacts.validation import canonical_json, compute_checksum
 from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
 from apps.orchestration.providers import ModelProviderError
-from apps.orchestration.runtime import RunResult
 from apps.releases.services import get_artifact_body_for_role
+from apps.workflows.models import RunStatus
 from apps.workflows.state_mapping import PROTECTED_WRITE_ROOTS
 
 # Verification target that re-runs the pinned release retrieval (no side effect).
 VERIFY_RETRIEVAL = "retrieval"
+
+
+def _redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _redact(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    if isinstance(value, bool) or value is None or isinstance(value, (int, float)):
+        return value
+    return "[redacted]"
+
+
+def _assert_checkpoint_size(state: dict[str, Any]) -> None:
+    size = len(json.dumps(state, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    if size > MAX_CHECKPOINT_BYTES:
+        raise AgentRuntimeError("AGENT_STATE_TOO_LARGE")
 
 
 class AgentRuntimeError(RuntimeError):
@@ -79,6 +87,16 @@ class AgentRuntimeError(RuntimeError):
 
 class AgentPaused(Exception):
     """Signals that a run is suspended awaiting a tool approval decision."""
+
+    def __init__(
+        self,
+        *,
+        invocation_id: int | None = None,
+        checkpoint: dict[str, Any] | None = None,
+    ) -> None:
+        self.invocation_id = invocation_id
+        self.checkpoint = checkpoint
+        super().__init__("agent paused")
 
 
 @dataclass(frozen=True)
@@ -96,51 +114,6 @@ class AgentResult:
     escalation: dict[str, Any] | None = None
 
 
-def run_agent_candidate(*, release: Any, input_payload: dict[str, Any]) -> RunResult:
-    """Isolated synchronous candidate seam used only by the governed eval runner."""
-    agent_version = resolve_release_agent(release)
-    limits = resolve_limits(agent_version.compiled_config.get("limits"))
-    snapshot = {"input": _redact(input_payload), "limits": limits.as_dict()}
-    run = SimpleNamespace(
-        agent_version=agent_version,
-        release=release,
-        execution_context={},
-        start_snapshot=snapshot,
-        checkpoint=dict(snapshot),
-        checkpoint_version=CHECKPOINT_SCHEMA_VERSION,
-        status=AgentRunStatus.RUNNING,
-        deadline_at=timezone.now() + timedelta(seconds=limits.deadline_seconds),
-        organization=release.scenario.project.organization,
-        organization_id=release.scenario.project.organization_id,
-        scenario_id=release.scenario_id,
-        release_id=release.id,
-        id=0,
-        public_id="",
-        consumer_id=None,
-        step_count=0,
-        tool_call_count=0,
-        input_tokens=0,
-        output_tokens=0,
-        awaiting_step=None,
-        awaiting_role="",
-        refresh_from_db=lambda **kwargs: None,
-    )
-    result = execute_agent(run=run, verify_context=False, persist=False)
-    return RunResult(
-        status="escalated" if result.escalation else "completed",
-        output=result.output,
-        usage={"input_tokens": result.input_tokens, "output_tokens": result.output_tokens},
-        fallback_used=False,
-        metadata={
-            "workload_type": "agent",
-            "steps": result.steps,
-            "tools_called": list(result.tools_called),
-            "decisions": list(result.decisions),
-            **({"escalation": result.escalation} if result.escalation else {}),
-        },
-    )
-
-
 def run_embedded_agent_loop(
     *,
     compiled_config: dict[str, Any],
@@ -155,19 +128,34 @@ def run_embedded_agent_loop(
     outer workflow transition persists the node result.
     """
 
-    if compiled_config.get("tools"):
-        raise AgentRuntimeError("AGENT_EMBEDDED_TOOLS_UNAVAILABLE")
-
     try:
         resolve_limits(compiled_config.get("limits"))
     except LimitError:
         raise AgentRuntimeError("AGENT_POLICY_INVALID") from None
+    embedded_state = dict(state)
+    awaiting_step = embedded_state.pop("_embedded_awaiting_step", None)
+    awaiting_invocation_id = embedded_state.pop("_embedded_invocation_id", None)
+    awaiting_role = ""
+    if isinstance(awaiting_invocation_id, int):
+        from apps.tools.models import ToolInvocation
+
+        invocation = ToolInvocation.objects.filter(
+            pk=awaiting_invocation_id,
+            organization_id=workflow_run.organization_id,
+            consumer_id=workflow_run.consumer_id,
+            release_id=workflow_run.release_id,
+        ).first()
+        if invocation is None:
+            raise AgentRuntimeError("AGENT_APPROVAL_RESUME_INVALID")
+        awaiting_role = invocation.binding_role
+    embedded_step_count = embedded_state.pop("_embedded_step_count", 0)
+    embedded_tool_call_count = embedded_state.pop("_embedded_tool_call_count", 0)
     embedded = SimpleNamespace(
         agent_version=SimpleNamespace(compiled_config=compiled_config),
         release=release,
         execution_context=workflow_run.execution_context,
         start_snapshot=dict(state),
-        checkpoint=dict(state),
+        checkpoint=embedded_state,
         checkpoint_version=CHECKPOINT_SCHEMA_VERSION,
         status=workflow_run.status,
         deadline_at=workflow_run.deadline_at,
@@ -178,12 +166,14 @@ def run_embedded_agent_loop(
         id=workflow_run.id,
         public_id="",
         consumer_id=workflow_run.consumer_id,
-        step_count=0,
-        tool_call_count=0,
+        consumer=workflow_run.consumer,
+        step_count=embedded_step_count,
+        tool_call_count=embedded_tool_call_count,
         input_tokens=0,
         output_tokens=0,
-        awaiting_step=None,
-        awaiting_role="",
+        awaiting_step=awaiting_step,
+        awaiting_role=awaiting_role,
+        tool_idempotency_prefix=f"run:{workflow_run.id}:agent_loop",
     )
 
     def _refresh(**kwargs: Any) -> None:
@@ -192,10 +182,10 @@ def run_embedded_agent_loop(
         embedded.deadline_at = workflow_run.deadline_at
 
     embedded.refresh_from_db = _refresh
-    return execute_agent(run=embedded, verify_context=False, persist=False)
+    return execute_agent(run=embedded, verify_context=False)
 
 
-def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True) -> AgentResult:
+def execute_agent(*, run: Any, verify_context: bool = True) -> AgentResult:
     if verify_context:
         try:
             verify_execution_context(run.execution_context)
@@ -239,7 +229,7 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
 
     while True:
         run.refresh_from_db(fields=["status", "deadline_at"])
-        if run.status == AgentRunStatus.CANCELLED:
+        if run.status == RunStatus.CANCELLED:
             raise AgentRuntimeError("AGENT_CANCELLED")
         if time.time() > run.deadline_at.timestamp():
             raise AgentRuntimeError("AGENT_TIMED_OUT")
@@ -326,8 +316,6 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
             )
             if denial is not None:
                 no_progress += 1
-                if persist:
-                    _emit_denial(run, step_index, decision, denial)
                 if no_progress >= NO_PROGRESS_LIMIT:
                     raise AgentRuntimeError("AGENT_NO_PROGRESS")
                 continue
@@ -357,7 +345,6 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
                 step_index=step_index,
                 tool_calls=tool_calls,
                 role_calls=role_calls,
-                persist=persist,
             )
             if decision.role != VERIFY_RETRIEVAL:
                 tool_calls = _bump_tool_calls(tool_calls, limits, is_resume=False)
@@ -389,7 +376,6 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
                 summaries=summaries,
                 retrieved=retrieved,
                 action_checksums=action_checksums,
-                persist=persist,
             )
             state["tool_output"] = tool_output
             state.pop("_pending_tool_input", None)
@@ -417,21 +403,8 @@ def execute_agent(*, run: Any, verify_context: bool = True, persist: bool = True
         state["_action_checksums"] = action_checksums
         state["_summaries"] = summaries
         step_index += 1
-        try:
-            _assert_checkpoint_size(state)
-        except AgentRequestError:
-            raise AgentRuntimeError("AGENT_STATE_TOO_LARGE") from None
+        _assert_checkpoint_size(state)
         decisions.append(decision.kind)
-        if persist:
-            _persist_step(
-                run=run,
-                state=state,
-                step_index=step_index,
-                tool_calls=tool_calls,
-                in_tokens=in_tokens,
-                out_tokens=out_tokens,
-                decision=decision.kind,
-            )
 
 
 def _bump_tool_calls(tool_calls: int, limits: dict[str, Any], *, is_resume: bool) -> int:
@@ -445,7 +418,7 @@ def _bump_tool_calls(tool_calls: int, limits: dict[str, Any], *, is_resume: bool
 
 def _do_retrieve(run: Any, state: dict[str, Any], objective: str) -> tuple[int, int]:
     # Governed release-scoped retrieval (P5): the P4 document-ACL retriever behind the
-    # same provider seam as run_rag. Deterministic default keeps CI hermetic.
+    # same provider seam as the unified generate node. Deterministic default keeps CI hermetic.
     from apps.orchestration.rag_steps import retrieve_for_release
 
     try:
@@ -473,7 +446,6 @@ def _do_verify(
     step_index: int,
     tool_calls: int,
     role_calls: dict[str, int],
-    persist: bool,
 ) -> tuple[str, int, int]:
     """Execute a governed no-side-effect verification observation and derive its outcome.
 
@@ -497,7 +469,6 @@ def _do_verify(
         summaries=None,
         retrieved=False,
         action_checksums=None,
-        persist=persist,
     )
     state["verification"] = tool_output
     state.pop("_pending_tool_input", None)
@@ -520,7 +491,6 @@ def _run_tool_step(
     summaries: list[dict[str, Any]] | None,
     retrieved: bool,
     action_checksums: list[str] | None,
-    persist: bool,
 ) -> dict[str, Any]:
     """Execute one governed tool call, pausing the run if approval is pending."""
     from apps.tools.approvals import ToolApprovalError, execute_invocation, request_tool_invocation
@@ -533,11 +503,6 @@ def _run_tool_step(
     else:
         tool_input = _tool_input(state, config, objective, decision)
 
-    # The eval candidate seam runs without a consumer; produce a deterministic stub so
-    # tool-using agents stay evaluable without real egress or approval.
-    if getattr(run, "consumer_id", None) is None:
-        return {"status": "ok"}
-
     # Defense in depth (P2.6.6): re-validate the planner-supplied arguments against the
     # pinned tool contract at the runtime boundary *before* the proxy, which re-validates
     # again. The runtime never builds authority from planner values.
@@ -545,7 +510,8 @@ def _run_tool_step(
 
     context = run.execution_context if isinstance(run.execution_context, dict) else {}
     capabilities = list(context.get("capabilities", []))
-    idempotency_key = f"agent:{run.id}:{step_index}"
+    prefix = getattr(run, "tool_idempotency_prefix", f"agent:{run.id}")
+    idempotency_key = f"{prefix}:{step_index}"
     try:
         invocation = request_tool_invocation(
             release=run.release,
@@ -560,9 +526,16 @@ def _run_tool_step(
         raise AgentRuntimeError(f"TOOL_{exc.code}") from None
 
     if invocation.status == ToolInvocationStatus.PENDING_APPROVAL:
-        if persist:
-            _pause_for_approval(run, step_index, role, state, tool_input, tool_calls)
-        raise AgentPaused()
+        paused_state = dict(state)
+        paused_state["_pending_tool_input"] = tool_input
+        paused_state["_embedded_awaiting_step"] = step_index
+        paused_state["_embedded_invocation_id"] = invocation.id
+        paused_state["_embedded_step_count"] = step_index
+        paused_state["_embedded_tool_call_count"] = tool_calls
+        raise AgentPaused(
+            invocation_id=invocation.id,
+            checkpoint=_redact(paused_state),
+        )
 
     if invocation.status == ToolInvocationStatus.APPROVED:
         try:
@@ -578,96 +551,6 @@ def _run_tool_step(
         output = invocation.redacted_output if isinstance(invocation.redacted_output, dict) else {}
         return output
     raise AgentRuntimeError(f"TOOL_{str(invocation.status).upper()}")
-
-
-def _pause_for_approval(
-    run: Any,
-    step_index: int,
-    role: str,
-    state: dict[str, Any],
-    tool_input: dict[str, Any],
-    tool_calls: int,
-) -> None:
-    run.status = AgentRunStatus.WAITING_APPROVAL
-    run.awaiting_step = step_index
-    run.awaiting_role = role
-    run.tool_call_count = tool_calls
-    # Persist the exact (already redacted) tool input so the approval-driven resume
-    # reproduces the request-checksum-bound input rather than rebuilding it.
-    state = dict(state)
-    state["_pending_tool_input"] = tool_input
-    run.checkpoint = _redact(state)
-    run.save(
-        update_fields=[
-            "status",
-            "awaiting_step",
-            "awaiting_role",
-            "tool_call_count",
-            "checkpoint",
-            "updated_at",
-        ]
-    )
-    AgentRunEvent.objects.create(
-        run=run,
-        sequence=_next_sequence(run),
-        event_type="run_waiting_approval",
-        step_index=step_index,
-        decision=DECISION_TOOL,
-        outcome="waiting_approval",
-    )
-
-
-def _persist_step(
-    *,
-    run: Any,
-    state: dict[str, Any],
-    step_index: int,
-    tool_calls: int,
-    in_tokens: int,
-    out_tokens: int,
-    decision: str,
-) -> None:
-    run.checkpoint = _redact(state)
-    run.step_count = step_index
-    run.tool_call_count = tool_calls
-    run.input_tokens = in_tokens
-    run.output_tokens = out_tokens
-    run.awaiting_step = None
-    run.awaiting_role = ""
-    run.save(
-        update_fields=[
-            "checkpoint",
-            "step_count",
-            "tool_call_count",
-            "input_tokens",
-            "output_tokens",
-            "awaiting_step",
-            "awaiting_role",
-            "updated_at",
-        ]
-    )
-    AgentRunEvent.objects.create(
-        run=run,
-        sequence=_next_sequence(run),
-        event_type="step_completed",
-        step_index=step_index,
-        decision=decision,
-        outcome=decision,
-        state_checksum=compute_checksum(run.checkpoint),
-    )
-
-
-def _emit_denial(run: Any, step_index: int, decision: AgentDecision, code: str) -> None:
-    """Audit-adjacent durable event for a bounded soft policy denial (no state change)."""
-    AgentRunEvent.objects.create(
-        run=run,
-        sequence=_next_sequence(run),
-        event_type="decision_denied",
-        step_index=step_index,
-        decision=decision.kind,
-        outcome="denied",
-        reason_code=code,
-    )
 
 
 def _validate_decision(

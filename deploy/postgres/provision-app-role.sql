@@ -32,7 +32,7 @@ TO :"app_role";
 
 -- Every protected table is readable only through FORCE RLS.
 GRANT SELECT ON
-    agents_agentrun, agents_agentrunevent, agents_agentruntimecontrol, agents_agentversion,
+    agents_agentruntimecontrol,
     artifacts_artifactversion,
     builder_artifactdraft, builder_workflowdraft,
     catalog_aiproject, catalog_scenario, catalog_scenarioalias,
@@ -56,20 +56,17 @@ GRANT SELECT ON
     tools_approvalrequest, tools_mcpcatalogcandidate, tools_mcpcatalogsource,
     tools_toolbinding, tools_tooldefinition, tools_toolinvocation,
     workflows_customnodedefinition, workflows_run, workflows_runevent, workflows_runwait,
-    workflows_workflowbranch, workflows_workflowjoin,
-    workflows_workflowrun, workflows_workflowchildlink, workflows_workflowrunevent,
-    workflows_workflowwait, workflows_workflowversion,
-    workflows_workflownodeattempt, workflows_workflowcompensationentry,
-    workflows_workflowrecoverycase, workflows_workflowrecoveryapproval
+    workflows_runbranch, workflows_runjoin, workflows_runchildlink,
+    workflows_runcompensationentry,
+    workflows_workflowversion
 TO :"app_role";
 
 -- Immutable/append-only records: create + read, never update/delete through the runtime role.
 GRANT INSERT ON
-    agents_agentrunevent, agents_agentversion,
     artifacts_artifactversion,
     evaluations_evalcaseresult,
     tools_toolbinding, tools_tooldefinition,
-    workflows_customnodedefinition, workflows_runevent, workflows_workflowrunevent,
+    workflows_customnodedefinition, workflows_runevent,
     workflows_workflowversion
 TO :"app_role";
 
@@ -77,7 +74,7 @@ TO :"app_role";
 -- delegated operator assignments are authorization-bearing: revocation is a status change that keeps
 -- who held which authority reconstructable, so DELETE is withheld deliberately.
 GRANT INSERT, UPDATE ON
-    agents_agentrun, agents_agentruntimecontrol,
+    agents_agentruntimecontrol,
     catalog_aiproject, catalog_scenario, catalog_scenarioalias,
     documents_scenariodocumentsetaccessrequest, documents_scenariodocumentsetgrant,
     evaluations_evalrun,
@@ -95,14 +92,9 @@ GRANT INSERT, UPDATE ON
     releases_releasecanary, releases_scenariorelease,
     tools_approvalrequest, tools_mcpcatalogcandidate, tools_mcpcatalogsource,
     tools_toolinvocation,
-    workflows_run, workflows_runwait,
-    workflows_workflowbranch, workflows_workflowjoin, workflows_workflowrun,
-    workflows_workflowwait, workflows_workflowchildlink,
-    workflows_workflownodeattempt, workflows_workflowcompensationentry,
-    workflows_workflowrecoverycase
+    workflows_run, workflows_runwait, workflows_runbranch, workflows_runjoin,
+    workflows_runchildlink, workflows_runcompensationentry
 TO :"app_role";
-
-GRANT INSERT ON workflows_workflowrecoveryapproval TO :"app_role";
 
 -- Explicitly deletable operator-owned drafts and document-plane lifecycle rows.
 GRANT INSERT, UPDATE, DELETE ON

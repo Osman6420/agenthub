@@ -47,7 +47,7 @@
     <div class="relationship-card"><div class="relationship-head"><div><h3><a href="{% url 'console:consumer_detail_public' binding.consumer.public_id %}">{{ binding.consumer.name }}</a></h3><p class="muted">{{ binding.consumer.get_protocol_display }} · {% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</p></div></div>
     {% if binding.consumer.protocol == 'rest' %}
       {% for alias in aliases %}<p><strong>HTTPS varsayılanı:</strong> <code>POST /v1/chat/completions</code> · <code>model: {{ alias.alias }}</code></p>{% endfor %}
-      {% if scenario.type == 'workflow' or scenario.type == 'agent' %}<p class="muted">Bu async senaryo için <code>POST /v1/responses</code>, <code>background: true</code> ve <code>Idempotency-Key</code> kullanın; Chat Completions yalnız senkron RAG içindir.</p>{% else %}<p class="muted"><code>POST /v1/responses</code> senkron alternatif olarak da desteklenir. Streaming ve multimodal input bu sürümde desteklenmez.</p>{% endif %}
+      <p class="muted"><code>POST /v1/responses</code> birleşik çalışma uç noktasıdır. Arka plan çalıştırmaları için <code>background: true</code> ve <code>Idempotency-Key</code> kullanın; Chat Completions yalnız senkron uyumluluk adaptörüdür.</p>
     {% elif binding.consumer.protocol == 'mcp' %}
       <p><strong>MCP:</strong> <code>POST /mcp/</code> üzerinden <code>agenthub__query</code> / <code>agenthub__invoke</code>. Bu credential HTTPS compatibility endpoint'lerinde kullanılamaz.</p>
     {% endif %}</div>

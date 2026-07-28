@@ -53,7 +53,12 @@ def test_invalid_trace_headers_are_untrusted_and_do_not_fail_request() -> None:
 
 def test_metric_dimensions_are_fixed() -> None:
     assert _route_dimensions("/mcp/") == ("mcp", "rpc")
-    assert _route_dimensions("/v1/query") == ("rest", "query")
+    assert _route_dimensions("/v1/responses") == ("rest", "responses")
+    assert _route_dimensions("/v1/chat/completions") == ("rest", "chat_completions")
+    assert _route_dimensions("/v1/runs/00000000-0000-0000-0000-000000000001") == (
+        "rest",
+        "run_status",
+    )
     assert _route_dimensions("/unknown/tenant-123") == ("web", "other")
     assert {_status_class(code) for code in (200, 401, 403, 404, 429, 500)} == {
         "success",

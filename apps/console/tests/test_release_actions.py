@@ -9,11 +9,12 @@ from django.urls import reverse
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership
+from apps.workflows.presets import empty_workflow
 
 User = get_user_model()
 SUITE = {"cases": [{"id": "c1", "input": {"query": "q"}, "assertions": [{"type": "grounded"}]}]}
@@ -21,9 +22,7 @@ SUITE = {"cases": [{"id": "c1", "input": {"query": "q"}, "assertions": [{"type":
 
 def _candidate(org: Organization) -> ScenarioRelease:
     project = AIProject.objects.create(organization=org, slug="cx", name="CX")
-    scenario = Scenario.objects.create(
-        project=project, slug="info", name="Info", type=ScenarioType.RAG
-    )
+    scenario = Scenario.objects.create(project=project, slug="info", name="Info")
     create_artifact_version(
         organization=org,
         artifact_type=ArtifactType.EVAL_SUITE,
@@ -31,9 +30,19 @@ def _candidate(org: Organization) -> ScenarioRelease:
         body=SUITE,
         created_by="alice",
     )
+    create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="flow",
+        body=empty_workflow(logical_id="flow"),
+        created_by="alice",
+    )
     return compile_release(
         scenario=scenario,
-        refs=[ArtifactRef("eval_suite", ArtifactType.EVAL_SUITE, "s", 1)],
+        refs=[
+            ArtifactRef("workflow_definition", ArtifactType.WORKFLOW_DEFINITION, "flow", 1),
+            ArtifactRef("eval_suite", ArtifactType.EVAL_SUITE, "s", 1),
+        ],
         runtime_version="rt:3",
         created_by="alice",
     )

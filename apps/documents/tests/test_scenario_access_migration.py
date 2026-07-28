@@ -9,7 +9,7 @@ from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.utils import timezone
 
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet, ScenarioDocumentSetGrant
 from apps.tenancy.models import Organization
 
@@ -80,7 +80,6 @@ def test_scenario_grant_is_hidden_outside_tenant_scope() -> None:
         project=project,
         slug="s",
         name="S",
-        type=ScenarioType.RAG,
     )
     document_set = DocumentSet.objects.create(
         organization=organization,

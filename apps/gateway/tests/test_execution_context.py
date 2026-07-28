@@ -9,6 +9,7 @@ from apps.gateway.execution_context import (
     issue_execution_context,
     verify_execution_context,
 )
+from apps.identity.capabilities import Capability
 
 
 def _issue(ttl_seconds: int = 300) -> dict:
@@ -18,7 +19,7 @@ def _issue(ttl_seconds: int = 300) -> dict:
         scenario_id=3,
         scenario_alias="customer-information",
         consumer_id=4,
-        capabilities=["query"],
+        capabilities=[Capability.WORKFLOW_RUN],
         release_id=5,
         request_id="req_test",
         ttl_seconds=ttl_seconds,

@@ -4,13 +4,12 @@ The owner-approved policy (see the P2.6.11 plan) keeps all traceability/audit/ev
 data indefinitely and purges only **bulky high-detail working state** older than a single
 90-day window:
 
-- ``agent_checkpoint``  — ``AgentRun.checkpoint`` (versioned redacted checkpoint + planner
-  observation summaries). The run, its immutable start snapshot, counters and append-only
-  event trail are retained.
-- ``branch_state``      — ``WorkflowBranch.input_state`` / ``result_state`` working payloads.
+- ``run_state``         — unified ``Run.checkpoint`` / ``redacted_state`` working payloads.
+  The run, counters and append-only event trail are retained.
+- ``branch_state``      — ``RunBranch.input_state`` / ``result_state`` working payloads.
   The branch row (region/branch/status/reason/checksum lineage) is retained.
-- ``wait_correlation``  — ``WorkflowWait.correlation_hash`` / ``redacted_payload`` on resolved
-  waits. The wait row (kind/node/status/timestamps) is retained.
+- ``wait_payload``      — unified ``RunWait.redacted_payload`` on resolved waits. The one-way
+  resume-token hash and wait lineage remain for replay detection and audit.
 
 Purge never deletes a row or any audit/eval record; it clears named columns in bounded,
 audited batches. Report mode (the default) counts eligible rows without mutating anything.
@@ -30,16 +29,21 @@ from django.db import transaction
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 
-from apps.agents.models import TERMINAL_RUN_STATUSES, AgentRun
 from apps.audit.services import record_event
-from apps.workflows.models import WorkflowWait, WorkflowWaitStatus
+from apps.workflows.models import (
+    RUN_TERMINAL_STATUSES,
+    Run,
+    RunBranch,
+    RunWait,
+    RunWaitStatus,
+)
 
 RETENTION_DAYS = 90
 DEFAULT_BATCH_SIZE = 500
 
 # Resolved wait states whose correlation material is no longer needed for resumption.
 _RESOLVED_WAIT_STATUSES = frozenset(
-    {WorkflowWaitStatus.RESUMED, WorkflowWaitStatus.EXPIRED, WorkflowWaitStatus.CANCELLED}
+    {RunWaitStatus.RESUMED, RunWaitStatus.EXPIRED, RunWaitStatus.CANCELLED}
 )
 
 
@@ -101,11 +105,11 @@ def run_retention(
     cutoff = retention_cutoff(now)
     reports = [
         _purge_class(
-            retention_class="agent_checkpoint",
-            queryset=AgentRun.objects.filter(
-                status__in=TERMINAL_RUN_STATUSES, finished_at__lt=cutoff
-            ).exclude(checkpoint={}),
-            clear_fields={"checkpoint": {}},
+            retention_class="run_state",
+            queryset=Run.objects.filter(
+                status__in=RUN_TERMINAL_STATUSES, finished_at__lt=cutoff
+            ).exclude(Q(checkpoint={}) & Q(redacted_state={})),
+            clear_fields={"checkpoint": {}, "redacted_state": {}},
             commit=commit,
             batch_size=batch_size,
             actor=actor,
@@ -119,11 +123,11 @@ def run_retention(
             actor=actor,
         ),
         _purge_class(
-            retention_class="wait_correlation",
-            queryset=WorkflowWait.objects.filter(
+            retention_class="wait_payload",
+            queryset=RunWait.objects.filter(
                 status__in=_RESOLVED_WAIT_STATUSES, updated_at__lt=cutoff
-            ).exclude(correlation_hash="", redacted_payload={}),
-            clear_fields={"correlation_hash": "", "redacted_payload": {}},
+            ).exclude(redacted_payload={}),
+            clear_fields={"redacted_payload": {}},
             commit=commit,
             batch_size=batch_size,
             actor=actor,
@@ -133,8 +137,6 @@ def run_retention(
 
 
 def _branch_state_queryset(cutoff: datetime) -> QuerySet[Any]:
-    from apps.workflows.models import WORKFLOW_TERMINAL_STATUSES, WorkflowBranch
-
-    return WorkflowBranch.objects.filter(
-        run__status__in=WORKFLOW_TERMINAL_STATUSES, finished_at__lt=cutoff
+    return RunBranch.objects.filter(
+        run__status__in=RUN_TERMINAL_STATUSES, finished_at__lt=cutoff
     ).exclude(Q(input_state={}) & Q(result_state={}))

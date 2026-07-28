@@ -130,4 +130,4 @@ Two consequences that were not obvious from the option statement and shaped the 
 - Any change to the RLS policies themselves; all five tables already carry FORCE RLS and the canonical
   `tenant_isolation` policy.
 - The unified `workflows_run`/`workflows_runevent`/`workflows_runwait` grants, which are already
-  landed and verified in `phase-2-8-part-3-unified-workflow-engine/verification.md`.
+  landed and verified in the Phase 2.8 Part 3 archived verification record.

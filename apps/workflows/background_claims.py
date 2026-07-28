@@ -14,11 +14,11 @@ from apps.audit.services import record_event
 from apps.tenancy.context import set_tenant_context
 from apps.workflows.compiler import COMPILER_VERSION
 from apps.workflows.models import (
-    WORKFLOW_TERMINAL_STATUSES,
+    RUN_TERMINAL_STATUSES,
     Run,
     RunCancellationState,
     RunExecutionMode,
-    WorkflowRunStatus,
+    RunStatus,
 )
 
 MAX_BACKGROUND_CLAIM_SECONDS = 60
@@ -152,7 +152,7 @@ def claim_background_run(
     if run.execution_mode != RunExecutionMode.BACKGROUND:
         raise BackgroundClaimError("RUN_BACKGROUND_MODE_REQUIRED")
     _validate_run_pins(run)
-    if run.status in WORKFLOW_TERMINAL_STATUSES:
+    if run.status in RUN_TERMINAL_STATUSES:
         return BackgroundClaimResult("terminal", str(run.status), run.checkpoint_version, None)
     if run.cancellation_state == RunCancellationState.REQUESTED:
         return BackgroundClaimResult(
@@ -172,7 +172,7 @@ def claim_background_run(
             raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_STALE")
         if run.background_claim_expires_at is None or run.background_claim_expires_at <= claimed_at:
             return BackgroundClaimResult(
-                ("expired" if run.status == WorkflowRunStatus.QUEUED else "recovery_required"),
+                ("expired" if run.status == RunStatus.QUEUED else "recovery_required"),
                 str(run.status),
                 run.checkpoint_version,
                 run.background_claim_expires_at,
@@ -195,11 +195,11 @@ def claim_background_run(
             run.checkpoint_version,
             run.background_claim_expires_at,
         )
-    if run.background_claim_token is not None and run.status != WorkflowRunStatus.QUEUED:
+    if run.background_claim_token is not None and run.status != RunStatus.QUEUED:
         return BackgroundClaimResult(
             "recovery_required", str(run.status), run.checkpoint_version, None
         )
-    if run.status != WorkflowRunStatus.QUEUED:
+    if run.status != RunStatus.QUEUED:
         raise BackgroundClaimError("RUN_BACKGROUND_NOT_CLAIMABLE")
 
     run.background_claim_token = claim_token
@@ -267,7 +267,7 @@ def renew_background_claim(
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_STALE")
     if run.background_claim_expires_at is None or run.background_claim_expires_at <= renewed_at:
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_EXPIRED")
-    if run.status in WORKFLOW_TERMINAL_STATUSES:
+    if run.status in RUN_TERMINAL_STATUSES:
         raise BackgroundClaimError("RUN_TERMINAL")
     if run.cancellation_state == RunCancellationState.REQUESTED:
         raise BackgroundClaimError("RUN_CANCELLATION_REQUESTED")
@@ -306,7 +306,7 @@ def resolve_expired_background_claim(
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_STALE")
     if run.background_claim_expires_at is None or run.background_claim_expires_at > resolved_at:
         raise BackgroundClaimError("RUN_BACKGROUND_CLAIM_NOT_EXPIRED")
-    if run.status == WorkflowRunStatus.QUEUED:
+    if run.status == RunStatus.QUEUED:
         run.background_claim_token = None
         run.background_claim_expires_at = None
         run.background_claim_checkpoint_version = None
@@ -333,21 +333,21 @@ def resolve_expired_background_claim(
             },
         )
         return "released"
-    if run.status in WORKFLOW_TERMINAL_STATUSES:
+    if run.status in RUN_TERMINAL_STATUSES:
         return "terminal"
 
     from apps.workflows.transitions import transition_run
 
     if run.cancellation_state == RunCancellationState.REQUESTED:
-        target_status = WorkflowRunStatus.CANCELLED
+        target_status = RunStatus.CANCELLED
         awaiting_reference = ""
         reason_code = "RUN_CANCELLATION_REQUESTED"
     elif resolved_at >= run.deadline_at:
-        target_status = WorkflowRunStatus.TIMED_OUT
+        target_status = RunStatus.TIMED_OUT
         awaiting_reference = ""
         reason_code = "RUN_DEADLINE_EXCEEDED"
     else:
-        target_status = WorkflowRunStatus.RECOVERY_REQUIRED
+        target_status = RunStatus.RECOVERY_REQUIRED
         awaiting_reference = "background-claim-expired"
         reason_code = "RUN_BACKGROUND_CLAIM_EXPIRED"
     result = transition_run(

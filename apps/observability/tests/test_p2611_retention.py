@@ -1,7 +1,6 @@
 """P2.6.11 retention/purge: report vs commit, in-window protection, audit, idempotency.
 
-Uses the buildable workflow classes (branch working state, wait correlation) to prove the
-shared purge mechanics; ``agent_checkpoint`` funnels through the same ``_purge_class`` path.
+Uses unified Run classes to prove report, purge, lineage and audit behavior.
 """
 
 from __future__ import annotations
@@ -17,20 +16,20 @@ from django.utils import timezone
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
-from apps.catalog.models import AIProject, LifecycleStatus, Scenario, ScenarioType
+from apps.catalog.models import AIProject, LifecycleStatus, Scenario
 from apps.identity.models import Consumer, ConsumerProtocol
 from apps.observability.retention import RETENTION_DAYS, run_retention
 from apps.releases.compiler import ArtifactRef, compile_release, promote_release
 from apps.tenancy.models import Organization
 from apps.workflows.models import (
-    WorkflowBranch,
-    WorkflowBranchStatus,
-    WorkflowRun,
-    WorkflowRunStatus,
+    Run,
+    RunBranch,
+    RunBranchStatus,
+    RunStatus,
+    RunWait,
+    RunWaitKind,
+    RunWaitStatus,
     WorkflowVersion,
-    WorkflowWait,
-    WorkflowWaitKind,
-    WorkflowWaitStatus,
 )
 
 User = get_user_model()
@@ -41,14 +40,13 @@ OLD = timedelta(days=RETENTION_DAYS + 10)
 RECENT = timedelta(days=RETENTION_DAYS - 10)
 
 
-def _run() -> WorkflowRun:
+def _run() -> Run:
     org = Organization.objects.create(slug="ret-org", name="Ret Org")
     project = AIProject.objects.create(organization=org, slug="ops", name="Ops")
     scenario = Scenario.objects.create(
         project=project,
         slug="flow",
         name="Flow",
-        type=ScenarioType.WORKFLOW,
         status=LifecycleStatus.ACTIVE,
     )
     in_c = create_artifact_version(
@@ -111,52 +109,66 @@ def _run() -> WorkflowRun:
     consumer = Consumer.objects.create(
         organization=org, subject="c", name="C", protocol=ConsumerProtocol.REST
     )
-    return WorkflowRun.objects.create(
+    run = Run.objects.create(
         organization=org,
         scenario=scenario,
         release=release,
         workflow_version=version,
         consumer=consumer,
+        actor_id=consumer.subject,
+        response_id=f"resp_{'b' * 32}",
         idempotency_key="k",
+        compiled_checksum=version.checksum,
+        compiler_version=version.compiler_version,
+        execution_mode="background",
+        checkpoint={"state": SECRET},
         input_checksum="d" * 64,
         execution_context={},
-        status=WorkflowRunStatus.FAILED,
+        redacted_state={"state": SECRET},
+        status=RunStatus.FAILED,
         deadline_at=timezone.now() + timedelta(hours=1),
+        finished_at=timezone.now() - OLD,
     )
+    return run
 
 
-def _branch(run: WorkflowRun, name: str, age: timedelta) -> WorkflowBranch:
-    return WorkflowBranch.objects.create(
+def _branch(run: Run, name: str, age: timedelta) -> RunBranch:
+    return RunBranch.objects.create(
         organization=run.organization,
         run=run,
         region_node_id="fan",
         branch_name=name,
         item_ordinal=0,
-        workflow_checksum="e" * 64,
-        transition_version="t",
-        status=WorkflowBranchStatus.SUCCEEDED,
+        compiled_checksum="e" * 64,
+        status=RunBranchStatus.SUCCEEDED,
         input_state={"x": SECRET},
         result_state={"y": SECRET},
         finished_at=timezone.now() - age,
     )
 
 
-def _wait(run: WorkflowRun, node: str, age: timedelta) -> WorkflowWait:
-    wait = WorkflowWait.objects.create(
+def _wait(run: Run, node: str, age: timedelta) -> RunWait:
+    wait = RunWait.objects.create(
         organization=run.organization,
         run=run,
-        kind=WorkflowWaitKind.HUMAN,
+        kind=RunWaitKind.HUMAN,
         node_id=node,
-        status=WorkflowWaitStatus.RESUMED,
-        correlation_hash="ab" * 16,
+        status=RunWaitStatus.RESUMED,
+        resume_token_hash=f"{node[:1]}{'a' * 63}",
         redacted_payload={"p": SECRET},
         pending_checksum="1" * 64,
-        workflow_checksum="e" * 64,
+        checkpoint_version_snapshot=1,
         release_id_snapshot=run.release_id,
+        compiled_checksum="e" * 64,
         compiler_version="v4",
+        requester_actor_id="requester",
         deadline_at=timezone.now() + timedelta(hours=1),
+        consumed_at=timezone.now(),
+        consumed_by="reviewer",
+        resume_checksum="2" * 64,
+        result_checkpoint_version=2,
     )
-    WorkflowWait.objects.filter(pk=wait.pk).update(updated_at=timezone.now() - age)
+    RunWait.objects.filter(pk=wait.pk).update(updated_at=timezone.now() - age)
     return wait
 
 
@@ -169,8 +181,8 @@ def test_report_mode_counts_eligible_without_mutating() -> None:
     reports = {r.retention_class: r for r in run_retention(commit=False)}
     assert reports["branch_state"].eligible == 1
     assert reports["branch_state"].purged == 0
-    assert reports["wait_correlation"].eligible == 1
-    assert "agent_checkpoint" in reports
+    assert reports["wait_payload"].eligible == 1
+    assert reports["run_state"].eligible == 1
     # Nothing mutated in report mode.
     old_branch.refresh_from_db()
     assert old_branch.input_state == {"x": SECRET}
@@ -186,7 +198,8 @@ def test_commit_purges_only_out_of_window_state_and_audits() -> None:
 
     reports = {r.retention_class: r for r in run_retention(commit=True, actor="root")}
     assert reports["branch_state"].purged == 1
-    assert reports["wait_correlation"].purged == 1
+    assert reports["wait_payload"].purged == 1
+    assert reports["run_state"].purged == 1
 
     old_branch.refresh_from_db()
     recent_branch.refresh_from_db()
@@ -194,11 +207,12 @@ def test_commit_purges_only_out_of_window_state_and_audits() -> None:
     recent_wait.refresh_from_db()
     # Out-of-window bulky state cleared; row + lineage retained.
     assert old_branch.input_state == {} and old_branch.result_state == {}
-    assert old_branch.status == WorkflowBranchStatus.SUCCEEDED  # lineage retained
-    assert old_wait.correlation_hash == "" and old_wait.redacted_payload == {}
+    assert old_branch.status == RunBranchStatus.SUCCEEDED  # lineage retained
+    assert old_wait.redacted_payload == {}
+    assert old_wait.resume_token_hash
     # In-window state protected.
     assert recent_branch.input_state == {"x": SECRET}
-    assert recent_wait.correlation_hash != ""
+    assert recent_wait.resume_token_hash
     # Audit records the class/window/count, never row contents.
     audits = AuditEvent.objects.filter(action="retention.purge")
     assert audits.exists()
@@ -210,7 +224,7 @@ def test_commit_purges_only_out_of_window_state_and_audits() -> None:
     # Idempotent: a second commit purges nothing more.
     reports2 = {r.retention_class: r for r in run_retention(commit=True, actor="root")}
     assert reports2["branch_state"].purged == 0
-    assert reports2["wait_correlation"].purged == 0
+    assert reports2["wait_payload"].purged == 0
 
 
 def test_retention_console_requires_platform_admin(client: Client) -> None:

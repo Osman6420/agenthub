@@ -231,7 +231,7 @@ def test_document_manager_can_create_set_but_not_non_document_objects(client: Cl
     assert (
         client.post(
             reverse("console:project_scenario_create", args=[project.public_id]),
-            {"name": "Denied", "type": "rag"},
+            {"name": "Denied"},
         ).status_code
         == 403
     )
@@ -280,7 +280,6 @@ def test_contextual_creates_ignore_forged_parent_fields(client: Client) -> None:
         {
             "project": foreign_project.pk,
             "name": "Context Scenario",
-            "type": "rag",
             "visibility": "internal",
             "risk_level": "low",
             "status": "active",

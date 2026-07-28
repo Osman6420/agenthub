@@ -4,8 +4,8 @@
 
 {% if kill_switch %}
 <div class="msg error" role="alert">
-  <strong>Agent çalışma zamanı askıya alınmış{% if kill_switch.scope == 'global' %} (global){% endif %}.</strong>
-  Yeni agent çalıştırmaları ve devam ettirmeler durduruldu.{% if kill_switch.reason %} Sebep: {{ kill_switch.reason }}.{% endif %}
+  <strong>Çalıştırma zamanı askıya alınmış{% if kill_switch.scope == 'global' %} (global){% endif %}.</strong>
+  Yeni birleşik çalıştırmalar ve devam ettirmeler durduruldu.{% if kill_switch.reason %} Sebep: {{ kill_switch.reason }}.{% endif %}
 </div>
 {% endif %}
 
@@ -35,7 +35,7 @@
   <div class="section-heading"><div><p class="eyebrow">Bekleyen kararlar</p><h2>Sizi bekleyen işlemler</h2><p class="muted">Yalnız yetkili olduğunuz karar yüzeyleri sayılır; hedef ekran işlemi yeniden yetkilendirir.</p></div>{% if metrics.decisions.total %}<span class="badge warning">{{ metrics.decisions.total }} bekliyor</span>{% else %}<span class="badge active">Kuyruk boş</span>{% endif %}</div>
   <div class="access-row"><div><strong>Tool onayları</strong><p class="muted">Yüksek riskli, yan etkili tool çağrıları için onay.</p></div><span class="badge {% if metrics.decisions.approvals %}warning{% endif %}">{{ metrics.decisions.approvals }}</span><a class="button secondary" href="{% url 'console:tool_approvals' %}">Aç →</a></div>
   <div class="access-row"><div><strong>İnsan görevleri</strong><p class="muted">Workflow içinde insan kararı bekleyen adımlar.</p></div><span class="badge {% if metrics.decisions.human_tasks %}warning{% endif %}">{{ metrics.decisions.human_tasks }}</span><a class="button secondary" href="{% url 'console:workflow_runs' %}?status=waiting_human">Aç →</a></div>
-  <div class="access-row"><div><strong>Kurtarma kararları</strong><p class="muted">Başarısız workflow'lar için operatör kurtarma kararı.</p></div><span class="badge {% if metrics.decisions.recoveries %}warning{% endif %}">{{ metrics.decisions.recoveries }}</span><a class="button secondary" href="{% url 'console:workflow_recoveries' %}">Aç →</a></div>
+  <div class="access-row"><div><strong>Kurtarma gereken çalıştırmalar</strong><p class="muted">Belirsiz sonuç sonrası açık operatör incelemesi gereken birleşik çalıştırmalar.</p></div><span class="badge {% if metrics.decisions.recoveries %}warning{% endif %}">{{ metrics.decisions.recoveries }}</span><a class="button secondary" href="{% url 'console:workflow_runs' %}?status=recovery_required">Aç →</a></div>
 </section>
 
 <section class="card">

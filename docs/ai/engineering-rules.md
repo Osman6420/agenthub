@@ -41,7 +41,7 @@ system-generated `chunk_iv_<pk>` names, `vector(D)`/`halfvec(D)`, PostgreSQL-onl
 P4 added the document-ACL retrieval security core: `ScenarioDocumentSetBinding` + forward-ready
 `DocumentSetGrant` (`apps/documents`); the release compiler pins `document_set_versions` deny-by-
 default from bindings, the resolver carries them, and `PgvectorRetrievalProvider._retrieve_acl`
-serves `/v1/query` only from the pinned versions' **active** per-`IndexVersion` stores (tenant +
+serves canonical workflow retrieval only from the pinned versions' **active** per-`IndexVersion` stores (tenant +
 not-tombstoned scoped, no client filter); each store is provisioned with **`FORCE ROW LEVEL
 SECURITY`** + a transaction-local `app.tenant_scope` tenant policy (ADR-0004, proven fail-closed under a
 non-superuser role); and `promote_staged_index`/`rollback_staged_index` do the metadata-only
@@ -52,11 +52,9 @@ proven on the served stores). Phase 2 P5 wired the **same governed retrieve/gene
 workflow (`retrieve`/`generate` nodes) and agent (retrieve step + `_respond`) via
 `apps/orchestration/rag_steps.py`, so agents/workflows now do real P4 ACL retrieval + P1 generation
 (not stubs); the workflow `generate` node gained optional per-node `prompt_ref`/`model_profile_ref`
-binding (multi-prompt/multi-model workflows). Phase 2 P6 added an authored, governed agent **system
-prompt**: `agent_definition` accepts an optional bounded, redaction-safe `spec.system_prompt` (data,
-not code — ≤8000 chars, no control chars) that the compiler pins into the checksummed agent config
-and `_respond` uses as the model prompt (objective fallback); it is input, never authorization (tool/
-decision/output-contract gates unchanged). Phase 2 P7.1–P7.2 added bounded local parsers; P7.3 added
+binding (multi-prompt/multi-model workflows). Phase 2 P6 added an authored, governed bounded system prompt. ADR-0014 now carries it inside
+the checksummed closed `agent_loop` node config; it remains input, never authorization, and tool,
+decision and output-contract gates are unchanged. Phase 2 P7.1–P7.2 added bounded local parsers; P7.3 added
 profile-only async OCR with durable result-before-ACK lineage; and P7.4a added governed Confluence
 Data Center snapshot ingestion under ADR-0006's connector-only private-corporate policy. Confluence
 is verified offline only; live network/CA/secret/service-account inputs remain deployment-gated and
@@ -76,7 +74,7 @@ definitions with GitOps import/export) and `apps/releases` (compiled
 and the Sprint 3 public `apps/gateway` (DRF) — bearer-token consumer auth
 (`ConsumerToken`, hashed), alias+capability authorization, per-consumer rate limiting,
 idempotency, a standard error envelope, a signed short-lived `ExecutionContext`, and
-`POST /v1/invoke` / `POST /v1/query` / `GET /v1/runs/{id}` — plus `apps/observability`
+canonical `POST /v1/responses`, synchronous Chat compatibility, UUID Run status/cancel — plus `apps/observability`
 (`UsageEvent`); the Sprint 4 runtime returns real grounded/fallback output. Sprint 5
 adds `apps/ingestion` (tenant-scoped `Source`s, bounded allowlisted HTTPS/S3
 connectors, parse/chunk/deterministic-embed pipeline, staged pgvector/HNSW
@@ -150,15 +148,10 @@ dependencies are `opentelemetry-api`, `opentelemetry-sdk`, the OTLP HTTP exporte
 parity tests. Live OTel/Prometheus/Grafana/OpenShift checks remain an operational
 follow-up; do not describe the draft manifests as deployed infrastructure.
 
-Sprint 8 is implemented and verified. `apps.workflows` provides strict artifact
-validation, deterministic immutable DAG compilation, additive workflow/custom-node/run
-models, bounded asynchronous Celery execution, redacted durable state/events,
-idempotency, tenant-scoped status/cancel, contract/policy enforcement, and workflow
-eval assertions. `POST /v1/invoke` returns `202` plus `run_id` for an authorized
-workflow scenario and requires `workflow_run` plus an `Idempotency-Key`; `GET`/`DELETE
-/v1/runs/{id}` are consumer/tenant scoped. Custom nodes are platform-preinstalled,
-organization-allowlisted, exact-version matched, schema-checked, and receive only a
-narrow execution context. No workflow-engine dependency was added.
+Sprint 8 established strict workflow compilation and durable execution. ADR-0014 supersedes
+its separate run surface: every executable scenario now pins one workflow definition and uses the
+canonical UUID `Run`/`RunEvent` lifecycle through Responses, Chat and MCP. Custom-node package,
+allowlist, version and schema controls remain unchanged. No workflow-engine dependency was added.
 
 Sprint 9 (tool registry + approval) is implemented and verified (SQLite + PostgreSQL),
 delivered across increments A–D. `apps.tools` adds `tool_definition` / `tool_binding`
@@ -191,48 +184,14 @@ dependency was added (the real client is stdlib). Additive migrations only
 (`tools.0001`, `tools.0002`, `workflows.0002`). Approval decisions are operator actions
 (not consumer actions), so no public consumer "decide" endpoint exists.
 
-Sprint 10 (agent runtime) is implemented and verified (SQLite 337 passed / 2 skipped;
-PostgreSQL affected-app run 142 passed). `apps.agents` adds the `agent_definition`
-artifact (data, not code: bounded, allowlisted tool *binding roles*, retrieval flag,
-limit overrides that may only lower the hard caps) with author-time validation and a
-deterministic checksummed compiler; the release compiler pins the compiled agent
-(`agent_checksum`) and fails closed unless every declared tool resolves to a pinned
-`tool_binding` role. Durable state is the immutable `AgentVersion`, the tenant-scoped
-`AgentRun` (addressed externally by an opaque `public_id` UUID so agent and workflow run
-ids never collide on `/v1/runs/{id}`) with an immutable redacted start snapshot, a
-versioned redacted checkpoint, bounded resource counters, and an append-only
-`AgentRunEvent` trail. The Celery task (`queue="runtime"`, `acks_late`) claims the run
-under `select_for_update`, is terminal-state idempotent, and treats a stale/missing
-message as a safe no-op; the bounded loop re-checks cancellation, deadline, and the step
-cap each iteration, enforces step/tool-call/token/state-size/checkpoint-schema-version
-caps (each terminates deterministically with a stable code — never an uncontrolled
-requeue), and re-validates every planner decision against the immutable compiled tool
-allowlist and decision-kind allowlist. Tool use flows only through the Sprint 9
-proxy/approval boundary (idempotency key `agent:<run_id>:<step>`); a required approval
-pauses the run (`waiting_approval` + durable checkpoint) and auto-resumes on the
-post-commit decision signal, failing closed on rejection. Final output must pass the
-release output contract and policy. **LangGraph (`langgraph==1.2.9`, the one approved new
-production dependency — exact pin, transitive tree captured in `requirements.lock`, `pip
-check` clean, and a CI step fails closed on lock drift) is integrated only as an
-`AgentPlanner` adapter selected via `AGENT_PLANNER`; the default is the deterministic
-planner, so CI/tests run no graph code and open no socket.** LangGraph owns only the
-planning loop/transitions/tool-selection/agent-local checkpointing; the durable run state
-machine, tenant isolation, tool proxy, approval, audit, retry, cancellation, and
-idempotency remain AgentHub's. No LangSmith / LangGraph Cloud / hosted service / new
-public endpoint was added (`langsmith` is a dormant transitive dep — no API key, no
-tracing). Gateway `POST /v1/invoke` returns `202` + `run_id` (the UUID `public_id`) for an
-authorized AGENT scenario, requiring `agent_invoke` + `Idempotency-Key`; `GET`/`DELETE
-/v1/runs/{id}` dual-dispatch (numeric→workflow, UUID→agent) and stay consumer/tenant
-scoped. Governed eval adds trajectory assertions (`agent_completed`, `agent_tool_invoked`,
-`agent_no_tools`, `agent_max_steps`) over the isolated candidate seam. Operator surfaces:
-the role-gated, tenant-scoped console agent-run list + redacted trace view + cancel, the
-`list_agent_runs` / `cancel_agent_run` management commands, and bounded Prometheus
-counters `agenthub_agent_runs_total` / `agenthub_agent_steps_total`. Additive migrations
-only (`agents.0001`, `artifacts.0003`). Management commands today additionally include
-`list_agent_runs` and `cancel_agent_run`. Not yet delivered (operational follow-ups): a
-global start/resume kill switch, the checkpoint retention/purge job (the 30/90-day policy
-is recorded but not automated), and production-like load/soak tests; no live-egress or
-live-server smoke was run (default deterministic model provider + no-egress tool adapter).
+Sprint 10 established the governed agent policy and planner safety boundary. ADR-0014 removes
+its separate artifact/version/run/event persistence and exposes the policy only as a closed
+`agent_loop` workflow node. The canonical executor preserves exact tool-role pins, action and
+argument allowlists, step/tool/token/deadline/state caps, approval pause/resume, deterministic
+no-progress termination, output validation, kill-switch checks and optional LangGraph planner
+isolation. All lifecycle, cancellation, retry, recovery, usage and audit evidence is now owned by
+UUID `Run` and ordered `RunEvent`; the public surface is Responses/Chat plus UUID Run status and
+POST cancellation.
 
 Sprint 11 (visual workflow builder) is implemented and verified (SQLite 364 passed / 2
 skipped; PostgreSQL `apps/builder`+`apps/console` run 46 passed; frontend 11 vitest tests +
@@ -340,36 +299,16 @@ duplicate/redelivery and reconciliation drills. Wave gate evidence (static + ful
 PostgreSQL + frontend runs) is in `docs/tasks/phase-2-6-wave-3-integration/verification.md`; the
 integrated head lands on `feat/foundation-sprint-0-1`.
 
-Phase 2.6 P2.6.6 (advanced governed agent loop) is implemented and verified. It adds agent decision
-schema v2 (`AGENT_DECISION_SCHEMA_VERSION = 2`: structured `kind`/`role`/bounded `arguments`/
-`reason_code`; kinds `retrieve`/`tool`/`verify`/`respond`/`escalate`) validated server-side as a
-proposal only; an additive `agent_definition` `spec.actions` policy (`verify_roles`,
-`repeat_retrieval`, `escalation_enabled`, `role_call_caps` bounded by `MAX_ROLE_CALLS = MAX_TOOL_CALLS`)
-compiled **only when authored** so legacy compiled agents keep byte-identical configs/checksums; a
-governed no-side-effect `verify` step (side-effecting/approval-requiring verification roles rejected at
-release compile); a closed platform-owned `escalate` terminal (`status=failed` + stable
-`AGENT_ESCALATED`, no free text); dual argument validation (runtime contract + protected namespaces,
-then the unchanged Sprint 9 proxy); per-role budgets, a repeated-action checksum guard and bounded
-`AGENT_NO_PROGRESS` termination; bounded redacted code/count planner observation summaries
-(`MAX_OBSERVATION_BYTES`/`MAX_OBSERVATION_CONTEXT_BYTES`); and `CHECKPOINT_SCHEMA_VERSION = 2` (v1
-checkpoints refused). Composition attenuation expands `AGENT_CALL_ACTIONS` to `verify`/`escalate` and
-carries the call-site `allowed_actions` into the child claim, so a parent compiled before P2.6.6 denies
-the new kinds by default. This delivers the previously-missing **global start/resume kill switch**: the
-DB-backed `AgentRuntimeControl` (`agents.0003`, global + per-organization, manual RLS with the global
-`NULL`-org row visible in every tenant scope and a global-singleton partial index) enforced fail-closed
-at Celery task claim/resume, flipped only by the role-gated audited `suspend_agent_runtime` /
-`resume_agent_runtime` platform-admin commands; the table is in the owner-approved application-role
-grant inventory (SELECT + INSERT/UPDATE, no DELETE). The default deterministic planner and the optional
-LangGraph adapter both emit schema v2; CI stays hermetic (no socket, no live egress, no new dependency).
-The console kill-switch button and checkpoint retention/purge remain P2.6.11/operational follow-ups, and
-no real-broker Celery restart smoke was run. Evidence: static gates, full SQLite (926 passed / 35
-skipped), the PostgreSQL affected-app profile (163 passed incl. composition FORCE RLS) and a PostgreSQL
-non-owner RLS proof of the control table, in
+Phase 2.6 P2.6.6's advanced governed agent-loop policy remains implemented: structured
+server-validated decisions, exact role allowlists, bounded retrieval/tool/verify/respond/escalate
+actions, repeated-action/no-progress guards, redacted observations, versioned internal checkpoints
+and the global/tenant `AgentRuntimeControl` kill switch. ADR-0014 embeds that policy in the canonical
+workflow `agent_loop` node and canonical Run checkpoint; historical verification remains in
 `docs/tasks/phase-2-6-part-6-governed-agent-loop/verification.md`.
 
 Phase 2.6 P2.6.11 (product/operational closure) increments A–D are implemented and verified;
 E/F remain environment/owner-gated. A: Scenario Studio now exposes every verified workflow node
-family — `parallel`/`for_each`/`join`/`subworkflow`/`agent_call` plus node-level `retry_policy`/
+family — `parallel`/`for_each`/`join`/`subworkflow`/`agent_loop` plus node-level `retry_policy`/
 `compensation` — via the backend-authoritative `apps/builder/node_schema.py` (Turkish-first
 labels, compiler-accurate bounds, `branch_owner`/`composition`/gate metadata) and additive
 React authoring (new field kinds, node input/output mappings, retry/compensation editors,

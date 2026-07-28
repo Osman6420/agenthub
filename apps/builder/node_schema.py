@@ -11,12 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.conf import settings
-
 from apps.tools.models import ToolBinding, ToolStatus
 from apps.workflows.compiler import (
-    AGENT_CALL_ACTIONS,
-    MAX_AGENT_CALL_DECISIONS,
     MAX_CHILD_DEPTH,
     MAX_EDGES,
     MAX_FOR_EACH_ITEMS,
@@ -26,7 +22,6 @@ from apps.workflows.compiler import (
     MAX_PARALLEL_DURATION_SECONDS,
     MAX_PARALLEL_STATE_BYTES,
     MAX_RETRY_ATTEMPTS,
-    MAX_RETRY_BACKOFF_SECONDS,
 )
 from apps.workflows.models import CustomNodeDefinition, CustomNodeStatus
 from apps.workflows.state_mapping import (
@@ -37,9 +32,7 @@ from apps.workflows.state_mapping import (
 
 # Node types that may carry a node-level ``retry_policy`` (mirrors the compiler's
 # retry-ineligible set inverted). Exposed as a UI hint; the compiler stays authoritative.
-_RETRY_ELIGIBLE_TYPES = frozenset(
-    {"retrieve", "generate", "format_output", "validate_contract", "custom", "transform"}
-)
+_RETRY_ELIGIBLE_TYPES = frozenset({"retrieve", "generate", "custom", "transform"})
 
 # Field descriptors are data the frontend uses to render inputs. ``kind`` is a UI hint,
 # not an authoritative validator — the backend compiler remains the source of truth.
@@ -330,7 +323,6 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
         "supports_mapping": True,
         "mapping_required": True,
         "composition": True,
-        "supports_retry": True,
         "fields": [
             {
                 "name": "workflow_role",
@@ -345,38 +337,6 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
                 "min": 1,
                 "max": MAX_CHILD_DEPTH,
                 "help": f"İzin verilen en fazla iç içe derinlik (1..{MAX_CHILD_DEPTH}).",
-            },
-        ],
-    },
-    {
-        "type": "agent_call",
-        "label": "Ajan çağrısı",
-        "category": "composition",
-        "supports_mapping": True,
-        "mapping_required": True,
-        "composition": True,
-        "supports_retry": True,
-        "fields": [
-            {
-                "name": "agent_role",
-                "kind": "identifier",
-                "required": True,
-                "help": "Release manifestindeki çocuk ajan rolü.",
-            },
-            {
-                "name": "max_decisions",
-                "kind": "integer",
-                "required": True,
-                "min": 1,
-                "max": MAX_AGENT_CALL_DECISIONS,
-                "help": f"Çocuk ajanın en fazla karar sayısı (1..{MAX_AGENT_CALL_DECISIONS}).",
-            },
-            {
-                "name": "allowed_actions",
-                "kind": "list",
-                "required": True,
-                "options": sorted(AGENT_CALL_ACTIONS),
-                "help": "Çocuk ajana devredilen izinli eylemler (üst yetkinin alt kümesi).",
             },
         ],
     },
@@ -417,7 +377,7 @@ for _node in _BUILTIN_NODES:
 # backend compiler in apps.workflows.compiler remains the source of truth).
 _RETRY_POLICY_SCHEMA: dict[str, Any] = {
     "max_attempts": {"min": 1, "max": MAX_RETRY_ATTEMPTS},
-    "backoff_seconds": {"min": 0, "max": MAX_RETRY_BACKOFF_SECONDS},
+    "backoff_seconds": {"min": 0, "max": 0},
     "retry_on": ["transient"],
     "idempotent_required": True,
 }
@@ -463,12 +423,8 @@ def build_node_schema(*, organization_id: int) -> dict[str, Any]:
         .values_list("logical_id", flat=True)
         .distinct()
     ]
-    # Composition (subworkflow/agent_call) is deployment-gated. It is always shown in the
-    # palette so authors can see it, but marked ``gated`` when disabled so the UI can render
-    # it as unavailable; the compiler independently rejects composition nodes when the gate is
-    # off, so UI exposure can never activate a gated capability.
-    composition_enabled = bool(getattr(settings, "WORKFLOW_COMPOSITION_ENABLED", False))
-    agent_loop_enabled = bool(getattr(settings, "WORKFLOW_AGENT_LOOP_ENABLED", False))
+    composition_enabled = True
+    agent_loop_enabled = True
     return {
         "dsl": {"api_version": "agenthub/v1", "kind": "Workflow"},
         "limits": {

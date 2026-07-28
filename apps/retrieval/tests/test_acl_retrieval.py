@@ -14,7 +14,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.utils import timezone
 
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.documents import services as doc_services
 from apps.documents import storage
 from apps.documents.models import (
@@ -139,7 +139,6 @@ def _scenario(org: Organization) -> Scenario:
         project=project,
         slug="acl",
         name="ACL",
-        type=ScenarioType.RAG,
     )
 
 

@@ -1,4 +1,4 @@
-"""Deterministic agent compilation and release-level tool-allowlist closure."""
+"""Deterministic embedded agent-loop policy compilation."""
 
 from __future__ import annotations
 
@@ -6,10 +6,7 @@ import pytest
 
 from apps.agents.compiler import AgentCompileError, compile_agent
 from apps.agents.limits import MAX_STEPS, MAX_TOKENS
-from apps.agents.tests.conftest import agent_body, build_agent
-from apps.artifacts.services import create_artifact_version
-from apps.artifacts.types import ArtifactType
-from apps.releases.compiler import ArtifactRef, CompileError, compile_release
+from apps.agents.tests.conftest import agent_body
 
 
 def test_compile_emits_immutable_config_and_checksum() -> None:
@@ -44,35 +41,3 @@ def test_limits_lowered_but_never_raised() -> None:
 def test_compile_rejects_invalid_body() -> None:
     with pytest.raises(AgentCompileError):
         compile_agent(agent_body(tools=["dup", "dup"]))
-
-
-@pytest.mark.django_db
-def test_release_compile_pins_agent_checksum() -> None:
-    fixture = build_agent(promote=False)
-    assert "agent_checksum" in fixture.release.manifest
-    assert "agent_definition" in fixture.release.manifest["artifacts"]
-
-
-@pytest.mark.django_db
-def test_release_rejects_tool_not_pinned() -> None:
-    # An agent declaring a tool with no matching tool_binding role fails closed.
-    from apps.catalog.models import AIProject, Scenario, ScenarioType
-    from apps.tenancy.models import Organization
-
-    org = Organization.objects.create(slug="closure-org", name="Closure")
-    project = AIProject.objects.create(organization=org, slug="cx", name="CX")
-    scenario = Scenario.objects.create(project=project, slug="a", name="A", type=ScenarioType.AGENT)
-    create_artifact_version(
-        organization=org,
-        artifact_type=ArtifactType.AGENT_DEFINITION,
-        logical_id="assistant",
-        body=agent_body(tools=["ghost_tool"]),
-        created_by="editor",
-    )
-    with pytest.raises(CompileError):
-        compile_release(
-            scenario=scenario,
-            refs=[ArtifactRef("agent_definition", ArtifactType.AGENT_DEFINITION, "assistant", 1)],
-            runtime_version="agent:1",
-            created_by="editor",
-        )

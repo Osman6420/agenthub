@@ -1,235 +1,187 @@
-"""Celery workflow task; messages carry only the authoritative run id."""
+"""Identifier-only Celery delivery for unified Runs and parallel branches."""
 
 from __future__ import annotations
 
-import logging
 import uuid
 from functools import partial
 
 from celery import shared_task
-from django.conf import settings
 from django.db import transaction
-from django.utils import timezone
 
-from apps.artifacts.validation import compute_checksum
 from apps.tenancy.context import set_tenant_context
-from apps.workflows.models import (
-    Run,
-    WorkflowBranch,
-    WorkflowRun,
-    WorkflowRunEvent,
-    WorkflowRunStatus,
-)
-from apps.workflows.runtime import (
-    WorkflowParallelPending,
-    WorkflowPaused,
-    WorkflowRetryPending,
-    WorkflowRuntimeError,
-    execute_branch_path,
-    execute_graph,
-)
-from apps.workflows.services import _next_sequence
-from apps.workflows.waits import reconcile_due_waits
-
-logger = logging.getLogger(__name__)
+from apps.workflows.models import Run
+from apps.workflows.runtime import WorkflowRuntimeError
 
 
-def _dispatch_branches(branch_ids: tuple[int, ...], organization_id: int) -> None:
-    for branch_id in branch_ids:
-        execute_workflow_branch.delay(branch_id, organization_id)
+def dispatch_unified_run_branches(
+    *,
+    organization_id: int,
+    run_id: uuid.UUID,
+    region_node_id: str,
+) -> int:
+    """Reserve and publish only the branch slots the region may currently run."""
 
+    from apps.workflows.run_parallel import admit_run_branch_deliveries
 
-def _dispatch_retry(run_id: int, organization_id: int, countdown_seconds: int) -> None:
-    execute_workflow_run.apply_async(args=(run_id, organization_id), countdown=countdown_seconds)
-
-
-@shared_task(queue="runtime", acks_late=True)
-def execute_workflow_run(run_id: int, organization_id: int | None = None) -> str:
-    if organization_id is None:
-        organization_id = (
-            WorkflowRun.objects.filter(pk=run_id).values_list("organization_id", flat=True).first()
+    deliveries = admit_run_branch_deliveries(
+        organization_id=organization_id,
+        run_id=run_id,
+        region_node_id=region_node_id,
+    )
+    for delivery in deliveries:
+        transaction.on_commit(
+            partial(
+                execute_unified_run_branch.apply_async,
+                args=(str(delivery.branch_id), organization_id, str(delivery.delivery_token)),
+                queue="runtime",
+            )
         )
-        if organization_id is None:
-            logger.warning(
-                "workflow task ignored because run does not exist", extra={"run_id": run_id}
-            )
-            return "missing"
-    try:
-        with transaction.atomic():
-            set_tenant_context(organization_id)
-            run = (
-                WorkflowRun.objects.select_for_update()
-                .select_related("workflow_version", "release")
-                .get(pk=run_id, organization_id=organization_id)
-            )
-            if run.status in {
-                WorkflowRunStatus.COMPLETED,
-                WorkflowRunStatus.FAILED,
-                WorkflowRunStatus.TIMED_OUT,
-                WorkflowRunStatus.CANCELLED,
-            }:
-                return str(run.status)
-            if run.status not in {
-                WorkflowRunStatus.QUEUED,
-                WorkflowRunStatus.REQUESTED,
-                WorkflowRunStatus.WAITING_APPROVAL,
-                WorkflowRunStatus.WAITING_EVENT,
-                WorkflowRunStatus.WAITING_HUMAN,
-                WorkflowRunStatus.WAITING_TIMER,
-                WorkflowRunStatus.WAITING_CHILD,
-            } and not (run.status == WorkflowRunStatus.RUNNING and run.awaiting_node):
-                return str(run.status)
-            resuming = run.status in {
-                WorkflowRunStatus.WAITING_APPROVAL,
-                WorkflowRunStatus.WAITING_EVENT,
-                WorkflowRunStatus.WAITING_HUMAN,
-                WorkflowRunStatus.WAITING_TIMER,
-                WorkflowRunStatus.WAITING_CHILD,
-            }
-            run.status = WorkflowRunStatus.RUNNING
-            if run.started_at is None:
-                run.started_at = timezone.now()
-            run.save(update_fields=["status", "started_at", "updated_at"])
-            WorkflowRunEvent.objects.create(
-                run=run,
-                sequence=_next_sequence(run),
-                event_type="run_resumed" if resuming else "run_started",
-                outcome="running",
-            )
-    except WorkflowRun.DoesNotExist:
-        # Stale/redelivered broker messages can outlive a rolled-back or ephemeral
-        # database. They carry no tenant data and must be an idempotent safe no-op.
-        logger.warning("workflow task ignored because run does not exist", extra={"run_id": run_id})
-        return "missing"
+    return len(deliveries)
+
+
+@shared_task(queue="runtime", acks_late=True, reject_on_worker_lost=True)
+def execute_unified_run_branch(branch_id: str, organization_id: int, delivery_token: str) -> str:
+    """Execute one server-owned unified branch, then converge its join and parent Run."""
+
+    from apps.workflows.models import RunBranch
+    from apps.workflows.run_parallel import (
+        RunParallelError,
+        claim_run_branch,
+        complete_run_branch,
+    )
+    from apps.workflows.run_waits import RunWaitError, resume_run_for_join
+    from apps.workflows.unified_executor import (
+        UnifiedExecutorError,
+        execute_run_branch_path,
+    )
 
     try:
-        with transaction.atomic():
-            set_tenant_context(organization_id)
+        identifier = uuid.UUID(branch_id)
+        token = uuid.UUID(delivery_token)
+    except (AttributeError, TypeError, ValueError):
+        return "invalid"
+    try:
+        claim = claim_run_branch(
+            organization_id=organization_id,
+            branch_id=identifier,
+            delivery_token=token,
+        )
+        if claim == "claimed":
+            with transaction.atomic():
+                set_tenant_context(organization_id)
+                branch = RunBranch.objects.select_related(
+                    "run__workflow_version", "run__release", "run__consumer"
+                ).get(pk=identifier, organization_id=organization_id)
+                attempt = branch.attempt_count
             try:
-                result = execute_graph(run=run)
-            except WorkflowPaused:
-                # Commit the durable waiting checkpoint before acknowledging the task.
-                return str(run.status)
-            except WorkflowParallelPending as pending:
-                if pending.branch_ids:
-                    branch_ids = tuple(pending.branch_ids)
-                    transaction.on_commit(partial(_dispatch_branches, branch_ids, organization_id))
-                return "parallel_pending"
-            except WorkflowRetryPending as pending:
-                transaction.on_commit(
-                    partial(_dispatch_retry, run_id, organization_id, pending.countdown_seconds)
-                )
-                return "retry_pending"
-    except WorkflowRuntimeError as exc:
-        return _finish_error(run_id, organization_id, exc.code)
-
-    with transaction.atomic():
-        set_tenant_context(organization_id)
-        run = WorkflowRun.objects.select_for_update().get(
-            pk=run_id, organization_id=organization_id
+                result = execute_run_branch_path(branch=branch, delivery_token=token)
+                reason_code = ""
+            except (UnifiedExecutorError, WorkflowRuntimeError) as exc:
+                result, reason_code = None, exc.code
+            claim = complete_run_branch(
+                organization_id=organization_id,
+                branch_id=identifier,
+                delivery_token=token,
+                idempotency_key=f"run-branch:{identifier}:attempt:{attempt}",
+                result_state=result,
+                reason_code=reason_code,
+            ).outcome
+        branch_location = (
+            RunBranch.objects.filter(pk=identifier, organization_id=organization_id)
+            .values_list("region_node_id", "run_id")
+            .first()
         )
-        if run.status == WorkflowRunStatus.CANCELLED:
-            return str(run.status)
-        run.redacted_state = result.state
-        run.status = WorkflowRunStatus.COMPLETED
-        run.finished_at = timezone.now()
-        run.save(update_fields=["redacted_state", "status", "finished_at", "updated_at"])
-        node_types = {
-            node["id"]: node["type"] for node in run.workflow_version.compiled_graph["nodes"]
-        }
-        for node_id in result.executed_nodes:
-            WorkflowRunEvent.objects.create(
-                run=run,
-                sequence=_next_sequence(run),
-                event_type="node_completed",
-                node_id=node_id,
-                outcome=node_types.get(node_id, "unknown"),
-                state_checksum=compute_checksum(result.state),
-            )
-        WorkflowRunEvent.objects.create(
-            run=run,
-            sequence=_next_sequence(run),
-            event_type="run_completed",
-            outcome="completed",
-            state_checksum=compute_checksum(result.state),
-        )
-    return WorkflowRunStatus.COMPLETED
-
-
-def _finish_error(run_id: int, organization_id: int, code: str) -> str:
-    with transaction.atomic():
-        set_tenant_context(organization_id)
-        run = WorkflowRun.objects.select_for_update().get(
-            pk=run_id, organization_id=organization_id
-        )
-        if run.status == WorkflowRunStatus.CANCELLED:
-            return str(run.status)
-        status = (
-            WorkflowRunStatus.TIMED_OUT
-            if code
-            in {"WORKFLOW_TIMED_OUT", "WORKFLOW_NODE_TIMED_OUT", "COMPOSITION_CHILD_TIMED_OUT"}
-            else WorkflowRunStatus.FAILED
-        )
-        run.status = status
-        run.error_code = code
-        run.finished_at = timezone.now()
-        run.save(update_fields=["status", "error_code", "finished_at", "updated_at"])
-        WorkflowRunEvent.objects.create(
-            run=run,
-            sequence=_next_sequence(run),
-            event_type="run_failed",
-            outcome=str(status),
-            reason_code=code,
-        )
-    return str(status)
-
-
-@shared_task(queue="runtime", acks_late=True)
-def execute_workflow_branch(branch_id: int, organization_id: int) -> str:
-    """Execute a server-owned branch locator under freshly installed tenant context."""
-    from apps.workflows.parallel import claim_branch, complete_branch
-
-    try:
-        claim = claim_branch(organization_id=organization_id, branch_id=branch_id)
-        if claim != "claimed":
-            return claim
-        with transaction.atomic():
-            set_tenant_context(organization_id)
-            branch = WorkflowBranch.objects.select_related(
-                "run__workflow_version", "run__release", "run__consumer"
-            ).get(pk=branch_id, organization_id=organization_id)
-            result = execute_branch_path(branch=branch)
-        transition = complete_branch(
-            organization_id=organization_id,
-            branch_id=branch_id,
-            idempotency_key=f"branch:{branch_id}:attempt:{branch.attempt_count}",
-            result_state=result,
-        )
-    except (WorkflowBranch.DoesNotExist, WorkflowRun.DoesNotExist):
+        if branch_location is None:
+            return "missing"
+        region_node_id, run_id = branch_location
+    except (RunBranch.DoesNotExist, Run.DoesNotExist, TypeError):
         return "missing"
-    except WorkflowRuntimeError as exc:
-        transition = complete_branch(
+    except RunParallelError as exc:
+        return f"denied:{exc.code}"
+    if claim == "committed":
+        try:
+            dispatch_unified_run_branches(
+                organization_id=organization_id,
+                run_id=run_id,
+                region_node_id=region_node_id,
+            )
+        except RunParallelError:
+            pass
+    try:
+        resume_run_for_join(
             organization_id=organization_id,
-            branch_id=branch_id,
-            idempotency_key=f"branch:{branch_id}:failed",
-            reason_code=exc.code,
+            run_id=run_id,
+            region_node_id=region_node_id,
         )
-    if transition.join_status in {"succeeded", "failed"}:
-        execute_workflow_run.delay(branch.run_id, organization_id)
-    return transition.outcome
+    except (RunWaitError, Run.DoesNotExist):
+        return claim
+    try:
+        dispatch_unified_background_run(run_id=run_id, organization_id=organization_id)
+    except UnifiedExecutorError:
+        pass
+    return claim
 
 
 @shared_task(queue="runtime", acks_late=True)
-def reconcile_workflow_waits(limit: int = 100) -> int:
-    """Wake due durable waits without holding a worker for their delay."""
-    run_ids = reconcile_due_waits(limit=limit)
-    for run_id in run_ids:
-        organization_id = (
-            WorkflowRun.objects.filter(pk=run_id).values_list("organization_id", flat=True).first()
-        )
-        if organization_id is not None:
-            execute_workflow_run.delay(run_id, organization_id)
-    return len(run_ids)
+def reconcile_unified_run_branches(limit: int = 100) -> int:
+    """Repair expired branch delivery/claim leases and publish safe replacements."""
+
+    from apps.tenancy.models import Organization, OrganizationStatus
+    from apps.workflows.run_parallel import RunParallelError, reconcile_run_parallel_work
+    from apps.workflows.run_waits import RunWaitError, resume_run_for_join
+    from apps.workflows.unified_executor import UnifiedExecutorError
+
+    if not 1 <= limit <= 100:
+        return 0
+    remaining = limit
+    published = 0
+    organization_ids = list(
+        Organization.objects.filter(status=OrganizationStatus.ACTIVE)
+        .order_by("id")
+        .values_list("id", flat=True)[:limit]
+    )
+    for organization_id in organization_ids:
+        if remaining <= 0:
+            break
+        try:
+            reconciliation = reconcile_run_parallel_work(
+                organization_id=organization_id,
+                limit=remaining,
+            )
+        except RunParallelError:
+            continue
+        for delivery in reconciliation.deliveries:
+            transaction.on_commit(
+                partial(
+                    execute_unified_run_branch.apply_async,
+                    args=(
+                        str(delivery.branch_id),
+                        organization_id,
+                        str(delivery.delivery_token),
+                    ),
+                    queue="runtime",
+                )
+            )
+        published += len(reconciliation.deliveries)
+        remaining -= reconciliation.regions_scanned
+        for run_id, region_node_id in reconciliation.closed_regions:
+            try:
+                resumed = resume_run_for_join(
+                    organization_id=organization_id,
+                    run_id=run_id,
+                    region_node_id=region_node_id,
+                )
+            except (RunWaitError, Run.DoesNotExist):
+                continue
+            if resumed.outcome == "committed":
+                try:
+                    dispatch_unified_background_run(
+                        run_id=run_id,
+                        organization_id=organization_id,
+                    )
+                except UnifiedExecutorError:
+                    pass
+    return published
 
 
 def dispatch_unified_background_run(
@@ -240,10 +192,8 @@ def dispatch_unified_background_run(
 ) -> uuid.UUID:
     """Schedule an identifier-only unified delivery after the caller commits."""
 
-    from apps.workflows.unified_executor import UnifiedExecutorError, service_revision
+    from apps.workflows.unified_executor import service_revision
 
-    if not bool(getattr(settings, "UNIFIED_BACKGROUND_EXECUTOR_ENABLED", False)):
-        raise UnifiedExecutorError("RUN_EXECUTOR_DISABLED")
     token = delivery_token or uuid.uuid4()
     transaction.on_commit(
         partial(

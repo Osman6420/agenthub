@@ -50,10 +50,10 @@ class TelemetryMiddleware:
 def _route_dimensions(path: str) -> tuple[str, str]:
     if path.startswith("/mcp"):
         return "mcp", "rpc"
-    if path.startswith("/v1/invoke"):
-        return "rest", "invoke"
-    if path.startswith("/v1/query"):
-        return "rest", "query"
+    if path.startswith("/v1/responses"):
+        return "rest", "responses"
+    if path.startswith("/v1/chat/completions"):
+        return "rest", "chat_completions"
     if path.startswith("/v1/runs"):
         return "rest", "run_status"
     if path.startswith("/v1/health"):

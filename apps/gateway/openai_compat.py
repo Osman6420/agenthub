@@ -97,9 +97,10 @@ def chat_response(body: dict[str, Any], alias: str) -> dict[str, Any]:
 
 def responses_response(body: dict[str, Any], alias: str) -> dict[str, Any]:
     request_id = str(body.get("request_id", ""))
+    response_id = str(body.get("response_id") or _opaque("resp", request_id))
     if int(body.get("_http_status", 200)) == 202:
         return {
-            "id": _opaque("resp", request_id),
+            "id": response_id,
             "object": "response",
             "created_at": _created(),
             "status": "queued",
@@ -109,7 +110,6 @@ def responses_response(body: dict[str, Any], alias: str) -> dict[str, Any]:
             "metadata": {"run_id": str(body["run_id"])},
         }
     text = _output_text(body.get("output"))
-    response_id = _opaque("resp", request_id)
     return {
         "id": response_id,
         "object": "response",

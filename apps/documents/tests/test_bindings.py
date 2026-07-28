@@ -21,7 +21,7 @@ pytestmark = pytest.mark.django_db
 
 def _scenario(org: Organization, slug: str = "sc") -> Scenario:
     project = AIProject.objects.create(organization=org, slug=f"p-{slug}", name="P")
-    return Scenario.objects.create(project=project, slug=slug, name="S", type="rag")
+    return Scenario.objects.create(project=project, slug=slug, name="S")
 
 
 def _set(org: Organization, logical_id: str = "kb") -> DocumentSet:

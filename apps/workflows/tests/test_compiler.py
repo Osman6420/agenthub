@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import ArtifactValidationError
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.tenancy.models import Organization
 from apps.workflows.compiler import WorkflowCompileError, compile_workflow
 from apps.workflows.services import compile_workflow_version
 
 
-def workflow_body() -> dict:
+def workflow_body() -> dict[str, Any]:
     return {
         "api_version": "agenthub/v1",
         "kind": "Workflow",
@@ -105,8 +107,8 @@ def test_execution_mode_analysis_is_stable_and_fails_closed_for_unproven_nodes()
     }
 
 
-def test_agent_loop_is_gated_and_reuses_the_closed_agent_policy_contract() -> None:
-    body = {
+def test_agent_loop_reuses_the_closed_agent_policy_contract() -> None:
+    body: dict[str, Any] = {
         "api_version": "agenthub/v1",
         "kind": "Workflow",
         "metadata": {"id": "agent_flow.v1"},
@@ -133,10 +135,7 @@ def test_agent_loop_is_gated_and_reuses_the_closed_agent_policy_contract() -> No
             ],
         },
     }
-    with pytest.raises(WorkflowCompileError, match="not enabled"):
-        compile_workflow(body)
-
-    compiled = compile_workflow(body, allow_agent_loop=True)
+    compiled = compile_workflow(body)
     agent = next(node for node in compiled.graph["nodes"] if node["id"] == "agent")
     assert agent["config"]["policy"]["tools"] == ["tool_binding.search"]
     assert len(agent["config"]["policy_checksum"]) == 64
@@ -147,7 +146,7 @@ def test_agent_loop_is_gated_and_reuses_the_closed_agent_policy_contract() -> No
 
     body["spec"]["nodes"][1]["config"]["endpoint"] = "https://attacker.example"
     with pytest.raises(WorkflowCompileError, match="forbidden"):
-        compile_workflow(body, allow_agent_loop=True)
+        compile_workflow(body)
 
 
 def test_custom_node_requires_explicit_compiler_allowlist() -> None:
@@ -321,7 +320,6 @@ def test_artifact_validation_and_tenant_scoped_compilation() -> None:
         project=project,
         slug="workflow",
         name="Workflow",
-        type=ScenarioType.WORKFLOW,
     )
     artifact = create_artifact_version(
         organization=organization,
@@ -345,7 +343,6 @@ def test_artifact_validation_and_tenant_scoped_compilation() -> None:
         project=other_project,
         slug="workflow",
         name="Other workflow",
-        type=ScenarioType.WORKFLOW,
     )
     with pytest.raises(WorkflowCompileError, match="another organization"):
         compile_workflow_version(

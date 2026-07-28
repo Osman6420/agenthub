@@ -453,20 +453,20 @@ def execute_configured_python_node(
 
 
 def _emit_safe_audit(run: Any, event: dict[str, str | int | bool], node_id: str) -> None:
-    from apps.workflows.models import WorkflowRunEvent
-    from apps.workflows.services import _next_sequence
+    from apps.workflows.models import RunEventType
+    from apps.workflows.run_events import append_locked_run_event
 
     if not getattr(run, "id", 0):
         return
-    WorkflowRunEvent.objects.create(
+    append_locked_run_event(
         run=run,
-        organization_id=run.organization_id,
-        sequence=_next_sequence(run),
-        event_type="python_node_execution",
+        event_type=RunEventType.CHECKPOINTED,
         node_id=node_id,
         outcome=str(event.get("outcome", "denied")),
         reason_code=str(event.get("reason_code", "PYTHON_NODE_AUDIT_INCOMPLETE")),
+        payload={"kind": "python_node_execution"},
     )
+    run.save(update_fields=["next_event_sequence", "updated_at"])
 
 
 def _resolve_exact(pin: PythonNodePin, resolver: PythonNodeResolver) -> ResolvedPythonNode:

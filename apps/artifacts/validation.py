@@ -105,11 +105,3 @@ def validate_body(artifact_type: str, body: Any) -> None:
             validate_tool_artifact_body(artifact_type, body)
         except ToolArtifactError as exc:
             raise ArtifactValidationError(str(exc)) from exc
-
-    if artifact_type == ArtifactType.AGENT_DEFINITION:
-        from apps.agents.compiler import AgentCompileError, validate_artifact_body
-
-        try:
-            validate_artifact_body(artifact_type, body)
-        except AgentCompileError as exc:
-            raise ArtifactValidationError(str(exc)) from exc

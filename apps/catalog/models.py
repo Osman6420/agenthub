@@ -29,13 +29,6 @@ class RiskLevel(models.TextChoices):
     CRITICAL = "critical", "Critical"
 
 
-class ScenarioType(models.TextChoices):
-    RAG = "rag", "RAG"
-    WORKFLOW = "workflow", "Workflow"
-    AGENT = "agent", "Agent"
-    ADAPTER = "adapter", "Adapter"
-
-
 class Visibility(models.TextChoices):
     INTERNAL = "internal", "Internal"
     CUSTOMER_FACING = "customer_facing", "Customer facing"
@@ -116,7 +109,6 @@ class Scenario(TimeStampedModel):
     project = models.ForeignKey(AIProject, on_delete=models.CASCADE, related_name="scenarios")
     slug = models.SlugField(max_length=64)
     name = models.CharField(max_length=200)
-    type = models.CharField(max_length=16, choices=ScenarioType.choices)
     visibility = models.CharField(
         max_length=16, choices=Visibility.choices, default=Visibility.INTERNAL
     )

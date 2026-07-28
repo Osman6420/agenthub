@@ -21,4 +21,4 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 | [0011](0011-reviewed-python-node-isolation-and-lifecycle.md) | Proposed | P2.6.8 minimum isolated runner, exact-checksum review/activation, source governance and safe catalog contract. |
 | [0012](0012-durable-ingestion-build-jobs-and-worker-readiness.md) | Accepted | PostgreSQL-authoritative staged-index jobs, dispatch outbox, reconciliation and compatible-worker evidence. |
 | [0013](0013-scoped-operator-capabilities-and-superadmin-recovery.md) | Accepted | Closed operator capabilities, delegated object scopes, document-content separation and exceptional superadmin recovery. |
-| [0014](0014-unified-workflow-engine-cutover.md) | Proposed | One executable workflow artifact/runtime, compiler-owned execution modes, breaking cutover and empty-database rollback. |
+| [0014](0014-unified-workflow-engine-cutover.md) | Accepted | One executable workflow artifact/runtime, compiler-owned execution modes, breaking cutover and empty-database rollback. |

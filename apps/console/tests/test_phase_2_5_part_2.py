@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 from django.urls import reverse
 
-from apps.catalog.models import AIProject, Scenario, ScenarioAlias, ScenarioType
+from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.catalog.services import create_console_project, create_console_scenario
 from apps.console.forms import (
     DocumentSetForm,
@@ -72,9 +72,7 @@ def test_console_services_generate_organization_and_document_set_ids() -> None:
 def test_catalog_console_services_generate_stable_ids_and_atomic_alias() -> None:
     organization = Organization.objects.create(slug="existing", name="Existing")
     project = create_console_project(organization=organization, name="İş Süreçleri")
-    scenario = create_console_scenario(
-        project=project, name="Müşteri Yanıtı", type=ScenarioType.RAG
-    )
+    scenario = create_console_scenario(project=project, name="Müşteri Yanıtı")
 
     assert project.slug.startswith("is-surecleri-")
     assert scenario.slug.startswith("musteri-yaniti-")
@@ -98,7 +96,7 @@ def test_uuid_routes_are_canonical_and_legacy_routes_remain_scoped() -> None:
     client = _member_client(organization)
     project = AIProject.objects.create(organization=organization, slug="p", name="P")
     scenario = Scenario.objects.create(
-        organization=organization, project=project, slug="s", name="S", type=ScenarioType.RAG
+        organization=organization, project=project, slug="s", name="S"
     )
     document = Document.objects.create(organization=organization, logical_id="d")
     document_set = DocumentSet.objects.create(

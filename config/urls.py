@@ -3,8 +3,8 @@
 The operator console (`/console/`) is the management surface (ADR-0001). Django
 Admin is routed only when ``ENABLE_DJANGO_ADMIN`` is set (local dev), never in
 production. Unauthenticated operational health probes live under `/v1/health/`.
-The authenticated public product API (`/v1/invoke` ...) is added with the gateway
-in Sprint 3.
+The authenticated public product API is `/v1/responses` with the synchronous
+`/v1/chat/completions` compatibility adapter.
 """
 
 from __future__ import annotations

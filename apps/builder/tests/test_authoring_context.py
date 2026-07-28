@@ -11,7 +11,7 @@ from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
 from apps.builder.authoring_context import build_authoring_context, validate_workflow_references
 from apps.builder.tests.conftest import BuilderFixture, simple_workflow
-from apps.catalog.models import Scenario, ScenarioType
+from apps.catalog.models import Scenario
 from apps.documents.models import (
     DocumentSet,
     DocumentSetVersion,
@@ -53,7 +53,6 @@ def test_context_is_deterministic_scoped_and_redacted(bf: BuilderFixture) -> Non
         project=bf.project,
         slug="studio",
         name="Studio",
-        type=ScenarioType.WORKFLOW,
     )
     definition = ToolDefinition.objects.create(
         organization=bf.org,
@@ -106,7 +105,6 @@ def test_context_includes_safe_python_release_contract_and_retrieval_capabilitie
         project=bf.project,
         slug="capabilities",
         name="Capabilities",
-        type=ScenarioType.WORKFLOW,
     )
     input_schema = {"type": "object", "properties": {"question": {"type": "string"}}}
     artifact = ArtifactVersion.objects.create(
@@ -177,7 +175,6 @@ def test_reference_validation_rejects_invented_tool_role(bf: BuilderFixture) -> 
         project=bf.project,
         slug="studio",
         name="Studio",
-        type=ScenarioType.WORKFLOW,
     )
     context = build_authoring_context(project=bf.project, scenario=scenario)
     body = simple_workflow()
@@ -204,7 +201,6 @@ def test_context_rejects_python_catalog_with_non_public_fields(bf: BuilderFixtur
         project=bf.project,
         slug="unsafe-catalog",
         name="Unsafe catalog",
-        type=ScenarioType.WORKFLOW,
     )
 
     with pytest.raises(ValueError, match="python_node_catalog_invalid"):
@@ -219,7 +215,6 @@ def test_reference_validation_rejects_invented_prompt_and_model_roles(
         project=bf.project,
         slug="invented-generation-role",
         name="Invented generation role",
-        type=ScenarioType.WORKFLOW,
     )
     context = build_authoring_context(project=bf.project, scenario=scenario)
     body = simple_workflow()

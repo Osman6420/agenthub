@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import uuid
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, LifecycleStatus, Scenario, ScenarioType
+from apps.catalog.models import AIProject, LifecycleStatus, Scenario
 from apps.gateway.execution_context import issue_execution_context
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
 from apps.releases.compiler import ArtifactRef, CompileError, compile_release, promote_release
 from apps.tenancy.models import Organization
-from apps.workflows.models import WorkflowRunStatus
-from apps.workflows.runtime import WorkflowRuntimeError, _run_transform_node, execute_graph
-from apps.workflows.services import request_workflow_run, resolve_release_workflow
-from apps.workflows.tasks import execute_workflow_run
+from apps.workflows.models import RunStatus
+from apps.workflows.runtime import WorkflowRuntimeError, _run_transform_node
+from apps.workflows.services import request_unified_run, resolve_release_workflow
+from apps.workflows.transitions import renew_sync_lease
+from apps.workflows.unified_executor import (
+    UnifiedExecutorError,
+    _validated_graph,
+    execute_sync_run,
+)
 
 ORG_SLUG = "transform-org"
 
@@ -73,7 +80,6 @@ def _setup(*, pin_transform: bool = True):
         project=project,
         slug="flow",
         name="Flow",
-        type=ScenarioType.WORKFLOW,
         status=LifecycleStatus.ACTIVE,
     )
     output_contract = create_artifact_version(
@@ -140,7 +146,7 @@ def test_transform_node_runs_pinned_profile_and_maps_output() -> None:
         release_id=release.id,
         request_id="req-1",
     )
-    run, _created = request_workflow_run(
+    run, _created = request_unified_run(
         release=release,
         consumer=consumer,
         workflow_version=resolve_release_workflow(release),
@@ -149,10 +155,25 @@ def test_transform_node_runs_pinned_profile_and_maps_output() -> None:
             "rows": [{"active": True, "n": 1}, {"active": False, "n": 2}],
         },
         idempotency_key="transform-1",
+        execution_mode="sync",
     )
-    assert execute_workflow_run(run.id) == WorkflowRunStatus.COMPLETED
+    lease_token = uuid.uuid4()
+    renew_sync_lease(
+        organization_id=org.id,
+        run_id=run.id,
+        lease_token=lease_token,
+        expires_at=timezone.now() + timedelta(seconds=30),
+    )
+    assert (
+        execute_sync_run(
+            organization_id=org.id,
+            run_id=run.id,
+            lease_token=lease_token,
+        ).status
+        == RunStatus.COMPLETED
+    )
     run.refresh_from_db()
-    assert run.status == WorkflowRunStatus.COMPLETED
+    assert run.status == RunStatus.COMPLETED
     # Only the active row survives the filter and gains the default; booleans/ints are not
     # redacted, so we can assert the governed transform actually ran and its output mapped.
     assert run.redacted_state["evidence"]["normalized"] == [
@@ -175,18 +196,9 @@ def test_transform_node_unresolved_profile_fails_closed(monkeypatch: pytest.Monk
 
 @pytest.mark.django_db
 def test_runtime_rejects_stale_compiled_contract_version() -> None:
-    org, scenario, release = _setup()
+    _org, _scenario, release = _setup()
     version = resolve_release_workflow(release)
     stale_graph = dict(version.compiled_graph)
     stale_graph["api_version"] = "agenthub/compiled-workflow/v1"
-    run = SimpleNamespace(
-        workflow_version=SimpleNamespace(compiled_graph=stale_graph),
-        release=release,
-        redacted_state={"input": {}},
-        status=WorkflowRunStatus.RUNNING,
-        deadline_at=release.created_at,
-        consumer_id=None,
-        refresh_from_db=lambda **kwargs: None,
-    )
-    with pytest.raises(WorkflowRuntimeError, match="WORKFLOW_COMPILER_VERSION_UNSUPPORTED"):
-        execute_graph(run=run, verify_context=False)
+    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_GRAPH_VERSION_UNSUPPORTED"):
+        _validated_graph(stale_graph)

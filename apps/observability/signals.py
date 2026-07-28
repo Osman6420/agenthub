@@ -8,14 +8,11 @@ from django.contrib.auth.signals import user_logged_in
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from apps.agents.models import AgentRun, AgentRunEvent
 from apps.audit.models import AuditEvent
 from apps.audit.services import record_event
 from apps.evaluations.models import EvalCaseResult
 from apps.ingestion.models import IngestionRun
 from apps.observability.metrics import (
-    AGENT_RUNS,
-    AGENT_STEPS,
     EVAL_CASES,
     INGESTION_RUNS,
     RELEASE_LIFECYCLE,
@@ -24,14 +21,8 @@ from apps.observability.metrics import (
     TOKENS,
     TOOL_APPROVALS,
     TOOL_INVOCATIONS,
-    WORKFLOW_BRANCHES,
-    WORKFLOW_CHILDREN,
-    WORKFLOW_COMPENSATIONS,
-    WORKFLOW_JOINS,
-    WORKFLOW_NODES,
-    WORKFLOW_RETRIES,
-    WORKFLOW_RUNS,
-    WORKFLOW_WAITS,
+    UNIFIED_RUN_ADMISSIONS,
+    UNIFIED_RUN_EVENTS,
 )
 from apps.observability.models import UsageEvent
 from apps.observability.tracing import current_trace_id
@@ -41,29 +32,15 @@ from apps.tools.models import (
     ApprovalStatus,
     ToolInvocation,
 )
-from apps.workflows.compiler import BUILTIN_NODE_TYPES
 from apps.workflows.models import (
-    WorkflowBranch,
-    WorkflowChildLink,
-    WorkflowCompensationEntry,
-    WorkflowJoin,
-    WorkflowNodeAttempt,
-    WorkflowRun,
-    WorkflowRunEvent,
-    WorkflowWait,
+    Run,
+    RunEvent,
+    RunEventType,
+    RunExecutionMode,
 )
 
-_BRANCH_OUTCOMES = frozenset({"succeeded", "failed", "cancelled"})
-_JOIN_MODES = frozenset({"all", "threshold", "fail_fast"})
-_JOIN_OUTCOMES = frozenset({"succeeded", "failed", "cancelled"})
-_WAIT_KINDS = frozenset({"event", "timer", "human"})
-_WAIT_RESOLVED = frozenset({"resumed", "expired", "cancelled"})
-_FAILURE_CLASSES = frozenset(
-    {"validation", "authorization", "permanent", "transient", "outcome_unknown"}
-)
-_COMPENSATION_OUTCOMES = frozenset({"succeeded", "blocked", "cancelled"})
-_CHILD_KINDS = frozenset({"workflow", "agent"})
-_CHILD_TERMINAL = frozenset({"completed", "failed", "cancelled"})
+_RUN_EVENT_TYPES = frozenset(str(value) for value in RunEventType.values)
+_RUN_EXECUTION_MODES = frozenset(str(value) for value in RunExecutionMode.values)
 
 
 def _bounded(value: str, allowed: frozenset[str]) -> str:
@@ -139,109 +116,20 @@ def superadmin_logged_in(sender: Any, request: Any, user: Any, **kwargs: Any) ->
     )
 
 
-@receiver(post_save, sender=WorkflowRun, dispatch_uid="observability.workflow_run")
-def workflow_run_saved(sender: Any, instance: WorkflowRun, **kwargs: Any) -> None:
-    status = str(instance.status)
-    if status not in {
-        "requested",
-        "queued",
-        "running",
-        "completed",
-        "failed",
-        "timed_out",
-        "cancelled",
-    }:
-        status = "other"
-    WORKFLOW_RUNS.labels(status=status).inc()
-
-
-@receiver(post_save, sender=WorkflowRunEvent, dispatch_uid="observability.workflow_node")
-def workflow_event_saved(
-    sender: Any, instance: WorkflowRunEvent, created: bool, **kwargs: Any
-) -> None:
-    if not created or instance.event_type != "node_completed":
+@receiver(post_save, sender=Run, dispatch_uid="observability.unified_run")
+def unified_run_saved(sender: Any, instance: Run, created: bool, **kwargs: Any) -> None:
+    if not created:
         return
-    node_type = instance.outcome if instance.outcome in BUILTIN_NODE_TYPES else "other"
-    WORKFLOW_NODES.labels(node_type=node_type).inc()
+    execution_mode = _bounded(str(instance.execution_mode), _RUN_EXECUTION_MODES)
+    UNIFIED_RUN_ADMISSIONS.labels(execution_mode=execution_mode).inc()
 
 
-@receiver(post_save, sender=AgentRun, dispatch_uid="observability.agent_run")
-def agent_run_saved(sender: Any, instance: AgentRun, **kwargs: Any) -> None:
-    status = str(instance.status)
-    if status not in {
-        "requested",
-        "queued",
-        "running",
-        "waiting_approval",
-        "completed",
-        "failed",
-        "timed_out",
-        "cancelled",
-    }:
-        status = "other"
-    AGENT_RUNS.labels(status=status).inc()
-
-
-@receiver(post_save, sender=AgentRunEvent, dispatch_uid="observability.agent_step")
-def agent_event_saved(sender: Any, instance: AgentRunEvent, created: bool, **kwargs: Any) -> None:
-    if not created or instance.event_type != "step_completed":
+@receiver(post_save, sender=RunEvent, dispatch_uid="observability.unified_run_event")
+def unified_run_event_saved(sender: Any, instance: RunEvent, created: bool, **kwargs: Any) -> None:
+    if not created:
         return
-    decision = (
-        instance.decision if instance.decision in {"retrieve", "tool", "respond"} else "other"
-    )
-    AGENT_STEPS.labels(decision=decision).inc()
-
-
-@receiver(post_save, sender=WorkflowBranch, dispatch_uid="observability.workflow_branch")
-def workflow_branch_saved(sender: Any, instance: WorkflowBranch, **kwargs: Any) -> None:
-    if str(instance.status) in _BRANCH_OUTCOMES:
-        WORKFLOW_BRANCHES.labels(outcome=str(instance.status)).inc()
-
-
-@receiver(post_save, sender=WorkflowJoin, dispatch_uid="observability.workflow_join")
-def workflow_join_saved(sender: Any, instance: WorkflowJoin, **kwargs: Any) -> None:
-    if str(instance.status) in _JOIN_OUTCOMES:
-        WORKFLOW_JOINS.labels(
-            mode=_bounded(str(instance.mode), _JOIN_MODES),
-            outcome=str(instance.status),
-        ).inc()
-
-
-@receiver(post_save, sender=WorkflowWait, dispatch_uid="observability.workflow_wait")
-def workflow_wait_saved(sender: Any, instance: WorkflowWait, created: bool, **kwargs: Any) -> None:
-    kind = _bounded(str(instance.kind), _WAIT_KINDS)
-    if created:
-        WORKFLOW_WAITS.labels(kind=kind, phase="created").inc()
-    elif str(instance.status) in _WAIT_RESOLVED:
-        WORKFLOW_WAITS.labels(kind=kind, phase=str(instance.status)).inc()
-
-
-@receiver(post_save, sender=WorkflowNodeAttempt, dispatch_uid="observability.workflow_retry")
-def workflow_attempt_saved(sender: Any, instance: WorkflowNodeAttempt, **kwargs: Any) -> None:
-    # A scheduled retry is the retry-storm signal; count when an attempt enters retry_wait.
-    if str(instance.status) == "retry_wait":
-        WORKFLOW_RETRIES.labels(
-            failure_class=_bounded(str(instance.failure_class), _FAILURE_CLASSES)
-        ).inc()
-
-
-@receiver(
-    post_save, sender=WorkflowCompensationEntry, dispatch_uid="observability.workflow_compensation"
-)
-def workflow_compensation_saved(
-    sender: Any, instance: WorkflowCompensationEntry, **kwargs: Any
-) -> None:
-    if str(instance.status) in _COMPENSATION_OUTCOMES:
-        WORKFLOW_COMPENSATIONS.labels(outcome=str(instance.status)).inc()
-
-
-@receiver(post_save, sender=WorkflowChildLink, dispatch_uid="observability.workflow_child")
-def workflow_child_saved(sender: Any, instance: WorkflowChildLink, **kwargs: Any) -> None:
-    if str(instance.status) in _CHILD_TERMINAL:
-        WORKFLOW_CHILDREN.labels(
-            kind=_bounded(str(instance.child_kind), _CHILD_KINDS),
-            status=str(instance.status),
-        ).inc()
+    event_type = _bounded(str(instance.event_type), _RUN_EVENT_TYPES)
+    UNIFIED_RUN_EVENTS.labels(event_type=event_type).inc()
 
 
 @receiver(post_save, sender=ToolInvocation, dispatch_uid="observability.tool_invocation")

@@ -106,7 +106,7 @@ acceptance gate.
 ## Part records
 
 - [Part 2 archive](archive/phase-2-8-part-2-organization-access-management-2026-07-22/plan.md)
-- [Part 3 plan](../tasks/phase-2-8-part-3-unified-workflow-engine/plan.md)
+- [Part 3 archive](archive/phase-2-8-part-3-unified-workflow-engine-2026-07-28/plan.md)
 - [Part 4 plan](../tasks/phase-2-8-part-4-scenario-authoring-release-experience/plan.md)
 - [Part 5 plan](../tasks/phase-2-8-part-5-document-profiles-index-automation/plan.md)
 - [Part 6 plan](../tasks/phase-2-8-part-6-question-sets-evaluation/plan.md)

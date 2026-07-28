@@ -24,8 +24,8 @@ def resolve_runtime_policy(
 ) -> RuntimeAgentPolicy:
     """Resolve server-compiled policy plus child-call attenuation.
 
-    The function performs no persistence or provider calls, so both the legacy AgentRun runtime and
-    the unified workflow runtime can consume the same authority calculation.
+    The function performs no persistence or provider calls, so every embedded agent-loop node
+    consumes the same authority calculation.
     """
 
     limits = dict(compiled_config["limits"])

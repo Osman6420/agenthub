@@ -55,10 +55,10 @@ def test_authenticated_shell_has_keyboard_and_semantic_landmarks(client: Client)
     [
         ("console:projects", "Projeler", "Yetki kapsamınızda kayıt yok", "tablosu"),
         (
-            "console:agent_runs",
-            "Agent çalıştırmaları",
-            "Yetki kapsamınızda agent çalıştırması yok",
-            "Agent çalıştırmaları",
+            "console:workflow_runs",
+            "Workflow çalıştırmaları",
+            "Yetki kapsamınızda workflow çalıştırması yok",
+            "Workflow çalıştırmaları",
         ),
         (
             "console:tool_approvals",

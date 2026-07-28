@@ -6,7 +6,7 @@ import pytest
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, LifecycleStatus, Scenario, ScenarioAlias, ScenarioType
+from apps.catalog.models import AIProject, LifecycleStatus, Scenario, ScenarioAlias
 from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
 from apps.identity.tokens import create_token
 from apps.releases.compiler import ArtifactRef, compile_release, promote_release
@@ -52,7 +52,6 @@ def workflow_fixture(db: object) -> WorkflowFixture:
         project=project,
         slug="flow",
         name="Flow",
-        type=ScenarioType.WORKFLOW,
         status=LifecycleStatus.ACTIVE,
     )
     alias = "workflow-flow"

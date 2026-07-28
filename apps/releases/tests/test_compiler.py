@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from django.db import IntegrityError, transaction
-from django.test import override_settings
 
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
-from apps.catalog.models import AIProject, Scenario, ScenarioType
+from apps.catalog.models import AIProject, Scenario
 from apps.releases.compiler import (
     ArtifactRef,
     CompileError,
@@ -21,6 +22,7 @@ from apps.releases.compiler import (
 )
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization
+from apps.workflows.presets import empty_workflow
 
 INPUT_SCHEMA = {
     "type": "object",
@@ -40,7 +42,7 @@ OUTPUT_SCHEMA = {
 def scenario(db) -> Scenario:
     org = Organization.objects.create(slug="mcm", name="MCM")
     project = AIProject.objects.create(organization=org, slug="cx", name="CX")
-    return Scenario.objects.create(project=project, slug="info", name="Info", type=ScenarioType.RAG)
+    return Scenario.objects.create(project=project, slug="info", name="Info")
 
 
 def _seed_contracts(org: Organization) -> None:
@@ -53,6 +55,13 @@ def _seed_contracts(org: Organization) -> None:
     )
     create_artifact_version(
         organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="customer_workflow",
+        body=empty_workflow(logical_id="customer_workflow"),
+        created_by="alice",
+    )
+    create_artifact_version(
+        organization=org,
         artifact_type=ArtifactType.OUTPUT_CONTRACT,
         logical_id="customer_answer",
         body=OUTPUT_SCHEMA,
@@ -60,11 +69,21 @@ def _seed_contracts(org: Organization) -> None:
     )
 
 
-def _refs() -> list[ArtifactRef]:
-    return [
+def _refs(*, include_workflow: bool = True) -> list[ArtifactRef]:
+    refs = [
         ArtifactRef("input_contract", ArtifactType.INPUT_CONTRACT, "customer_query", 1),
         ArtifactRef("output_contract", ArtifactType.OUTPUT_CONTRACT, "customer_answer", 1),
     ]
+    if include_workflow:
+        refs.append(
+            ArtifactRef(
+                "workflow_definition",
+                ArtifactType.WORKFLOW_DEFINITION,
+                "customer_workflow",
+                1,
+            )
+        )
+    return refs
 
 
 @pytest.mark.django_db
@@ -167,7 +186,7 @@ def test_promote_supersedes_previous_active(scenario: Scenario) -> None:
 
 
 def test_agent_loop_policy_requires_exact_release_pinned_tools() -> None:
-    graph = {
+    graph: dict[str, Any] = {
         "nodes": [
             {
                 "id": "agent",
@@ -184,7 +203,7 @@ def test_agent_loop_policy_requires_exact_release_pinned_tools() -> None:
     with pytest.raises(CompileError, match="no pinned tool_binding"):
         _assert_agent_loop_tools_pinned(graph, {})
 
-    unsafe_manifest = {
+    unsafe_manifest: dict[str, dict[str, object]] = {
         "tool_binding.search": {
             "type": ArtifactType.TOOL_BINDING,
             "tool": {"side_effecting": False, "approval_required": True},
@@ -193,7 +212,7 @@ def test_agent_loop_policy_requires_exact_release_pinned_tools() -> None:
     with pytest.raises(CompileError, match="no-side-effect"):
         _assert_agent_loop_tools_pinned(graph, unsafe_manifest)
 
-    safe_manifest = {
+    safe_manifest: dict[str, dict[str, object]] = {
         "tool_binding.search": {
             "type": ArtifactType.TOOL_BINDING,
             "tool": {"side_effecting": False, "approval_required": False},
@@ -203,7 +222,6 @@ def test_agent_loop_policy_requires_exact_release_pinned_tools() -> None:
 
 
 @pytest.mark.django_db
-@override_settings(WORKFLOW_AGENT_LOOP_ENABLED=True)
 def test_release_pins_agent_loop_execution_mode_analysis(scenario: Scenario) -> None:
     _seed_contracts(scenario.project.organization)
     workflow = create_artifact_version(
@@ -239,7 +257,7 @@ def test_release_pins_agent_loop_execution_mode_analysis(scenario: Scenario) -> 
     release = compile_release(
         scenario=scenario,
         refs=[
-            *_refs(),
+            *_refs(include_workflow=False),
             ArtifactRef(
                 "workflow_definition",
                 ArtifactType.WORKFLOW_DEFINITION,
@@ -448,7 +466,7 @@ def _compile_tool_release(scenario: Scenario, *, approval_required: bool) -> Sce
     return compile_release(
         scenario=scenario,
         refs=[
-            *_refs(),
+            *_refs(include_workflow=False),
             ArtifactRef("workflow_definition", workflow.type, "tool_flow", 1),
             ArtifactRef("tool_binding.search", binding.type, "search_binding", 1),
         ],

@@ -13,13 +13,11 @@ from typing import Any
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.agents.models import AgentRun, AgentRunStatus
 from apps.agents.services import set_runtime_suspension
-from apps.agents.tasks import execute_agent_run
 from apps.tenancy.models import Organization
 from apps.tenancy.services import is_platform_admin
-
-_CLAIMABLE = (AgentRunStatus.QUEUED, AgentRunStatus.REQUESTED, AgentRunStatus.WAITING_APPROVAL)
+from apps.workflows.models import Run, RunExecutionMode, RunStatus
+from apps.workflows.tasks import dispatch_unified_background_run
 
 
 class Command(BaseCommand):
@@ -51,12 +49,15 @@ class Command(BaseCommand):
         )
         # Re-dispatch runs held during suspension. Dispatch is idempotent: the task claims
         # under select_for_update and a still-suspended peer scope simply no-ops again.
-        runs = AgentRun.objects.filter(status__in=_CLAIMABLE)
+        runs = Run.objects.filter(
+            status__in=(RunStatus.QUEUED, RunStatus.REQUESTED),
+            execution_mode=RunExecutionMode.BACKGROUND,
+        )
         if organization_id is not None:
             runs = runs.filter(organization_id=organization_id)
         dispatched = 0
         for run_id, org_id in runs.values_list("id", "organization_id"):
-            execute_agent_run.delay(run_id, org_id)
+            dispatch_unified_background_run(run_id=run_id, organization_id=org_id)
             dispatched += 1
         scope = "global" if organization_id is None else options["organization"]
         self.stdout.write(

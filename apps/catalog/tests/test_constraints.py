@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from django.db import IntegrityError, transaction
 
-from apps.catalog.models import AIProject, Scenario, ScenarioAlias, ScenarioType
+from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.tenancy.models import Organization
 
 
@@ -14,9 +14,7 @@ def _project(org: Organization, slug: str) -> AIProject:
 
 
 def _scenario(project: AIProject, slug: str) -> Scenario:
-    return Scenario.objects.create(
-        project=project, slug=slug, name=slug.title(), type=ScenarioType.RAG
-    )
+    return Scenario.objects.create(project=project, slug=slug, name=slug.title())
 
 
 @pytest.mark.django_db
@@ -69,5 +67,4 @@ def test_scenario_direct_tenant_lineage_rejects_mismatch() -> None:
             project=project,
             slug="mismatch",
             name="Mismatch",
-            type=ScenarioType.RAG,
         )

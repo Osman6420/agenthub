@@ -54,24 +54,17 @@ def role_accepts_artifact_type(role: str, artifact_type: str) -> bool:
         or not all(character.isalnum() or character in "._-" for character in role)
     ):
         return False
-    # P2.6.5 child-composition pins reuse the type-prefixed namespace: a parent release may pin
-    # exact child runtimes under ``child_workflow.<name>``/``child_agent.<name>`` without a second
-    # binding mechanism. The parent's own runtime keeps the singleton workflow/agent role.
+    # Child composition pins exact workflow definitions through the same registry.
     if role.startswith("child_workflow."):
         return artifact_type == ArtifactType.WORKFLOW_DEFINITION
-    if role.startswith("child_agent."):
-        return artifact_type == ArtifactType.AGENT_DEFINITION
     reserved = {value for value, _label in ArtifactType.choices}
     prefix = role.split(".", 1)[0]
     if role in reserved or prefix in reserved:
         return role == artifact_type or role.startswith(f"{artifact_type}.")
-    # Workflow and agent runtimes require their canonical singleton roles. Other
+    # Workflow runtimes require their canonical singleton role. Other
     # types may intentionally use semantic roles such as ``prompt`` or ``search``;
     # those remain compatible unless they impersonate a reserved type namespace.
-    return artifact_type not in {
-        ArtifactType.WORKFLOW_DEFINITION,
-        ArtifactType.AGENT_DEFINITION,
-    }
+    return artifact_type != ArtifactType.WORKFLOW_DEFINITION
 
 
 def _resolve(scenario: Scenario, ref: ArtifactRef) -> ArtifactVersion:
@@ -112,9 +105,6 @@ def compile_release(
     artifacts_manifest: dict[str, dict[str, object]] = {}
     workflow_checksum = ""
     compiled_workflow_graph: dict[str, object] | None = None
-    agent_checksum = ""
-    agent_tools: list[str] = []
-    agent_verify_roles: list[str] = []
     for ref in refs:
         if ref.role in artifacts_manifest:
             raise CompileError(f"duplicate role in release: {ref.role}")
@@ -168,55 +158,6 @@ def compile_release(
                     raise CompileError(f"workflow compilation failed: {exc}") from exc
                 workflow_checksum = workflow_version.checksum
                 compiled_workflow_graph = workflow_version.compiled_graph
-        if artifact.type == "agent_definition":
-            if ref.role.startswith("child_agent."):
-                pass
-            elif ref.role != "agent_definition":
-                raise CompileError(
-                    "agent definition must use the agent_definition or child_agent.* role"
-                )
-            else:
-                from apps.agents.compiler import AgentCompileError
-                from apps.agents.services import compile_agent_version
-
-                try:
-                    agent_version = compile_agent_version(
-                        scenario=scenario,
-                        source_artifact=artifact,
-                        created_by=created_by,
-                    )
-                except AgentCompileError as exc:
-                    raise CompileError(f"agent compilation failed: {exc}") from exc
-                agent_checksum = agent_version.checksum
-                agent_tools = list(agent_version.compiled_config.get("tools", []))
-                agent_verify_roles = list(
-                    (agent_version.compiled_config.get("actions") or {}).get("verify_roles", [])
-                )
-
-    if agent_checksum:
-        # Fail closed: every tool the agent may propose must resolve to a tool_binding
-        # role pinned into this same release, so the runtime's allowlist is complete.
-        tool_roles = {
-            role for role, entry in artifacts_manifest.items() if entry["type"] == "tool_binding"
-        }
-        missing = sorted(t for t in agent_tools if t not in tool_roles)
-        if missing:
-            raise CompileError(f"agent declares tools with no pinned tool_binding role: {missing}")
-        # Fail closed (P2.6.6): a verification role must be a no-side-effect observation. A
-        # tool-backed verification role whose pinned definition is side-effecting or requires
-        # approval would let ``verify`` execute an unapproved effect, so it is rejected here
-        # where the pinned binding/definition metadata is known ("retrieval" has no side effect).
-        for role in agent_verify_roles:
-            if role == "retrieval":
-                continue
-            pinned = artifacts_manifest.get(role, {}).get("tool")
-            if not isinstance(pinned, dict):
-                raise CompileError(f"agent verification role has no pinned tool_binding: {role}")
-            if pinned.get("side_effecting") or pinned.get("approval_required"):
-                raise CompileError(
-                    f"agent verification role must be a no-side-effect action: {role}"
-                )
-
     if compiled_workflow_graph is not None:
         # Fail closed: every workflow ``transform`` node must reference a manifest role that pins
         # an immutable ``transform_profile`` in this same release (P2.6.1 D1), so the runtime can
@@ -224,9 +165,9 @@ def compile_release(
         _assert_transform_profiles_pinned(compiled_workflow_graph, artifacts_manifest)
         # Embedded agent policy is executable authority. Every declared/verification tool role must
         # resolve to the same release's exact active binding, with verification remaining
-        # observation-only just like the legacy agent compiler path.
+        # observation-only, matching the governed agent policy contract.
         _assert_agent_loop_tools_pinned(compiled_workflow_graph, artifacts_manifest)
-        # Fail closed: every ``subworkflow``/``agent_call`` node must reference a pinned child role
+        # Fail closed: every ``subworkflow`` node must reference a pinned child role
         # that resolves to an exact same-organization released child scenario (P2.6.5 / ADR-0009).
         # The pin records the child kind/scenario/release/checksum so the runtime can never resolve
         # a newer, mutable, foreign or cyclic child.
@@ -267,8 +208,8 @@ def compile_release(
             manifest["execution_mode_analysis"] = _release_execution_mode_analysis(
                 compiled_workflow_graph, artifacts_manifest
             )
-    if agent_checksum:
-        manifest["agent_checksum"] = agent_checksum
+    if not workflow_checksum or compiled_workflow_graph is None:
+        raise CompileError("a release must pin one canonical workflow_definition")
     manifest_sha = compute_checksum(manifest)
 
     return ScenarioRelease.objects.create(

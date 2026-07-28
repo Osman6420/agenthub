@@ -37,7 +37,6 @@ def _scenario(organization: Organization, slug: str = "yardim") -> Scenario:
         project=project,
         slug=slug,
         name=f"Senaryo {slug}",
-        type="rag",
     )
 
 
@@ -256,7 +255,7 @@ def test_scenario_document_set_consumer_and_release_names_cross_link(client: Cli
         organization=organization,
         consumer=consumer,
         scenario=scenario,
-        capabilities=["query"],
+        capabilities=["workflow_run"],
     )
     ScenarioDocumentSetBinding.objects.create(
         organization=organization, scenario=scenario, document_set=document_set

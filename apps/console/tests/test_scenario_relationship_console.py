@@ -34,7 +34,6 @@ def _scenario(organization: Organization, slug: str = "yardim") -> Scenario:
         project=project,
         slug=slug,
         name=f"Senaryo {slug}",
-        type="rag",
         status="active",
     )
 
@@ -46,7 +45,9 @@ def _consumer(organization: Organization, scenario: Scenario, subject: str) -> C
         name=f"Consumer {subject}",
         protocol=ConsumerProtocol.REST,
     )
-    ConsumerBinding.objects.create(consumer=consumer, scenario=scenario, capabilities=["query"])
+    ConsumerBinding.objects.create(
+        consumer=consumer, scenario=scenario, capabilities=["workflow_run"]
+    )
     return consumer
 
 
@@ -108,7 +109,9 @@ def test_scenario_and_consumer_show_protocol_specific_invocation_guidance(
         name="MCP Client",
         protocol=ConsumerProtocol.MCP,
     )
-    ConsumerBinding.objects.create(consumer=mcp_consumer, scenario=scenario, capabilities=["query"])
+    ConsumerBinding.objects.create(
+        consumer=mcp_consumer, scenario=scenario, capabilities=["workflow_run"]
+    )
     client.force_login(_member("auditor-guidance", organization, Role.AUDITOR))
 
     scenario_response = client.get(reverse("console:scenario_detail", args=[scenario.id]))
