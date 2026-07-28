@@ -1,8 +1,8 @@
 # AgentHub — Phase 2.8 Plan
 
-> **Status: In progress.** Parts 1–2 were verified and owner-accepted on 2026-07-22; Part 1 is
-> archived and Part 2 completion evidence is recorded. Part 2.1 is **In progress** with Slices 1–4
-> implemented and automatically verified; Slice 5 and Parts 3–7 remain. This is a program plan:
+> **Status: In progress.** Parts 1–3 are verified and owner-accepted. Part 4 is implemented and
+> automated/offline verified; its browser/live-provider owner acceptance remains. Parts 5–7 remain.
+> This is a program plan:
 > every remaining part owns a
 > separate plan, threat model, verification record and acceptance gate. Planned behavior must not
 > be described as current behavior before its part is implemented and verified.
@@ -31,18 +31,16 @@ observability and migrations, and therefore has its own staged acceptance gates.
 2. **Part 2 — Organization, user and access management — Verified.** Removed the cross-organization
    workspace state, add organization creation and user-role assignment, introduce the single-role
    document manager, and make creation forms derive their parent scope from trusted context.
-3. **Part 2.1 — Scoped authorization and superadmin recovery — In progress.** Slices 1–4 add the
-   central capability service, delegated assignments and live scenario-to-document-set grants.
-   Slice 5 still needs the responsive Access UI, superadmin alert/runbook and final compatibility
-   cleanup. The implemented slices already centralize release, delegated-object and live
-   scenario-to-document-set authority. See the
+3. **Part 2.1 — Scoped authorization and superadmin recovery — Verified.** The central capability
+   service, delegated assignments, scenario-to-document-set grants, responsive Access UI and
+   superadmin recovery controls are complete. See the
    [Part 2.1 archive](archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md).
-4. **Part 3 — Unified workflow engine — Planned.** One `workflow_definition`, compiler, runtime,
-   Run/Event model and public run surface; RAG and agent become governed workflow presets/nodes.
-5. **Part 4 — Scenario authoring, reusable artifacts and release experience — Planned.** Preset-led
-   scenario creation, contextual Studio/graph, typed artifact selectors, release history and
-   correct OpenAI-compatible invocation guidance; enable governed AI authoring in configured
-   environments.
+4. **Part 3 — Unified workflow engine — Verified.** One `workflow_definition`, compiler, runtime,
+   Run/Event model and public run surface now govern RAG, workflow and agent execution.
+5. **Part 4 — Scenario authoring, reusable artifacts and release experience — Implemented and
+   automated/offline verified.** Preset-led scenario creation, contextual Studio, typed exact
+   artifact selectors with logical/version descriptions, compiler-derived invocation guidance and
+   governed AI-authoring preflight are implemented. Browser/live-provider owner acceptance remains.
 6. **Part 5 — Document profiles, document manager and index automation — Planned.** Set-only
    document management, real chunking/retrieval profiles, BM25/vector/hybrid search, optional
    LLM-derived summaries and staged index preparation with explicit activation.

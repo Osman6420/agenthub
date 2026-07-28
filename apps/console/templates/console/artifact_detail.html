@@ -11,6 +11,12 @@
   <div class="summary-card"><span>Release pini</span><strong>{{ pinned_by|length }}</strong><small class="muted">Exact rol/release kullanımı</small></div>
 </div>
 
+<section class="card">
+  <h2>Artifact açıklamaları</h2>
+  <p><strong>Logical artifact:</strong> {{ artifact.logical_description|default:"Açıklama girilmemiş." }}</p>
+  <p><strong>Exact version v{{ artifact.version }}:</strong> {{ artifact.version_description|default:"Sürüm açıklaması girilmemiş." }}</p>
+</section>
+
 <section class="card form-card">
   <div class="section-heading"><div><h2>Canonical DSL / JSON</h2><p class="muted">Bu içerik read-only'dir; değişiklik yeni immutable artifact version olarak publish edilmelidir.</p></div>{% if not body_too_large %}<button class="button secondary" type="button" data-copy-target="artifact-body">JSON'u kopyala</button>{% endif %}</div>
   {% if body_too_large %}<div class="warning-box">Artifact gövdesi güvenli console görüntüleme sınırını aşıyor; içerik HTML'e basılmadı. Exact version'ı kontrollü GitOps/registry kanalından inceleyin.</div>{% else %}<textarea id="artifact-body" class="mono code-field" rows="24" readonly>{{ canonical_body }}</textarea>{% endif %}

@@ -109,12 +109,12 @@ export function Editor({
   );
 
   const runAction = useCallback(
-    async (action: "validate" | "save" | "publish") => {
+    async (action: "validate" | "save" | "publish", versionDescription = "") => {
       setBusy(true);
       try {
         if (action === "validate") await builder.runDiagnostics();
         else if (action === "save") await builder.save();
-        else await builder.publish();
+        else await builder.publish(versionDescription);
       } catch (err) {
         const message = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
         builder.setStatusError(message);

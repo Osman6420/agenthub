@@ -223,17 +223,15 @@ def test_scenario_author_create_is_atomic_and_audited(client: Client) -> None:
             "project": project.pk,
             "slug": "faq",
             "name": "FAQ",
-            "type": "rag",
-            "visibility": "internal",
-            "risk_level": "medium",
-            "status": "draft",
-            "alias": "customer-faq",
+            "preset": "empty_workflow",
+            "logical_description": "Customer FAQ workflow",
         },
     )
 
     assert response.status_code == 302
     scenario = Scenario.objects.get(project=project)
     assert scenario.slug.startswith("faq-")
+    assert scenario.workflow_drafts.get().logical_description == "Customer FAQ workflow"
     assert ScenarioAlias.objects.filter(scenario=scenario, alias__startswith="alpha-faq-").exists()
     assert AuditEvent.objects.filter(
         action="console.scenario.create",

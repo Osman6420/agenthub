@@ -14,6 +14,10 @@ export interface BuilderInitial {
   scenario_id?: number;
   scenario_name?: string;
   project_name?: string;
+  ai_authoring?: {
+    available: boolean;
+    message: string;
+  };
   active_workflow?: {
     logical_id: string;
     name: string;
@@ -139,6 +143,7 @@ export interface Draft {
   scenario_id: number | null;
   name: string;
   logical_id: string;
+  logical_description?: string;
   body: Record<string, unknown>;
   last_published_version: number;
   last_published_at: string | null;

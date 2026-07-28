@@ -112,10 +112,30 @@ class ProjectForm(forms.ModelForm):
         return cleaned_data
 
 
+SCENARIO_PRESET_CHOICES = [
+    ("empty_workflow", "Empty Workflow"),
+    ("document_answer", "Document Answer"),
+    ("agent_loop", "Agent Loop"),
+]
+
+
 class ScenarioForm(forms.ModelForm):
+    preset = forms.ChoiceField(
+        choices=SCENARIO_PRESET_CHOICES,
+        label="Başlangıç",
+        help_text="Yalnız doğrulanmış bir workflow draft oluşturur; release yayımlamaz.",
+        widget=forms.RadioSelect,
+    )
+    logical_description = forms.CharField(
+        label="Logical artifact açıklaması",
+        max_length=1000,
+        widget=forms.Textarea(attrs={"rows": 3}),
+        help_text="Bu workflow’un sürümler boyunca değişmeyen amacı ve yeniden kullanım bağlamı.",
+    )
+
     class Meta:
         model = Scenario
-        fields = ["name", "visibility", "risk_level", "status"]
+        fields = ["name"]
         labels = {"name": "Senaryo adı"}
         help_texts = {"name": "Kalıcı kimlik ve ilk API alias'ı otomatik oluşturulur."}
 

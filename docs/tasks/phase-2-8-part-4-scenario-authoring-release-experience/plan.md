@@ -22,6 +22,9 @@ safe candidate/acceptance path but reports disabled when the deployment has no a
   Releases and Test; retain exact technical provenance as secondary detail.
 - Replace the full artifact list/free-text role form with `artifact type → logical artifact → exact
   version` selectors filtered by role/type compatibility and scenario organization.
+- Capture a bounded human explanation for both the stable logical artifact and each immutable exact
+  version when authoring/publishing. Show both explanations in dependent selectors so operators can
+  understand the reusable purpose and the version-specific change before pinning it.
 - Describe every reusable artifact type and show version, checksum, status and dependency impact
   before selection. Never resolve “latest” at compile/publish time.
 - Keep DSL/graph access and workflow drafts inside the scenario. Remove any separate primary DSL or
@@ -49,6 +52,8 @@ safe candidate/acceptance path but reports disabled when the deployment has no a
 - Each preset produces a valid scenario-bound draft with clear next steps and no active release.
 - Artifact selectors show only tenant-authorized, published, compatible exact versions and reject
   forged/stale selections server-side.
+- Newly authored logical artifacts and exact versions require bounded descriptions; selector
+  responses and release review show both without exposing artifact bodies or tenant-private content.
 - Release compilation continues through canonical validators and immutable manifest checksums.
 - Scenario page explains draft versus published artifact versus candidate/active release.
 - Curl examples match compiler-supported execution modes and use the scenario alias, not internal ID.
@@ -79,8 +84,9 @@ contract. Existing artifact, release, eval and Studio services remain authoritat
 1. Define preset bodies against the verified DSL and test them through the canonical compiler.
 2. Replace global scenario creation with project-context route and transactional scenario/draft
    creation; preserve server-generated IDs/alias and audit rollback.
-3. Build bounded dependent artifact selectors backed by server-filtered endpoints/forms and canonical
-   role/type validation; include descriptions and exact provenance.
+3. Add additive logical/exact-version description fields to authoring and immutable artifact state,
+   then build bounded dependent artifact selectors backed by server-filtered endpoints/forms and
+   canonical role/type validation; include both descriptions and exact provenance.
 4. Reorganize scenario detail/Studio/release surfaces without duplicating mutation routes.
 5. Generate invocation examples from compiled supported modes and active alias/release state.
 6. Enable AI authoring operationally with approved profile/provider preflight; update AI and human
@@ -114,7 +120,10 @@ None. The preset model, contextual creation and configured-profile AI-authoring 
 
 ## Status
 
-**Planned.** Not implementable until Part 3 contracts are verified.
+**Implemented and automated/offline verified on 2026-07-28.** PostgreSQL/RLS, focused/full backend,
+frontend, migration, static-analysis and live-health checks pass. Owner acceptance remains separate;
+the environment had no in-app browser backend or approved live AI provider for those optional manual
+journeys. See `verification.md`.
 
 ## Completion criteria
 

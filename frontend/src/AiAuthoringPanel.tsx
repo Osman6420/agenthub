@@ -3,9 +3,10 @@ import { useState } from "react";
 import { ApiError, BuilderApi } from "./api";
 import type { AiCandidateResult, CapabilityMissingResult } from "./types";
 
-export function AiAuthoringPanel({ api, organization, projects, lockedProjectId, scenarioId, onGenerated, onCapabilityMissing }: {
+export function AiAuthoringPanel({ api, organization, projects, lockedProjectId, scenarioId, availability, onGenerated, onCapabilityMissing }: {
   api: BuilderApi; organization: string; projects: { id: number; name: string }[];
   lockedProjectId?: number; scenarioId?: number;
+  availability?: { available: boolean; message: string };
   onGenerated: (result: AiCandidateResult, projectId: number) => void;
   onCapabilityMissing: (result: CapabilityMissingResult) => void;
 }) {
@@ -27,7 +28,13 @@ export function AiAuthoringPanel({ api, organization, projects, lockedProjectId,
       setStatus("");
       onGenerated(generated, projectId);
     } catch (error) {
-      setStatus(error instanceof ApiError ? error.code : String(error));
+      if (error instanceof ApiError && error.code === "ai_authoring_disabled") {
+        setStatus("AI authoring kapalı: deployment yöneticisi onaylı immutable model profile ID ve provider yapılandırmalıdır.");
+      } else if (error instanceof ApiError && error.code === "model_profile_unavailable") {
+        setStatus("Yapılandırılan AI authoring model profili aktif veya erişilebilir değil; deployment ayarını doğrulayın.");
+      } else {
+        setStatus(error instanceof ApiError ? error.code : String(error));
+      }
     }
   }
 
@@ -37,9 +44,12 @@ export function AiAuthoringPanel({ api, organization, projects, lockedProjectId,
       {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
     </select></label>
     <h2>Scenario Studio AI planner</h2>
+    {availability && <div role={availability.available ? "status" : "alert"}>
+      {availability.message}
+    </div>}
     <textarea aria-label="taslak açıklaması" rows={4} value={description}
       onChange={(event) => setDescription(event.target.value)} />
-    <button type="button" disabled={!description.trim() || !scenarioId}
+    <button type="button" disabled={!description.trim() || !scenarioId || availability?.available === false}
       onClick={() => void generate()}>Geçici aday üret</button>
     {status && <div role="alert">{status}</div>}
   </section>;

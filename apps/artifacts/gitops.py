@@ -76,6 +76,8 @@ def import_document(
         organization=organization,
         artifact_type=TYPE_BY_KIND[kind],
         logical_id=str(logical_id),
+        logical_description=str(metadata.get("logical_description", "")),
+        version_description=str(metadata.get("version_description", "")),
         body=spec,
         created_by=created_by,
         source_git_revision=source_git_revision,
@@ -91,7 +93,9 @@ def artifact_to_document(artifact: ArtifactVersion) -> dict[str, Any]:
         "metadata": {
             "organization": artifact.organization.slug,
             "logical_id": artifact.logical_id,
+            "logical_description": artifact.logical_description,
             "version": artifact.version,
+            "version_description": artifact.version_description,
             "checksum": artifact.checksum,
         },
         "spec": artifact.body,

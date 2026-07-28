@@ -21,7 +21,17 @@ class ArtifactVersion(models.Model):
     logical_id = models.CharField(
         max_length=128, help_text="Stable identity across versions, e.g. 'customer_answer'."
     )
+    logical_description = models.TextField(
+        blank=True,
+        max_length=1000,
+        help_text="Human explanation of the stable logical artifact across versions.",
+    )
     version = models.PositiveIntegerField()
+    version_description = models.TextField(
+        blank=True,
+        max_length=1000,
+        help_text="Human explanation of what this exact immutable version contains or changes.",
+    )
     body = models.JSONField()
     checksum = models.CharField(max_length=64, editable=False)
     created_by = models.CharField(max_length=200)

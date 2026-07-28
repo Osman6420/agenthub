@@ -22,11 +22,12 @@ from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import connection, transaction
 from django.db.models import Count, Q, QuerySet
-from django.http import Http404, HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.module_loading import import_string
 from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_variables
@@ -35,8 +36,11 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.agents.models import AgentRuntimeControl
 from apps.agents.services import runtime_suspended
 from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.types import ArtifactType
 from apps.audit.services import record_event
+from apps.builder import services as builder_services
 from apps.builder.models import WorkflowDraft
+from apps.builder.services import BuilderError
 from apps.catalog.models import AIProject, Scenario
 from apps.catalog.services import ProjectOwnerError, create_console_project, create_console_scenario
 from apps.console import context as console_context
@@ -151,6 +155,7 @@ from apps.ingestion.vector_store import (
 )
 from apps.observability.retention import RETENTION_DAYS, run_retention
 from apps.orchestration.authoring_guide import workflow_authoring_guide
+from apps.orchestration.models import ModelProfile, ModelProfileStatus
 from apps.releases.compiler import (
     ArtifactRef,
     CompileError,
@@ -187,6 +192,11 @@ from apps.workflows.models import (
     RunWait,
     RunWaitKind,
     RunWaitStatus,
+)
+from apps.workflows.presets import (
+    agent_loop_workflow,
+    document_answer_workflow,
+    empty_workflow,
 )
 from apps.workflows.run_recovery import RunRecoveryError, resolve_run_recovery
 from apps.workflows.run_waits import RunWaitError, decide_run_human_task
@@ -1171,6 +1181,104 @@ def _workflow_dsl_guide() -> str:
     return workflow_authoring_guide()
 
 
+def _scenario_preset_body(preset: str, *, logical_id: str) -> dict[str, Any]:
+    if preset == "empty_workflow":
+        return empty_workflow(logical_id=logical_id)
+    if preset == "document_answer":
+        return document_answer_workflow(logical_id=logical_id)
+    if preset == "agent_loop":
+        return agent_loop_workflow(
+            logical_id=logical_id,
+            policy={
+                "tool_binding_roles": [],
+                "retrieval": {"enabled": True},
+                "limits": {"max_steps": 4, "max_tool_calls": 0},
+            },
+        )
+    raise ValueError("unknown scenario preset")
+
+
+def _invocation_guidance(
+    active_release: ScenarioRelease | None, alias: str | None
+) -> dict[str, object]:
+    if active_release is None or not alias:
+        return {"ready": False, "examples": []}
+    analysis = active_release.manifest.get("execution_mode_analysis", {})
+    raw_modes = analysis.get("supported_execution_modes", []) if isinstance(analysis, dict) else []
+    modes = {mode for mode in raw_modes if mode in {"sync", "background"}}
+    examples: list[dict[str, str]] = []
+    if "sync" in modes:
+        examples.append(
+            {
+                "label": "Senkron Chat Completions",
+                "description": "Derlenen workflow senkron çalışmayı destekliyor.",
+                "command": (
+                    'curl -sS -X POST "$AGENTHUB_BASE_URL/v1/chat/completions" '
+                    '-H "Authorization: Bearer $AGENTHUB_TOKEN" '
+                    '-H "Content-Type: application/json" '
+                    f'-d \'{{"model":"{alias}","messages":[{{"role":"user",'
+                    '"content":"Merhaba"}}]}\''
+                ),
+            }
+        )
+    if "background" in modes:
+        examples.append(
+            {
+                "label": "Responses background",
+                "description": (
+                    "Arka plan çalışması bir response kimliği ve X-AgentHub-Run-Id döndürür."
+                ),
+                "command": (
+                    'curl -sS -X POST "$AGENTHUB_BASE_URL/v1/responses" '
+                    '-H "Authorization: Bearer $AGENTHUB_TOKEN" '
+                    '-H "Content-Type: application/json" '
+                    '-H "Idempotency-Key: replace-with-unique-key" '
+                    f'-d \'{{"model":"{alias}","input":"Merhaba","background":true}}\''
+                ),
+            }
+        )
+    return {"ready": bool(examples), "examples": examples, "modes": sorted(modes)}
+
+
+def _ai_authoring_preflight() -> dict[str, object]:
+    profile_id = str(getattr(settings, "AI_AUTHORING_MODEL_PROFILE_ID", "")).strip()
+    if not profile_id:
+        return {
+            "available": False,
+            "message": (
+                "AI authoring kapalı: deployment yöneticisi onaylı immutable model profile ID "
+                "ve provider yapılandırmalıdır."
+            ),
+        }
+    try:
+        parsed_profile_id = uuid.UUID(profile_id)
+    except ValueError:
+        return {
+            "available": False,
+            "message": "AI authoring model profile ayarı geçersiz; deployment ayarını doğrulayın.",
+        }
+    if not ModelProfile.objects.filter(
+        public_id=parsed_profile_id, status=ModelProfileStatus.ACTIVE
+    ).exists():
+        return {
+            "available": False,
+            "message": "Yapılandırılan AI authoring model profili aktif veya erişilebilir değil.",
+        }
+    provider_path = str(getattr(settings, "AI_AUTHORING_PROVIDER", "")).strip()
+    if provider_path:
+        try:
+            import_string(provider_path)
+        except ImportError:
+            return {
+                "available": False,
+                "message": "AI authoring provider yüklenemedi; deployment ayarını doğrulayın.",
+            }
+    return {
+        "available": True,
+        "message": "AI authoring hazır; çıktı geçici adaydır ve açık kabul olmadan kaydedilmez.",
+    }
+
+
 @login_required
 def scenario_detail(
     request: HttpRequest, pk: int | None = None, public_id: object = None
@@ -1181,6 +1289,7 @@ def scenario_detail(
     active_release = ScenarioRelease.objects.filter(
         scenario=scenario, status=ReleaseStatus.ACTIVE
     ).first()
+    aliases = list(scenario.aliases.order_by("alias"))
     raw_pinned_version_ids = (
         active_release.manifest.get("document_set_versions", []) if active_release else []
     )
@@ -1280,26 +1389,26 @@ def scenario_detail(
             "-created_at", "-pk"
         )[:20]
     ]
-    artifact_candidates = list(
-        ArtifactVersion.objects.filter(organization_id=organization_id).order_by(
-            "type", "logical_id", "-version"
-        )[:201]
-    )
     return render(
         request,
         "console/scenario_detail.html",
         {
             "title": scenario.name,
             "scenario": scenario,
-            "aliases": scenario.aliases.order_by("alias"),
+            "aliases": aliases,
             "active_release": active_release,
             "active_artifacts": active_artifacts,
             "has_output_contract": any(
                 row["role"] == "output_contract" for row in active_artifacts
             ),
             "release_rows": release_rows,
-            "artifact_candidates": artifact_candidates[:200],
-            "artifact_candidates_limited": len(artifact_candidates) > 200,
+            "artifact_type_descriptions": ARTIFACT_TYPE_DESCRIPTIONS,
+            "artifact_options_url": reverse(
+                "console:scenario_artifact_options", args=[scenario.public_id]
+            ),
+            "invocation_guidance": _invocation_guidance(
+                active_release, aliases[0].alias if aliases else None
+            ),
             "project_drafts": project_drafts,
             "dsl_guide": _workflow_dsl_guide(),
             "consumer_bindings": consumer_bindings,
@@ -1320,6 +1429,112 @@ def scenario_detail(
             "author_reason": _AUTHOR_REASON,
             "release_reason": _RELEASE_AUTHORITY_REASON,
         },
+    )
+
+
+@login_required
+@require_GET
+def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonResponse:
+    scenario = _scoped_scenario(request.user, public_id=public_id)
+    if not can_manage_scenario_releases(request.user, scenario.organization_id):
+        raise PermissionDenied
+    if scenario.organization.status != OrganizationStatus.ACTIVE:
+        raise PermissionDenied
+    artifact_type = request.GET.get("artifact_type", "").strip()
+    logical_id = request.GET.get("logical_id", "").strip()
+    queryset = ArtifactVersion.objects.filter(organization_id=scenario.organization_id)
+
+    if not artifact_type:
+        available_types = set(queryset.values_list("type", flat=True).distinct())
+        options = [
+            {
+                "value": value,
+                "label": label,
+                "description": ARTIFACT_TYPE_DESCRIPTIONS.get(value, ""),
+            }
+            for value, label in ArtifactType.choices
+            if value in available_types
+        ]
+        return JsonResponse({"level": "artifact_type", "options": options})
+
+    if artifact_type not in ArtifactType.values:
+        raise Http404
+    queryset = queryset.filter(type=artifact_type)
+    if not logical_id:
+        rows = list(
+            queryset.order_by("logical_id", "-version").values(
+                "logical_id", "logical_description", "version"
+            )[:501]
+        )
+        logical_options: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for row in rows:
+            value = str(row["logical_id"])
+            if value in seen:
+                continue
+            seen.add(value)
+            logical_options.append(
+                {
+                    "value": value,
+                    "label": value,
+                    "description": row["logical_description"],
+                    "latest_version": row["version"],
+                }
+            )
+        return JsonResponse(
+            {
+                "level": "logical_artifact",
+                "artifact_type": artifact_type,
+                "options": logical_options[:100],
+                "limited": len(rows) > 500 or len(logical_options) > 100,
+            }
+        )
+
+    if len(logical_id) > 128:
+        raise Http404
+    versions = list(queryset.filter(logical_id=logical_id).order_by("-version")[:101])
+    if not versions:
+        raise Http404
+    refs = {(artifact_type, logical_id, artifact.version): 0 for artifact in versions[:100]}
+    releases = ScenarioRelease.objects.filter(organization_id=scenario.organization_id).only(
+        "manifest"
+    )[:500]
+    for release in releases:
+        manifest_artifacts = release.manifest.get("artifacts", {})
+        if not isinstance(manifest_artifacts, dict):
+            continue
+        for item in manifest_artifacts.values():
+            if not isinstance(item, dict):
+                continue
+            key = (item.get("type"), item.get("logical_id"), item.get("version"))
+            if key in refs:
+                refs[key] += 1
+    role_candidates = [artifact_type, f"{artifact_type}.{logical_id}"]
+    if artifact_type == ArtifactType.WORKFLOW_DEFINITION:
+        role_candidates = ["workflow_definition", f"child_workflow.{logical_id}"]
+    roles = [role for role in role_candidates if role_accepts_artifact_type(role, artifact_type)]
+    return JsonResponse(
+        {
+            "level": "exact_version",
+            "artifact_type": artifact_type,
+            "logical_id": logical_id,
+            "logical_description": versions[0].logical_description,
+            "roles": roles,
+            "options": [
+                {
+                    "id": artifact.pk,
+                    "version": artifact.version,
+                    "description": artifact.version_description,
+                    "checksum": artifact.checksum,
+                    "status": "published",
+                    "pinned_release_count": refs[
+                        (artifact.type, artifact.logical_id, artifact.version)
+                    ],
+                }
+                for artifact in versions[:100]
+            ],
+            "limited": len(versions) > 100,
+        }
     )
 
 
@@ -2063,6 +2278,24 @@ def workflow_human_task_decide(request: HttpRequest, wait_id: uuid.UUID) -> Http
 _RUN_DAYS_CHOICES = (1, 7, 30, 90)
 _RUN_PAGE_SIZE = 50
 
+ARTIFACT_TYPE_DESCRIPTIONS: dict[str, str] = {
+    ArtifactType.INPUT_CONTRACT: "Senaryonun kabul ettiği giriş yapısını doğrular.",
+    ArtifactType.OUTPUT_CONTRACT: "Çıktı biçimini ve alanlarını doğrular.",
+    ArtifactType.PROMPT_TEMPLATE: "Tekrar kullanılabilir, sürümlenmiş prompt metnidir.",
+    ArtifactType.POLICY_PROFILE: "Çalışma zamanı davranış ve güvenlik politikasını tanımlar.",
+    ArtifactType.MODEL_PROFILE: "Onaylı model seçimi ve çalışma sınırlarını tanımlar.",
+    ArtifactType.SOURCE_DEFINITION: "Yönetilen veri kaynağı tanımıdır.",
+    ArtifactType.TRANSFORM_PROFILE: "Girdi veya çıktı dönüşüm sözleşmesini tanımlar.",
+    ArtifactType.CHUNKING_PROFILE: "Doküman parçalama davranışını tanımlar.",
+    ArtifactType.RETRIEVAL_PROFILE: "Arama ve retrieval davranışını tanımlar.",
+    ArtifactType.WORKFLOW_DEFINITION: "Senaryonun derlenen node/edge çalışma grafiğidir.",
+    ArtifactType.CUSTOM_NODE_DEFINITION: "Onaylı özel workflow node sözleşmesidir.",
+    ArtifactType.TOOL_DEFINITION: "Bir aracın güvenli çağrı sözleşmesini tanımlar.",
+    ArtifactType.TOOL_BINDING: "Aracı onaylı hedef ve yetki sınırlarıyla bağlar.",
+    ArtifactType.MEMORY_POLICY: "Agent belleğinin sınırlarını ve saklama davranışını tanımlar.",
+    ArtifactType.EVAL_SUITE: "Release değerlendirmesinde kullanılan immutable test setidir.",
+}
+
 
 def _query_without_page(request: HttpRequest) -> str:
     """Current querystring minus ``page``, so pagination links keep the active filters."""
@@ -2403,6 +2636,7 @@ def builder(request: HttpRequest) -> HttpResponse:
         if requested_org not in organizations_by_slug:
             raise Http404
         initial = {"organization": requested_org}
+    initial["ai_authoring"] = _ai_authoring_preflight()
     return render(
         request,
         "console/builder.html",
@@ -4170,13 +4404,16 @@ def scenario_create(
     request: HttpRequest, project_public_id: uuid.UUID | None = None
 ) -> HttpResponse:
     if project_public_id is None:
-        requested_project = request.GET.get("project", "").strip()
+        requested_project = (
+            request.GET.get("project", "").strip() if request.method == "GET" else ""
+        )
         if not requested_project:
-            raise Http404
+            return redirect("console:projects")
         try:
-            project_public_id = uuid.UUID(requested_project)
+            contextual_project_id = uuid.UUID(requested_project)
         except ValueError as exc:
             raise Http404 from exc
+        return redirect("console:project_scenario_create", project_public_id=contextual_project_id)
     project = scoping.scoped_projects(request.user).filter(public_id=project_public_id).first()
     if project is None:
         raise Http404
@@ -4189,16 +4426,31 @@ def scenario_create(
                 scenario = create_console_scenario(
                     project=project,
                     name=form.cleaned_data["name"],
-                    visibility=form.cleaned_data["visibility"],
-                    risk_level=form.cleaned_data["risk_level"],
-                    status=form.cleaned_data["status"],
+                )
+                logical_id = f"{scenario.slug}_workflow"
+                builder_services.create_draft(
+                    organization=project.organization,
+                    project=project,
+                    scenario=scenario,
+                    name=f"{scenario.name} workflow",
+                    logical_id=logical_id,
+                    logical_description=form.cleaned_data["logical_description"],
+                    body=_scenario_preset_body(form.cleaned_data["preset"], logical_id=logical_id),
+                    actor=request.user.get_username(),
+                    request_id=_request_id(request),
                 )
                 _audit_create(request, "scenario", str(scenario.pk), project.organization_id)
+        except (BuilderError, ValueError):
+            form.add_error(None, "Preset canonical workflow compiler tarafından reddedildi.")
         except IdentifierAllocationError:
             form.add_error(None, IdentifierAllocationError.code)
         else:
             return redirect("console:scenario_detail_public", public_id=scenario.public_id)
-    return render(request, "console/form.html", {"title": "Yeni senaryo", "form": form})
+    return render(
+        request,
+        "console/scenario_create.html",
+        {"title": "Yeni senaryo", "form": form, "project": project},
+    )
 
 
 @login_required

@@ -7,7 +7,7 @@
     <h1>Senaryolar</h1>
     <p class="muted">Organizasyon ve proje bağlamında çalışan yapay zekâ senaryoları.</p>
   </div>
-  {% if can_create %}<a class="button primary" href="{% url 'console:scenario_create' %}">Yeni senaryo</a>{% else %}<button type="button" class="button primary" disabled aria-disabled="true" title="{{ create_reason }}">Yeni senaryo</button>{% endif %}
+  {% if can_create %}<a class="button primary" href="{% url 'console:projects' %}">Projeden yeni senaryo</a>{% else %}<button type="button" class="button primary" disabled aria-disabled="true" title="{{ create_reason }}">Projeden yeni senaryo</button>{% endif %}
 </div>
 
 <div class="card table-card">

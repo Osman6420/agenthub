@@ -72,6 +72,9 @@ describe("builder deep link", () => {
     expect(screen.getByLabelText("organizasyon")).toBeDisabled();
     fireEvent.change(screen.getByLabelText("draft adı"), { target: { value: "Imported" } });
     fireEvent.change(screen.getByLabelText("logical id"), { target: { value: "imported" } });
+    fireEvent.change(screen.getByLabelText("logical artifact açıklaması"), {
+      target: { value: "Imported workflow purpose" },
+    });
     fireEvent.change(screen.getByLabelText("yeni workflow JSON"), {
       target: { value: JSON.stringify(workflow) },
     });

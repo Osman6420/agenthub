@@ -221,6 +221,7 @@ def _serialize(draft: WorkflowDraft, *, can_write: bool) -> dict[str, Any]:
         "scenario_id": draft.scenario_id,
         "name": draft.name,
         "logical_id": draft.logical_id,
+        "logical_description": draft.logical_description,
         "body": draft.body,
         "last_published_version": draft.last_published_version,
         "last_published_at": (
@@ -285,6 +286,7 @@ def drafts(request: HttpRequest) -> HttpResponse:
                 "scenario_id": d.scenario_id,
                 "name": d.name,
                 "logical_id": d.logical_id,
+                "logical_description": d.logical_description,
                 "last_published_version": d.last_published_version,
                 "updated_at": d.updated_at.isoformat(),
                 "revision": d.revision,
@@ -296,7 +298,16 @@ def drafts(request: HttpRequest) -> HttpResponse:
 
     payload = _json_body(request)
     _reject_unknown_fields(
-        payload, {"organization", "project_id", "scenario_id", "name", "logical_id", "body"}
+        payload,
+        {
+            "organization",
+            "project_id",
+            "scenario_id",
+            "name",
+            "logical_id",
+            "logical_description",
+            "body",
+        },
     )
     org = _resolve_org_in_scope(request, payload.get("organization"))
     _require_author(request, org.id)
@@ -306,6 +317,7 @@ def drafts(request: HttpRequest) -> HttpResponse:
         organization=org,
         name=payload.get("name", ""),
         logical_id=payload.get("logical_id", ""),
+        logical_description=payload.get("logical_description", ""),
         body=payload.get("body"),
         actor=_actor(request),
         project=project,
@@ -336,12 +348,13 @@ def draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
         return JsonResponse({"deleted": True})
 
     payload = _json_body(request)
-    _reject_unknown_fields(payload, {"name", "body", "revision"})
+    _reject_unknown_fields(payload, {"name", "logical_description", "body", "revision"})
     updated = services.update_draft(
         draft,
         actor=_actor(request),
         expected_revision=payload.get("revision"),
         name=payload.get("name"),
+        logical_description=payload.get("logical_description"),
         body=payload.get("body"),
         request_id=_request_id(request),
     )
@@ -364,11 +377,12 @@ def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
     draft = _scoped_draft(request, pk)
     _require_author(request, draft.organization_id)
     payload = _json_body(request)
-    _reject_unknown_fields(payload, {"revision"})
+    _reject_unknown_fields(payload, {"revision", "version_description"})
     artifact = services.publish_draft(
         draft,
         actor=_actor(request),
         expected_revision=payload.get("revision"),
+        version_description=payload.get("version_description", ""),
         request_id=_request_id(request),
     )
     draft.refresh_from_db(fields=["revision"])
@@ -377,7 +391,9 @@ def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
             "published": True,
             "artifact_type": artifact.type,
             "logical_id": artifact.logical_id,
+            "logical_description": artifact.logical_description,
             "version": artifact.version,
+            "version_description": artifact.version_description,
             "checksum": artifact.checksum,
             "revision": draft.revision,
         },

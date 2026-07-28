@@ -284,7 +284,11 @@ def test_diagnostics_invalid_body_returns_errors(client: Client, bf: BuilderFixt
 def test_publish_creates_workflow_artifact(client: Client, bf: BuilderFixture) -> None:
     client.force_login(bf.author)
     url = reverse("builder_api:draft_publish", args=[bf.draft.pk])
-    response = _post(client, url, {"revision": 1})
+    response = _post(
+        client,
+        url,
+        {"revision": 1, "version_description": "Initial reviewed workflow"},
+    )
     assert response.status_code == 201
     data = response.json()
     assert data["artifact_type"] == "workflow_definition"
@@ -293,6 +297,8 @@ def test_publish_creates_workflow_artifact(client: Client, bf: BuilderFixture) -
         organization=bf.org, type="workflow_definition", logical_id="flow_a"
     )
     assert artifact.checksum == data["checksum"]
+    assert artifact.logical_description == "Stable flow purpose"
+    assert artifact.version_description == "Initial reviewed workflow"
     assert AuditEvent.objects.filter(action="console.builder.draft.publish").exists()
     bf.draft.refresh_from_db()
     assert bf.draft.last_published_version == 1

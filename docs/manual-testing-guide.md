@@ -425,6 +425,34 @@ Phase 2 closes only after all five rows have attached evidence plus privacy/rete
 residual-risk approval. If a provider is intentionally omitted, the owner must remove that capability
 from the approved Phase 2 target or explicitly accept the unverified risk; absence is not a pass.
 
+### 9.4 AI-authoring profile activation
+
+Register a platform-approved immutable profile with synthetic/non-production access. The command
+accepts only a secret reference; never put the provider credential in arguments, source or `.env`.
+
+```powershell
+.venv\Scripts\python.exe manage.py register_model_profile `
+  --actor '<PLATFORM_ADMIN_USERNAME>' `
+  --logical-id 'studio-authoring' `
+  --revision 1 `
+  --host '<APPROVED_PUBLIC_PROVIDER_HOST>' `
+  --model '<APPROVED_MODEL>' `
+  --secret-ref 'secret:<APPROVED_SECRET_NAME>'
+```
+
+Copy the printed public UUID into the deployment environment and restart the web role. Workers do
+not generate Studio candidates.
+
+```powershell
+$env:AI_AUTHORING_MODEL_PROFILE_ID = '<MODEL_PROFILE_PUBLIC_UUID>'
+$env:AI_AUTHORING_PROVIDER = 'apps.orchestration.authoring.OpenAICompatibleAuthoringProvider'
+```
+
+Open a scenario's Studio. Preflight must report that AI authoring is ready. Generate a candidate,
+inspect diagnostics, explicitly transfer it to a draft, and confirm that no artifact or release was
+created. Then unset `AI_AUTHORING_MODEL_PROFILE_ID`, restart web, and confirm the Studio shows the
+actionable disabled message while existing drafts and artifacts remain intact.
+
 ## 10. Re-seed / reset
 
 ```powershell

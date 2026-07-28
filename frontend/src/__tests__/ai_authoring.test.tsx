@@ -52,4 +52,16 @@ describe("Studio AI authoring panel", () => {
       status: "capability_missing", required_capability: "number.multiply",
     }));
   });
+
+  it("shows actionable preflight and disables generation when deployment is unconfigured", () => {
+    render(<AiAuthoringPanel api={new BuilderApi("/console/api/builder/")}
+      organization="org" projects={[{ id: 3, name: "Project" }]}
+      scenarioId={7}
+      availability={{ available: false, message: "Onaylı model profile ID yapılandırılmalıdır." }}
+      onGenerated={vi.fn()} onCapabilityMissing={vi.fn()} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("model profile ID");
+    fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "akış" } });
+    expect(screen.getByText("Geçici aday üret")).toBeDisabled();
+  });
 });

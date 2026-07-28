@@ -20,6 +20,7 @@ are authoritative server-side.
 | Foreign project injected into create | Project comes from authorized route target; no submitted parent field |
 | Preset bypasses compiler or activates release | Create draft through canonical service; publish/promote remain separate governed actions |
 | Artifact dropdown leaks another tenant | Server-scoped bounded options and generic foreign-ID denial |
+| Artifact descriptions leak bodies, prompts or secrets | Bounded plain text, no body-derived defaults, output encoding and no description payloads in logs/audit |
 | Free-text/mismatched manifest role | Closed role/type contract and exact published version validation |
 | “Latest” changes between review and compile | Persist exact version/checksum selection; revalidate under transaction |
 | AI prompt/output leaks content | Bounded context, approved provider, no logs/audit content, redacted errors |
@@ -30,7 +31,7 @@ are authoritative server-side.
 
 ## Residual risks and required tests
 
-Artifact descriptions can become stale and AI provider configuration remains environment-specific.
-Require cross-tenant/role/disabled tests, selector forgery, compile checksum, candidate validation,
-rate limits, audit rollback, content redaction, prompt-injection samples, guide/compiler parity and
-accessible keyboard/browser journeys.
+Logical descriptions can become stale, version descriptions can be misleading and AI provider
+configuration remains environment-specific. Require length/encoding tests, cross-tenant/role/disabled
+tests, selector forgery, compile checksum, candidate validation, rate limits, audit rollback, content
+redaction, prompt-injection samples, guide/compiler parity and accessible keyboard/browser journeys.

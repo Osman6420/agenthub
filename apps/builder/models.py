@@ -43,6 +43,11 @@ class WorkflowDraft(TimeStampedModel):
     name = models.CharField(max_length=200)
     # The target artifact ``logical_id`` used when the draft is published.
     logical_id = models.CharField(max_length=128)
+    logical_description = models.TextField(
+        blank=True,
+        max_length=1000,
+        help_text="Stable purpose of the logical artifact across published versions.",
+    )
     # The workflow DSL as author working state; may be incomplete/invalid while editing.
     body = models.JSONField(default=dict, blank=True)
     created_by = models.CharField(max_length=200)

@@ -136,6 +136,7 @@ export class BuilderApi {
     scenario_id?: number;
     name: string;
     logical_id: string;
+    logical_description?: string;
     body: Record<string, unknown>;
   }): Promise<Draft> {
     return request<Draft>(this.url("/drafts/"), {
@@ -166,16 +167,18 @@ export class BuilderApi {
     });
   }
 
-  publish(id: number, revision: number): Promise<{
+  publish(id: number, revision: number, versionDescription = ""): Promise<{
     published: boolean;
     artifact_type: string;
     logical_id: string;
+    logical_description: string;
     version: number;
+    version_description: string;
     checksum: string;
     revision: number;
   }> {
     return request(this.url(`/drafts/${id}/publish/`), {
-      method: "POST", body: JSON.stringify({ revision }),
+      method: "POST", body: JSON.stringify({ revision, version_description: versionDescription }),
     });
   }
 }

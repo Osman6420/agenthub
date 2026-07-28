@@ -11,7 +11,7 @@ from django.urls import reverse
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, LifecycleStatus, Scenario, ScenarioAlias, ScenarioType
+from apps.catalog.models import AIProject, LifecycleStatus, Scenario, ScenarioAlias
 from apps.documents import services as document_services
 from apps.documents.models import DocumentSet, GrantPrincipalType
 from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
@@ -64,7 +64,6 @@ scenario, _scenario_created = Scenario.objects.get_or_create(
     slug=TAG,
     defaults={
         "name": "Yerel doküman embedding smoke",
-        "type": ScenarioType.RAG,
         "status": LifecycleStatus.ACTIVE,
     },
 )

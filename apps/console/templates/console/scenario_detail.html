@@ -43,11 +43,21 @@
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Sunum yolları</p><h2>Senaryoyu çağırma</h2><p class="muted">Yetki istemci tokenı + protokol + senaryo alias bağı + capability üzerinden sunucuda doğrulanır.</p></div></div>
   {% if active_release %}<p>{% if has_output_contract %}<span class="access-ok">Output contract aktif release'e pinli ve runtime'da uygulanıyor.</span>{% else %}<span class="muted">Output contract seçilmemiş; adapter yalnız kendi response envelope sınırlarını uygular.</span>{% endif %}</p>{% else %}<div class="warning-box">Aktif release olmadan hiçbir sunum yolu çalışmaz.</div>{% endif %}
+  {% if invocation_guidance.ready %}
+    {% for example in invocation_guidance.examples %}
+      <div class="relationship-card">
+        <div><strong>{{ example.label }}</strong><p class="muted">{{ example.description }}</p></div>
+        <button class="button secondary" type="button" data-copy-target="invocation-example-{{ forloop.counter }}">curl kopyala</button>
+        <textarea id="invocation-example-{{ forloop.counter }}" class="mono code-field" rows="4" readonly>{{ example.command }}</textarea>
+      </div>
+    {% endfor %}
+  {% elif active_release %}
+    <div class="warning-box">Aktif release’in derlenmiş execution mode bilgisi çağrı örneği üretmeye uygun değil.</div>
+  {% endif %}
   {% for binding in consumer_bindings %}
     <div class="relationship-card"><div class="relationship-head"><div><h3><a href="{% url 'console:consumer_detail_public' binding.consumer.public_id %}">{{ binding.consumer.name }}</a></h3><p class="muted">{{ binding.consumer.get_protocol_display }} · {% for capability in binding.capabilities %}<span class="chip">{{ capability }}</span>{% endfor %}</p></div></div>
     {% if binding.consumer.protocol == 'rest' %}
-      {% for alias in aliases %}<p><strong>HTTPS varsayılanı:</strong> <code>POST /v1/chat/completions</code> · <code>model: {{ alias.alias }}</code></p>{% endfor %}
-      <p class="muted"><code>POST /v1/responses</code> birleşik çalışma uç noktasıdır. Arka plan çalıştırmaları için <code>background: true</code> ve <code>Idempotency-Key</code> kullanın; Chat Completions yalnız senkron uyumluluk adaptörüdür.</p>
+      <p class="muted">Yukarıdaki örnekler compiler-supported mode’lardan üretilir ve dahili senaryo ID’si yerine aktif alias kullanır.</p>
     {% elif binding.consumer.protocol == 'mcp' %}
       <p><strong>MCP:</strong> <code>POST /mcp/</code> üzerinden <code>agenthub__query</code> / <code>agenthub__invoke</code>. Bu credential HTTPS compatibility endpoint'lerinde kullanılamaz.</p>
     {% endif %}</div>
@@ -57,7 +67,7 @@
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Çalışan tanım</p><h2>Aktif release artifact'leri</h2><p class="muted">Aşağıdaki roller yalnız aktif release manifestindeki exact immutable version'lardır.</p></div>{% if active_release %}<span class="badge active">release #{{ active_release.id }}</span>{% endif %}</div>
   {% if active_release %}
-    {% for row in active_artifacts %}<div class="access-row"><div><strong>{{ row.role }}</strong><p class="muted">{{ row.type }} · {{ row.ref }}</p></div>{% if row.artifact %}<a class="button secondary" href="{% url 'console:artifact_detail' row.artifact.id %}">DSL / detay</a>{% if row.checksum_matches %}<span class="access-ok">checksum doğru</span>{% else %}<span class="access-missing">checksum uyuşmuyor</span>{% endif %}{% if row.workflow_draft and can_write %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ row.workflow_draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ row.workflow_draft.id }}">Grafikte aç</a>{% endif %}{% else %}<span class="access-missing">Artifact çözümlenemedi</span>{% endif %}</div>{% empty %}<p class="muted">Aktif release artifact rolü içermiyor.</p>{% endfor %}
+    {% for row in active_artifacts %}<div class="access-row"><div><strong>{{ row.role }}</strong><p class="muted">{{ row.type }} · {{ row.ref }}</p>{% if row.artifact %}<p class="muted">{{ row.artifact.logical_description }} · exact version: {{ row.artifact.version_description }}</p>{% endif %}</div>{% if row.artifact %}<a class="button secondary" href="{% url 'console:artifact_detail' row.artifact.id %}">DSL / detay</a>{% if row.checksum_matches %}<span class="access-ok">checksum doğru</span>{% else %}<span class="access-missing">checksum uyuşmuyor</span>{% endif %}{% if row.workflow_draft and can_write %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ row.workflow_draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ row.workflow_draft.id }}">Grafikte aç</a>{% endif %}{% else %}<span class="access-missing">Artifact çözümlenemedi</span>{% endif %}</div>{% empty %}<p class="muted">Aktif release artifact rolü içermiyor.</p>{% endfor %}
   {% else %}<div class="empty">Aktif release yok; artifact seçimi henüz runtime'a çıkmamış.</div>{% endif %}
 </section>
 
@@ -73,13 +83,24 @@
 
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Reusable artifact registry</p><h2>Exact candidate manifest hazırla</h2><p class="muted">Seçim yalnız immutable exact version/checksum pinler ve candidate oluşturur; publish, evaluation veya promotion yapmaz.</p></div></div>
-  {% if artifact_candidates_limited %}<div class="warning-box">İlk 200 artifact sürümü gösteriliyor; daha dar bir katalog filtresi sonraki kullanım iyileştirmesidir.</div>{% endif %}
   {% if can_compile_release %}
-  <form method="post" action="{% url 'console:scenario_compile_candidate' scenario.public_id %}">{% csrf_token %}
-    {% for artifact in artifact_candidates %}<div class="access-row"><label><input type="checkbox" name="artifact_ids" value="{{ artifact.id }}"> <strong>{{ artifact.type }}</strong> · {{ artifact.logical_id }}:v{{ artifact.version }}</label><span class="mono">{{ artifact.checksum|slice:':12' }}</span><label>Manifest rolü <input name="role_{{ artifact.id }}" value="{{ artifact.type }}" maxlength="128"></label></div>{% empty %}<p class="muted">Bu organizasyonda published artifact sürümü yok.</p>{% endfor %}
-    {% if artifact_candidates %}<button class="button primary" type="submit">Candidate release derle</button>{% endif %}
+  <form method="post" action="{% url 'console:scenario_compile_candidate' scenario.public_id %}"
+        data-artifact-selector data-options-url="{{ artifact_options_url }}">{% csrf_token %}
+    <div class="relationship-card">
+      <label>1. Artifact type<select data-artifact-type required><option value="">Type seçin</option></select></label>
+      <p class="muted" data-artifact-type-description>Artifact türünün çalışma zamanındaki rolü burada açıklanır.</p>
+      <label>2. Logical artifact<select data-logical-artifact required disabled><option value="">Önce type seçin</option></select></label>
+      <p class="muted" data-logical-description>Logical artifact’ın sürümler boyunca değişmeyen amacı.</p>
+      <label>3. Exact version<select data-exact-version required disabled><option value="">Önce logical artifact seçin</option></select></label>
+      <p class="muted" data-version-description>Exact immutable sürümün içeriği/değişikliği, checksum ve dependency etkisi.</p>
+      <label>Manifest rolü<select data-manifest-role required disabled><option value="">Önce version seçin</option></select></label>
+      <button class="button secondary" type="button" data-add-artifact disabled>Manifest’e ekle</button>
+      <div class="msg error" role="alert" data-selector-error hidden></div>
+    </div>
+    <div data-selected-artifacts><p class="muted" data-empty-selection>Henüz exact version seçilmedi.</p></div>
+    <button class="button primary" type="submit" data-compile-release disabled>Candidate release derle</button>
   </form>
-  {% else %}<p class="muted">Artifact kataloğu salt okunur. Candidate derleme yalnız Global Administrator veya organizasyon yöneticisine açıktır.</p>{% for artifact in artifact_candidates %}<div class="access-row"><div><strong>{{ artifact.type }}</strong> · {{ artifact.logical_id }}:v{{ artifact.version }}</div><span class="mono">{{ artifact.checksum|slice:':12' }}</span></div>{% empty %}<p class="muted">Artifact yok.</p>{% endfor %}{% endif %}
+  {% else %}<p class="muted">Artifact kataloğu ve candidate derleme yalnız Global Administrator veya organizasyon yöneticisine açıktır. Senaryo editörleri Studio’da draft hazırlayıp test edebilir ancak release pinleyemez.</p>{% endif %}
 </section>
 
 <details class="card form-card">
@@ -144,4 +165,5 @@
   </tbody></table></div>{% else %}<p class="muted">Bu senaryoyu çağırmaya yetkili istemci yok.</p>{% endif %}
 </section>
 <script src="{% static 'console/copy_text.js' %}" defer></script>
+<script src="{% static 'console/artifact_selector.js' %}" defer></script>
 {% endblock %}

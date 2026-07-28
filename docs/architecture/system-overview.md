@@ -62,6 +62,16 @@ scenario, consumer, release or membership role sets. Project, document-set and c
 derive organization from the active workspace; scenario creation derives project from its
 authorized contextual route.
 
+Phase 2.8 Part 4 makes scenario authoring preset-led and scenario-local. Empty Workflow, Document
+Answer and Agent Loop create one compiler-validated mutable draft and no release. Workflow drafts
+carry a stable logical-artifact description; every published immutable version carries a separate
+exact-version description. Candidate manifests are prepared through a tenant-scoped
+`artifact type → logical artifact → exact version` selector that exposes descriptions, checksum and
+bounded dependency impact but never artifact bodies. The server re-resolves every submitted ID,
+enforces the closed role/type contract and compiles through the canonical release compiler.
+Invocation examples use the active alias and the release-pinned execution-mode analysis. Studio AI
+authoring has a safe deployment preflight and remains candidate-only.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full

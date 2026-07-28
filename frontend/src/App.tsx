@@ -32,6 +32,7 @@ export function App({
   const [error, setError] = useState<string>("");
   const [newName, setNewName] = useState("");
   const [newId, setNewId] = useState("");
+  const [newLogicalDescription, setNewLogicalDescription] = useState("");
   const [newJson, setNewJson] = useState("");
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
   const [scenarioAutoHandled, setScenarioAutoHandled] = useState(false);
@@ -126,17 +127,19 @@ export function App({
         ...(initial?.scenario_id ? { scenario_id: initial.scenario_id } : {}),
         name: newName,
         logical_id: newId,
+        logical_description: newLogicalDescription,
         body,
       });
       setNewName("");
       setNewId("");
+      setNewLogicalDescription("");
       setNewJson("");
       await reload();
       setActive(draft);
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
     }
-  }, [api, initial?.project_id, initial?.scenario_id, newJson, newName, newId, orgSlug, reload]);
+  }, [api, initial?.project_id, initial?.scenario_id, newJson, newLogicalDescription, newName, newId, orgSlug, reload]);
 
   const createFromActive = useCallback(async () => {
     if (!initial?.active_workflow || !initial.project_id || !initial.scenario_id) return;
@@ -147,6 +150,7 @@ export function App({
         scenario_id: initial.scenario_id,
         name: initial.active_workflow.name,
         logical_id: `${initial.active_workflow.logical_id}_${initial.scenario_id}`.slice(0, 128),
+        logical_description: `${initial.scenario_name ?? "Senaryo"} aktif workflow kopyası`,
         body: initial.active_workflow.body,
       });
       await reload();
@@ -254,6 +258,9 @@ export function App({
             <span>
               <strong>{d.name}</strong>{" "}
               <span style={{ color: "#8b95a7" }}>({d.logical_id})</span>
+              {d.logical_description && <div style={{ color: "#8b95a7", fontSize: 13 }}>
+                {d.logical_description}
+              </div>}
               {d.last_published_version > 0 && (
                 <span style={{ color: "#86efac", marginLeft: 8 }}>
                   v{d.last_published_version} yayımlandı
@@ -292,6 +299,7 @@ export function App({
 
       {canWrite && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
         lockedProjectId={initial?.project_id} scenarioId={initial?.scenario_id}
+        availability={initial?.ai_authoring}
         onCapabilityMissing={openCapabilityScaffold}
         onGenerated={(result, projectId) => {
           setCapabilityScaffold(null);
@@ -343,11 +351,19 @@ export function App({
             onChange={(e) => setNewId(e.target.value)}
             style={createInput}
           />
+          <textarea
+            aria-label="logical artifact açıklaması"
+            placeholder="Bu logical artifact hangi kalıcı amacı karşılıyor?"
+            maxLength={1000}
+            value={newLogicalDescription}
+            onChange={(e) => setNewLogicalDescription(e.target.value)}
+            style={{ display: "block", width: "100%", margin: "10px 0" }}
+          />
           {initial?.scenario_id && <textarea aria-label="yeni workflow JSON" rows={12}
             placeholder="İsteğe bağlı: agenthub/v1 Workflow JSON'unun tamamını buraya yapıştırın. Boş bırakırsanız graph ile başlayın."
             value={newJson} onChange={(event) => setNewJson(event.target.value)}
             style={{ display: "block", width: "100%", margin: "10px 0", fontFamily: "monospace" }} />}
-          <button type="button" disabled={!newName || !newId} onClick={() => void create()} style={openBtn}>
+          <button type="button" disabled={!newName || !newId || !newLogicalDescription.trim()} onClick={() => void create()} style={openBtn}>
             Oluştur
           </button>
         </div>

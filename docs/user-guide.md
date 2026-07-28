@@ -73,6 +73,19 @@ Artifact, release ve DSL ayrıntıları aynı senaryo bağlamındaki görev böl
 global sidebar katalogları değildir. Eski global GET katalog adresleri güvenli bağlamsal sayfalara
 yönlenir; detail ve state-changing route'lar korunur.
 
+Yeni senaryo oluştururken üç başlangıçtan biri seçilir: **Empty Workflow**, **Document Answer** veya
+**Agent Loop**. Oluşturma yalnız senaryoya bağlı doğrulanmış bir Studio draft'ı hazırlar; release
+yayımlamaz. Logical artifact açıklaması workflow'un sürümler boyunca değişmeyen amacını anlatır.
+Studio'da **Yayımla** işlemi ayrıca exact version açıklaması ister; bu metin yalnız o immutable
+sürümde ne olduğunu veya neyin değiştiğini açıklar.
+
+Candidate release hazırlanırken seçim sırası **artifact type → logical artifact → exact version**
+şeklindedir. Her seviyenin açıklaması, exact checksum ve daha önce kaç release tarafından pinlendiği
+seçimden önce gösterilir. Manifest rolü serbest metin değildir; yalnız seçilen artifact type ile
+uyumlu kapalı seçeneklerden seçilir. Senaryo çağrı bölümündeki kopyalanabilir `curl` örneği, aktif
+release'in compiler-supported execution mode'larına göre Chat Completions veya background Responses
+biçiminde ve dahili ID yerine senaryo alias'ıyla üretilir.
+
 Klavye kullanıcıları sayfanın başındaki **Ana içeriğe geç** bağlantısıyla navigasyonu atlayabilir.
 Odak göstergesi tüm link/form kontrollerinde görünürdür; geniş tablolar dar ekranda yatay kaydırılır.
 Builder 760 px altında palette, canvas ve config panelini dikey sıraya alır. Bu davranışların son

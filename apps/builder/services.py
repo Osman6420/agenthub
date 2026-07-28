@@ -75,6 +75,7 @@ def create_draft(
     organization: Organization,
     name: str,
     logical_id: str,
+    logical_description: str = "",
     body: dict[str, Any] | None,
     actor: str,
     project: AIProject | None = None,
@@ -83,10 +84,15 @@ def create_draft(
 ) -> WorkflowDraft:
     name = (name or "").strip()
     logical_id = (logical_id or "").strip()
+    logical_description = " ".join((logical_description or "").split())
     if not name:
         raise BuilderError("name_required", "draft name is required")
     if not logical_id:
         raise BuilderError("logical_id_required", "logical_id is required")
+    if not logical_description:
+        logical_description = f"{name} workflow"
+    if len(logical_description) > 1000:
+        raise BuilderError("logical_description_too_large")
     if project is not None and project.organization_id != organization.id:
         raise BuilderError("project_mismatch", "project must belong to the organization")
     if scenario is not None:
@@ -105,6 +111,7 @@ def create_draft(
         scenario=scenario,
         name=name,
         logical_id=logical_id,
+        logical_description=logical_description,
         body=candidate,
         created_by=actor,
         updated_by=actor,
@@ -120,6 +127,7 @@ def update_draft(
     actor: str,
     expected_revision: Any,
     name: str | None = None,
+    logical_description: str | None = None,
     body: dict[str, Any] | None = None,
     request_id: str = "",
 ) -> WorkflowDraft:
@@ -132,9 +140,27 @@ def update_draft(
         locked.name = stripped
     if body is not None:
         locked.body = _validated_body(body)
+    if logical_description is not None:
+        normalized_description = " ".join(logical_description.split())
+        if not normalized_description:
+            raise BuilderError("logical_description_required")
+        if len(normalized_description) > 1000:
+            raise BuilderError("logical_description_too_large")
+        if locked.last_published_version and normalized_description != locked.logical_description:
+            raise BuilderError("logical_description_immutable_after_publish")
+        locked.logical_description = normalized_description
     locked.updated_by = actor
     locked.revision += 1
-    locked.save(update_fields=["name", "body", "updated_by", "revision", "updated_at"])
+    locked.save(
+        update_fields=[
+            "name",
+            "logical_description",
+            "body",
+            "updated_by",
+            "revision",
+            "updated_at",
+        ]
+    )
     _audit(actor, "update", locked, request_id=request_id)
     return locked
 
@@ -335,6 +361,7 @@ def publish_draft(
     *,
     actor: str,
     expected_revision: Any,
+    version_description: str = "",
     source_git_revision: str = "",
     request_id: str = "",
 ) -> ArtifactVersion:
@@ -346,11 +373,18 @@ def publish_draft(
     """
     locked = WorkflowDraft.objects.select_for_update().get(pk=draft.pk)
     _require_revision(expected=expected_revision, actual=locked.revision)
+    version_description = " ".join((version_description or "").split())
+    if not version_description:
+        version_description = f"{locked.name} published version"
+    if len(version_description) > 1000:
+        raise BuilderError("version_description_too_large")
     try:
         artifact = create_artifact_version(
             organization=locked.organization,
             artifact_type=ArtifactType.WORKFLOW_DEFINITION,
             logical_id=locked.logical_id,
+            logical_description=locked.logical_description,
+            version_description=version_description,
             body=_validated_body(locked.body),
             created_by=actor,
             source_git_revision=source_git_revision,

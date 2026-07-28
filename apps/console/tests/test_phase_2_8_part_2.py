@@ -280,9 +280,8 @@ def test_contextual_creates_ignore_forged_parent_fields(client: Client) -> None:
         {
             "project": foreign_project.pk,
             "name": "Context Scenario",
-            "visibility": "internal",
-            "risk_level": "low",
-            "status": "active",
+            "preset": "document_answer",
+            "logical_description": "Answers from governed documents",
         },
     )
     assert scenario_response.status_code == 302

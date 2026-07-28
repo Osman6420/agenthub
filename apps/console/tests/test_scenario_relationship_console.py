@@ -9,12 +9,17 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 from django.urls import reverse
 
+from apps.artifacts.services import create_artifact_version
+from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.documents.models import DocumentSet, DocumentSetGrant, ScenarioDocumentSetBinding
 from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
 from apps.identity.roles import Role
+from apps.releases.compiler import ArtifactRef, compile_release
+from apps.releases.models import ReleaseStatus
 from apps.tenancy.models import Organization, OrganizationMembership
+from apps.workflows.presets import empty_workflow
 
 User = get_user_model()
 pytestmark = pytest.mark.django_db
@@ -102,6 +107,30 @@ def test_scenario_and_consumer_show_protocol_specific_invocation_guidance(
     ScenarioAlias.objects.create(
         organization=organization, scenario=scenario, alias="proje-yardim-ab12"
     )
+    workflow = create_artifact_version(
+        organization=organization,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="guidance_flow",
+        logical_description="Invocation guidance workflow",
+        version_description="Initial synchronous release",
+        body=empty_workflow(logical_id="guidance_flow"),
+        created_by="test",
+    )
+    release = compile_release(
+        scenario=scenario,
+        refs=[
+            ArtifactRef(
+                role="workflow_definition",
+                type=workflow.type,
+                logical_id=workflow.logical_id,
+                version=workflow.version,
+            )
+        ],
+        runtime_version="runtime:v1",
+        created_by="test",
+    )
+    release.status = ReleaseStatus.ACTIVE
+    release.save(update_fields=["status"])
     rest_consumer = _consumer(organization, scenario, "portal")
     mcp_consumer = Consumer.objects.create(
         organization=organization,

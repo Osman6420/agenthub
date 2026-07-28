@@ -78,6 +78,8 @@ def test_export_document_shape(org: Organization) -> None:
         organization=org,
         artifact_type=ArtifactType.POLICY_PROFILE,
         logical_id="grounded",
+        logical_description="Stable grounding policy",
+        version_description="Requires grounded answers",
         body={"grounding": {"required": True}},
         created_by="cli",
     )
@@ -86,4 +88,6 @@ def test_export_document_shape(org: Organization) -> None:
     assert doc["kind"] == "PolicyProfile"
     assert doc["metadata"]["organization"] == "mcm"
     assert doc["metadata"]["version"] == 1
+    assert doc["metadata"]["logical_description"] == "Stable grounding policy"
+    assert doc["metadata"]["version_description"] == "Requires grounded answers"
     assert doc["spec"] == {"grounding": {"required": True}}

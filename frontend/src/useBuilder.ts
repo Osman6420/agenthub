@@ -50,7 +50,7 @@ export interface BuilderController {
   removeSelected: () => void;
   runDiagnostics: () => Promise<void>;
   save: () => Promise<number | undefined>;
-  publish: () => Promise<void>;
+  publish: (versionDescription?: string) => Promise<void>;
   applyJsonCandidate: (body: unknown) => Promise<boolean>;
 }
 
@@ -247,11 +247,11 @@ export function useBuilder(
     }
   }, [api, body, draft.id, readOnly, revision]);
 
-  const publish = useCallback(async () => {
+  const publish = useCallback(async (versionDescription = "Published workflow version") => {
     if (readOnly) return;
     const publishRevision = isDirty ? await save() : revision;
     if (publishRevision === undefined) return;
-    const result = await api.publish(draft.id, publishRevision);
+    const result = await api.publish(draft.id, publishRevision, versionDescription);
     setRevision(result.revision);
     setStatus(`Yayımlandı: ${result.logical_id} v${result.version}`);
   }, [api, draft.id, isDirty, readOnly, revision, save]);

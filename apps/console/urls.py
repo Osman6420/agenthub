@@ -41,6 +41,11 @@ urlpatterns = [
         name="scenario_compile_candidate",
     ),
     path(
+        "scenarios/id/<uuid:public_id>/artifact-options/",
+        views.scenario_artifact_options,
+        name="scenario_artifact_options",
+    ),
+    path(
         "scenarios/id/<uuid:public_id>/document-sets/bind/",
         views.scenario_bind_document_set,
         name="scenario_bind_document_set_public",

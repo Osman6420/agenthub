@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { BuilderController } from "../useBuilder";
 
 // Top toolbar: workflow id, validate/save/publish, and status. Validation and publishing
@@ -12,9 +14,10 @@ export function Toolbar({
   builder: BuilderController;
   draftName: string;
   busy: boolean;
-  onAction: (action: "validate" | "save" | "publish") => void;
+  onAction: (action: "validate" | "save" | "publish", versionDescription?: string) => void;
 }) {
   const { readOnly, isDirty, diagnostics } = builder;
+  const [versionDescription, setVersionDescription] = useState("");
   return (
     <div style={{ borderBottom: "1px solid #262b36" }}>
       <div className="ah-builder-toolbar-row">
@@ -39,6 +42,18 @@ export function Toolbar({
         {readOnly && <span style={badge("#7c5e10", "#fcd34d")}>salt okunur</span>}
         {!readOnly && isDirty && <span style={badge("#334155", "#93c5fd")}>kaydedilmemiş değişiklik</span>}
         <div style={{ flex: 1 }} />
+        <label style={{ fontSize: 12, color: "#8b95a7" }}>
+          Exact version açıklaması
+          <input
+            aria-label="exact version açıklaması"
+            value={versionDescription}
+            maxLength={1000}
+            disabled={readOnly}
+            onChange={(event) => setVersionDescription(event.target.value)}
+            placeholder="Bu sürümde ne var/değişti?"
+            style={{ marginLeft: 6, minWidth: 220 }}
+          />
+        </label>
         <button type="button" disabled={busy} onClick={() => onAction("validate")} style={btn()}>
           Doğrula
         </button>
@@ -52,8 +67,8 @@ export function Toolbar({
         </button>
         <button
           type="button"
-          disabled={busy || readOnly}
-          onClick={() => onAction("publish")}
+          disabled={busy || readOnly || !versionDescription.trim()}
+          onClick={() => onAction("publish", versionDescription)}
           style={btn("#2563eb")}
         >
           Yayımla

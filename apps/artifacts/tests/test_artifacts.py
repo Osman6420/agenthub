@@ -47,6 +47,42 @@ def test_create_assigns_version_and_checksum(org: Organization) -> None:
 
 
 @pytest.mark.django_db
+def test_logical_description_is_stable_while_exact_version_description_changes(
+    org: Organization,
+) -> None:
+    first = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        logical_id="support_prompt",
+        logical_description="Stable support answer purpose",
+        version_description="Initial reviewed wording",
+        body={"template": "Hello"},
+        created_by="author",
+    )
+    second = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        logical_id="support_prompt",
+        version_description="Adds Turkish wording",
+        body={"template": "Merhaba"},
+        created_by="author",
+    )
+    assert second.logical_description == first.logical_description
+    assert second.version_description == "Adds Turkish wording"
+
+    with pytest.raises(ValueError, match="must remain stable"):
+        create_artifact_version(
+            organization=org,
+            artifact_type=ArtifactType.PROMPT_TEMPLATE,
+            logical_id="support_prompt",
+            logical_description="Different purpose",
+            version_description="Invalid metadata change",
+            body={"template": "Nope"},
+            created_by="author",
+        )
+
+
+@pytest.mark.django_db
 def test_artifact_is_immutable(org: Organization) -> None:
     artifact = create_artifact_version(
         organization=org,

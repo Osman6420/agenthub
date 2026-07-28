@@ -1,0 +1,42 @@
+{% extends "console/base.html" %}
+{% block title %}Yeni senaryo · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu">
+  <a href="{% url 'console:organization_detail' project.organization.slug %}">{{ project.organization.name }}</a><span>›</span>
+  <a href="{% url 'console:project_detail_public' project.public_id %}">{{ project.name }}</a><span>›</span>
+  <span aria-current="page">Yeni senaryo</span>
+</nav>
+
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">Proje bağlamında oluştur</p>
+    <h1>Yeni senaryo</h1>
+    <p class="muted">Organizasyon ve proje güvenilir URL bağlamından alınır. Başlangıç yalnız doğrulanmış bir workflow draft oluşturur; release yayımlamaz.</p>
+  </div>
+</div>
+
+<form method="post" class="card form-card">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="form-field">{{ form.name.label_tag }}{{ form.name }}<p class="help">{{ form.name.help_text }}</p>{{ form.name.errors }}</div>
+  <fieldset>
+    <legend><strong>Başlangıç seçin</strong></legend>
+    <p class="muted">Studio’da değiştirebileceğiniz canonical Part 3 workflow draft’ı hazırlanır.</p>
+    {% for choice in form.preset %}
+      <label class="relationship-card" for="{{ choice.id_for_label }}">
+        {{ choice.tag }}
+        <span>
+          <strong>{{ choice.choice_label }}</strong>
+          {% if choice.data.value == 'empty_workflow' %}<span class="muted">Input → format output → end. Tamamen özelleştirilecek sade başlangıç.</span>{% endif %}
+          {% if choice.data.value == 'document_answer' %}<span class="muted">Input → retrieve → generate → end. Doküman erişimi daha sonra senaryoya bağlanır.</span>{% endif %}
+          {% if choice.data.value == 'agent_loop' %}<span class="muted">Input → governed agent loop → end. Araçlar başlangıçta kapalı ve limitler bounded’dır.</span>{% endif %}
+        </span>
+      </label>
+    {% endfor %}
+    {{ form.preset.errors }}
+  </fieldset>
+  <div class="form-field">{{ form.logical_description.label_tag }}{{ form.logical_description }}<p class="help">{{ form.logical_description.help_text }}</p>{{ form.logical_description.errors }}</div>
+  <div class="notice"><strong>Sonraki adım:</strong> Senaryo açıldığında Studio draft’ını inceleyin. Yayımlarken exact version açıklaması ayrıca istenir; candidate release, evaluation ve promotion ayrı yetkili işlemlerdir.</div>
+  <button class="button primary" type="submit">Senaryo ve draft oluştur</button>
+</form>
+{% endblock %}

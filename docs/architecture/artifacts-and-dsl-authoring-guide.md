@@ -1,5 +1,22 @@
 # AgentHub Artifact ve DSL Yazım Kılavuzu
 
+## Senaryo merkezli yazım ve açıklamalar
+
+Yeni senaryo yalnız yetkili bir proje içinde Empty Workflow, Document Answer veya Agent Loop
+başlangıcından oluşturulur. Preset, compiler tarafından doğrulanmış senaryoya bağlı mutable draft
+yaratır; artifact yayımlamaz veya release aktifleştirmez.
+
+Yeni workflow yazımında iki ayrı insan açıklaması tutulur:
+
+- `logical_description`, logical artifact'ın tüm sürümlerde değişmeyen amacını açıklar;
+- `version_description`, yayımlanan immutable exact version'ın ne içerdiğini veya neyi
+  değiştirdiğini açıklar.
+
+Release seçimi `artifact type → logical artifact → exact version` sırasındadır. Kullanıcı kapalı ve
+uyumlu manifest rolünü seçmeden önce iki açıklamayı, checksum'ı ve mevcut release-pin etkisini görür.
+Açıklamalar yalnız sunum metadata'sıdır; artifact body, canonical validator/compiler, checksum ve
+exact manifest pini otorite olmaya devam eder.
+
 ## 1. Amaç ve otorite
 
 Bu doküman AgentHub artifact registry, release manifest rolleri, workflow DSL, agent tanımı,

@@ -63,6 +63,7 @@ def bf(db: object) -> BuilderFixture:
         project=project,
         name="Flow draft",
         logical_id="flow_a",
+        logical_description="Stable flow purpose",
         body=simple_workflow(),
         created_by="author",
         updated_by="author",
