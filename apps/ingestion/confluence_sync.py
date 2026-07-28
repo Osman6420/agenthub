@@ -14,6 +14,7 @@ from apps.audit.services import record_event
 from apps.documents.models import Document, DocumentLifecycle, DocumentVersion
 from apps.documents.services import (
     DocumentError,
+    get_or_create_manual_draft,
     upload_document,
 )
 from apps.ingestion.confluence import ConfluenceDataCenterClient, ConfluenceError, ConfluencePage
@@ -291,6 +292,12 @@ def _persist_changed_page(
             raise ConfluenceError("CONFLUENCE_DOCUMENT_TOMBSTONED")
     reusable = _reusable_crash_version(document, existing_cursor, checksum)
     if reusable is None:
+        if source.document_set is None:
+            raise ConfluenceError("CONFLUENCE_SOURCE_SET_REQUIRED")
+        draft = get_or_create_manual_draft(
+            document_set=source.document_set,
+            actor="confluence-worker",
+        )
         version = upload_document(
             organization=source.organization,
             logical_id=logical_id,
@@ -298,6 +305,7 @@ def _persist_changed_page(
             mime_type="text/html",
             data=body,
             actor="confluence-worker",
+            document_set_version=draft,
             source=source,
         )
         document = version.document

@@ -116,6 +116,20 @@ Before implementation, select the authentication mechanism and recovery factors,
 enrolment/reset and credential-custody procedures, test lockout and recovery failure modes, and
 update the superadmin threat model and operational runbook.
 
+## Workstream F — Governed retrieval metadata
+
+Implement the `metadata_filter` field reserved by the retrieval-profile contract. This work moved
+from Phase 2.8 Part 5 to Phase 3 by owner decision on 2026-07-28. Until this workstream is delivered,
+the field is validated as a bounded governed expression but is a documented no-op; it must not be
+presented as narrowing retrieval results or as an authorization control.
+
+Before implementation, define the authoritative metadata schema and ingestion lineage, field
+allowlist and types, immutable document/chunk projection, PostgreSQL indexing strategy, migration
+and backfill policy, and identical enforcement across keyword, vector, hybrid and hierarchical
+summary-routing stages. Metadata may only narrow an already server-authorized tenant/grant/pinned
+set-version/active-index corpus. Client-supplied organization, owner, role, permission or other
+authority fields remain forbidden.
+
 ## Required planning artifacts
 
 Before either workstream is implemented, create its dedicated task plan and proportionate threat
@@ -126,6 +140,8 @@ Persistent history requires a conversation ownership/data lifecycle ADR, privacy
 authorization matrix, retention/purge runbook and migration/rollback plan.
 Superadmin MFA requires an authentication design review, recovery-factor custody policy, negative
 authentication tests and rollout/rollback evidence.
+Governed retrieval metadata requires a field-schema decision, ingestion/backfill plan, query/index
+design, cross-mode parity tests and cross-tenant/authority-negative tests.
 
 ## Status
 

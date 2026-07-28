@@ -93,6 +93,12 @@ class ParseStatus(models.TextChoices):
     FAILED = "failed", "Failed"
 
 
+class SummaryStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    READY = "ready", "Ready"
+    FAILED = "failed", "Failed"
+
+
 class DocumentVersion(TimeStampedModel):
     """An immutable snapshot of one document's bytes (stored in the object store)."""
 
@@ -127,6 +133,56 @@ class DocumentVersion(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"document-version:{self.document_id}:v{self.version}"
+
+
+class DocumentVersionSummary(TimeStampedModel):
+    """Bounded, derived summary with exact model and prompt provenance."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="document_version_summaries"
+    )
+    document_version = models.ForeignKey(
+        DocumentVersion, on_delete=models.CASCADE, related_name="summaries"
+    )
+    model_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        related_name="document_summaries_as_model",
+    )
+    prompt_contract = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        related_name="document_summaries_as_prompt",
+    )
+    status = models.CharField(
+        max_length=16, choices=SummaryStatus.choices, default=SummaryStatus.PENDING
+    )
+    content = models.TextField(blank=True)
+    checksum = models.CharField(max_length=64, blank=True)
+    error_code = models.CharField(max_length=64, blank=True)
+    input_checksum = models.CharField(max_length=64)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document_version", "model_profile", "prompt_contract"],
+                name="uniq_document_summary_provenance",
+            )
+        ]
+        indexes = [models.Index(fields=["organization", "status"])]
+
+    def clean(self) -> None:
+        if (
+            self.document_version_id
+            and self.document_version.organization_id != self.organization_id
+        ):
+            raise ValidationError("summary organization must match its document version")
+        for artifact, expected_type in (
+            (self.model_profile, "model_profile"),
+            (self.prompt_contract, "prompt_template"),
+        ):
+            if artifact.organization_id != self.organization_id or artifact.type != expected_type:
+                raise ValidationError("summary artifact provenance is invalid")
 
 
 class DocumentSetStatus(models.TextChoices):

@@ -1,7 +1,7 @@
 # AgentHub — Phase 2.8 Plan
 
-> **Status: In progress.** Parts 1–3 are verified and owner-accepted. Part 4 is implemented and
-> automated/offline verified; its browser/live-provider owner acceptance remains. Parts 5–7 remain.
+> **Status: In progress.** Parts 1–3 are verified and owner-accepted. Parts 4 and 5 are implemented
+> and automated/offline verified; browser/live-provider owner acceptance remains. Parts 6–7 remain.
 > This is a program plan:
 > every remaining part owns a
 > separate plan, threat model, verification record and acceptance gate. Planned behavior must not
@@ -41,9 +41,11 @@ observability and migrations, and therefore has its own staged acceptance gates.
    automated/offline verified.** Preset-led scenario creation, contextual Studio, typed exact
    artifact selectors with logical/version descriptions, compiler-derived invocation guidance and
    governed AI-authoring preflight are implemented. Browser/live-provider owner acceptance remains.
-6. **Part 5 — Document profiles, document manager and index automation — Planned.** Set-only
-   document management, real chunking/retrieval profiles, BM25/vector/hybrid search, optional
-   LLM-derived summaries and staged index preparation with explicit activation.
+6. **Part 5 — Document profiles, document manager and index automation — Implemented and
+   automated/offline verified.** Set-only document management, exact chunking/retrieval profiles,
+   keyword/vector/hybrid search, opt-in summary-to-document-to-content routing, optional
+   provenance-bound summaries and idempotent staged index preparation are implemented; activation
+   remains explicit. Destructive cleanup is not authorized.
 7. **Part 6 — Question sets and retrieval/answer evaluation — Planned.** Reusable versioned question
    sets, document retrieval diagnostics, scenario answer evaluation and separate retrieval/answer
    quality measures.

@@ -14,3 +14,11 @@ class RetrievedChunk:
     source_uri: str
     title: str = ""
     score: float = 0.0
+    chunk_kind: str = "content"
+    vector_rank: int | None = None
+    vector_score: float | None = None
+    keyword_rank: int | None = None
+    keyword_score: float | None = None
+    fused_score: float | None = None
+    document_routing_score: float | None = None
+    retrieval_stage: str = "direct"

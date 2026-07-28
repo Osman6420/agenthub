@@ -172,6 +172,10 @@ def run_staged_index_build_job(self: object, job_public_id: str) -> str:
             document_set_version=job.document_set_version,
             embedding_profile=job.embedding_profile,
             ocr_profile=job.ocr_profile,
+            chunking_profile=job.chunking_profile,
+            retrieval_profile=job.retrieval_profile,
+            summary_model_profile=job.summary_model_profile,
+            summary_prompt_contract=job.summary_prompt_contract,
             actor=job.requested_by,
             request_id=job.request_id,
             progress_callback=lambda documents, chunks: update_progress(

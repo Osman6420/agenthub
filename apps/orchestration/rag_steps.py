@@ -74,6 +74,14 @@ def chunk_to_dict(chunk: RetrievedChunk) -> dict[str, Any]:
         "source_uri": chunk.source_uri,
         "title": chunk.title,
         "score": chunk.score,
+        "chunk_kind": chunk.chunk_kind,
+        "vector_rank": chunk.vector_rank,
+        "vector_score": chunk.vector_score,
+        "keyword_rank": chunk.keyword_rank,
+        "keyword_score": chunk.keyword_score,
+        "fused_score": chunk.fused_score,
+        "document_routing_score": chunk.document_routing_score,
+        "retrieval_stage": chunk.retrieval_stage,
     }
 
 
@@ -91,6 +99,38 @@ def chunks_from_state(state: dict[str, Any]) -> list[RetrievedChunk]:
                     source_uri=str(item.get("source_uri", "")),
                     title=str(item.get("title", "")),
                     score=float(item.get("score", 0.0) or 0.0),
+                    chunk_kind=str(item.get("chunk_kind", "content")),
+                    vector_rank=(
+                        int(item["vector_rank"])
+                        if isinstance(item.get("vector_rank"), int)
+                        else None
+                    ),
+                    vector_score=(
+                        float(item["vector_score"])
+                        if isinstance(item.get("vector_score"), (int, float))
+                        else None
+                    ),
+                    keyword_rank=(
+                        int(item["keyword_rank"])
+                        if isinstance(item.get("keyword_rank"), int)
+                        else None
+                    ),
+                    keyword_score=(
+                        float(item["keyword_score"])
+                        if isinstance(item.get("keyword_score"), (int, float))
+                        else None
+                    ),
+                    fused_score=(
+                        float(item["fused_score"])
+                        if isinstance(item.get("fused_score"), (int, float))
+                        else None
+                    ),
+                    document_routing_score=(
+                        float(item["document_routing_score"])
+                        if isinstance(item.get("document_routing_score"), (int, float))
+                        else None
+                    ),
+                    retrieval_stage=str(item.get("retrieval_stage", "direct")),
                 )
             )
     return chunks

@@ -12,6 +12,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
 
+from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.services import create_artifact_version
+from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.documents import storage
 from apps.documents.models import Document, DocumentSetVersionStatus
@@ -64,6 +67,39 @@ def _profile(org: Organization, *, logical_id: str = "embed") -> EmbeddingProfil
         organization=org, embedding_profile=profile, created_by="platform-admin"
     )
     return profile
+
+
+def _document_profiles(org: Organization) -> tuple[ArtifactVersion, ArtifactVersion]:
+    chunking = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.CHUNKING_PROFILE,
+        logical_id="chunk",
+        body={
+            "api_version": "agenthub/chunking/v1",
+            "kind": "ChunkingProfile",
+            "strategy": "characters",
+            "size": 500,
+            "overlap": 50,
+            "max_chunks": 1000,
+        },
+        created_by="owner",
+    )
+    retrieval = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.RETRIEVAL_PROFILE,
+        logical_id="retrieve",
+        body={
+            "api_version": "agenthub/retrieval/v1",
+            "kind": "RetrievalProfile",
+            "mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "vector_weight": 0.5,
+            "keyword_weight": 0.5,
+        },
+        created_by="owner",
+    )
+    return chunking, retrieval
 
 
 @pytest.mark.django_db
@@ -192,6 +228,7 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     publish_document_set_version(set_version=version, actor="seed")
     granted = _profile(org)
     foreign = _profile(other, logical_id="foreign")
+    chunking, retrieval = _document_profiles(org)
     url = reverse("console:document_set_build_index", args=[version.pk])
 
     detail = client.get(reverse("console:document_set_detail", args=[document_set.pk]))
@@ -200,7 +237,15 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     assert "secret://embedding" not in detail.content.decode()
 
     with patch("apps.console.views.create_build_job", return_value=(object(), True)) as create_job:
-        response = client.post(url, {"embedding_profile": granted.pk, "ocr_profile": ""})
+        response = client.post(
+            url,
+            {
+                "embedding_profile": granted.pk,
+                "ocr_profile": "",
+                "chunking_profile": chunking.pk,
+                "retrieval_profile": retrieval.pk,
+            },
+        )
         assert response.status_code == 302
         create_job.assert_called_once()
 

@@ -14,6 +14,8 @@ from django import forms
 from django.contrib.auth import get_user_model
 from django.db.models import QuerySet
 
+from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet, ScenarioDocumentSetBinding
 from apps.identity.capabilities import Capability
@@ -396,6 +398,26 @@ class DocumentSetBuildForm(forms.Form):
     ocr_profile = forms.ModelChoiceField(
         queryset=OcrProfile.objects.none(), required=False, label="OCR profili (isteğe bağlı)"
     )
+    chunking_profile = forms.ModelChoiceField(
+        queryset=ArtifactVersion.objects.none(), label="Parçalama profili"
+    )
+    retrieval_profile = forms.ModelChoiceField(
+        queryset=ArtifactVersion.objects.none(), label="Arama profili"
+    )
+    summary_model_profile = forms.ModelChoiceField(
+        queryset=ArtifactVersion.objects.none(),
+        required=False,
+        label="Özet model profili (isteğe bağlı)",
+    )
+    summary_prompt_contract = forms.ModelChoiceField(
+        queryset=ArtifactVersion.objects.none(),
+        required=False,
+        label="Özet prompt sözleşmesi (isteğe bağlı)",
+    )
+    auto_prepare = forms.BooleanField(
+        required=False,
+        label="Sonraki yayımlanan set sürümlerini otomatik staged hazırla",
+    )
 
     def __init__(self, *args: Any, organization_id: int, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -411,6 +433,27 @@ class DocumentSetBuildForm(forms.Form):
             status=OcrProfileStatus.ACTIVE,
             tenant_grants__organization_id=organization_id,
         ).distinct()
+        artifact_fields = {
+            "chunking_profile": ArtifactType.CHUNKING_PROFILE,
+            "retrieval_profile": ArtifactType.RETRIEVAL_PROFILE,
+            "summary_model_profile": ArtifactType.MODEL_PROFILE,
+            "summary_prompt_contract": ArtifactType.PROMPT_TEMPLATE,
+        }
+        for field_name, artifact_type in artifact_fields.items():
+            cast(
+                forms.ModelChoiceField, self.fields[field_name]
+            ).queryset = ArtifactVersion.objects.filter(
+                organization_id=organization_id,
+                type=artifact_type,
+            ).order_by("logical_id", "-version")
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        if bool(cleaned.get("summary_model_profile")) != bool(
+            cleaned.get("summary_prompt_contract")
+        ):
+            raise forms.ValidationError("Özet model ve prompt profilleri birlikte seçilmelidir.")
+        return cleaned
 
 
 class BoundedJsonField(forms.CharField):

@@ -278,6 +278,12 @@ def test_pipeline_persists_result_before_ack_and_reuses_it() -> None:
     profile_audit = AuditEvent.objects.get(action="ocr_profile.create", outcome="success")
     assert "ocr.example.com" not in str(profile_audit.after)
     assert "ocr-key" not in str(profile_audit.after)
+    document_set = document_services.create_document_set(
+        organization=org, logical_id="scans", name="Scans", actor="operator"
+    )
+    draft = document_services.create_document_set_version(
+        document_set=document_set, actor="operator"
+    )
     version = document_services.upload_document(
         organization=org,
         logical_id="scan",
@@ -285,6 +291,7 @@ def test_pipeline_persists_result_before_ack_and_reuses_it() -> None:
         mime_type="application/pdf",
         data=_blank_pdf(),
         actor="operator",
+        document_set_version=draft,
     )
     parsed = parse_image_only_pdf(
         document_version=version,
@@ -298,11 +305,18 @@ def test_pipeline_persists_result_before_ack_and_reuses_it() -> None:
     assert job.status == OcrJobStatus.ACKNOWLEDGED
     result_key = job.result_object_key
     document_services.soft_delete_document(version.document, actor="operator")
+    version.memberships.all().delete()
     document_services.purge_document(version.document, actor="platform")
     with pytest.raises(storage.StorageError, match="OBJECT_NOT_FOUND"):
         storage.get_object_store().get(result_key)
 
     other = Organization.objects.create(slug="other", name="Other")
+    other_set = document_services.create_document_set(
+        organization=other, logical_id="scans", name="Scans", actor="operator"
+    )
+    other_draft = document_services.create_document_set_version(
+        document_set=other_set, actor="operator"
+    )
     other_version = document_services.upload_document(
         organization=other,
         logical_id="scan",
@@ -310,6 +324,7 @@ def test_pipeline_persists_result_before_ack_and_reuses_it() -> None:
         mime_type="application/pdf",
         data=_blank_pdf(),
         actor="operator",
+        document_set_version=other_draft,
     )
     with pytest.raises(OcrError, match="OCR_PROFILE_NOT_GRANTED"):
         parse_image_only_pdf(

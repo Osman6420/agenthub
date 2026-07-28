@@ -21,7 +21,7 @@
 </div>
 {% endif %}
 
-<div class="card table-card"><div class="table-scroll"><table><caption class="sr-only">Doküman sürümleri</caption><thead><tr><th>Sürüm</th><th>Ayrıştırma</th><th>Tür</th><th>Boyut</th><th>Oluşturma</th></tr></thead><tbody>{% for version in versions %}<tr><td>v{{ version.version }}</td><td><span class="badge {{ version.parse_status }}">{{ version.parse_status }}</span></td><td>{{ version.mime_type }}</td><td>{{ version.byte_size }} bayt</td><td>{{ version.created_at }}</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card table-card"><div class="table-scroll"><table><caption class="sr-only">Doküman sürümleri</caption><thead><tr><th>Sürüm</th><th>Ayrıştırma</th><th>Tür</th><th>Boyut</th><th>Oluşturma</th></tr></thead><tbody>{% for version in versions %}<tr id="document-version-{{ version.id }}"><td><a href="#document-version-{{ version.id }}">v{{ version.version }}</a></td><td><span class="badge {{ version.parse_status }}">{{ version.parse_status }}</span></td><td>{{ version.mime_type }}</td><td>{{ version.byte_size }} bayt</td><td>{{ version.created_at }}</td></tr>{% endfor %}</tbody></table></div></div>
 
 {% if chunk_view %}
 <div class="card">
@@ -33,6 +33,6 @@
 </div>
 {% endif %}
 
-<div class="card"><h2>Set sürümü pinleri</h2>{% for membership in memberships %}<p><a href="{% url 'console:document_set_detail_public' set.public_id %}">Set v{{ membership.document_set_version.version }}</a> <span class="badge {{ membership.document_set_version.status }}">{{ membership.document_set_version.status }}</span> → doküman v{{ membership.document_version.version }}</p>{% empty %}<p class="muted">Bu set içinde pin yok.</p>{% endfor %}</div>
+<div class="card"><h2>Set sürümü pinleri</h2>{% for membership in memberships %}<p><a href="{% url 'console:document_set_detail_public' set.public_id %}?version={{ membership.document_set_version_id }}#set-version-{{ membership.document_set_version_id }}">Set v{{ membership.document_set_version.version }}</a> <span class="badge {{ membership.document_set_version.status }}">{{ membership.document_set_version.status }}</span> → <a href="#document-version-{{ membership.document_version_id }}">doküman v{{ membership.document_version.version }}</a></p>{% empty %}<p class="muted">Bu set içinde pin yok.</p>{% endfor %}</div>
 
 {% endblock %}

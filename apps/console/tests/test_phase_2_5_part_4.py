@@ -39,6 +39,7 @@ def _set_with_draft(org: Organization) -> tuple[Any, Any, Any, Any]:
     document_set = services.create_document_set(
         organization=org, logical_id="kb", name="Bilgi bankası", actor="seed"
     )
+    draft = services.get_or_create_manual_draft(document_set=document_set, actor="seed")
     version = services.upload_document(
         organization=org,
         logical_id="rehber",
@@ -46,8 +47,8 @@ def _set_with_draft(org: Organization) -> tuple[Any, Any, Any, Any]:
         mime_type="text/plain",
         data=b"v1",
         actor="seed",
+        document_set_version=draft,
     )
-    draft = services.get_or_create_manual_draft(document_set=document_set, actor="seed")
     membership = services.upsert_document_in_set_draft(
         set_version=draft, document_version=version, actor="seed"
     )
@@ -237,6 +238,7 @@ def test_document_must_be_a_member_of_the_requested_set(client: Client) -> None:
     other_set = services.create_document_set(
         organization=org, logical_id="other", name="Other", actor="seed"
     )
+    other_draft = services.get_or_create_manual_draft(document_set=other_set, actor="seed")
     other_version = services.upload_document(
         organization=org,
         logical_id="other-document",
@@ -244,8 +246,8 @@ def test_document_must_be_a_member_of_the_requested_set(client: Client) -> None:
         mime_type="text/plain",
         data=b"other",
         actor="seed",
+        document_set_version=other_draft,
     )
-    other_draft = services.get_or_create_manual_draft(document_set=other_set, actor="seed")
     services.upsert_document_in_set_draft(
         set_version=other_draft, document_version=other_version, actor="seed"
     )

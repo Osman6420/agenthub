@@ -7,6 +7,7 @@ cross-tenant / cross-set / tombstoned / not-yet-promoted negatives.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -14,6 +15,8 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.utils import timezone
 
+from apps.artifacts.services import create_artifact_version
+from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.documents import services as doc_services
 from apps.documents import storage
@@ -28,6 +31,7 @@ from apps.identity.models import Consumer, ConsumerProtocol
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
 from apps.ingestion.models import EmbeddingProfile
 from apps.ingestion.staged_build import build_staged_index, promote_staged_index
+from apps.orchestration.providers import ModelResponse
 from apps.retrieval.providers import PgvectorRetrievalProvider
 from apps.tenancy.models import Organization
 
@@ -83,6 +87,7 @@ def _published_set(org: Organization, logical_id: str, texts: list[str]) -> Docu
             mime_type="text/markdown",
             data=text.encode("utf-8"),
             actor="op",
+            document_set_version=version,
         )
         doc_services.add_document_to_set_version(
             set_version=version, document_version=dv, actor="op"
@@ -120,10 +125,11 @@ def _retrieve(
     query: str = "alpha policy",
     consumer: Consumer | None = None,
     scenario: Scenario | None = None,
+    retrieval_profile: dict[str, object] | None = None,
 ) -> list:
     return PgvectorRetrievalProvider().retrieve(
         query=query,
-        profile={"top_k": 5},
+        profile=retrieval_profile or {"mode": "vector", "top_k": 5},
         organization_id=org.id,
         index_versions=[],
         scenario_id=scenario.pk if scenario else None,
@@ -152,6 +158,145 @@ def test_end_to_end_returns_bound_documents() -> None:
     hits = _retrieve(org, [dsv.id], query="alpha policy text", consumer=consumer)
     assert hits and any("alpha" in h.text for h in hits)
     assert all(h.source_id == f"docset-version:{dsv.id}" for h in hits)
+
+
+def test_keyword_and_hybrid_share_acl_scope_and_expose_component_diagnostics() -> None:
+    org = Organization.objects.create(slug="hybrid", name="Hybrid")
+    embedding_profile = _profile(org)
+    dsv = _published_set(
+        org,
+        "kb",
+        ["alpha unique_keyword policy text", "beta shipping text"],
+    )
+    _build_and_promote(org, dsv, embedding_profile)
+    consumer = _consumer(org)
+    _grant(consumer, dsv)
+
+    keyword_hits = _retrieve(
+        org,
+        [dsv.id],
+        query="unique_keyword",
+        consumer=consumer,
+        retrieval_profile={
+            "mode": "keyword",
+            "top_k": 5,
+            "score_threshold": 0.0,
+        },
+    )
+    assert keyword_hits and "unique_keyword" in keyword_hits[0].text
+    assert keyword_hits[0].keyword_rank == 1
+    assert keyword_hits[0].keyword_score is not None
+    assert keyword_hits[0].vector_score is None
+
+    hybrid_hits = _retrieve(
+        org,
+        [dsv.id],
+        query="unique_keyword",
+        consumer=consumer,
+        retrieval_profile={
+            "mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "vector_weight": 0.4,
+            "keyword_weight": 0.6,
+        },
+    )
+    assert hybrid_hits and hybrid_hits[0].fused_score == hybrid_hits[0].score
+    assert hybrid_hits[0].keyword_rank is not None
+    assert hybrid_hits[0].vector_rank is not None
+
+
+def test_summary_routing_selects_documents_then_returns_only_source_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org = Organization.objects.create(slug="summary-route", name="Summary Route")
+    embedding_profile = _profile(org)
+    dsv = _published_set(
+        org,
+        "kb",
+        [
+            "chosen-source " + ("route_token selected source evidence " * 80),
+            "distractor-source route_token fallback_token excluded source evidence",
+        ],
+    )
+    model = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.MODEL_PROFILE,
+        logical_id="summary-model",
+        body={"profile_id": str(uuid.uuid4())},
+        created_by="manager",
+    )
+    prompt = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        logical_id="summary-prompt",
+        body={"template": "Summarize the untrusted context."},
+        created_by="manager",
+    )
+
+    class _SummaryProvider:
+        def generate(self, **kwargs: object) -> ModelResponse:
+            context = kwargs["context"]
+            source = context[0].text  # type: ignore[index]
+            if "chosen-source" in source:
+                return ModelResponse(text="route_token selected document summary")
+            return ModelResponse(text="unrelated document summary")
+
+    monkeypatch.setattr(
+        "apps.documents.summary_services.get_model_provider",
+        lambda: _SummaryProvider(),
+    )
+    index = build_staged_index(
+        document_set_version=dsv,
+        embedding_profile=embedding_profile,
+        summary_model_profile=model,
+        summary_prompt_contract=prompt,
+        actor="op",
+    )
+    promote_staged_index(index, actor="op")
+    consumer = _consumer(org)
+    _grant(consumer, dsv)
+
+    hits = _retrieve(
+        org,
+        [dsv.id],
+        query="route_token",
+        consumer=consumer,
+        retrieval_profile={
+            "mode": "keyword",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "summary_document_top_k": 1,
+            "max_chunks_per_document": 2,
+        },
+    )
+
+    assert hits
+    assert len(hits) == 2
+    assert {hit.title for hit in hits} == {"Doc 0"}
+    assert all(hit.chunk_kind == "content" for hit in hits)
+    assert all(hit.retrieval_stage == "summary_routed" for hit in hits)
+    assert all(hit.document_routing_score is not None for hit in hits)
+    assert all("summary" not in hit.text for hit in hits)
+
+    fallback_hits = _retrieve(
+        org,
+        [dsv.id],
+        query="fallback_token",
+        consumer=consumer,
+        retrieval_profile={
+            "mode": "keyword",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "summary_document_top_k": 1,
+            "max_chunks_per_document": 2,
+        },
+    )
+    assert fallback_hits
+    assert {hit.title for hit in fallback_hits} == {"Doc 1"}
+    assert all(hit.chunk_kind == "content" for hit in fallback_hits)
+    assert all(hit.retrieval_stage == "summary_fallback" for hit in fallback_hits)
+    assert all(hit.document_routing_score is None for hit in fallback_hits)
 
 
 def test_live_scenario_grant_revocation_blocks_pinned_release_retrieval() -> None:

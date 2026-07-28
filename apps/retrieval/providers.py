@@ -234,21 +234,162 @@ class PgvectorRetrievalProvider:
         )
         if not active_indexes:
             return []
-        provider = get_embedding_provider()
-        scored: list[tuple[vector_store.VectorHit, int | None]] = []
-        for index in active_indexes:
-            embedding_profile = index.embedding_profile
-            profile_id = str(embedding_profile.public_id) if embedding_profile is not None else None
-            query_vector = provider.embed([query], profile_id=profile_id).vectors[0]
-            for hit in vector_store.search(
-                index, query_vector, organization_id=organization_id, top_k=top_k
-            ):
-                scored.append((hit, index.document_set_version_id))
-        scored.sort(key=lambda item: item[0].score, reverse=True)
-        scored = scored[:top_k]
+        mode = str(profile.get("mode", "vector")) if profile else "vector"
+        if mode not in {"keyword", "vector", "hybrid"}:
+            return []
+        provider = get_embedding_provider() if mode in {"vector", "hybrid"} else None
+        threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
+        candidate_limit = min(100, max(top_k, top_k * 4))
+        query_vectors: dict[int, list[float]] = {}
 
-        # Exclude tombstoned documents (soft-deleted content is immediately unservable).
-        version_ids = [hit.document_version_id for hit, _ in scored if hit.document_version_id]
+        def collect_candidates(
+            *,
+            chunk_kinds: tuple[str, ...] | None,
+            document_version_ids: list[int] | None,
+            limit: int,
+        ) -> list[dict[str, Any]]:
+            candidates: dict[tuple[int, int | None, int, str], dict[str, Any]] = {}
+            for index in active_indexes:
+                embedding_profile = index.embedding_profile
+                if provider is not None:
+                    query_vector = query_vectors.get(int(index.pk))
+                    if query_vector is None:
+                        profile_id = (
+                            str(embedding_profile.public_id)
+                            if embedding_profile is not None
+                            else None
+                        )
+                        query_vector = provider.embed([query], profile_id=profile_id).vectors[0]
+                        query_vectors[int(index.pk)] = query_vector
+                    vector_hits = vector_store.search(
+                        index,
+                        query_vector,
+                        organization_id=organization_id,
+                        top_k=limit,
+                        document_version_ids=document_version_ids,
+                        chunk_kinds=chunk_kinds,
+                    )
+                    for rank, vector_hit in enumerate(vector_hits, start=1):
+                        key = (
+                            int(index.pk),
+                            vector_hit.document_version_id,
+                            vector_hit.ordinal,
+                            vector_hit.chunk_kind,
+                        )
+                        item = candidates.setdefault(
+                            key,
+                            {
+                                "hit": vector_hit,
+                                "document_set_version_id": index.document_set_version_id,
+                            },
+                        )
+                        item["vector_rank"] = rank
+                        item["vector_score"] = vector_hit.score
+                if mode in {"keyword", "hybrid"}:
+                    keyword_hits = vector_store.keyword_search(
+                        index,
+                        query,
+                        organization_id=organization_id,
+                        top_k=limit,
+                        document_version_ids=document_version_ids,
+                        chunk_kinds=chunk_kinds,
+                    )
+                    for rank, keyword_hit in enumerate(keyword_hits, start=1):
+                        key = (
+                            int(index.pk),
+                            keyword_hit.document_version_id,
+                            keyword_hit.ordinal,
+                            keyword_hit.chunk_kind,
+                        )
+                        item = candidates.setdefault(
+                            key,
+                            {
+                                "hit": keyword_hit,
+                                "document_set_version_id": index.document_set_version_id,
+                            },
+                        )
+                        item["keyword_rank"] = rank
+                        item["keyword_score"] = keyword_hit.score
+
+            rank_constant = 60.0
+            vector_weight = float(profile.get("vector_weight", 0.5)) if profile else 0.5
+            keyword_weight = float(profile.get("keyword_weight", 0.5)) if profile else 0.5
+            for item in candidates.values():
+                if mode == "vector":
+                    item["score"] = float(item.get("vector_score", 0.0))
+                elif mode == "keyword":
+                    raw_keyword = float(item.get("keyword_score", 0.0))
+                    item["score"] = raw_keyword / (1.0 + raw_keyword)
+                else:
+                    fused = 0.0
+                    if item.get("vector_rank") is not None:
+                        fused += vector_weight / (rank_constant + int(item["vector_rank"]))
+                    if item.get("keyword_rank") is not None:
+                        fused += keyword_weight / (rank_constant + int(item["keyword_rank"]))
+                    item["score"] = fused * (rank_constant + 1.0)
+                    item["fused_score"] = item["score"]
+            return sorted(
+                candidates.values(),
+                key=lambda item: float(item["score"]),
+                reverse=True,
+            )
+
+        summary_document_top_k = (
+            min(max(int(profile.get("summary_document_top_k", 0)), 0), 50) if profile else 0
+        )
+        max_chunks_per_document = (
+            min(max(int(profile.get("max_chunks_per_document", 3)), 1), 10)
+            if summary_document_top_k
+            else top_k
+        )
+        routing_scores: dict[int, float] = {}
+        routed_document_ids: list[int] = []
+        retrieval_stage = "direct"
+        if summary_document_top_k:
+            summary_candidates = collect_candidates(
+                chunk_kinds=("summary",),
+                document_version_ids=None,
+                limit=min(100, max(summary_document_top_k, summary_document_top_k * 4)),
+            )
+            summary_version_ids = {
+                int(item["hit"].document_version_id)
+                for item in summary_candidates
+                if item["hit"].document_version_id is not None
+            }
+            live_summary_ids = set(
+                DocumentVersion.objects.filter(
+                    id__in=summary_version_ids,
+                    organization_id=organization_id,
+                    document__deleted_at__isnull=True,
+                ).values_list("id", flat=True)
+            )
+            for item in summary_candidates:
+                document_version_id = item["hit"].document_version_id
+                score = float(item["score"])
+                if (
+                    document_version_id is None
+                    or document_version_id not in live_summary_ids
+                    or document_version_id in routing_scores
+                    or score < threshold
+                ):
+                    continue
+                routed_document_ids.append(document_version_id)
+                routing_scores[document_version_id] = score
+                if len(routed_document_ids) >= summary_document_top_k:
+                    break
+            retrieval_stage = "summary_routed" if routed_document_ids else "summary_fallback"
+
+        scored = collect_candidates(
+            chunk_kinds=("content",) if summary_document_top_k else None,
+            document_version_ids=routed_document_ids or None,
+            limit=100 if routed_document_ids else candidate_limit,
+        )
+
+        # Exclude tombstoned documents before the final top-k/cap selection (soft-deleted content
+        # is immediately unservable and cannot consume a result slot).
+        version_ids = [
+            item["hit"].document_version_id for item in scored if item["hit"].document_version_id
+        ]
         live = {
             dv.id: dv
             for dv in DocumentVersion.objects.filter(
@@ -257,11 +398,19 @@ class PgvectorRetrievalProvider:
                 document__deleted_at__isnull=True,
             ).select_related("document")
         }
-        threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
         results: list[RetrievedChunk] = []
-        for hit, dsv_id in scored:
+        chunks_per_document: dict[int, int] = {}
+        for item in scored:
+            hit = item["hit"]
+            dsv_id = item["document_set_version_id"]
             version = live.get(hit.document_version_id) if hit.document_version_id else None
-            if version is None or hit.score < threshold:
+            score = float(item["score"])
+            if version is None or score < threshold:
+                continue
+            if (
+                chunks_per_document.get(version.pk, 0) >= max_chunks_per_document
+                and summary_document_top_k
+            ):
                 continue
             results.append(
                 RetrievedChunk(
@@ -269,9 +418,20 @@ class PgvectorRetrievalProvider:
                     source_id=f"docset-version:{dsv_id}",
                     source_uri=version.document.logical_id,
                     title=version.document.title,
-                    score=hit.score,
+                    score=score,
+                    chunk_kind=hit.chunk_kind,
+                    vector_rank=item.get("vector_rank"),
+                    vector_score=item.get("vector_score"),
+                    keyword_rank=item.get("keyword_rank"),
+                    keyword_score=item.get("keyword_score"),
+                    fused_score=item.get("fused_score"),
+                    document_routing_score=routing_scores.get(version.pk),
+                    retrieval_stage=retrieval_stage,
                 )
             )
+            chunks_per_document[version.pk] = chunks_per_document.get(version.pk, 0) + 1
+            if len(results) >= top_k:
+                break
         return results
 
 

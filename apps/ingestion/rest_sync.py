@@ -12,7 +12,7 @@ from django.utils import timezone
 from apps.audit.models import ActorType, Outcome
 from apps.audit.services import record_event
 from apps.documents.models import Document, DocumentLifecycle, DocumentVersion
-from apps.documents.services import DocumentError, upload_document
+from apps.documents.services import DocumentError, get_or_create_manual_draft, upload_document
 from apps.ingestion.models import (
     ConnectorType,
     RestDocumentCursor,
@@ -280,6 +280,12 @@ def _persist_item(
             raise RestPullError("REST_DOCUMENT_TOMBSTONED")
     version = _reusable_version(document, checksum)
     if version is None:
+        if source.document_set is None:
+            raise RestPullError("REST_SOURCE_SET_REQUIRED")
+        draft = get_or_create_manual_draft(
+            document_set=source.document_set,
+            actor="rest-worker",
+        )
         version = upload_document(
             organization=source.organization,
             logical_id=logical_id,
@@ -287,6 +293,7 @@ def _persist_item(
             mime_type=run.rest_contract.definition["response"]["mime_type"],
             data=content,
             actor="rest-worker",
+            document_set_version=draft,
             source=source,
         )
     with transaction.atomic():

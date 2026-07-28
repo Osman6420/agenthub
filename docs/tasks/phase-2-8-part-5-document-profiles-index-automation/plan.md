@@ -50,8 +50,9 @@ prerequisites.
 ## Canonical profile behavior
 
 - Chunking profiles are immutable/versioned artifacts and part of the pipeline fingerprint.
-- Retrieval profiles select `keyword`, `vector` or `hybrid`, bounded `top_k`, threshold, optional
-  metadata filter and hybrid weights summing to one.
+- Retrieval profiles select `keyword`, `vector` or `hybrid`, bounded `top_k`, threshold and hybrid
+  weights summing to one. `metadata_filter` remains a validated reserved/no-op contract field;
+  runtime metadata modeling/enforcement moved to Phase 3 by owner decision on 2026-07-28.
 - Weighted reciprocal-rank fusion uses a fixed documented rank constant and profile weights so BM25
   raw-score scale cannot dominate vector similarity. Diagnostic raw/component scores are not
   treated as comparable percentages.
@@ -135,9 +136,47 @@ content still referenced outside modeled pins; role creep.
 None for implementation design. Cleanup targets and destructive apply approval are intentionally
 resolved from the later inventory rather than assumed here.
 
+## Current implementation decisions
+
+- The additive implementation is active on `feat/foundation-sprint-0-1` from the verified Part 4
+  baseline. The working tree was clean at task start.
+- Existing public standalone document upload/create paths will be closed. Internal ingestion and
+  console paths must supply an exact draft document-set version so document/version creation and
+  membership are one database invariant.
+- Published immutable `chunking_profile` artifacts will be pinned directly on each new
+  `IndexVersion`; retrieval profiles remain exact release inputs and are enforced by the shared
+  authorized retrieval path.
+- Keyword and vector candidates will come from the same tenant-scoped immutable physical store.
+  Hybrid fusion uses a fixed reciprocal-rank constant and applies the threshold only to the
+  normalized fused score.
+- Optional summary configuration and provenance are additive and fail closed during preparation.
+  No document, chunk, query, prompt or summary body is written to logs or audit payloads.
+- Automatic preparation is idempotent and produces only a staged/promotable index. It never changes
+  an active index pointer.
+- Existing unbound rows are in scope only for an exact, non-mutating inventory/dry-run command.
+  Cleanup apply, object deletion and database deletion remain outside the approved scope.
+- Retrieval metadata schema/storage/query enforcement is outside Part 5. The existing
+  `metadata_filter` field remains accepted for forward compatibility but has no runtime effect and
+  is documented accordingly; Phase 3 owns implementation and its authorization-negative tests.
+- The follow-up hierarchical retrieval extension is opt-in through exact retrieval-profile fields.
+  It first ranks only `summary` chunks into a bounded set of exact `DocumentVersion` IDs, then
+  searches only `content` chunks from those documents. Returned grounding remains source content,
+  never the derived summary. If no authorized summary candidate exists, it falls back to the
+  existing direct chunk path so enabling the option does not turn missing summaries into an empty
+  answer.
+- Hierarchical routing keeps the same tenant/grant/active-index/tombstone intersection in both
+  stages. It caps selected documents and chunks per document to prevent fan-out and one-document
+  domination. Summary-derived routing scores are diagnostic only and are not represented as source
+  confidence.
+
 ## Status
 
-**Planned.** Cleanup is not authorized merely by this plan.
+**Implemented and repository/PostgreSQL verified; browser acceptance pending.** The additive schema
+and services, PostgreSQL retrieval/RLS path, hierarchical summary routing, console lifecycle and
+non-mutating inventory are verified by focused and full-suite tests. The requested authenticated
+browser walkthrough could not complete because the in-app browser transport closed during its safe
+runtime reconnect. Destructive cleanup apply remains a separately authorized operation and was not
+performed.
 
 ## Completion criteria
 

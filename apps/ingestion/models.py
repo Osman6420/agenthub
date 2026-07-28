@@ -439,6 +439,34 @@ class IndexVersion(TimeStampedModel):
         blank=True,
         related_name="index_versions",
     )
+    chunking_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="chunked_index_versions",
+    )
+    retrieval_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="retrieval_index_versions",
+    )
+    summary_model_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="summarized_index_versions",
+    )
+    summary_prompt_contract = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="summary_prompt_index_versions",
+    )
     # Snapshot of the store's fixed geometry so the DAL never has to join a (possibly disabled)
     # profile to know the column type. "vector"/"halfvec"; dimensions <= profile.max_dimensions.
     dimensions = models.PositiveIntegerField(null=True, blank=True)
@@ -486,6 +514,99 @@ class IndexVersion(TimeStampedModel):
             parent = self.parent_index_version
             if parent is None or parent.organization_id != self.organization_id:
                 raise ValidationError("parent index must belong to the organization")
+        for artifact, expected_type in (
+            (self.chunking_profile, "chunking_profile"),
+            (self.retrieval_profile, "retrieval_profile"),
+            (self.summary_model_profile, "model_profile"),
+            (self.summary_prompt_contract, "prompt_template"),
+        ):
+            if artifact is not None and (
+                artifact.organization_id != self.organization_id or artifact.type != expected_type
+            ):
+                raise ValidationError("index profile provenance is invalid")
+
+
+class DocumentSetPreparationProfile(TimeStampedModel):
+    """Exact, tenant-owned preparation policy used after a set version is published."""
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="document_preparation_profiles"
+    )
+    document_set = models.OneToOneField(
+        "documents.DocumentSet", on_delete=models.CASCADE, related_name="preparation_profile"
+    )
+    embedding_profile = models.ForeignKey(
+        "ingestion.EmbeddingProfile",
+        on_delete=models.PROTECT,
+        related_name="document_preparation_profiles",
+    )
+    chunking_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        related_name="document_preparation_chunking_profiles",
+    )
+    retrieval_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        related_name="document_preparation_retrieval_profiles",
+    )
+    ocr_profile = models.ForeignKey(
+        "ingestion.OcrProfile",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="document_preparation_profiles",
+    )
+    summary_model_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="document_preparation_summary_models",
+    )
+    summary_prompt_contract = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="document_preparation_summary_prompts",
+    )
+    auto_prepare = models.BooleanField(default=False)
+
+    class Meta:
+        indexes = [models.Index(fields=["organization", "auto_prepare"])]
+
+    def clean(self) -> None:
+        if self.document_set_id and self.document_set.organization_id != self.organization_id:
+            raise ValidationError("preparation profile organization must match its document set")
+        if (
+            self.embedding_profile_id
+            and not self.embedding_profile.tenant_grants.filter(
+                organization_id=self.organization_id
+            ).exists()
+        ):
+            raise ValidationError("embedding profile is not granted to this organization")
+        if self.ocr_profile_id:
+            ocr_profile = self.ocr_profile
+            if (
+                ocr_profile is None
+                or not ocr_profile.tenant_grants.filter(
+                    organization_id=self.organization_id
+                ).exists()
+            ):
+                raise ValidationError("OCR profile is not granted to this organization")
+        for artifact, expected_type in (
+            (self.chunking_profile, "chunking_profile"),
+            (self.retrieval_profile, "retrieval_profile"),
+            (self.summary_model_profile, "model_profile"),
+            (self.summary_prompt_contract, "prompt_template"),
+        ):
+            if artifact is not None and (
+                artifact.organization_id != self.organization_id or artifact.type != expected_type
+            ):
+                raise ValidationError("preparation artifact profile is invalid")
+        if bool(self.summary_model_profile_id) != bool(self.summary_prompt_contract_id):
+            raise ValidationError("summary model and prompt must be configured together")
 
 
 class RunStatus(models.TextChoices):
@@ -1239,6 +1360,34 @@ class StagedIndexBuildJob(TimeStampedModel):
         null=True,
         blank=True,
     )
+    chunking_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="index_build_jobs_as_chunking_profile",
+    )
+    retrieval_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="index_build_jobs_as_retrieval_profile",
+    )
+    summary_model_profile = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="index_build_jobs_as_summary_model",
+    )
+    summary_prompt_contract = models.ForeignKey(
+        "artifacts.ArtifactVersion",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="index_build_jobs_as_summary_prompt",
+    )
     result_index_version = models.OneToOneField(
         IndexVersion,
         on_delete=models.PROTECT,
@@ -1310,6 +1459,10 @@ class StagedIndexBuildJob(TimeStampedModel):
                     "document_set_version_id",
                     "embedding_profile_id",
                     "ocr_profile_id",
+                    "chunking_profile_id",
+                    "retrieval_profile_id",
+                    "summary_model_profile_id",
+                    "summary_prompt_contract_id",
                     "request_checksum",
                     "pipeline_fingerprint",
                     "requested_by",
@@ -1321,6 +1474,10 @@ class StagedIndexBuildJob(TimeStampedModel):
                 "document_set_version_id": self.document_set_version_id,
                 "embedding_profile_id": self.embedding_profile_id,
                 "ocr_profile_id": self.ocr_profile_id,
+                "chunking_profile_id": self.chunking_profile_id,
+                "retrieval_profile_id": self.retrieval_profile_id,
+                "summary_model_profile_id": self.summary_model_profile_id,
+                "summary_prompt_contract_id": self.summary_prompt_contract_id,
                 "request_checksum": self.request_checksum,
                 "pipeline_fingerprint": self.pipeline_fingerprint,
                 "requested_by": self.requested_by,

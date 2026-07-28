@@ -21,7 +21,11 @@ from apps.documents.models import (
     DocumentSetVersion,
     DocumentSetVersionStatus,
 )
-from apps.documents.services import create_document_set, upload_document
+from apps.documents.services import (
+    create_document_set,
+    create_document_set_version,
+    upload_document,
+)
 from apps.identity.roles import Role
 from apps.ingestion.job_lifecycle import create_build_job
 from apps.ingestion.tests.test_staged_build import _granted_profile, _published_set_version
@@ -62,6 +66,7 @@ def test_author_can_create_document_set(client: Client) -> None:
 def test_full_set_version_lifecycle(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
     document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    draft = create_document_set_version(document_set=document_set, actor="seed")
     upload_document(
         organization=org,
         logical_id="doc-1",
@@ -69,11 +74,11 @@ def test_full_set_version_lifecycle(client: Client) -> None:
         mime_type="text/plain",
         data=b"hello",
         actor="seed",
+        document_set_version=draft,
     )
     client.force_login(_member("owner", org, Role.PROJECT_OWNER))
 
-    # 1. open a draft version
-    client.post(reverse("console:document_set_version_create", args=[document_set.id]))
+    # 1. upload atomically opened and populated the exact draft version
     version = DocumentSetVersion.objects.get(document_set=document_set)
     assert version.status == DocumentSetVersionStatus.DRAFT
 

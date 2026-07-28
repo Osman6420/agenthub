@@ -26,11 +26,25 @@ def _fake_bundle(**overrides: Any) -> SimpleNamespace:
 
 
 def test_chunks_roundtrip_through_state() -> None:
-    chunk = RetrievedChunk(text="t", source_id="s", source_uri="u", title="Ti", score=0.9)
+    chunk = RetrievedChunk(
+        text="t",
+        source_id="s",
+        source_uri="u",
+        title="Ti",
+        score=0.9,
+        chunk_kind="content",
+        keyword_rank=1,
+        keyword_score=0.8,
+        document_routing_score=0.7,
+        retrieval_stage="summary_routed",
+    )
     state = {"retrieval": {"chunks": [rag_steps.chunk_to_dict(chunk)]}}
     rebuilt = rag_steps.chunks_from_state(state)
     assert len(rebuilt) == 1
     assert rebuilt[0].text == "t" and rebuilt[0].score == 0.9
+    assert rebuilt[0].keyword_rank == 1
+    assert rebuilt[0].document_routing_score == 0.7
+    assert rebuilt[0].retrieval_stage == "summary_routed"
 
 
 def test_chunks_from_state_tolerates_missing_or_malformed() -> None:

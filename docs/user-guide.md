@@ -112,13 +112,42 @@ uygulanır. Dosya adı başlık olur; Türkçe karakterler ASCII karşılıklar�
 stabil bir logical ID üretilir. Aynı dosya adı yeniden yüklendiğinde yeni bir `DocumentVersion` oluşur ve taslaktaki eski
 sürümün yerini alır. Yeni taslak, son yayımlanmış set üyeliğini korur.
 
-Yükleme doğrudan serve edilmez. Operatör taslağı açıkça yayımlar, tenant'a grant edilmiş embedding
-ve isteğe bağlı OCR profilini seçerek staged build'i ingestion kuyruğuna gönderir. İndeks hazır
+Yükleme doğrudan serve edilmez. Belge sürümü ve exact taslak üyeliği tek transaction içinde
+oluşturulur; set dışı yeni belge oluşturma reddedilir. Operatör taslağı açıkça yayımlar, tenant'a
+grant edilmiş embedding profiliyle birlikte immutable parçalama ve arama profillerini, isteğe bağlı
+OCR profilini ve birlikte seçilen exact özet model/prompt profillerini kullanarak staged build'i
+ingestion kuyruğuna gönderir. Karakter, token, heading, sayfa ve tablo parçalama stratejileri
+uyumsuz parser/MIME birleşimlerinde güvenli bir compatibility koduyla durur. Özet etkinse türetilmiş
+özet ayrı bir `summary` chunk olarak, checksum ve exact model/prompt provenance ile saklanır; hata
+durumunda build bunu sessizce atlamaz.
+
+Arama profili `keyword`, `vector` veya `hybrid` seçebilir. Keyword ve vector aynı immutable,
+tenant-scoped PostgreSQL store ve aynı ACL/tombstone filtresini kullanır. Hybrid sonuçlar sabit
+weighted reciprocal-rank fusion sözleşmesiyle birleştirilir; component rank/score ve fused score
+teknik tanıda ayrı gösterilir. Ham BM25 ve vector skorları tek bir yüzde gibi sunulmaz.
+
+Arama profiline `summary_document_top_k` eklendiğinde iki aşamalı doküman yönlendirme açılır.
+Örneğin değer `10` ise ilk aşama yalnızca özetlerde en alakalı on exact doküman sürümünü seçer;
+ikinci aşama aynı sorguyu yalnızca bu dokümanların gerçek içerik parçalarında çalıştırır.
+`max_chunks_per_document` (varsayılan `3`, en fazla `10`) tek bir dokümanın sonuçları doldurmasını
+önler. Nihai grounding sonuçları her zaman `content` parçasıdır; özet yalnızca güvenli yönlendirme
+sinyalidir. Yetkili bir özet eşleşmezse sistem boş sonuç vermek yerine doğrudan content aramasına
+döner. Her iki aşama aynı tenant, grant, pinned set-version, active-index ve tombstone kapsamındadır.
+
+Retrieval profile sözleşmesindeki `metadata_filter` alanı Faz 3 için ayrılmıştır ve şu anda
+sonuçları değiştirmeyen belgelenmiş bir no-op'tur. Tenant, yetki veya sonuç daraltması yaptığı
+varsayılmamalıdır. Metadata şeması, ingestion lineage'ı, PostgreSQL indeksleri ve bütün arama
+modlarında ortak uygulama Faz 3'te birlikte teslim edilecektir.
+
+İndeks hazır
 olduğunda `document_manager`, mevcut belge yazarları ve organizasyon yöneticileri belge/index
 adımlarını yürütebilir; release yaşam döngüsü ayrı `release_manager`/`organization_admin` yetkisini
 korur.
-Çalışma alanı taslak, yayımlanmış set, building/promotable indeks ve aktif indeks durumlarını ayrı
-gösterir. Manuel akış otomatik promotion yapmaz.
+Çalışma alanı taslak, yayımlanmış set, building/promotable indeks ve aktif indeks durumlarını gerçek
+önkoşullardan hesaplayarak ayrı gösterir. Exact preparation seçimi sonraki yayımlanan sürümler için
+otomatik staged hazırlığı açabilir; bu otomasyon aktif indeks pointer'ını değiştirmez. Set, belge ve
+indeks geçmiş sürümleri deep link olarak açılabilir. Manuel veya otomatik hazırlık hiçbir zaman
+otomatik promotion yapmaz.
 
 ### Connector kaynakları ve periyodik güncelleme
 

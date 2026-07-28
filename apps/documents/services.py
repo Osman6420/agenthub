@@ -91,14 +91,14 @@ def upload_document(
     mime_type: str,
     data: bytes,
     actor: str,
+    document_set_version: DocumentSetVersion,
     source: Source | None = None,
     request_id: str = "",
 ) -> DocumentVersion:
     """Store ``data`` in the object store and record a new immutable ``DocumentVersion``.
 
-    Creates the ``Document`` on first upload for ``logical_id`` and advances its version on
-    subsequent uploads. The blob is written before the DB rows; if the DB write fails, the
-    orphaned blob is best-effort removed (unique random keys make orphans harmless otherwise).
+    Creation and exact draft-set membership share one database transaction. The blob is written
+    first; if the database or required audit write fails it is best-effort removed.
     """
     logical_id = _clean_text(logical_id, field="logical_id", max_length=128)
     title = (title or "").strip()[:500]
@@ -106,6 +106,15 @@ def upload_document(
     _validate_upload(mime_type=mime_type, data=data)
     if source is not None and source.organization_id != organization.id:
         raise DocumentError("source_mismatch", "source must belong to the organization")
+    if (
+        document_set_version.organization_id != organization.id
+        or document_set_version.status != DocumentSetVersionStatus.DRAFT
+    ):
+        raise DocumentError(
+            "UNBOUND_DOCUMENT_DENIED", "documents must be uploaded into an exact draft set version"
+        )
+    if source is not None and source.document_set_id != document_set_version.document_set_id:
+        raise DocumentError("SOURCE_SET_MISMATCH", "source and draft set must match")
 
     checksum = hashlib.sha256(data).hexdigest()
     object_key = build_object_key(organization_id=organization.id, document_logical_id=logical_id)
@@ -165,6 +174,12 @@ def upload_document(
                 request_id=request_id,
                 after={"byte_size": len(data), "mime_type": mime_type},
             )
+            upsert_document_in_set_draft(
+                set_version=document_set_version,
+                document_version=version,
+                actor=actor,
+                request_id=request_id,
+            )
             return version
     except IntegrityError as exc:
         _best_effort_delete(object_key)
@@ -183,30 +198,8 @@ def upload_console_document(
     actor: str,
     request_id: str = "",
 ) -> DocumentVersion:
-    """Upload a new standalone console document with a server-owned logical ID."""
-    for _attempt in range(MAX_ALLOCATION_ATTEMPTS):
-        logical_id = allocate_identifier(
-            title,
-            fallback="document",
-            max_length=128,
-            exists=lambda value: Document.objects.filter(
-                organization=organization, logical_id=value
-            ).exists(),
-        )
-        try:
-            return upload_document(
-                organization=organization,
-                logical_id=logical_id,
-                title=title,
-                mime_type=mime_type,
-                data=data,
-                actor=actor,
-                request_id=request_id,
-            )
-        except DocumentError as exc:
-            if exc.code != "UPLOAD_CONFLICT":
-                raise
-    raise IdentifierAllocationError
+    """Standalone console uploads are intentionally closed by Phase 2.8 Part 5."""
+    raise DocumentError("UNBOUND_DOCUMENT_DENIED", "documents must be uploaded from a document set")
 
 
 def _best_effort_delete(object_key: str) -> None:
@@ -496,6 +489,9 @@ def add_document_to_set_version(
     locked = DocumentSetVersion.objects.select_for_update().get(pk=set_version.pk)
     if locked.is_frozen:
         raise DocumentError("SET_VERSION_FROZEN", "published set versions are immutable")
+    existing = locked.memberships.filter(document_version=document_version).first()
+    if existing is not None:
+        return existing
     membership = DocumentSetMembership(
         organization_id=locked.organization_id,
         document_set_version=locked,
@@ -585,6 +581,14 @@ def publish_document_set_version(
         resource_type="document_set_version",
         resource_id=f"{locked.document_set.logical_id}:v{locked.version}",
         request_id=request_id,
+    )
+    from apps.ingestion.preparation import enqueue_auto_preparation
+
+    transaction.on_commit(
+        lambda: enqueue_auto_preparation(
+            document_set_version_id=locked.pk,
+            organization_id=locked.organization_id,
+        )
     )
     return locked
 

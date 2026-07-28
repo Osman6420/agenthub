@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from django.db import connection, transaction
 
@@ -44,6 +45,7 @@ class VectorRow:
     ordinal: int
     text: str
     embedding: list[float]
+    chunk_kind: str = "content"
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,16 @@ class VectorHit:
     ordinal: int
     text: str
     score: float
+    chunk_kind: str = "content"
+
+
+@dataclass(frozen=True)
+class KeywordHit:
+    document_version_id: int | None
+    ordinal: int
+    text: str
+    score: float
+    chunk_kind: str = "content"
 
 
 def _require_postgres() -> None:
@@ -106,11 +118,20 @@ def provision_store(index_version: IndexVersion) -> str:
             "document_version_id bigint, "
             "ordinal integer NOT NULL, "
             "text text NOT NULL, "
+            "chunk_kind varchar(16) NOT NULL DEFAULT 'content', "
             f"embedding {column_type} NOT NULL)"
+        )
+        cursor.execute(
+            f'ALTER TABLE "{name}" ADD COLUMN IF NOT EXISTS '
+            "chunk_kind varchar(16) NOT NULL DEFAULT 'content'"
         )
         cursor.execute(
             f'CREATE INDEX IF NOT EXISTS "{name}_hnsw" ON "{name}" '
             f"USING hnsw (embedding {opclass}) WITH (m = 16, ef_construction = 64)"
+        )
+        cursor.execute(
+            f'CREATE INDEX IF NOT EXISTS "{name}_fts" ON "{name}" '
+            "USING gin (to_tsvector('simple', text))"
         )
         # RLS backstop (ADR-0004): FORCE applies the policy even to the table owner, so a missing
         # transaction-local tenant scope yields no rows regardless of the app predicate.
@@ -140,6 +161,7 @@ def write_chunks(index_version: IndexVersion, rows: list[VectorRow]) -> int:
                 row.document_version_id,
                 row.ordinal,
                 row.text,
+                row.chunk_kind,
                 _vector_literal(row.embedding),
             ]
         )
@@ -153,8 +175,8 @@ def write_chunks(index_version: IndexVersion, rows: list[VectorRow]) -> int:
             # "name" is int-derived and regex-validated (ADR-0003); values are bound parameters.
             cursor.executemany(
                 f'INSERT INTO "{name}" '  # noqa: S608
-                "(organization_id, document_version_id, ordinal, text, embedding) "
-                "VALUES (%s, %s, %s, %s, %s)",
+                "(organization_id, document_version_id, ordinal, text, chunk_kind, embedding) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
                 params,
             )
     return len(params)
@@ -240,8 +262,9 @@ def copy_chunks(parent: IndexVersion, target: IndexVersion, document_version_ids
         with connection.cursor() as cursor:
             cursor.execute(
                 f'INSERT INTO "{target_name}" '  # noqa: S608
-                "(organization_id, document_version_id, ordinal, text, embedding) "
-                f"SELECT organization_id, document_version_id, ordinal, text, embedding "
+                "(organization_id, document_version_id, ordinal, text, chunk_kind, embedding) "
+                "SELECT organization_id, document_version_id, ordinal, text, "
+                "chunk_kind, embedding "
                 f'FROM "{parent_name}" '  # noqa: S608
                 "WHERE organization_id = %s AND document_version_id = ANY(%s)",
                 [target.organization_id, ids],
@@ -255,6 +278,8 @@ def search(
     *,
     organization_id: int,
     top_k: int,
+    document_version_ids: list[int] | None = None,
+    chunk_kinds: tuple[str, ...] | None = None,
 ) -> list[VectorHit]:
     """Cosine-nearest chunks in one store, scoped to a tenant (RLS is the P4 backstop)."""
     _require_postgres()
@@ -265,6 +290,13 @@ def search(
     column_type, _ = _column_spec(index_version.index_type, dimensions)
     literal = _vector_literal(query_embedding)
     limit = max(1, min(int(top_k), 100))
+    filters, filter_params = _search_filters(
+        organization_id=organization_id,
+        document_version_ids=document_version_ids,
+        chunk_kinds=chunk_kinds,
+    )
+    if filters is None:
+        return []
     # Transaction-local tenant context so the RLS policy (ADR-0004) is active during the read; the
     # ``WHERE organization_id`` app predicate is the first layer, RLS the fail-closed backstop.
     with transaction.atomic():
@@ -272,10 +304,10 @@ def search(
         with connection.cursor() as cursor:
             # "name"/"column_type" are int-derived and validated; values are bound params.
             cursor.execute(
-                f"SELECT document_version_id, ordinal, text, "  # noqa: S608
+                f"SELECT document_version_id, ordinal, text, chunk_kind, "  # noqa: S608
                 f"(embedding <=> %s::{column_type}) AS distance "
-                f'FROM "{name}" WHERE organization_id = %s ORDER BY distance LIMIT %s',
-                [literal, organization_id, limit],
+                f'FROM "{name}" WHERE {filters} ORDER BY distance LIMIT %s',
+                [literal, *filter_params, limit],
             )
             rows = cursor.fetchall()
     return [
@@ -283,10 +315,92 @@ def search(
             document_version_id=row[0],
             ordinal=row[1],
             text=row[2],
-            score=max(0.0, 1.0 - float(row[3])),
+            chunk_kind=row[3],
+            score=max(0.0, 1.0 - float(row[4])),
         )
         for row in rows
     ]
+
+
+def keyword_search(
+    index_version: IndexVersion,
+    query: str,
+    *,
+    organization_id: int,
+    top_k: int,
+    document_version_ids: list[int] | None = None,
+    chunk_kinds: tuple[str, ...] | None = None,
+) -> list[KeywordHit]:
+    """BM25-style PostgreSQL full-text ranking in one immutable, RLS-scoped store."""
+    _require_postgres()
+    clean_query = (query or "").strip()
+    if not clean_query or len(clean_query) > 4_000:
+        return []
+    name = store_name(index_version)
+    limit = max(1, min(int(top_k), 100))
+    filters, filter_params = _search_filters(
+        organization_id=organization_id,
+        document_version_ids=document_version_ids,
+        chunk_kinds=chunk_kinds,
+    )
+    if filters is None:
+        return []
+    with transaction.atomic():
+        set_tenant_context(int(organization_id))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"SELECT document_version_id, ordinal, text, chunk_kind, "  # noqa: S608
+                "ts_rank_cd(to_tsvector('simple', text), plainto_tsquery('simple', %s)) AS rank "
+                f'FROM "{name}" WHERE {filters} '  # noqa: S608
+                "AND to_tsvector('simple', text) @@ plainto_tsquery('simple', %s) "
+                "ORDER BY rank DESC, document_version_id, ordinal LIMIT %s",
+                [clean_query, *filter_params, clean_query, limit],
+            )
+            rows = cursor.fetchall()
+    return [
+        KeywordHit(
+            document_version_id=row[0],
+            ordinal=row[1],
+            text=row[2],
+            chunk_kind=row[3],
+            score=max(0.0, float(row[4])),
+        )
+        for row in rows
+    ]
+
+
+def _search_filters(
+    *,
+    organization_id: int,
+    document_version_ids: list[int] | None,
+    chunk_kinds: tuple[str, ...] | None,
+) -> tuple[str | None, list[Any]]:
+    """Build only closed, value-parameterized search predicates for one tenant store."""
+    clauses = ["organization_id = %s"]
+    params: list[Any] = [int(organization_id)]
+    if document_version_ids is not None:
+        ids = sorted(
+            {
+                int(value)
+                for value in document_version_ids
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0
+            }
+        )
+        if not ids:
+            return None, []
+        if len(ids) > 5_000:
+            raise VectorStoreError("SEARCH_SCOPE_TOO_LARGE")
+        clauses.append("document_version_id = ANY(%s)")
+        params.append(ids)
+    if chunk_kinds is not None:
+        if not chunk_kinds or any(
+            not isinstance(kind, str) or kind not in {"content", "summary"} for kind in chunk_kinds
+        ):
+            raise VectorStoreError("CHUNK_KIND_INVALID")
+        kinds = tuple(sorted(set(chunk_kinds)))
+        clauses.append("chunk_kind = ANY(%s)")
+        params.append(list(kinds))
+    return " AND ".join(clauses), params
 
 
 def store_exists(index_version: IndexVersion) -> bool:

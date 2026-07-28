@@ -71,6 +71,61 @@ def test_provision_write_search_roundtrip() -> None:
 
 @pg_only
 @pytest.mark.django_db
+def test_search_filters_exact_document_versions_and_chunk_kinds() -> None:
+    iv = _index_version(dimensions=4)
+    vector_store.provision_store(iv)
+    vector_store.write_chunks(
+        iv,
+        [
+            VectorRow(
+                iv.organization_id,
+                10,
+                0,
+                "route term summary",
+                [1.0, 0.0, 0.0, 0.0],
+                "summary",
+            ),
+            VectorRow(
+                iv.organization_id,
+                10,
+                1,
+                "route term selected content",
+                [1.0, 0.0, 0.0, 0.0],
+            ),
+            VectorRow(
+                iv.organization_id,
+                20,
+                0,
+                "route term excluded content",
+                [1.0, 0.0, 0.0, 0.0],
+            ),
+        ],
+    )
+
+    vector_hits = vector_store.search(
+        iv,
+        [1.0, 0.0, 0.0, 0.0],
+        organization_id=iv.organization_id,
+        top_k=10,
+        document_version_ids=[10],
+        chunk_kinds=("content",),
+    )
+    keyword_hits = vector_store.keyword_search(
+        iv,
+        "route term",
+        organization_id=iv.organization_id,
+        top_k=10,
+        document_version_ids=[10],
+        chunk_kinds=("content",),
+    )
+
+    assert [(hit.document_version_id, hit.chunk_kind) for hit in vector_hits] == [(10, "content")]
+    assert [(hit.document_version_id, hit.chunk_kind) for hit in keyword_hits] == [(10, "content")]
+    vector_store.drop_store(iv)
+
+
+@pg_only
+@pytest.mark.django_db
 def test_chunk_preview_is_bounded_and_ordered() -> None:
     # Backs the console document-detail chunk view (Scope G): counts + a bounded, ordered,
     # truncated text preview for one document version, embeddings never returned.

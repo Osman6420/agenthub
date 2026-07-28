@@ -24,8 +24,12 @@ from collections.abc import Callable
 from django.db import connection, transaction
 from django.db.models import Max
 
+from apps.artifacts.governed_dsl import GovernedDSLValidationError, chunk_with_profile
+from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.types import ArtifactType
 from apps.audit.services import record_event
 from apps.documents.models import DocumentSetVersion, DocumentSetVersionStatus
+from apps.documents.summary_services import SummaryError, generate_document_summary
 from apps.ingestion.embedding import (
     EmbeddingError,
     EmbeddingOutcomeUnknown,
@@ -69,6 +73,10 @@ def build_staged_index(
     embedding_profile: EmbeddingProfile,
     actor: str,
     chunker: str = "fixed",
+    chunking_profile: ArtifactVersion | None = None,
+    retrieval_profile: ArtifactVersion | None = None,
+    summary_model_profile: ArtifactVersion | None = None,
+    summary_prompt_contract: ArtifactVersion | None = None,
     request_id: str = "",
     ocr_profile: OcrProfile | None = None,
     ocr_client: AsyncMarkdownOcrClient | None = None,
@@ -91,12 +99,44 @@ def build_staged_index(
         organization_id=organization_id, embedding_profile=embedding_profile
     ).exists():
         raise StagedBuildError("EMBEDDING_PROFILE_NOT_GRANTED")
-    chunk_fn = CHUNKERS.get(chunker)
-    if chunk_fn is None:
+    _validate_artifact_profile(
+        chunking_profile,
+        organization_id=organization_id,
+        expected_type=ArtifactType.CHUNKING_PROFILE,
+        required=False,
+    )
+    _validate_artifact_profile(
+        retrieval_profile,
+        organization_id=organization_id,
+        expected_type=ArtifactType.RETRIEVAL_PROFILE,
+        required=False,
+    )
+    _validate_artifact_profile(
+        summary_model_profile,
+        organization_id=organization_id,
+        expected_type=ArtifactType.MODEL_PROFILE,
+        required=False,
+    )
+    _validate_artifact_profile(
+        summary_prompt_contract,
+        organization_id=organization_id,
+        expected_type=ArtifactType.PROMPT_TEMPLATE,
+        required=False,
+    )
+    if bool(summary_model_profile) != bool(summary_prompt_contract):
+        raise StagedBuildError("SUMMARY_CONFIGURATION_INCOMPLETE")
+    chunk_fn = CHUNKERS.get(chunker) if chunking_profile is None else None
+    if chunking_profile is None and chunk_fn is None:
         raise StagedBuildError("CHUNKER_UNSUPPORTED")
 
     fingerprint = pipeline_fingerprint(
-        embedding_profile=embedding_profile, chunker=chunker, ocr_profile=ocr_profile
+        embedding_profile=embedding_profile,
+        chunker=chunker,
+        ocr_profile=ocr_profile,
+        chunking_profile=chunking_profile,
+        retrieval_profile=retrieval_profile,
+        summary_model_profile=summary_model_profile,
+        summary_prompt_contract=summary_prompt_contract,
     )
     parent = _compatible_parent(
         document_set_version=document_set_version,
@@ -107,6 +147,10 @@ def build_staged_index(
         embedding_profile,
         pipeline_fingerprint=fingerprint,
         parent=parent,
+        chunking_profile=chunking_profile,
+        retrieval_profile=retrieval_profile,
+        summary_model_profile=summary_model_profile,
+        summary_prompt_contract=summary_prompt_contract,
     )
     try:
         provision_store(index_version)
@@ -127,6 +171,9 @@ def build_staged_index(
             document_set_version,
             embedding_profile,
             chunk_fn,
+            chunking_profile=chunking_profile,
+            summary_model_profile=summary_model_profile,
+            summary_prompt_contract=summary_prompt_contract,
             actor=actor,
             request_id=request_id,
             ocr_profile=ocr_profile,
@@ -140,7 +187,15 @@ def build_staged_index(
         chunk_count = reused_chunks + embedded_chunks
         if document_count != len(member_ids):
             raise StagedBuildError("BUILD_DOCUMENT_COUNT_MISMATCH")
-    except (StagedBuildError, VectorStoreError, EmbeddingError, PipelineError, OcrError):
+    except (
+        StagedBuildError,
+        VectorStoreError,
+        EmbeddingError,
+        PipelineError,
+        OcrError,
+        SummaryError,
+        GovernedDSLValidationError,
+    ):
         _fail(index_version, reason="build_failed")
         raise
     except Exception:
@@ -182,6 +237,11 @@ def build_staged_index(
             after={
                 "document_set_version_id": document_set_version.pk,
                 "embedding_profile_id": str(embedding_profile.public_id),
+                "chunking_profile_ref": (
+                    chunking_profile.ref if chunking_profile else "legacy-fixed"
+                ),
+                "retrieval_profile_ref": retrieval_profile.ref if retrieval_profile else None,
+                "summary_enabled": summary_model_profile is not None,
                 "documents": document_count,
                 "chunks": chunk_count,
                 "embedded_documents": embedded_documents,
@@ -200,6 +260,10 @@ def _create_index_version(
     *,
     pipeline_fingerprint: str,
     parent: IndexVersion | None,
+    chunking_profile: ArtifactVersion | None,
+    retrieval_profile: ArtifactVersion | None,
+    summary_model_profile: ArtifactVersion | None,
+    summary_prompt_contract: ArtifactVersion | None,
 ) -> IndexVersion:
     with transaction.atomic():
         latest = (
@@ -212,6 +276,10 @@ def _create_index_version(
             organization_id=document_set_version.organization_id,
             document_set_version=document_set_version,
             embedding_profile=embedding_profile,
+            chunking_profile=chunking_profile,
+            retrieval_profile=retrieval_profile,
+            summary_model_profile=summary_model_profile,
+            summary_prompt_contract=summary_prompt_contract,
             dimensions=embedding_profile.dimensions,
             index_type=embedding_profile.index_type,
             version=latest + 1,
@@ -222,10 +290,17 @@ def _create_index_version(
 
 
 def pipeline_fingerprint(
-    *, embedding_profile: EmbeddingProfile, chunker: str, ocr_profile: OcrProfile | None
+    *,
+    embedding_profile: EmbeddingProfile,
+    chunker: str,
+    ocr_profile: OcrProfile | None,
+    chunking_profile: ArtifactVersion | None = None,
+    retrieval_profile: ArtifactVersion | None = None,
+    summary_model_profile: ArtifactVersion | None = None,
+    summary_prompt_contract: ArtifactVersion | None = None,
 ) -> str:
     payload = {
-        "schema": 1,
+        "schema": 2,
         "embedding_profile": str(embedding_profile.public_id),
         "embedding_revision": embedding_profile.revision,
         "dimensions": embedding_profile.dimensions,
@@ -233,8 +308,19 @@ def pipeline_fingerprint(
         "normalize": embedding_profile.normalize,
         "distance_metric": embedding_profile.distance_metric,
         "parser_pipeline": "allowlisted-parsers-v2",
-        "chunker": chunker,
-        "chunker_config": {"size": 1000, "overlap": 100},
+        "chunker": chunking_profile.ref if chunking_profile else chunker,
+        "chunker_checksum": chunking_profile.checksum if chunking_profile else None,
+        "chunker_config": chunking_profile.body
+        if chunking_profile
+        else {"size": 1000, "overlap": 100},
+        "retrieval_profile": retrieval_profile.ref if retrieval_profile else None,
+        "retrieval_checksum": retrieval_profile.checksum if retrieval_profile else None,
+        "summary_model_profile": summary_model_profile.ref if summary_model_profile else None,
+        "summary_model_checksum": summary_model_profile.checksum if summary_model_profile else None,
+        "summary_prompt_contract": summary_prompt_contract.ref if summary_prompt_contract else None,
+        "summary_prompt_checksum": summary_prompt_contract.checksum
+        if summary_prompt_contract
+        else None,
         "ocr_profile": str(ocr_profile.public_id) if ocr_profile else None,
         "ocr_revision": ocr_profile.revision if ocr_profile else None,
     }
@@ -264,6 +350,9 @@ def _embed_into_store(
     embedding_profile: EmbeddingProfile,
     chunk_fn: object,
     *,
+    chunking_profile: ArtifactVersion | None,
+    summary_model_profile: ArtifactVersion | None,
+    summary_prompt_contract: ArtifactVersion | None,
     actor: str,
     request_id: str,
     ocr_profile: OcrProfile | None,
@@ -314,18 +403,56 @@ def _embed_into_store(
                 raise StagedBuildError("UNSUPPORTED_MIME_FOR_EMBEDDING") from exc
             else:
                 raise StagedBuildError("DOCUMENT_PARSE_FAILED") from exc
-        chunks = chunk_fn(parsed.text)  # type: ignore[operator]
+        version.parser = parsed.parser
+        version.parse_status = "parsed"
+        version.element_count = parsed.element_count
+        version.page_count = parsed.page_count
+        version.save(
+            update_fields=[
+                "parser",
+                "parse_status",
+                "element_count",
+                "page_count",
+                "updated_at",
+            ]
+        )
+        if chunking_profile is None:
+            chunks = [("content", text) for text in chunk_fn(parsed.text)]  # type: ignore[operator]
+        else:
+            chunks = [
+                ("content", text)
+                for text in _chunk_with_compatibility(
+                    parsed.text,
+                    mime_type=version.mime_type,
+                    profile=chunking_profile,
+                )
+            ]
+        if summary_model_profile is not None and summary_prompt_contract is not None:
+            try:
+                summary = generate_document_summary(
+                    document_version=version,
+                    parsed_text=parsed.text,
+                    model_profile=summary_model_profile,
+                    prompt_contract=summary_prompt_contract,
+                    actor=actor,
+                    request_id=request_id,
+                )
+            except SummaryError as exc:
+                raise StagedBuildError(exc.code) from exc
+            chunks.append(("summary", summary.content))
         rows: list[VectorRow] = []
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
             try:
-                result = provider.embed(batch, profile_id=profile_id)
+                result = provider.embed([text for _, text in batch], profile_id=profile_id)
             except EmbeddingOutcomeUnknown:
                 # Post-send unknown: never re-send; fail the build for controlled re-drive.
                 raise
             if result.dimensions and result.dimensions != embedding_profile.dimensions:
                 raise StagedBuildError("EMBEDDING_DIMENSION_MISMATCH")
-            for offset, (chunk_text, vector) in enumerate(zip(batch, result.vectors, strict=True)):
+            for offset, ((chunk_kind, chunk_text), vector) in enumerate(
+                zip(batch, result.vectors, strict=True)
+            ):
                 rows.append(
                     VectorRow(
                         organization_id=organization_id,
@@ -333,6 +460,7 @@ def _embed_into_store(
                         ordinal=start + offset,
                         text=chunk_text,
                         embedding=vector,
+                        chunk_kind=chunk_kind,
                     )
                 )
         chunk_count += write_chunks(index_version, rows)
@@ -345,6 +473,40 @@ def _embed_into_store(
                 initial_chunk_count + chunk_count,
             )
     return document_count, chunk_count
+
+
+def _validate_artifact_profile(
+    artifact: ArtifactVersion | None,
+    *,
+    organization_id: int,
+    expected_type: str,
+    required: bool,
+) -> None:
+    if artifact is None:
+        if required:
+            raise StagedBuildError("PROFILE_REQUIRED")
+        return
+    if artifact.organization_id != organization_id or artifact.type != expected_type:
+        raise StagedBuildError("PROFILE_INVALID")
+
+
+def _chunk_with_compatibility(text: str, *, mime_type: str, profile: ArtifactVersion) -> list[str]:
+    strategy = str(profile.body.get("strategy", ""))
+    supported = {
+        "pages": {"application/pdf"},
+        "tables": {
+            "text/csv",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+        "headings": {
+            "text/markdown",
+            "text/html",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+    }
+    if strategy in supported and mime_type not in supported[strategy]:
+        raise StagedBuildError("CHUNKING_STRATEGY_INCOMPATIBLE")
+    return chunk_with_profile(text, profile.body)
 
 
 def _fail(index_version: IndexVersion, *, reason: str) -> None:

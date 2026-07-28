@@ -72,6 +72,25 @@ enforces the closed role/type contract and compiles through the canonical releas
 Invocation examples use the active alias and the release-pinned execution-mode analysis. Studio AI
 authoring has a safe deployment preflight and remains candidate-only.
 
+Phase 2.8 Part 5 makes an exact draft document-set membership part of every new document upload
+transaction; standalone creation is denied and the elevated storage inventory is no longer a normal
+navigation destination. Staged indexes pin immutable chunking and retrieval artifact versions plus
+optional exact model/prompt summary provenance. Every per-index PostgreSQL store contains both
+pgvector and `simple` full-text indexes under the same FORCE-RLS tenant policy. Keyword and vector
+candidates therefore share the tenant, consumer grant, pinned set-version, active-index and
+tombstone intersection; hybrid mode combines their ranks with weighted reciprocal-rank fusion and
+returns component diagnostics. A set preparation policy may enqueue an idempotent staged build
+after publish, but only the separately authorized promotion action can change the active index.
+Historical set, document and index versions remain deep-linkable. Existing unbound rows are exposed
+only by a non-mutating inventory command; destructive cleanup remains separately gated.
+
+Retrieval profiles may additionally enable bounded hierarchical summary routing. The first stage
+searches only derived `summary` chunks and selects exact live `DocumentVersion` IDs; the second
+stage searches only original `content` chunks inside that authorized document scope and applies a
+per-document diversity cap. Summaries therefore route retrieval but never become the grounding
+passage in this mode. If no authorized summary matches, the provider falls back to direct content
+retrieval. Both stages use the same active per-index FORCE-RLS store and server-derived ACL scope.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full

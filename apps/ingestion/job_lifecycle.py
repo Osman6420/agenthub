@@ -13,6 +13,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.artifacts.models import ArtifactVersion
 from apps.audit.services import record_event
 from apps.ingestion.models import (
     EmbeddingProfile,
@@ -38,7 +39,7 @@ from apps.observability.metrics import (
 if TYPE_CHECKING:
     from apps.documents.models import DocumentSetVersion
 
-CONTRACT_REVISION = 1
+CONTRACT_REVISION = 2
 TERMINAL_STATES = frozenset(
     {
         StagedIndexBuildJobStatus.SUCCEEDED,
@@ -129,6 +130,10 @@ def create_build_job(
     document_set_version: DocumentSetVersion,
     embedding_profile: EmbeddingProfile,
     ocr_profile: OcrProfile | None,
+    chunking_profile: ArtifactVersion | None = None,
+    retrieval_profile: ArtifactVersion | None = None,
+    summary_model_profile: ArtifactVersion | None = None,
+    summary_prompt_contract: ArtifactVersion | None = None,
     actor: str,
     request_id: str = "",
 ) -> tuple[StagedIndexBuildJob, bool]:
@@ -136,15 +141,29 @@ def create_build_job(
 
     organization_id = document_set_version.organization_id
     pipeline = pipeline_fingerprint(
-        embedding_profile=embedding_profile, chunker="fixed", ocr_profile=ocr_profile
+        embedding_profile=embedding_profile,
+        chunker="fixed",
+        ocr_profile=ocr_profile,
+        chunking_profile=chunking_profile,
+        retrieval_profile=retrieval_profile,
+        summary_model_profile=summary_model_profile,
+        summary_prompt_contract=summary_prompt_contract,
     )
     checksum = _canonical_checksum(
         {
-            "schema": 1,
+            "schema": 2,
             "organization_id": organization_id,
             "document_set_version_id": document_set_version.pk,
             "embedding_profile_id": int(embedding_profile.pk),
             "ocr_profile_id": int(ocr_profile.pk) if ocr_profile else None,
+            "chunking_profile_id": int(chunking_profile.pk) if chunking_profile else None,
+            "retrieval_profile_id": int(retrieval_profile.pk) if retrieval_profile else None,
+            "summary_model_profile_id": int(summary_model_profile.pk)
+            if summary_model_profile
+            else None,
+            "summary_prompt_contract_id": int(summary_prompt_contract.pk)
+            if summary_prompt_contract
+            else None,
             "pipeline_fingerprint": pipeline,
         }
     )
@@ -157,6 +176,10 @@ def create_build_job(
                 document_set_version=document_set_version,
                 embedding_profile=embedding_profile,
                 ocr_profile=ocr_profile,
+                chunking_profile=chunking_profile,
+                retrieval_profile=retrieval_profile,
+                summary_model_profile=summary_model_profile,
+                summary_prompt_contract=summary_prompt_contract,
                 request_checksum=checksum,
                 pipeline_fingerprint=pipeline,
                 requested_by=actor[:255],

@@ -32,6 +32,7 @@ from apps.documents.models import (
     Document,
     DocumentSet,
     DocumentSetVersion,
+    DocumentSetVersionStatus,
     DocumentVersion,
 )
 from apps.documents.storage import StorageError
@@ -206,6 +207,24 @@ def documents(request: HttpRequest) -> HttpResponse:
 
     org = _resolve_org_in_scope(request, request.POST.get("organization"))
     _require_author(request, org.id)
+    try:
+        set_version_id = int(request.POST.get("document_set_version", ""))
+    except (TypeError, ValueError) as exc:
+        raise services.DocumentError(
+            "document_set_version_required",
+            "an exact draft document_set_version is required",
+        ) from exc
+    set_version = (
+        _scoped(request, DocumentSetVersion.objects)
+        .filter(
+            pk=set_version_id,
+            organization_id=org.id,
+            status=DocumentSetVersionStatus.DRAFT,
+        )
+        .first()
+    )
+    if set_version is None:
+        raise Http404
     upload = request.FILES.get("file")
     if upload is None:
         raise services.DocumentError("file_required", "a multipart 'file' field is required")
@@ -216,6 +235,7 @@ def documents(request: HttpRequest) -> HttpResponse:
         mime_type=upload.content_type or "application/octet-stream",
         data=upload.read(),
         actor=_actor(request),
+        document_set_version=set_version,
         request_id=_request_id(request),
     )
     return JsonResponse(

@@ -10,8 +10,9 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.documents import services
-from apps.documents.models import Document
+from apps.documents.models import Document, DocumentSet
 from apps.documents.tests.conftest import DocFixture
+from apps.tenancy.models import Organization
 
 pytestmark = pytest.mark.django_db
 
@@ -24,11 +25,19 @@ def _client(user: object | None) -> Client:
 
 
 def _upload(client: Client, org_id: int, logical_id: str = "doc-a"):
+    organization = Organization.objects.get(pk=org_id)
+    document_set, _ = DocumentSet.objects.get_or_create(
+        organization=organization,
+        logical_id="api-uploads",
+        defaults={"name": "API uploads"},
+    )
+    draft = services.get_or_create_manual_draft(document_set=document_set, actor="test")
     return client.post(
         reverse("documents_api:documents"),
         {
             "organization": org_id,
             "logical_id": logical_id,
+            "document_set_version": draft.pk,
             "title": "A",
             "file": SimpleUploadedFile("a.txt", b"hello world", content_type="text/plain"),
         },
@@ -41,6 +50,10 @@ def test_unauthenticated_is_401(df: DocFixture) -> None:
 
 
 def test_list_is_tenant_scoped(df: DocFixture) -> None:
+    document_set = services.create_document_set(
+        organization=df.org, logical_id="list-a", name="List A", actor="op"
+    )
+    draft = services.create_document_set_version(document_set=document_set, actor="op")
     services.upload_document(
         organization=df.org,
         logical_id="doc-a",
@@ -48,6 +61,7 @@ def test_list_is_tenant_scoped(df: DocFixture) -> None:
         mime_type="text/plain",
         data=b"hi",
         actor="op",
+        document_set_version=draft,
     )
     # Author (member of org) sees the document; outsider (other org) sees none.
     resp = _client(df.author).get(reverse("documents_api:documents"))
@@ -107,10 +121,10 @@ def test_purge_requires_admin(df: DocFixture) -> None:
     _upload(_client(df.author), df.org.id)
     doc = Document.objects.get(organization=df.org, logical_id="doc-a")
     url = reverse("documents_api:document_purge", args=[doc.pk])
-    # Author may not purge; org admin may.
+    # Author may not purge; org admin still cannot bypass the set-membership protection.
     assert _client(df.author).post(url).status_code == 403
-    assert _client(df.admin).post(url).status_code == 200
-    assert not Document.objects.filter(pk=doc.pk).exists()
+    assert _client(df.admin).post(url).status_code == 400
+    assert Document.objects.filter(pk=doc.pk).exists()
 
 
 def test_document_set_flow_via_api(df: DocFixture) -> None:

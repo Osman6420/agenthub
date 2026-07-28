@@ -377,6 +377,9 @@ class _SyncClient:
 @pytest.mark.django_db
 def test_sync_reuses_checksum_preserves_other_members_and_noops(governed_rest: Any) -> None:
     _, author, organization, document_set, source = governed_rest
+    base = document_services.create_document_set_version(
+        document_set=document_set, actor="operator"
+    )
     upload = document_services.upload_document(
         organization=organization,
         logical_id="manual",
@@ -384,9 +387,7 @@ def test_sync_reuses_checksum_preserves_other_members_and_noops(governed_rest: A
         mime_type="text/markdown",
         data=b"manual",
         actor="operator",
-    )
-    base = document_services.create_document_set_version(
-        document_set=document_set, actor="operator"
+        document_set_version=base,
     )
     document_services.add_document_to_set_version(
         set_version=base, document_version=upload, actor="operator"
@@ -596,6 +597,9 @@ def test_document_set_manager_can_select_exact_safe_promotion_target(governed_re
     assert schedule.promotion_approved_by == str(manager.pk)
     assert list(schedule.promotion_targets.values_list("scenario_id", flat=True)) == [scenario.pk]
 
+    candidate = document_services.create_document_set_version(
+        document_set=document_set, actor="operator"
+    )
     version = document_services.upload_document(
         organization=organization,
         logical_id="revoked-candidate",
@@ -603,9 +607,7 @@ def test_document_set_manager_can_select_exact_safe_promotion_target(governed_re
         mime_type="text/markdown",
         data=b"candidate",
         actor="operator",
-    )
-    candidate = document_services.create_document_set_version(
-        document_set=document_set, actor="operator"
+        document_set_version=candidate,
     )
     document_services.add_document_to_set_version(
         set_version=candidate, document_version=version, actor="operator"
@@ -622,6 +624,9 @@ def test_document_set_manager_can_select_exact_safe_promotion_target(governed_re
 @pytest.mark.django_db
 def test_automation_task_is_idempotent_per_candidate(governed_rest: Any) -> None:
     _, author, organization, document_set, source = governed_rest
+    candidate = document_services.create_document_set_version(
+        document_set=document_set, actor="operator"
+    )
     version = document_services.upload_document(
         organization=organization,
         logical_id="candidate-doc",
@@ -629,9 +634,7 @@ def test_automation_task_is_idempotent_per_candidate(governed_rest: Any) -> None
         mime_type="text/markdown",
         data=b"candidate",
         actor="operator",
-    )
-    candidate = document_services.create_document_set_version(
-        document_set=document_set, actor="operator"
+        document_set_version=candidate,
     )
     document_services.add_document_to_set_version(
         set_version=candidate, document_version=version, actor="operator"
@@ -656,6 +659,9 @@ def test_automation_task_is_idempotent_per_candidate(governed_rest: Any) -> None
 @pytest.mark.django_db
 def test_stale_automation_claim_is_recoverable(governed_rest: Any) -> None:
     _, author, organization, document_set, source = governed_rest
+    candidate = document_services.create_document_set_version(
+        document_set=document_set, actor="operator"
+    )
     version = document_services.upload_document(
         organization=organization,
         logical_id="recovery-doc",
@@ -663,9 +669,7 @@ def test_stale_automation_claim_is_recoverable(governed_rest: Any) -> None:
         mime_type="text/markdown",
         data=b"recovery",
         actor="operator",
-    )
-    candidate = document_services.create_document_set_version(
-        document_set=document_set, actor="operator"
+        document_set_version=candidate,
     )
     document_services.add_document_to_set_version(
         set_version=candidate, document_version=version, actor="operator"

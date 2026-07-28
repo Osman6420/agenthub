@@ -17,9 +17,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
-from apps.documents import storage
+from apps.documents import services, storage
 from apps.documents.models import Document, DocumentLifecycle, DocumentSet
-from apps.documents.services import upload_document
 from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
 
@@ -42,25 +41,36 @@ def _member(username: str, org: Organization, role: str) -> Any:
     return user
 
 
+def _draft(org: Organization):
+    document_set, _ = DocumentSet.objects.get_or_create(
+        organization=org,
+        logical_id="test-documents",
+        defaults={"name": "Test documents"},
+    )
+    return services.get_or_create_manual_draft(document_set=document_set, actor="seed")
+
+
 @pytest.mark.django_db
 def test_documents_list_is_tenant_scoped(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
-    upload_document(
+    services.upload_document(
         organization=org_a,
         logical_id="doc-a",
         title="Alpha doc",
         mime_type="text/plain",
         data=b"a",
         actor="seed",
+        document_set_version=_draft(org_a),
     )
-    upload_document(
+    services.upload_document(
         organization=org_b,
         logical_id="doc-b",
         title="Beta doc",
         mime_type="text/plain",
         data=b"b",
         actor="seed",
+        document_set_version=_draft(org_b),
     )
     DocumentSet.objects.create(organization=org_a, logical_id="set-a", name="Set A")
     DocumentSet.objects.create(organization=org_b, logical_id="set-b", name="Set B")
@@ -75,7 +85,7 @@ def test_documents_list_is_tenant_scoped(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_author_can_upload_document(client: Client) -> None:
+def test_standalone_console_upload_is_denied(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
     client.force_login(_member("owner", org, Role.PROJECT_OWNER))
 
@@ -91,11 +101,8 @@ def test_author_can_upload_document(client: Client) -> None:
         },
     )
     assert response.status_code == 302
-    document = Document.objects.get(organization=org)
-    assert document.logical_id.startswith("return-policy-")
-    assert document.current_version == 1
-    assert document.versions.get(version=1).mime_type == "text/plain"
-    assert AuditEvent.objects.filter(action="documents.document.upload").exists()
+    assert not Document.objects.filter(organization=org).exists()
+    assert not AuditEvent.objects.filter(action="documents.document.upload").exists()
 
 
 @pytest.mark.django_db
@@ -119,13 +126,14 @@ def test_upload_denied_for_non_author(client: Client) -> None:
 @pytest.mark.django_db
 def test_soft_delete_tombstones_document(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
-    version = upload_document(
+    version = services.upload_document(
         organization=org,
         logical_id="doc",
         title="Doc",
         mime_type="text/plain",
         data=b"data",
         actor="seed",
+        document_set_version=_draft(org),
     )
     client.force_login(_member("owner", org, Role.PROJECT_OWNER))
 
@@ -140,13 +148,14 @@ def test_soft_delete_tombstones_document(client: Client) -> None:
 def test_cross_tenant_soft_delete_is_not_found(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
-    version_b = upload_document(
+    version_b = services.upload_document(
         organization=org_b,
         logical_id="doc-b",
         title="B",
         mime_type="text/plain",
         data=b"b",
         actor="seed",
+        document_set_version=_draft(org_b),
     )
     client.force_login(_member("owner-a", org_a, Role.PROJECT_OWNER))
 
@@ -159,13 +168,14 @@ def test_cross_tenant_soft_delete_is_not_found(client: Client) -> None:
 @pytest.mark.django_db
 def test_org_admin_can_confirm_and_purge_tombstoned_document(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
-    version = upload_document(
+    version = services.upload_document(
         organization=org,
         logical_id="obsolete",
         title="Old",
         mime_type="text/plain",
         data=b"old",
         actor="seed",
+        document_set_version=_draft(org),
     )
     document = version.document
     document.lifecycle_state = DocumentLifecycle.TOMBSTONED
@@ -178,20 +188,21 @@ def test_org_admin_can_confirm_and_purge_tombstoned_document(client: Client) -> 
         {"confirm_logical_id": "obsolete"},
     )
     assert response.status_code == 302
-    assert not Document.objects.filter(pk=document.id).exists()
-    assert AuditEvent.objects.filter(action="documents.document.purge").exists()
+    assert Document.objects.filter(pk=document.id).exists()
+    assert not AuditEvent.objects.filter(action="documents.document.purge").exists()
 
 
 @pytest.mark.django_db
 def test_purge_requires_admin_tombstone_and_exact_confirmation(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
-    version = upload_document(
+    version = services.upload_document(
         organization=org,
         logical_id="keep",
         title="Keep",
         mime_type="text/plain",
         data=b"keep",
         actor="seed",
+        document_set_version=_draft(org),
     )
     document = version.document
     client.force_login(_member("editor", org, Role.SCENARIO_EDITOR))
@@ -221,13 +232,14 @@ def test_purge_requires_admin_tombstone_and_exact_confirmation(client: Client) -
 def test_cross_tenant_purge_is_not_found(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
-    version = upload_document(
+    version = services.upload_document(
         organization=org_b,
         logical_id="foreign",
         title="Foreign",
         mime_type="text/plain",
         data=b"x",
         actor="seed",
+        document_set_version=_draft(org_b),
     )
     client.force_login(_member("admin-a", org_a, Role.ORGANIZATION_ADMIN))
     response = client.post(

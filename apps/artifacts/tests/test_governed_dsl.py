@@ -66,6 +66,8 @@ def test_governed_profiles_publish_as_validated_immutable_artifacts() -> None:
                 "vector_weight": 0.7,
                 "keyword_weight": 0.3,
                 "metadata_filter": {"field": "/language", "eq": "tr"},
+                "summary_document_top_k": 10,
+                "max_chunks_per_document": 3,
             },
         ),
     ]
@@ -160,6 +162,13 @@ def test_transform_rejects_unknown_code_pointer_and_excessive_depth(mutation, co
             "top_k": 51,
             "organization_id": 99,
         },
+        {
+            "api_version": "agenthub/retrieval/v1",
+            "kind": "RetrievalProfile",
+            "mode": "vector",
+            "top_k": 5,
+            "max_chunks_per_document": 2,
+        },
     ],
 )
 def test_retrieval_profile_rejects_invalid_weights_bounds_and_authority_fields(body) -> None:
@@ -234,9 +243,17 @@ def test_chunking_and_retrieval_runtime_use_validated_contracts() -> None:
             "mode": "vector",
             "top_k": 5,
             "score_threshold": 0.4,
+            "summary_document_top_k": 10,
+            "max_chunks_per_document": 2,
         }
     )
-    assert normalized == {"mode": "vector", "top_k": 5, "score_threshold": 0.4}
+    assert normalized == {
+        "mode": "vector",
+        "top_k": 5,
+        "score_threshold": 0.4,
+        "summary_document_top_k": 10,
+        "max_chunks_per_document": 2,
+    }
 
     provider = StaticRetrievalProvider(
         [
@@ -250,3 +267,44 @@ def test_chunking_and_retrieval_runtime_use_validated_contracts() -> None:
             query="q", profile=normalized, organization_id=1, index_versions=[]
         )
     ] == ["high"]
+
+
+@pytest.mark.parametrize(
+    ("strategy", "source"),
+    [
+        ("characters", "x" * 205),
+        ("tokens", " ".join(f"token-{index}" for index in range(205))),
+        ("headings", "\n".join(f"# Heading {index}" for index in range(205))),
+        ("pages", "\f".join(f"Page {index}" for index in range(205))),
+        ("tables", "\n\n".join(f"row-{index}|value-{index}" for index in range(205))),
+    ],
+)
+def test_all_chunking_strategies_apply_bounds_and_overlap(strategy: str, source: str) -> None:
+    chunks = chunk_with_profile(
+        source,
+        {
+            "api_version": "agenthub/chunking/v1",
+            "kind": "ChunkingProfile",
+            "strategy": strategy,
+            "size": 100,
+            "overlap": 10,
+            "max_chunks": 10,
+        },
+    )
+    assert len(chunks) == 3
+    assert all(chunks)
+
+
+def test_chunking_fails_closed_when_profile_maximum_is_exceeded() -> None:
+    with pytest.raises(GovernedDSLValidationError, match="chunking_max_exceeded"):
+        chunk_with_profile(
+            " ".join(f"token-{index}" for index in range(205)),
+            {
+                "api_version": "agenthub/chunking/v1",
+                "kind": "ChunkingProfile",
+                "strategy": "tokens",
+                "size": 100,
+                "overlap": 0,
+                "max_chunks": 1,
+            },
+        )

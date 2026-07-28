@@ -201,6 +201,8 @@ def validate_retrieval_profile(body: dict[str, Any]) -> None:
         "keyword_weight",
         "reranker_profile_ref",
         "metadata_filter",
+        "summary_document_top_k",
+        "max_chunks_per_document",
     }
     _exact_keys(body, allowed, "retrieval_unknown_field")
     if body.get("api_version") != "agenthub/retrieval/v1" or body.get("kind") != "RetrievalProfile":
@@ -240,6 +242,21 @@ def validate_retrieval_profile(body: dict[str, Any]) -> None:
         _fail("retrieval_reranker_invalid")
     if "metadata_filter" in body:
         _filter(body["metadata_filter"])
+    if "summary_document_top_k" in body:
+        _positive_int(
+            body["summary_document_top_k"],
+            minimum=1,
+            maximum=50,
+            code="retrieval_summary_routing_invalid",
+        )
+        _positive_int(
+            body.get("max_chunks_per_document", 3),
+            minimum=1,
+            maximum=10,
+            code="retrieval_summary_routing_invalid",
+        )
+    elif "max_chunks_per_document" in body:
+        _fail("retrieval_summary_routing_invalid")
 
 
 @dataclass(frozen=True)

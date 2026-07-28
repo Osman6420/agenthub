@@ -2926,10 +2926,23 @@ def document_set_detail(
         document_set.versions.order_by("-version").annotate(_member_count=Count("memberships"))
     )
     latest_version = all_versions[0] if all_versions else None
-    current_version = _version_detail(latest_version) if latest_version is not None else None
+    selected_version = latest_version
+    requested_version_id = request.GET.get("version", "")
+    if requested_version_id.isdigit():
+        selected_version = next(
+            (version for version in all_versions if version.pk == int(requested_version_id)),
+            latest_version,
+        )
+    current_version = _version_detail(selected_version) if selected_version is not None else None
     older_versions = [
-        {"version": v.version, "status": v.status, "member_count": getattr(v, "_member_count", 0)}
-        for v in all_versions[1:]
+        {
+            "id": v.id,
+            "version": v.version,
+            "status": v.status,
+            "member_count": getattr(v, "_member_count", 0),
+        }
+        for v in all_versions
+        if selected_version is None or v.pk != selected_version.pk
     ]
     active_index = (
         IndexVersion.objects.filter(
@@ -2952,7 +2965,7 @@ def document_set_detail(
     )
     uploaded_complete = bool(latest_members)
     parsed_complete = uploaded_complete and parsed_count == len(latest_members)
-    draft_complete = parsed_complete and latest_version is not None
+    draft_complete = uploaded_complete and latest_version is not None
     promotable_index = (
         IndexVersion.objects.filter(
             organization_id=document_set.organization_id,
@@ -3018,7 +3031,7 @@ def document_set_detail(
             "complete": parsed_complete,
             "detail": f"{parsed_count}/{len(latest_members)} hazır",
             "action": _anchor("#build", "İndeks oluştur (ayrıştırmayı çalıştırır)")
-            if can_write and latest_members and parsed_count != len(latest_members)
+            if can_write and published_complete and not parsed_complete
             else None,
         },
         {
@@ -3030,15 +3043,9 @@ def document_set_detail(
         {
             "label": "Set sürümü yayımlandı",
             "complete": published_complete,
-            "detail": "Yayımlandı"
-            if published_complete
-            else (
-                "Önce ayrıştırmayı tamamlayın"
-                if is_draft_current and not parsed_complete
-                else "Taslak üyelik değişebilir"
-            ),
+            "detail": "Yayımlandı" if published_complete else "Taslak üyelik değişebilir",
             "action": {"type": "post", "url": publish_url, "label": "Taslağı yayımla"}
-            if can_write and is_draft_current and parsed_complete
+            if can_write and is_draft_current and draft_complete
             else None,
         },
         {
@@ -3266,6 +3273,11 @@ def document_set_document_replace(
         upload = form.cleaned_data["file"]
         mime_type = _UPLOAD_MIME_BY_SUFFIX.get(Path(upload.name).suffix.lower(), "")
         try:
+            draft = document_services.get_or_create_manual_draft(
+                document_set=document_set,
+                actor=request.user.get_username(),
+                request_id=_request_id(request),
+            )
             version = document_services.upload_document(
                 organization=document.organization,
                 logical_id=document.logical_id,
@@ -3273,18 +3285,8 @@ def document_set_document_replace(
                 mime_type=mime_type,
                 data=upload.read(),
                 actor=request.user.get_username(),
+                document_set_version=draft,
                 source=document.source,
-                request_id=_request_id(request),
-            )
-            draft = document_services.get_or_create_manual_draft(
-                document_set=document_set,
-                actor=request.user.get_username(),
-                request_id=_request_id(request),
-            )
-            document_services.upsert_document_in_set_draft(
-                set_version=draft,
-                document_version=version,
-                actor=request.user.get_username(),
                 request_id=_request_id(request),
             )
             messages.success(
@@ -3869,20 +3871,16 @@ def document_set_bulk_upload(
             document_set=document_set, actor=request.user.get_username()
         )
         for upload, item in zip(files, metadata, strict=True):
-            version = document_services.upload_document(
+            document_services.upload_document(
                 organization=document_set.organization,
                 logical_id=item["logical_id"],
                 title=item["title"],
                 mime_type=item["mime_type"],
                 data=upload.read(),
                 actor=request.user.get_username(),
+                document_set_version=draft,
             )
             uploaded += 1
-            document_services.upsert_document_in_set_draft(
-                set_version=draft,
-                document_version=version,
-                actor=request.user.get_username(),
-            )
         messages.success(
             request, f"{uploaded} doküman yüklendi ve taslak v{draft.version} güncellendi."
         )
@@ -3921,20 +3919,29 @@ def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpRespo
         )
     profile = form.cleaned_data["embedding_profile"]
     ocr_profile = form.cleaned_data["ocr_profile"]
-    if IndexVersion.objects.filter(
-        document_set_version=set_version,
-        embedding_profile=profile,
-        status__in=[IndexStatus.BUILDING, IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
-    ).exists():
-        messages.error(request, "Bu sürüm ve profil için kullanılabilir bir indeks zaten var.")
-        return redirect(
-            "console:document_set_detail_public", public_id=set_version.document_set.public_id
-        )
     try:
+        from apps.ingestion.preparation import configure_preparation
+
+        configure_preparation(
+            document_set=set_version.document_set,
+            embedding_profile=profile,
+            ocr_profile=ocr_profile,
+            chunking_profile=form.cleaned_data["chunking_profile"],
+            retrieval_profile=form.cleaned_data["retrieval_profile"],
+            summary_model_profile=form.cleaned_data["summary_model_profile"],
+            summary_prompt_contract=form.cleaned_data["summary_prompt_contract"],
+            auto_prepare=form.cleaned_data["auto_prepare"],
+            actor=request.user.get_username(),
+            request_id=request.headers.get("X-Request-ID", ""),
+        )
         job, created = create_build_job(
             document_set_version=set_version,
             embedding_profile=profile,
             ocr_profile=ocr_profile,
+            chunking_profile=form.cleaned_data["chunking_profile"],
+            retrieval_profile=form.cleaned_data["retrieval_profile"],
+            summary_model_profile=form.cleaned_data["summary_model_profile"],
+            summary_prompt_contract=form.cleaned_data["summary_prompt_contract"],
             actor=request.user.get_username(),
             request_id=request.headers.get("X-Request-ID", ""),
         )

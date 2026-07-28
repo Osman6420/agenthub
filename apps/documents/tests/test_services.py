@@ -9,6 +9,7 @@ from apps.documents import services, storage
 from apps.documents.models import (
     Document,
     DocumentLifecycle,
+    DocumentSet,
     DocumentSetVersionStatus,
     DocumentVersion,
 )
@@ -25,6 +26,12 @@ def org() -> Organization:
 def _upload(
     org: Organization, logical_id: str = "doc-a", data: bytes = b"hello"
 ) -> DocumentVersion:
+    document_set, _ = DocumentSet.objects.get_or_create(
+        organization=org,
+        logical_id="test-uploads",
+        defaults={"name": "Test uploads"},
+    )
+    draft = services.get_or_create_manual_draft(document_set=document_set, actor="op")
     return services.upload_document(
         organization=org,
         logical_id=logical_id,
@@ -32,6 +39,7 @@ def _upload(
         mime_type="text/plain",
         data=data,
         actor="op",
+        document_set_version=draft,
     )
 
 
@@ -72,6 +80,10 @@ def test_upload_rejects_tombstoned_document(org: Organization) -> None:
     ],
 )
 def test_upload_validation(org: Organization, mime: str, data: bytes, code: str) -> None:
+    document_set = services.create_document_set(
+        organization=org, logical_id="validation", name="Validation", actor="op"
+    )
+    draft = services.create_document_set_version(document_set=document_set, actor="op")
     with pytest.raises(services.DocumentError) as exc:
         services.upload_document(
             organization=org,
@@ -80,6 +92,7 @@ def test_upload_validation(org: Organization, mime: str, data: bytes, code: str)
             mime_type=mime,
             data=data,
             actor="op",
+            document_set_version=draft,
         )
     assert exc.value.code == code
 
@@ -106,6 +119,7 @@ def test_soft_delete_is_idempotent_and_audited(org: Organization) -> None:
 def test_purge_removes_blobs_and_versions(org: Organization) -> None:
     version = _upload(org)
     key = version.object_key
+    version.memberships.all().delete()
     removed = services.purge_document(version.document, actor="admin")
     assert removed == 1
     assert not Document.objects.filter(pk=version.document_id).exists()

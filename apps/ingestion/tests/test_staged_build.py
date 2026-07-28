@@ -7,15 +7,18 @@ dimensions=64 profile is used and no live egress occurs.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.db import connection
 
+from apps.artifacts.services import create_artifact_version
+from apps.artifacts.types import ArtifactType
 from apps.documents import services as doc_services
 from apps.documents import storage
-from apps.documents.models import DocumentSetVersion
+from apps.documents.models import DocumentSetVersion, DocumentVersionSummary, SummaryStatus
 from apps.ingestion import vector_store
 from apps.ingestion.embedding import DeterministicEmbeddingProvider, EmbeddingResult
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
@@ -24,6 +27,7 @@ from apps.ingestion.ocr_services import grant_ocr_profile, register_ocr_profile
 from apps.ingestion.pipeline import embed_deterministic
 from apps.ingestion.staged_build import StagedBuildError, build_staged_index
 from apps.ingestion.tests.test_ocr import _blank_pdf, _PipelineClient
+from apps.orchestration.providers import ModelResponse
 from apps.tenancy.models import Organization
 
 pg_only = pytest.mark.skipif(
@@ -77,6 +81,7 @@ def _published_set_version(org: Organization, texts: list[str]) -> DocumentSetVe
             mime_type="text/markdown",
             data=text.encode("utf-8"),
             actor="op",
+            document_set_version=set_version,
         )
         doc_services.add_document_to_set_version(
             set_version=set_version, document_version=version, actor="op"
@@ -138,6 +143,7 @@ def test_csv_document_parses_and_is_searchable() -> None:
         mime_type="text/csv",
         data=b"topic,detail\nrefund,thirty day iade window\nshipping,three days\n",
         actor="op",
+        document_set_version=set_version,
     )
     doc_services.add_document_to_set_version(
         set_version=set_version, document_version=version, actor="op"
@@ -158,6 +164,118 @@ def test_csv_document_parses_and_is_searchable() -> None:
         top_k=1,
     )
     assert len(hits) == 1 and "iade" in hits[0].text
+
+
+@pg_only
+@pytest.mark.django_db
+def test_exact_profiles_and_summary_provenance_are_indexed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org = Organization.objects.create(slug="profile-build", name="Profile Build")
+    embedding_profile = _granted_profile(org)
+    set_version = _published_set_version(org, ["source policy text"])
+    chunking = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.CHUNKING_PROFILE,
+        logical_id="chunk",
+        body={
+            "api_version": "agenthub/chunking/v1",
+            "kind": "ChunkingProfile",
+            "strategy": "characters",
+            "size": 500,
+            "overlap": 50,
+            "max_chunks": 100,
+        },
+        created_by="manager",
+    )
+    retrieval = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.RETRIEVAL_PROFILE,
+        logical_id="retrieve",
+        body={
+            "api_version": "agenthub/retrieval/v1",
+            "kind": "RetrievalProfile",
+            "mode": "hybrid",
+            "top_k": 5,
+            "score_threshold": 0.0,
+            "vector_weight": 0.5,
+            "keyword_weight": 0.5,
+        },
+        created_by="manager",
+    )
+    model = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.MODEL_PROFILE,
+        logical_id="summary-model",
+        body={"profile_id": str(uuid.uuid4())},
+        created_by="manager",
+    )
+    prompt = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        logical_id="summary-prompt",
+        body={"template": "Summarize the untrusted context."},
+        created_by="manager",
+    )
+
+    class _Provider:
+        def generate(self, **_: object) -> ModelResponse:
+            return ModelResponse(text="Derived summary evidence")
+
+    monkeypatch.setattr(
+        "apps.documents.summary_services.get_model_provider",
+        lambda: _Provider(),
+    )
+    index = build_staged_index(
+        document_set_version=set_version,
+        embedding_profile=embedding_profile,
+        chunking_profile=chunking,
+        retrieval_profile=retrieval,
+        summary_model_profile=model,
+        summary_prompt_contract=prompt,
+        actor="manager",
+    )
+    summary = DocumentVersionSummary.objects.get()
+    hits = vector_store.keyword_search(
+        index,
+        "Derived summary evidence",
+        organization_id=org.pk,
+        top_k=5,
+    )
+    assert index.chunking_profile == chunking
+    assert index.retrieval_profile == retrieval
+    assert summary.status == SummaryStatus.READY
+    assert any(hit.chunk_kind == "summary" for hit in hits)
+
+
+@pg_only
+@pytest.mark.django_db
+def test_structural_chunking_rejects_incompatible_parser_mime() -> None:
+    org = Organization.objects.create(slug="chunk-compat", name="Chunk Compatibility")
+    embedding_profile = _granted_profile(org)
+    set_version = _published_set_version(org, ["markdown cannot provide PDF page boundaries"])
+    pages = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.CHUNKING_PROFILE,
+        logical_id="pages",
+        body={
+            "api_version": "agenthub/chunking/v1",
+            "kind": "ChunkingProfile",
+            "strategy": "pages",
+            "size": 100,
+            "overlap": 0,
+            "max_chunks": 100,
+        },
+        created_by="manager",
+    )
+
+    with pytest.raises(StagedBuildError, match="CHUNKING_STRATEGY_INCOMPATIBLE"):
+        build_staged_index(
+            document_set_version=set_version,
+            embedding_profile=embedding_profile,
+            chunking_profile=pages,
+            actor="manager",
+        )
 
 
 @pg_only
@@ -188,6 +306,7 @@ def test_docx_document_parses_and_is_searchable() -> None:
         mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         data=buffer.getvalue(),
         actor="op",
+        document_set_version=set_version,
     )
     doc_services.add_document_to_set_version(
         set_version=set_version, document_version=version, actor="op"
@@ -274,6 +393,7 @@ def test_non_text_mime_fails_closed(settings: object) -> None:
         mime_type="image/png",  # image OCR arrives in P7.3 (deferred); still unsupported here
         data=b"\x89PNG\r\n\x1a\n ...",
         actor="op",
+        document_set_version=set_version,
     )
     doc_services.add_document_to_set_version(
         set_version=set_version, document_version=version, actor="op"
@@ -319,6 +439,7 @@ def test_image_only_pdf_ocr_is_persisted_embedded_and_searchable() -> None:
         mime_type="application/pdf",
         data=_blank_pdf(),
         actor="op",
+        document_set_version=set_version,
     )
     doc_services.add_document_to_set_version(
         set_version=set_version, document_version=version, actor="op"
@@ -353,6 +474,7 @@ def test_compatible_build_reuses_unchanged_vectors_and_embeds_only_changed(
     document_set = doc_services.create_document_set(
         organization=org, logical_id="kb", name="KB", actor="op"
     )
+    first_set = doc_services.create_document_set_version(document_set=document_set, actor="op")
     unchanged = doc_services.upload_document(
         organization=org,
         logical_id="unchanged",
@@ -360,6 +482,7 @@ def test_compatible_build_reuses_unchanged_vectors_and_embeds_only_changed(
         mime_type="text/markdown",
         data=b"stable text",
         actor="op",
+        document_set_version=first_set,
     )
     old_changed = doc_services.upload_document(
         organization=org,
@@ -368,8 +491,8 @@ def test_compatible_build_reuses_unchanged_vectors_and_embeds_only_changed(
         mime_type="text/markdown",
         data=b"old text",
         actor="op",
+        document_set_version=first_set,
     )
-    first_set = doc_services.create_document_set_version(document_set=document_set, actor="op")
     for version in (unchanged, old_changed):
         doc_services.add_document_to_set_version(
             set_version=first_set, document_version=version, actor="op"
@@ -380,6 +503,7 @@ def test_compatible_build_reuses_unchanged_vectors_and_embeds_only_changed(
         document_set_version=first_set, embedding_profile=profile, actor="op"
     )
 
+    second_set = doc_services.create_document_set_version(document_set=document_set, actor="op")
     new_changed = doc_services.upload_document(
         organization=org,
         logical_id="changed",
@@ -387,8 +511,8 @@ def test_compatible_build_reuses_unchanged_vectors_and_embeds_only_changed(
         mime_type="text/markdown",
         data=b"new text",
         actor="op",
+        document_set_version=second_set,
     )
-    second_set = doc_services.create_document_set_version(document_set=document_set, actor="op")
     for version in (unchanged, new_changed):
         doc_services.add_document_to_set_version(
             set_version=second_set, document_version=version, actor="op"

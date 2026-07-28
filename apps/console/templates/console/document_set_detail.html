@@ -18,7 +18,7 @@
 
 <div class="summary-grid" id="overview">
   <div class="summary-card"><span>Son set sürümü</span><strong>{% if latest_version %}v{{ latest_version.version }}{% else %}—{% endif %}</strong><small class="muted">{% if latest_version %}{{ latest_version.status }}{% else %}Henüz taslak yok{% endif %}</small></div>
-  <div class="summary-card"><span>Aktif indeks</span><strong>{% if active_index %}v{{ active_index.version }}{% else %}—{% endif %}</strong><small class="muted">{% if active_index %}Set v{{ active_index.document_set_version.version }} · {{ active_index.chunk_count }} parça{% else %}Henüz serve edilmiyor{% endif %}</small></div>
+  <div class="summary-card"><span>Aktif indeks</span><strong>{% if active_index %}<a href="?version={{ active_index.document_set_version_id }}#index-version-{{ active_index.id }}">v{{ active_index.version }}</a>{% else %}—{% endif %}</strong><small class="muted">{% if active_index %}Set v{{ active_index.document_set_version.version }} · {{ active_index.chunk_count }} parça{% else %}Henüz serve edilmiyor{% endif %}</small></div>
   <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Release derlemesinde pinlenir</small></div>
 </div>
 
@@ -52,9 +52,9 @@
 
   {% with v=current_version %}
   {% if v %}
-  <div class="relationship-card">
+  <div class="relationship-card" id="set-version-{{ v.id }}">
     <div class="relationship-head">
-      <div><h3>Güncel set sürümü v{{ v.version }}</h3><p class="muted">{{ v.members|length }} doküman sürümü</p></div>
+      <div><h3>{% if latest_version and v.id == latest_version.id %}Güncel {% endif %}set sürümü v{{ v.version }}</h3><p class="muted">{{ v.members|length }} doküman sürümü</p></div>
       <div class="status-stack"><span class="badge {{ v.status }}">{{ v.status }}</span></div>
     </div>
     <div class="relationship-body">
@@ -71,7 +71,7 @@
       <div id="build">
         <h4>İndeksler</h4>
         {% for index in v.indexes %}
-        <div class="access-row"><div><strong>{{ index.profile }}</strong><p class="muted">İndeks v{{ index.version }} · {{ index.documents }} doküman · {{ index.chunks }} parça{% if index.reused_documents %} · {{ index.reused_documents }} yeniden kullanıldı{% endif %}</p></div><span class="badge {{ index.status }}">{{ index.status }}</span>{% if index.can_promote %}<form method="post" action="{% url 'console:document_set_promote_index' index.id %}">{% csrf_token %}<button class="button primary" type="submit">Aktif et</button></form>{% endif %}</div>
+        <div class="access-row" id="index-version-{{ index.id }}"><div><strong>{{ index.profile }}</strong><p class="muted">İndeks v{{ index.version }} · {{ index.documents }} doküman · {{ index.chunks }} parça{% if index.reused_documents %} · {{ index.reused_documents }} yeniden kullanıldı{% endif %}</p></div><span class="badge {{ index.status }}">{{ index.status }}</span>{% if index.can_promote %}<form method="post" action="{% url 'console:document_set_promote_index' index.id %}">{% csrf_token %}<button class="button primary" type="submit">Aktif et</button></form>{% endif %}</div>
         {% empty %}<p class="muted">Bu set sürümü için indeks yok.</p>{% endfor %}
 
         {% for job in v.jobs %}
@@ -80,7 +80,7 @@
 
         {% if can_write and v.can_build %}
         <form class="compact-form" method="post" action="{% url 'console:document_set_build_index' v.id %}">
-          {% csrf_token %}<label>Embedding profili</label>{{ build_form.embedding_profile }}<label style="margin-top:8px;">OCR profili</label>{{ build_form.ocr_profile }}<button class="button secondary" type="submit" style="margin-top:10px;">Staged indeks oluştur</button>
+          {% csrf_token %}<label>Embedding profili</label>{{ build_form.embedding_profile }}<label style="margin-top:8px;">Parçalama profili</label>{{ build_form.chunking_profile }}<label style="margin-top:8px;">Arama profili</label>{{ build_form.retrieval_profile }}<label style="margin-top:8px;">OCR profili</label>{{ build_form.ocr_profile }}<label style="margin-top:8px;">Özet model profili</label>{{ build_form.summary_model_profile }}<label style="margin-top:8px;">Özet prompt sözleşmesi</label>{{ build_form.summary_prompt_contract }}<label style="margin-top:8px;">{{ build_form.auto_prepare }} Sonraki yayımlanan sürümleri otomatik staged hazırla</label><button class="button secondary" type="submit" style="margin-top:10px;">Staged indeks oluştur</button>
         </form>
         {% elif v.is_draft %}<p class="notice">İndeks oluşturmak için önce taslağı yayımlayın.</p>{% endif %}
       </div>
@@ -92,7 +92,7 @@
   {% if older_versions %}
   <details class="version-history">
     <summary><strong>Geçmiş sürümler ({{ older_versions|length }})</strong></summary>
-    {% for v in older_versions %}<div class="access-row"><div><strong>Set sürümü v{{ v.version }}</strong><p class="muted">{{ v.member_count }} doküman sürümü</p></div><span class="badge {{ v.status }}">{{ v.status }}</span></div>{% endfor %}
+    {% for v in older_versions %}<div class="access-row"><div><strong><a href="?version={{ v.id }}#set-version-{{ v.id }}">Set sürümü v{{ v.version }}</a></strong><p class="muted">{{ v.member_count }} doküman sürümü</p></div><span class="badge {{ v.status }}">{{ v.status }}</span></div>{% endfor %}
   </details>
   {% endif %}
 </div>
