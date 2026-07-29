@@ -10,5 +10,6 @@
 </div>
 <div class="relationship-grid">
   <section class="card"><h2>Birleşik çalıştırmalar</h2><p class="muted">Tüm senaryo adımlarını, beklemeleri, onayları ve güvenli çalışma izlerini tek listede inceleyin.</p><a class="button secondary" href="{% url 'console:workflow_runs' %}">Çalıştırmaları aç</a></section>
+  {% if can_use_question_sets %}<section class="card"><h2>Soru setleri ve değerlendirme</h2><p class="muted">Exact retrieval ve release hedeflerinde ayrı kalite metrikleri üretin.</p><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setlerini aç</a></section>{% endif %}
 </div>
 {% endblock %}

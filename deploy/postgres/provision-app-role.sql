@@ -42,6 +42,8 @@ GRANT SELECT ON
     documents_scenariodocumentsetaccessrequest, documents_scenariodocumentsetbinding,
     documents_scenariodocumentsetgrant,
     evaluations_evalcaseresult, evaluations_evalrun,
+    evaluations_questioncase, evaluations_questionevaluationevidence,
+    evaluations_questionevaluationrun, evaluations_questionset, evaluations_questionsetversion,
     gateway_idempotencyrecord, identity_consumerbinding,
     identity_documentsetmanagerassignment, identity_projectadministratorassignment,
     identity_scenarioeditorassignment,
@@ -67,6 +69,7 @@ TO :"app_role";
 GRANT INSERT ON
     artifacts_artifactversion,
     evaluations_evalcaseresult,
+    evaluations_questioncase, evaluations_questionsetversion,
     tools_toolbinding, tools_tooldefinition,
     workflows_customnodedefinition, workflows_runevent,
     workflows_workflowversion
@@ -80,7 +83,8 @@ GRANT INSERT, UPDATE ON
     catalog_aiproject, catalog_scenario, catalog_scenarioalias,
     documents_scenariodocumentsetaccessrequest, documents_scenariodocumentsetgrant,
     documents_documentversionsummary,
-    evaluations_evalrun,
+    evaluations_evalrun, evaluations_questionevaluationevidence,
+    evaluations_questionevaluationrun, evaluations_questionset,
     gateway_idempotencyrecord, identity_consumerbinding,
     identity_documentsetmanagerassignment, identity_projectadministratorassignment,
     identity_scenarioeditorassignment,

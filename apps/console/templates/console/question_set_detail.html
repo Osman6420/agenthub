@@ -1,0 +1,44 @@
+{% extends "console/base.html" %}
+{% block title %}{{ question_set.name }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:question_sets' %}">Soru setleri</a><span>›</span><span>{{ question_set.name }}</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Versioned benchmark</p><h1>{{ question_set.name }}</h1><p class="muted">{{ question_set.description|default:"Açıklama yok." }}</p></div><span class="badge {{ question_set.status }}">{{ question_set.get_status_display }}</span></div>
+
+<div class="summary-grid">
+  <div class="summary-card"><span>Taslak revision</span><strong>{{ question_set.draft_revision }}</strong></div>
+  <div class="summary-card"><span>Taslak vaka</span><strong>{{ question_set.draft_cases|length }}</strong></div>
+  <div class="summary-card"><span>Yayımlanmış sürüm</span><strong>{{ versions|length }}</strong></div>
+</div>
+
+{% if can_write %}
+<section class="card form-card">
+  <h2>Mutable taslak</h2>
+  <form method="post" action="{% url 'console:question_set_update' question_set.public_id %}">{% csrf_token %}{{ draft_form.as_p }}<button type="submit">Taslağı kaydet</button></form>
+  <form method="post" action="{% url 'console:question_set_publish' question_set.public_id %}" class="actions">{% csrf_token %}<input type="hidden" name="expected_revision" value="{{ question_set.draft_revision }}"><button type="submit" class="button secondary">Immutable sürüm yayımla</button></form>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Immutable sürümler</h2>
+  {% for version in versions %}
+  <details class="version-history"{% if forloop.first %} open{% endif %}><summary>v{{ version.version }} · {{ version.case_count }} vaka · <span class="mono">{{ version.checksum|slice:":12" }}</span></summary>
+    {% for case in version.cases.all %}<div class="access-row"><div><strong>{{ case.case_id }}</strong><p class="muted">{{ case.question }}</p></div><span>{{ case.assertions|length }} assertion</span><span>{{ case.expected_anchors|length }} anchor</span></div>{% endfor %}
+  </details>
+  {% empty %}<p class="muted">Henüz yayımlanmış sürüm yok.</p>{% endfor %}
+</section>
+
+{% if versions %}
+<div class="relationship-grid">
+  <section class="card form-card">
+    <h2>Retrieval değerlendirmesi</h2><p class="muted">Exact document-set version, index ve retrieval profile üzerinde hit@k, recall@k ve MRR üretir.</p>
+    {% if retrieval_targets_available %}<form method="post" action="{% url 'console:question_set_start_retrieval' question_set.public_id %}">{% csrf_token %}{{ retrieval_form.as_p }}<button type="submit">Batch başlat</button></form>{% else %}<p class="warning-box">Yetkili, hazır exact retrieval hedefi yok.</p>{% endif %}
+  </section>
+  <section class="card form-card">
+    <h2>Cevap değerlendirmesi</h2><p class="muted">Exact candidate/active release üzerinde deterministik assertion'ları çalıştırır.</p>
+    {% if answer_targets_available %}<form method="post" action="{% url 'console:question_set_start_answer' question_set.public_id %}">{% csrf_token %}{{ answer_form.as_p }}<button type="submit">Batch başlat</button></form>{% else %}<p class="warning-box">Yetkili candidate/active release yok.</p>{% endif %}
+  </section>
+</div>
+{% endif %}
+
+<section class="card"><h2>Çalışma geçmişi</h2><div class="table-scroll"><table><thead><tr><th>Tür</th><th>Durum</th><th>İlerleme</th><th>Passed</th><th>Unscored</th><th></th></tr></thead><tbody>{% for run in runs %}<tr><td>{{ run.get_kind_display }}</td><td><span class="badge {{ run.status }}">{{ run.get_status_display }}</span></td><td>{{ run.completed_cases }}/{{ run.total_cases }}</td><td>{{ run.passed_cases }}</td><td>{{ run.unscored_cases }}</td><td><a href="{% url 'console:question_evaluation_detail' run.public_id %}">Aç</a></td></tr>{% empty %}<tr><td colspan="6" class="empty">Çalışma yok.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

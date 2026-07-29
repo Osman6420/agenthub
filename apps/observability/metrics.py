@@ -70,6 +70,25 @@ EVAL_CASES = Counter(
     ("status",),
     registry=REGISTRY,
 )
+QUESTION_EVAL_CASES = Counter(
+    "agenthub_question_eval_cases_total",
+    "Question evaluation case outcomes.",
+    ("kind", "status"),
+    registry=REGISTRY,
+)
+QUESTION_EVAL_RUNS = Counter(
+    "agenthub_question_eval_runs_total",
+    "Question evaluation terminal outcomes.",
+    ("kind", "status"),
+    registry=REGISTRY,
+)
+QUESTION_EVAL_DURATION = Histogram(
+    "agenthub_question_eval_duration_seconds",
+    "Question evaluation wall-clock duration.",
+    ("kind",),
+    registry=REGISTRY,
+    buckets=(0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900, 1800),
+)
 RELEASE_LIFECYCLE = Counter(
     "agenthub_release_lifecycle_total",
     "Release lifecycle decisions.",

@@ -107,6 +107,22 @@ def _execute_case(
     case: dict[str, Any],
     ordinal: int,
 ) -> RunResult:
+    return execute_release_input(
+        release=release,
+        input_payload=dict(case.get("input", {})),
+        request_key=f"eval:{eval_run.pk}:{ordinal}",
+    )
+
+
+def execute_release_input(
+    *,
+    release: ScenarioRelease,
+    input_payload: dict[str, Any],
+    request_key: str,
+) -> RunResult:
+    """Execute one bounded evaluation input against an exact release."""
+
+    consumer = _evaluation_consumer(release)
     workflow_version = resolve_release_workflow(release)
     scenario = release.scenario
     execution_context = issue_execution_context(
@@ -117,15 +133,15 @@ def _execute_case(
         consumer_id=consumer.id,
         capabilities=[Capability.WORKFLOW_RUN],
         release_id=release.id,
-        request_id=f"eval:{eval_run.pk}:{ordinal}",
+        request_id=request_key,
     )
     run, _ = request_unified_run(
         release=release,
         consumer=consumer,
         workflow_version=workflow_version,
         execution_context=execution_context,
-        input_payload=dict(case.get("input", {})),
-        idempotency_key=f"eval:{eval_run.pk}:{ordinal}",
+        input_payload=input_payload,
+        idempotency_key=request_key,
         execution_mode="sync",
     )
     lease_token = uuid.uuid4()

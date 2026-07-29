@@ -83,7 +83,34 @@ from apps.documents.models import (
 )
 from apps.documents.services import DocumentError
 from apps.documents.storage import StorageError
+from apps.evaluations.forms import (
+    EvaluationTargetForm,
+    OneOffQuestionForm,
+    QuestionSetDraftForm,
+)
+from apps.evaluations.models import (
+    QuestionEvaluationEvidenceStatus,
+    QuestionEvaluationKind,
+    QuestionEvaluationRun,
+    QuestionEvaluationStatus,
+    QuestionSet,
+    QuestionSetVersion,
+)
+from apps.evaluations.question_services import (
+    QuestionEvaluationError,
+    ask_document_set_once,
+    ask_scenario_once,
+    can_manage_question_sets,
+    can_read_question_sets,
+    create_answer_evaluation,
+    create_question_set,
+    create_retrieval_evaluation,
+    publish_question_set,
+    request_evaluation_cancellation,
+    update_question_set_draft,
+)
 from apps.evaluations.services import EvalError, run_eval
+from apps.evaluations.tasks import execute_question_evaluation_task
 from apps.identity.assignment_services import (
     AssignmentError,
     assign_document_set_manager,
@@ -91,6 +118,8 @@ from apps.identity.assignment_services import (
     assign_scenario_editor,
     remove_delegated_assignment,
 )
+from apps.identity.authorization import Capability as OperatorCapability
+from apps.identity.authorization import authorize as authorize_operator
 from apps.identity.credentials import (
     ConsumerSubjectAllocationError,
     CredentialLifecycleError,
@@ -151,6 +180,7 @@ from apps.ingestion.vector_store import (
     VectorStoreError,
     chunk_counts_by_document,
     chunk_preview_for_document,
+    exact_chunk_text,
     set_tenant_context,
 )
 from apps.observability.retention import RETENTION_DAYS, run_retention
@@ -1418,6 +1448,13 @@ def scenario_detail(
             .exclude(id__in=bound_set_ids)
             .order_by("name", "logical_id"),
             "can_write": can_author_scenarios(request.user, organization_id),
+            "can_evaluate": authorize_operator(
+                user=request.user,
+                capability=OperatorCapability.SCENARIO_TEST,
+                organization=scenario.organization,
+                project=scenario.project,
+                scenario=scenario,
+            ).allowed,
             "can_compile_release": can_manage_scenario_releases(request.user, organization_id),
             "editor_assignments": scenario.editor_assignments.filter(
                 status=DelegatedAssignmentStatus.ACTIVE
@@ -2019,8 +2056,16 @@ def releases(request: HttpRequest) -> HttpResponse:
 @require_GET
 def runs(request: HttpRequest) -> HttpResponse:
     """Task-oriented landing over existing, independently authorized run surfaces."""
-    console_context.resolve_active_organization(request)
-    return render(request, "console/runs.html")
+    organization = console_context.resolve_active_organization(request)
+    return render(
+        request,
+        "console/runs.html",
+        {
+            "can_use_question_sets": bool(
+                organization and can_read_question_sets(request.user, organization)
+            )
+        },
+    )
 
 
 def _scoped_release(user: UserLike, release_id: int) -> ScenarioRelease:
@@ -3149,6 +3194,12 @@ def document_set_detail(
                 status=ConsumerStatus.ACTIVE,
             ).order_by("name", "subject"),
             "can_write": can_write,
+            "can_evaluate": authorize_operator(
+                user=request.user,
+                capability=OperatorCapability.DOCUMENT_SET_OPERATIONS_MANAGE,
+                organization=document_set.organization,
+                document_set=document_set,
+            ).allowed,
             "can_promote_index": can_promote_index,
             "manager_assignments": document_set.manager_assignments.filter(
                 status=DelegatedAssignmentStatus.ACTIVE
@@ -4492,4 +4543,526 @@ def binding_create(request: HttpRequest) -> HttpResponse:
         resource_type="binding",
         permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
         success_url="console:consumers",
+    )
+
+
+# --- Phase 2.8 Part 6 question sets and evaluation ----------------------------
+
+
+def _active_question_organization(request: HttpRequest) -> Organization:
+    organization = console_context.resolve_active_organization(request)
+    if organization is None:
+        raise Http404
+    return organization
+
+
+def _scoped_question_set(request: HttpRequest, public_id: uuid.UUID) -> QuestionSet:
+    queryset = QuestionSet.objects.select_related("organization").filter(public_id=public_id)
+    organization_ids = allowed_organization_ids(request.user)
+    if organization_ids is not None:
+        queryset = queryset.filter(organization_id__in=organization_ids)
+    question_set = queryset.first()
+    if question_set is None or not can_read_question_sets(request.user, question_set.organization):
+        raise Http404
+    request.session[console_context.SESSION_KEY] = question_set.organization_id
+    return question_set
+
+
+def _question_version_choices(question_set: QuestionSet) -> list[tuple[str, str]]:
+    return [
+        (
+            str(version.public_id),
+            f"v{version.version} · {version.case_count} vaka · {version.checksum[:12]}",
+        )
+        for version in question_set.versions.order_by("-version")
+    ]
+
+
+def _retrieval_target_choices(
+    request: HttpRequest, organization: Organization
+) -> list[tuple[str, str]]:
+    choices: list[tuple[str, str]] = []
+    indexes = (
+        IndexVersion.objects.select_related(
+            "document_set_version__document_set", "retrieval_profile"
+        )
+        .filter(
+            organization=organization,
+            document_set_version__status__in=[
+                DocumentSetVersionStatus.PROMOTABLE,
+                DocumentSetVersionStatus.ACTIVE,
+            ],
+            status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
+            store_ready=True,
+            retrieval_profile__isnull=False,
+        )
+        .order_by("document_set_version__document_set__name", "-version")[:100]
+    )
+    for index in indexes:
+        set_version = index.document_set_version
+        profile = index.retrieval_profile
+        if set_version is None or profile is None:
+            continue
+        if not authorize_operator(
+            user=request.user,
+            capability=OperatorCapability.DOCUMENT_SET_OPERATIONS_MANAGE,
+            organization=organization,
+            document_set=set_version.document_set,
+        ).allowed:
+            continue
+        choices.append(
+            (
+                f"{set_version.pk}:{index.pk}:{profile.pk}",
+                (
+                    f"{set_version.document_set.name} · set v{set_version.version} · "
+                    f"index v{index.version} ({index.status}) · {profile.ref}"
+                ),
+            )
+        )
+    return choices
+
+
+def _answer_target_choices(
+    request: HttpRequest, organization: Organization
+) -> list[tuple[str, str]]:
+    choices: list[tuple[str, str]] = []
+    releases = (
+        ScenarioRelease.objects.select_related("scenario__project")
+        .filter(
+            organization=organization,
+            status__in=[ReleaseStatus.CANDIDATE, ReleaseStatus.ACTIVE],
+        )
+        .order_by("scenario__name", "-created_at")[:100]
+    )
+    for release in releases:
+        if authorize_operator(
+            user=request.user,
+            capability=OperatorCapability.SCENARIO_TEST,
+            organization=organization,
+            project=release.scenario.project,
+            scenario=release.scenario,
+        ).allowed:
+            choices.append(
+                (
+                    str(release.pk),
+                    f"{release.scenario.name} · release #{release.pk} ({release.status})",
+                )
+            )
+    return choices
+
+
+@login_required
+def question_sets(request: HttpRequest) -> HttpResponse:
+    organization = _active_question_organization(request)
+    if not can_read_question_sets(request.user, organization):
+        raise Http404
+    form = QuestionSetDraftForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            question_set = create_question_set(
+                organization=organization,
+                user=request.user,
+                name=form.cleaned_data["name"],
+                description=form.cleaned_data["description"],
+                cases=form.cleaned_data["cases_json"],
+                request_id=_request_id(request),
+            )
+        except QuestionEvaluationError as exc:
+            form.add_error(None, exc.code)
+        else:
+            messages.success(request, "Soru seti taslağı oluşturuldu.")
+            return redirect("console:question_set_detail", public_id=question_set.public_id)
+    if request.method == "GET":
+        form = QuestionSetDraftForm(
+            initial={
+                "cases_json": json.dumps(
+                    [
+                        {
+                            "id": "case-1",
+                            "question": "Sorunuzu yazın",
+                            "input": {},
+                            "assertions": [],
+                            "expected_anchors": [],
+                        }
+                    ],
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            }
+        )
+    return render(
+        request,
+        "console/question_sets.html",
+        {
+            "title": "Soru setleri",
+            "organization": organization,
+            "question_sets": QuestionSet.objects.filter(organization=organization).order_by("name"),
+            "runs": QuestionEvaluationRun.objects.filter(organization=organization)
+            .select_related("question_set_version__question_set")
+            .order_by("-created_at")[:30],
+            "form": form,
+            "can_write": can_manage_question_sets(request.user, organization),
+        },
+    )
+
+
+@login_required
+def question_set_detail(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    question_set = _scoped_question_set(request, public_id)
+    versions = list(question_set.versions.prefetch_related("cases").order_by("-version"))
+    version_choices = _question_version_choices(question_set)
+    retrieval_choices = _retrieval_target_choices(request, question_set.organization)
+    answer_choices = _answer_target_choices(request, question_set.organization)
+    return render(
+        request,
+        "console/question_set_detail.html",
+        {
+            "title": question_set.name,
+            "question_set": question_set,
+            "versions": versions,
+            "draft_form": QuestionSetDraftForm(
+                initial={
+                    "name": question_set.name,
+                    "description": question_set.description,
+                    "cases_json": json.dumps(
+                        question_set.draft_cases, ensure_ascii=False, indent=2
+                    ),
+                    "expected_revision": question_set.draft_revision,
+                }
+            ),
+            "retrieval_form": EvaluationTargetForm(
+                version_choices=version_choices,
+                target_choices=retrieval_choices,
+                initial={"idempotency_key": str(uuid.uuid4())},
+            ),
+            "answer_form": EvaluationTargetForm(
+                version_choices=version_choices,
+                target_choices=answer_choices,
+                initial={"idempotency_key": str(uuid.uuid4())},
+            ),
+            "can_write": can_manage_question_sets(request.user, question_set.organization),
+            "retrieval_targets_available": bool(retrieval_choices),
+            "answer_targets_available": bool(answer_choices),
+            "runs": QuestionEvaluationRun.objects.filter(
+                organization=question_set.organization,
+                question_set_version__question_set=question_set,
+            ).order_by("-created_at")[:30],
+        },
+    )
+
+
+@login_required
+@require_POST
+def question_set_update(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    question_set = _scoped_question_set(request, public_id)
+    form = QuestionSetDraftForm(request.POST)
+    if form.is_valid():
+        try:
+            update_question_set_draft(
+                question_set=question_set,
+                user=request.user,
+                expected_revision=form.cleaned_data["expected_revision"],
+                name=form.cleaned_data["name"],
+                description=form.cleaned_data["description"],
+                cases=form.cleaned_data["cases_json"],
+                request_id=_request_id(request),
+            )
+        except QuestionEvaluationError as exc:
+            messages.error(request, exc.code)
+        else:
+            messages.success(request, "Soru seti taslağı güncellendi.")
+    else:
+        messages.error(request, "Soru seti taslağı geçerli değil.")
+    return redirect("console:question_set_detail", public_id=question_set.public_id)
+
+
+@login_required
+@require_POST
+def question_set_publish(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    question_set = _scoped_question_set(request, public_id)
+    try:
+        expected_revision = int(request.POST.get("expected_revision", ""))
+        version = publish_question_set(
+            question_set=question_set,
+            user=request.user,
+            expected_revision=expected_revision,
+            request_id=_request_id(request),
+        )
+    except (ValueError, QuestionEvaluationError) as exc:
+        code = exc.code if isinstance(exc, QuestionEvaluationError) else "REVISION_INVALID"
+        messages.error(request, code)
+    else:
+        messages.success(request, f"Soru seti v{version.version} yayımlandı.")
+    return redirect("console:question_set_detail", public_id=question_set.public_id)
+
+
+def _dispatch_question_evaluation(run: QuestionEvaluationRun) -> None:
+    try:
+        execute_question_evaluation_task.delay(organization_id=run.organization_id, run_id=run.pk)
+    except Exception:
+        run.status = QuestionEvaluationStatus.FAILED
+        run.error_code = "QUEUE_DISPATCH_FAILED"
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "error_code", "finished_at", "updated_at"])
+
+
+@login_required
+@require_POST
+def question_set_start_retrieval(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    question_set = _scoped_question_set(request, public_id)
+    form = EvaluationTargetForm(
+        request.POST,
+        version_choices=_question_version_choices(question_set),
+        target_choices=_retrieval_target_choices(request, question_set.organization),
+    )
+    if not form.is_valid():
+        messages.error(request, "Retrieval değerlendirme hedefi geçerli değil.")
+        return redirect("console:question_set_detail", public_id=question_set.public_id)
+    try:
+        set_version_id, index_id, profile_id = (
+            int(value) for value in form.cleaned_data["target"].split(":")
+        )
+        version = QuestionSetVersion.objects.get(
+            public_id=form.cleaned_data["question_set_version"],
+            question_set=question_set,
+            organization=question_set.organization,
+        )
+        set_version = DocumentSetVersion.objects.select_related("document_set").get(
+            pk=set_version_id, organization=question_set.organization
+        )
+        index = IndexVersion.objects.get(pk=index_id, organization=question_set.organization)
+        profile = ArtifactVersion.objects.get(pk=profile_id, organization=question_set.organization)
+        run, created = create_retrieval_evaluation(
+            user=request.user,
+            question_set_version=version,
+            document_set_version=set_version,
+            index_version=index,
+            retrieval_profile=profile,
+            idempotency_key=form.cleaned_data["idempotency_key"],
+            request_id=_request_id(request),
+        )
+    except (
+        ValueError,
+        QuestionSetVersion.DoesNotExist,
+        DocumentSetVersion.DoesNotExist,
+        IndexVersion.DoesNotExist,
+        ArtifactVersion.DoesNotExist,
+        QuestionEvaluationError,
+    ) as exc:
+        raise Http404 from exc
+    if created:
+        _dispatch_question_evaluation(run)
+    return redirect("console:question_evaluation_detail", public_id=run.public_id)
+
+
+@login_required
+@require_POST
+def question_set_start_answer(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    question_set = _scoped_question_set(request, public_id)
+    form = EvaluationTargetForm(
+        request.POST,
+        version_choices=_question_version_choices(question_set),
+        target_choices=_answer_target_choices(request, question_set.organization),
+    )
+    if not form.is_valid():
+        messages.error(request, "Cevap değerlendirme hedefi geçerli değil.")
+        return redirect("console:question_set_detail", public_id=question_set.public_id)
+    try:
+        version = QuestionSetVersion.objects.get(
+            public_id=form.cleaned_data["question_set_version"],
+            question_set=question_set,
+            organization=question_set.organization,
+        )
+        release = ScenarioRelease.objects.select_related("scenario__project").get(
+            pk=int(form.cleaned_data["target"]),
+            organization=question_set.organization,
+        )
+        run, created = create_answer_evaluation(
+            user=request.user,
+            question_set_version=version,
+            release=release,
+            idempotency_key=form.cleaned_data["idempotency_key"],
+            request_id=_request_id(request),
+        )
+    except (
+        ValueError,
+        QuestionSetVersion.DoesNotExist,
+        ScenarioRelease.DoesNotExist,
+        QuestionEvaluationError,
+    ) as exc:
+        raise Http404 from exc
+    if created:
+        _dispatch_question_evaluation(run)
+    return redirect("console:question_evaluation_detail", public_id=run.public_id)
+
+
+def _scoped_question_run(request: HttpRequest, public_id: uuid.UUID) -> QuestionEvaluationRun:
+    queryset = QuestionEvaluationRun.objects.select_related(
+        "organization",
+        "question_set_version__question_set",
+        "document_set_version__document_set",
+        "index_version",
+        "release__scenario__project",
+    ).filter(public_id=public_id)
+    organization_ids = allowed_organization_ids(request.user)
+    if organization_ids is not None:
+        queryset = queryset.filter(organization_id__in=organization_ids)
+    run = queryset.first()
+    if run is None:
+        raise Http404
+    request.session[console_context.SESSION_KEY] = run.organization_id
+    return run
+
+
+def _run_content_access(request: HttpRequest, run: QuestionEvaluationRun) -> bool:
+    if run.kind == QuestionEvaluationKind.RETRIEVAL and run.document_set_version:
+        return authorize_operator(
+            user=request.user,
+            capability=OperatorCapability.DOCUMENT_SET_CONTENT_READ,
+            organization=run.organization,
+            document_set=run.document_set_version.document_set,
+        ).allowed
+    if run.kind == QuestionEvaluationKind.ANSWER and run.release:
+        return authorize_operator(
+            user=request.user,
+            capability=OperatorCapability.SCENARIO_TEST,
+            organization=run.organization,
+            project=run.release.scenario.project,
+            scenario=run.release.scenario,
+        ).allowed
+    return False
+
+
+@login_required
+def question_evaluation_detail(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    run = _scoped_question_run(request, public_id)
+    can_view_content = _run_content_access(request, run)
+    evidence_status = request.GET.get("evidence_status", "")
+    allowed_evidence_statuses = {
+        QuestionEvaluationEvidenceStatus.FAILED,
+        QuestionEvaluationEvidenceStatus.UNSCORED,
+        QuestionEvaluationEvidenceStatus.ERROR,
+    }
+    evidence_queryset = run.case_evidence.select_related("question_case").order_by("ordinal")
+    if evidence_status in allowed_evidence_statuses:
+        evidence_queryset = evidence_queryset.filter(status=evidence_status)
+    else:
+        evidence_status = ""
+    evidence_rows = list(evidence_queryset)
+    for evidence in evidence_rows:
+        evidence.resolved_chunks = []  # type: ignore[attr-defined]
+        if (
+            can_view_content
+            and run.kind == QuestionEvaluationKind.RETRIEVAL
+            and run.index_version is not None
+        ):
+            for item in evidence.retrieval_evidence:
+                text = None
+                document_version_id = item.get("document_version_id")
+                ordinal = item.get("ordinal")
+                if isinstance(document_version_id, int) and isinstance(ordinal, int):
+                    try:
+                        text = exact_chunk_text(run.index_version, document_version_id, ordinal)
+                    except VectorStoreError:
+                        text = None
+                evidence.resolved_chunks.append(  # type: ignore[attr-defined]
+                    {"evidence": item, "text": text}
+                )
+    return render(
+        request,
+        "console/question_evaluation_detail.html",
+        {
+            "title": "Değerlendirme sonucu",
+            "run": run,
+            "evidence_rows": evidence_rows,
+            "can_view_content": can_view_content,
+            "evidence_status": evidence_status,
+        },
+    )
+
+
+@login_required
+@require_POST
+def question_evaluation_cancel(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    run = _scoped_question_run(request, public_id)
+    try:
+        request_evaluation_cancellation(run=run, user=request.user, request_id=_request_id(request))
+    except QuestionEvaluationError as exc:
+        raise Http404 from exc
+    messages.success(request, "Değerlendirme iptal isteği kaydedildi.")
+    return redirect("console:question_evaluation_detail", public_id=run.public_id)
+
+
+@login_required
+@require_POST
+def document_set_ask(request: HttpRequest, public_id: object) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, None, public_id)
+    form = OneOffQuestionForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Soru geçerli değil.")
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
+    set_version = (
+        document_set.versions.select_related("built_index_version__retrieval_profile")
+        .filter(status=DocumentSetVersionStatus.ACTIVE)
+        .order_by("-version")
+        .first()
+    )
+    index = set_version.built_index_version if set_version else None
+    profile = index.retrieval_profile if index else None
+    if set_version is None or index is None or profile is None:
+        messages.error(request, "Aktif exact index/retrieval profili bulunamadı.")
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
+    try:
+        result = ask_document_set_once(
+            user=request.user,
+            document_set_version=set_version,
+            index_version=index,
+            retrieval_profile=profile,
+            question=form.cleaned_data["question"],
+        )
+    except QuestionEvaluationError as exc:
+        raise Http404 from exc
+    return render(
+        request,
+        "console/one_off_question_result.html",
+        {
+            "title": "Belge retrieval sonucu",
+            "question": form.cleaned_data["question"],
+            "result": result,
+            "back_url": reverse(
+                "console:document_set_detail_public", args=[document_set.public_id]
+            ),
+        },
+    )
+
+
+@login_required
+@require_POST
+def scenario_ask(request: HttpRequest, public_id: object) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, None, public_id)
+    form = OneOffQuestionForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Soru geçerli değil.")
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    release = ScenarioRelease.objects.filter(scenario=scenario, status=ReleaseStatus.ACTIVE).first()
+    if release is None:
+        messages.error(request, "Aktif release bulunamadı.")
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    try:
+        result = ask_scenario_once(
+            user=request.user,
+            release=release,
+            question=form.cleaned_data["question"],
+        )
+    except QuestionEvaluationError as exc:
+        raise Http404 from exc
+    return render(
+        request,
+        "console/one_off_question_result.html",
+        {
+            "title": "Senaryo cevabı",
+            "question": form.cleaned_data["question"],
+            "result": result,
+            "back_url": reverse("console:scenario_detail_public", args=[scenario.public_id]),
+        },
     )

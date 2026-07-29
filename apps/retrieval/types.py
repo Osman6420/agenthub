@@ -22,3 +22,7 @@ class RetrievedChunk:
     fused_score: float | None = None
     document_routing_score: float | None = None
     retrieval_stage: str = "direct"
+    document_version_id: int | None = None
+    document_set_version_id: int | None = None
+    index_version_id: int | None = None
+    ordinal: int | None = None

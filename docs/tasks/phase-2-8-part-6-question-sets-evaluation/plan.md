@@ -134,7 +134,32 @@ None. Deterministic scoring is the baseline; the pinned LLM judge is optional an
 
 ## Status
 
-**Planned.** Judge use remains optional and environment-gated.
+**Implemented and automated/offline verified on 2026-07-29.** The repository-owned
+`apps.evaluations` subsystem remains the implementation boundary. Existing release-gate
+`eval_suite` behavior is backward compatible; Part 6 adds question-set, retrieval-evaluation and
+richer answer-evaluation contracts alongside it. Judge use remains optional and environment-gated.
+
+### Milestone status
+
+- [x] Tenant-owned question-set, immutable version/case and evaluation evidence schema implemented.
+- [x] PostgreSQL FORCE RLS, lineage constraints and non-owner policy verification implemented.
+- [x] Draft/publish/reuse services and deterministic scoring implemented.
+- [x] Exact document-set/index/profile retrieval evaluation implemented.
+- [x] Exact-release answer evaluation and optional pinned judge boundary implemented.
+- [x] Batch/case-result and one-off document/scenario console journeys implemented.
+- [x] Redaction, audit, metrics, retry/idempotency, cancellation and retention behavior verified.
+- [x] Focused, full repository and PostgreSQL/RLS evidence recorded; browser policy block and
+  remaining authenticated visual owner acceptance are explicit in `verification.md`.
+
+### Implementation assumptions
+
+- Existing `apps.evaluations` is extended rather than introducing a parallel evaluation app.
+- Existing `eval_suite` release gates and `run_eval()` callers retain their current contract.
+- Part 5's `RetrievalProvider.retrieve()` is the only retrieval execution boundary; evaluation does
+  not bypass its tenant/index/document-set filters or reuse operator-test authority as consumer
+  authority.
+- Deterministic evaluation ships enabled. LLM judge execution remains disabled unless an approved
+  immutable model profile, prompt contract, privacy/cost review and environment flag are all present.
 
 ## Completion criteria
 

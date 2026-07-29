@@ -46,9 +46,11 @@ observability and migrations, and therefore has its own staged acceptance gates.
    keyword/vector/hybrid search, opt-in summary-to-document-to-content routing, optional
    provenance-bound summaries and idempotent staged index preparation are implemented; activation
    remains explicit. Destructive cleanup is not authorized.
-7. **Part 6 — Question sets and retrieval/answer evaluation — Planned.** Reusable versioned question
-   sets, document retrieval diagnostics, scenario answer evaluation and separate retrieval/answer
-   quality measures.
+7. **Part 6 — Question sets and retrieval/answer evaluation — Implemented and automated
+   verified.** Reusable immutable-versioned question sets, exact-target document retrieval
+   diagnostics, exact-release scenario answer evaluation, one-off asks and separate
+   retrieval/answer quality measures are implemented. Optional LLM judging remains disabled until
+   an approved pinned profile/prompt and privacy/cost review are supplied.
 8. **Part 7 — Unified runs and kill-switch management — Planned.** One filterable operational page
    across execution/evaluation/ingestion/sync jobs and audited organization/global runtime
    suspension controls.

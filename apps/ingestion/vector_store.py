@@ -232,6 +232,36 @@ def chunk_preview_for_document(
             return [(int(row[0]), row[1]) for row in cursor.fetchall()]
 
 
+def exact_chunk_text(
+    index_version: IndexVersion,
+    document_version_id: int,
+    ordinal: int,
+    *,
+    max_chars: int = 8000,
+) -> str | None:
+    """Resolve one immutable evidence pointer without persisting a duplicate chunk body."""
+
+    _require_postgres()
+    name = store_name(index_version)
+    chars = max(1, min(int(max_chars), 8000))
+    with transaction.atomic():
+        set_tenant_context(int(index_version.organization_id))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'SELECT LEFT(text, %s) FROM "{name}" '  # noqa: S608
+                "WHERE organization_id = %s AND document_version_id = %s AND ordinal = %s "
+                "LIMIT 1",
+                [
+                    chars,
+                    index_version.organization_id,
+                    int(document_version_id),
+                    int(ordinal),
+                ],
+            )
+            row = cursor.fetchone()
+    return str(row[0]) if row else None
+
+
 def copy_chunks(parent: IndexVersion, target: IndexVersion, document_version_ids: list[int]) -> int:
     """Copy compatible immutable rows between int-derived stores under the same tenant context."""
     _require_postgres()

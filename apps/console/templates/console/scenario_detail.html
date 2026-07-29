@@ -35,6 +35,13 @@
   <div class="summary-card"><span>Aktif release</span><strong>{% if active_release %}#{{ active_release.id }}{% else %}Yok{% endif %}</strong></div>
 </div>
 
+{% if can_evaluate and active_release %}
+<section class="card form-card">
+  <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>Senaryoya sor</h2><p class="muted">Exact aktif release üzerinden çalışır; soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>
+  <form method="post" action="{% url 'console:scenario_ask' scenario.public_id %}">{% csrf_token %}<label for="scenario-one-off-question">Soru</label><textarea id="scenario-one-off-question" name="question" rows="3" maxlength="4000" required></textarea><button type="submit">Sor</button></form>
+</section>
+{% endif %}
+
 <section class="card" id="access">
   <div class="section-heading"><div><h2>Senaryo erişimi</h2><p class="muted">Senaryo editörlüğü operasyon veya ham doküman içeriği yetkisi vermez.</p></div>{% if can_manage_access %}<a class="button secondary" href="{% url 'console:organization_members' %}">Erişimi yönet</a>{% endif %}</div>
   {% for assignment in editor_assignments %}<div class="access-row"><strong>{{ assignment.user.get_username }}</strong><span class="badge">Senaryo editörü</span></div>{% empty %}<p class="muted">Atanmış senaryo editörü yok.</p>{% endfor %}

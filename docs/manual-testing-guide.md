@@ -409,6 +409,11 @@ provider responses or secrets into the acceptance record.
 | 8.10 | Invoke through MCP with the MCP token; try the REST token | MCP succeeds only for the bound MCP consumer; REST credential is denied |
 | 8.11 | Inspect audit/usage/metrics after creation, denial, invocation, promotion and rollback | Actor/tenant/action/outcome/request correlation is present; tokens, content, endpoints and credentials are absent |
 | 8.12 | Disable the REST/MCP consumer or adapter feature, retry invocation, then restore it | Traffic fails closed while disabled and resumes only after explicit restoration; immutable history remains intact |
+| 8.13 | As an authorized author, create a question set, edit its JSON cases, publish it, then edit the draft again | The published version remains immutable and the draft revision advances; stale revision submission is rejected |
+| 8.14 | From the question-set page, run retrieval evaluation against an exact document-set version/index | Results identify the pinned target, show separate hit@k/recall@k/MRR denominators, and reveal retained chunk text/scores only to a content-authorized reader |
+| 8.15 | Run answer evaluation against an exact release, including a case without applicable assertions | Deterministic answer pass rate is separate from retrieval metrics; non-applicable/judge failures are unscored rather than silently failed |
+| 8.16 | Ask a one-off question from a document-set and scenario page, then inspect evaluation run counts | The response/evidence is shown, but no question set, case evidence or aggregate evaluation run is created |
+| 8.17 | Repeat question-set/run URLs as auditor, unauthorized author and another tenant; attempt publish/start/cancel POSTs | Auditor output is redacted and read-only; unauthorized/foreign access is non-disclosing; no mutation or content leakage occurs |
 
 Owner sign-off for Phase 2.5 means all applicable checks above pass or have an explicitly accepted,
 documented residual finding. It does not close Phase 2 live activation.

@@ -91,6 +91,23 @@ per-document diversity cap. Summaries therefore route retrieval but never become
 passage in this mode. If no authorized summary matches, the provider falls back to direct content
 retrieval. Both stages use the same active per-index FORCE-RLS store and server-derived ACL scope.
 
+Phase 2.8 Part 6 adds organization-owned reusable question sets with mutable drafts and immutable
+published versions/cases. Retrieval evaluations pin the exact question-set version, document-set
+version, index and retrieval artifact; answer evaluations pin the exact scenario release and may
+also pin an approved judge model and prompt revision. Retrieval hit@k, recall@k and MRR remain
+separate from deterministic answer pass rates, with explicit applicable and unscored denominators.
+The optional LLM judge is disabled by default, schema-validated and records only a verdict, safe
+reason code and immutable provenance.
+
+Evaluation workers use an internal operator-test retrieval path only after server-side
+document-set authorization. It preserves tenant, set-version and index filters but does not create
+or reuse consumer grants. Stored retrieval evidence contains bounded pointers, ranks, checksums and
+scores rather than copied chunk bodies; the console resolves exact retained chunk text only for an
+authorized reader. One-off document/scenario questions do not create benchmark runs or change
+aggregate metrics. Evaluation tables use direct tenant lineage and PostgreSQL FORCE RLS, lifecycle
+events are audited without content, and expired generated answers/retrieval evidence can be
+redacted unless legal hold applies.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full

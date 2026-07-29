@@ -22,6 +22,13 @@
   <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Release derlemesinde pinlenir</small></div>
 </div>
 
+{% if can_evaluate and active_index %}
+<section class="card form-card">
+  <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>Retrieval'a sor</h2><p class="muted">Exact aktif set/index/profile üzerinde çalışır; soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>
+  <form method="post" action="{% url 'console:document_set_ask' set.public_id %}">{% csrf_token %}<label for="document-one-off-question">Soru</label><textarea id="document-one-off-question" name="question" rows="3" maxlength="4000" required></textarea><button type="submit">Retrieval çalıştır</button></form>
+</section>
+{% endif %}
+
 <div class="card" id="access">
   <div class="section-heading"><div><h2>Doküman seti erişimi</h2><p class="muted">Atanmış yöneticiler bu setin içerik ve indeks operasyonlarını yönetebilir.</p></div>{% if can_manage_access %}<a class="button secondary" href="{% url 'console:organization_members' %}">Erişimi yönet</a>{% endif %}</div>
   {% for assignment in manager_assignments %}<div class="access-row"><strong>{{ assignment.user.get_username }}</strong><span class="badge">Doküman seti yöneticisi</span></div>{% empty %}<p class="muted">Atanmış doküman seti yöneticisi yok.</p>{% endfor %}

@@ -36,6 +36,11 @@ urlpatterns = [
     path("scenarios/<int:pk>/", views.scenario_detail, name="scenario_detail"),
     path("scenarios/id/<uuid:public_id>/", views.scenario_detail, name="scenario_detail_public"),
     path(
+        "scenarios/id/<uuid:public_id>/ask/",
+        views.scenario_ask,
+        name="scenario_ask",
+    ),
+    path(
         "scenarios/id/<uuid:public_id>/compile-candidate/",
         views.scenario_compile_candidate,
         name="scenario_compile_candidate",
@@ -110,6 +115,42 @@ urlpatterns = [
     path("releases/", views.releases, name="releases"),
     path("releases/<int:release_id>/", views.release_detail, name="release_detail"),
     path("releases/<int:release_id>/eval/", views.release_run_eval, name="release_run_eval"),
+    path("question-sets/", views.question_sets, name="question_sets"),
+    path(
+        "question-sets/id/<uuid:public_id>/",
+        views.question_set_detail,
+        name="question_set_detail",
+    ),
+    path(
+        "question-sets/id/<uuid:public_id>/update/",
+        views.question_set_update,
+        name="question_set_update",
+    ),
+    path(
+        "question-sets/id/<uuid:public_id>/publish/",
+        views.question_set_publish,
+        name="question_set_publish",
+    ),
+    path(
+        "question-sets/id/<uuid:public_id>/evaluate/retrieval/",
+        views.question_set_start_retrieval,
+        name="question_set_start_retrieval",
+    ),
+    path(
+        "question-sets/id/<uuid:public_id>/evaluate/answer/",
+        views.question_set_start_answer,
+        name="question_set_start_answer",
+    ),
+    path(
+        "question-evaluations/id/<uuid:public_id>/",
+        views.question_evaluation_detail,
+        name="question_evaluation_detail",
+    ),
+    path(
+        "question-evaluations/id/<uuid:public_id>/cancel/",
+        views.question_evaluation_cancel,
+        name="question_evaluation_cancel",
+    ),
     path("releases/<int:release_id>/promote/", views.release_promote, name="release_promote"),
     path("releases/<int:release_id>/rollback/", views.release_rollback, name="release_rollback"),
     path("releases/<int:release_id>/canary/", views.canary_start, name="canary_start"),
@@ -166,6 +207,11 @@ urlpatterns = [
         "document-sets/id/<uuid:public_id>/",
         views.document_set_detail,
         name="document_set_detail_public",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/ask/",
+        views.document_set_ask,
+        name="document_set_ask",
     ),
     path(
         "document-sets/id/<uuid:public_id>/documents/id/<uuid:document_public_id>/",

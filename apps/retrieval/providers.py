@@ -27,6 +27,7 @@ class RetrievalProvider(Protocol):
         scenario_id: int | None = None,
         document_set_version_ids: list[int] | None = None,
         consumer_id: int | None = None,
+        operator_test: bool = False,
     ) -> list[RetrievedChunk]: ...
 
 
@@ -46,6 +47,7 @@ class StaticRetrievalProvider:
         scenario_id: int | None = None,
         document_set_version_ids: list[int] | None = None,
         consumer_id: int | None = None,
+        operator_test: bool = False,
     ) -> list[RetrievedChunk]:
         top_k = int(profile.get("top_k", len(self._chunks))) if profile else len(self._chunks)
         threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
@@ -74,6 +76,7 @@ class DemoRetrievalProvider:
         scenario_id: int | None = None,
         document_set_version_ids: list[int] | None = None,
         consumer_id: int | None = None,
+        operator_test: bool = False,
     ) -> list[RetrievedChunk]:
         passage = "Iade sureci: urun tesliminden itibaren 14 gun icinde iade talebi olusturulur."
         threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
@@ -103,6 +106,7 @@ class PgvectorRetrievalProvider:
         scenario_id: int | None = None,
         document_set_version_ids: list[int] | None = None,
         consumer_id: int | None = None,
+        operator_test: bool = False,
     ) -> list[RetrievedChunk]:
         # P4 document-ACL path: when the release pins document-set versions, serve **only** from
         # their active per-IndexVersion stores (deny-by-default, tenant + RLS scoped). Otherwise
@@ -115,6 +119,7 @@ class PgvectorRetrievalProvider:
                 scenario_id=scenario_id,
                 document_set_version_ids=document_set_version_ids,
                 consumer_id=consumer_id,
+                operator_test=operator_test,
             )
         if not index_versions:
             return []
@@ -159,6 +164,7 @@ class PgvectorRetrievalProvider:
         scenario_id: int | None,
         document_set_version_ids: list[int],
         consumer_id: int | None,
+        operator_test: bool = False,
     ) -> list[RetrievedChunk]:
         """Deny-by-default retrieval from pinned doc-set versions' active per-IndexVersion stores.
 
@@ -168,7 +174,7 @@ class PgvectorRetrievalProvider:
         """
         from django.db import connection
 
-        if connection.vendor != "postgresql" or not document_set_version_ids or consumer_id is None:
+        if connection.vendor != "postgresql" or not document_set_version_ids:
             return []
         from apps.documents.models import (
             DocumentSetGrant,
@@ -186,33 +192,47 @@ class PgvectorRetrievalProvider:
         # The authenticated consumer id comes from the signed execution context (or the durable
         # run's immutable consumer FK). A caller-provided subject is never trusted. Grants store
         # the stable database id as an opaque string so a subject/name change cannot widen access.
-        if not Consumer.objects.filter(
-            id=consumer_id,
-            organization_id=organization_id,
-            status=ConsumerStatus.ACTIVE,
-        ).exists():
-            return []
-        authorized_set_ids = list(
-            DocumentSetGrant.objects.filter(
-                organization_id=organization_id,
-                principal_type=GrantPrincipalType.CONSUMER,
-                principal_ref=str(consumer_id),
-                permission="retrieve",
-            ).values_list("document_set_id", flat=True)
-        )
-        if scenario_id is None:
-            live_scenario_set_ids = authorized_set_ids
-        else:
+        if operator_test:
+            # This path is reachable only through the evaluations service after an explicit
+            # DOCUMENT_SET_OPERATIONS_MANAGE authorization decision. It deliberately does not
+            # manufacture or reuse consumer grants.
             live_scenario_set_ids = list(
-                ScenarioDocumentSetGrant.objects.filter(
+                DocumentSetVersion.objects.filter(
+                    id__in=document_set_version_ids,
                     organization_id=organization_id,
-                    scenario_id=scenario_id,
-                    document_set_id__in=authorized_set_ids,
-                    permission="retrieve",
-                    status=ScenarioDocumentSetGrantStatus.GRANTED,
-                    revoked_at__isnull=True,
                 ).values_list("document_set_id", flat=True)
             )
+        else:
+            if (
+                consumer_id is None
+                or not Consumer.objects.filter(
+                    id=consumer_id,
+                    organization_id=organization_id,
+                    status=ConsumerStatus.ACTIVE,
+                ).exists()
+            ):
+                return []
+            authorized_set_ids = list(
+                DocumentSetGrant.objects.filter(
+                    organization_id=organization_id,
+                    principal_type=GrantPrincipalType.CONSUMER,
+                    principal_ref=str(consumer_id),
+                    permission="retrieve",
+                ).values_list("document_set_id", flat=True)
+            )
+            if scenario_id is None:
+                live_scenario_set_ids = authorized_set_ids
+            else:
+                live_scenario_set_ids = list(
+                    ScenarioDocumentSetGrant.objects.filter(
+                        organization_id=organization_id,
+                        scenario_id=scenario_id,
+                        document_set_id__in=authorized_set_ids,
+                        permission="retrieve",
+                        status=ScenarioDocumentSetGrantStatus.GRANTED,
+                        revoked_at__isnull=True,
+                    ).values_list("document_set_id", flat=True)
+                )
         authorized_version_ids = list(
             DocumentSetVersion.objects.filter(
                 id__in=document_set_version_ids,
@@ -427,6 +447,17 @@ class PgvectorRetrievalProvider:
                     fused_score=item.get("fused_score"),
                     document_routing_score=routing_scores.get(version.pk),
                     retrieval_stage=retrieval_stage,
+                    document_version_id=version.pk,
+                    document_set_version_id=dsv_id,
+                    index_version_id=next(
+                        (
+                            int(index.pk)
+                            for index in active_indexes
+                            if index.document_set_version_id == dsv_id
+                        ),
+                        None,
+                    ),
+                    ordinal=hit.ordinal,
                 )
             )
             chunks_per_document[version.pk] = chunks_per_document.get(version.pk, 0) + 1
