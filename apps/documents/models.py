@@ -187,6 +187,7 @@ class DocumentVersionSummary(TimeStampedModel):
 
 class DocumentSetStatus(models.TextChoices):
     ACTIVE = "active", "Active"
+    QUARANTINED = "quarantined", "Quarantined"
     ARCHIVED = "archived", "Archived"
 
 

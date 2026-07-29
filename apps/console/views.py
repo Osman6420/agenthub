@@ -33,8 +33,13 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.agents.models import AgentRuntimeControl
-from apps.agents.services import runtime_suspended
+from apps.agents.models import AgentRuntimeControl, RuntimeControlScope
+from apps.agents.services import (
+    RUNTIME_CONTROL_REASON_CODES,
+    RuntimeControlError,
+    applicable_runtime_controls,
+    change_runtime_control,
+)
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.audit.services import record_event
@@ -44,7 +49,7 @@ from apps.builder.services import BuilderError
 from apps.catalog.models import AIProject, Scenario
 from apps.catalog.services import ProjectOwnerError, create_console_project, create_console_scenario
 from apps.console import context as console_context
-from apps.console import scoping
+from apps.console import operations, scoping
 from apps.console.forms import (
     APPLICATION_MEMBERSHIP_ROLE_CHOICES,
     BindingForm,
@@ -81,7 +86,7 @@ from apps.documents.models import (
     ParseStatus,
     ScenarioDocumentSetBinding,
 )
-from apps.documents.services import DocumentError
+from apps.documents.services import DocumentError, DocumentSetControlError
 from apps.documents.storage import StorageError
 from apps.evaluations.forms import (
     EvaluationTargetForm,
@@ -118,6 +123,7 @@ from apps.identity.assignment_services import (
     assign_scenario_editor,
     remove_delegated_assignment,
 )
+from apps.identity.authorization import AuthoritySource
 from apps.identity.authorization import Capability as OperatorCapability
 from apps.identity.authorization import authorize as authorize_operator
 from apps.identity.credentials import (
@@ -217,6 +223,7 @@ from apps.tools.approvals import ToolApprovalError, cancel_invocation, decide_ap
 from apps.tools.authz import resolve_actor_roles
 from apps.tools.models import ApprovalRequest, ApprovalStatus, ToolInvocation
 from apps.workflows.models import (
+    RUN_TERMINAL_STATUSES,
     Run,
     RunStatus,
     RunWait,
@@ -231,6 +238,10 @@ from apps.workflows.presets import (
 from apps.workflows.run_recovery import RunRecoveryError, resolve_run_recovery
 from apps.workflows.run_waits import RunWaitError, decide_run_human_task
 from apps.workflows.tasks import dispatch_unified_background_run
+from apps.workflows.transitions import (
+    RunTransitionError,
+    request_run_cancellation,
+)
 
 # Role-honest affordance reasons (Scope D). When an action the user cannot perform is
 # rendered, it is shown disabled with one of these operator-facing reasons rather than
@@ -445,32 +456,19 @@ def switch_organization(request: HttpRequest) -> HttpResponse:
 
 
 def _kill_switch_state(active_organization: Organization | None) -> dict[str, object] | None:
-    """Return the agent-runtime kill-switch banner data, or ``None`` when not suspended.
-
-    With an active organization, reports its effective suspension (global OR that org's
-    row). With "all organizations", reports only a *global* suspension; per-organization
-    suspensions are surfaced on each org's own screens to avoid a noisy cross-tenant view.
-    """
+    """Return the strongest effective platform/organization control for the dashboard."""
     if active_organization is not None:
-        if not runtime_suspended(active_organization.pk):
-            return None
-        controls = list(
-            AgentRuntimeControl.objects.filter(
-                Q(organization__isnull=True) | Q(organization_id=active_organization.pk),
-                suspended=True,
-            )
-        )
-        control = next((c for c in controls if c.organization_id is None), None) or (
-            controls[0] if controls else None
-        )
+        controls = applicable_runtime_controls(active_organization.pk)
+        control = controls[0] if controls else None
     else:
         control = AgentRuntimeControl.objects.filter(
-            organization__isnull=True, suspended=True
+            scope_type=RuntimeControlScope.PLATFORM,
+            suspended=True,
         ).first()
     if control is None:
         return None
     return {
-        "scope": "global" if control.organization_id is None else "organization",
+        "scope": control.scope_type,
         "reason": control.reason or "",
     }
 
@@ -484,6 +482,7 @@ def _dashboard_metrics(
     the active organization when one is selected; codes/counts only, no payloads.
     """
     cutoff = timezone.now() - timedelta(hours=_DASHBOARD_RECENT_HOURS)
+    operations_cutoff = timezone.now() - timedelta(days=operations.MAX_DAYS)
     allowed = allowed_organization_ids(user)
 
     def _org_scope(queryset: QuerySet[Any], *, field: str = "organization_id") -> QuerySet[Any]:
@@ -494,20 +493,25 @@ def _dashboard_metrics(
         scoping.scoped_runs(user), active_organization, field="organization_id"
     )
     run_agg = unified_runs.aggregate(
-        active=Count("id", filter=Q(status__in=_RUN_ACTIVE_STATUSES)),
-        recent_failed=Count(
+        active=Count(
             "id",
             filter=Q(
-                status__in=(RunStatus.FAILED, RunStatus.TIMED_OUT),
-                created_at__gte=cutoff,
+                status__in=_RUN_ACTIVE_STATUSES,
+                created_at__gte=operations_cutoff,
             ),
         ),
-        recovery=Count("id", filter=Q(status=RunStatus.RECOVERY_REQUIRED)),
+        attention=Count(
+            "id",
+            filter=Q(
+                status__in=_RUN_ATTENTION_STATUSES,
+                created_at__gte=operations_cutoff,
+            ),
+        ),
         done=Count("id", filter=Q(status__in=_RUN_DONE_STATUSES, created_at__gte=cutoff)),
     )
     runs = {
         "active": run_agg["active"],
-        "attention": run_agg["recent_failed"] + run_agg["recovery"],
+        "attention": run_agg["attention"],
         "done": run_agg["done"],
         "agent_active": 0,
         "workflow_active": run_agg["active"],
@@ -560,6 +564,7 @@ def _dashboard_metrics(
             "active_canaries": active_canaries,
         },
         "recent_hours": _DASHBOARD_RECENT_HOURS,
+        "operations_days": operations.MAX_DAYS,
     }
 
 
@@ -2055,17 +2060,176 @@ def releases(request: HttpRequest) -> HttpResponse:
 @login_required
 @require_GET
 def runs(request: HttpRequest) -> HttpResponse:
-    """Task-oriented landing over existing, independently authorized run surfaces."""
+    """Render the bounded unified operational projection for one active organization."""
     organization = console_context.resolve_active_organization(request)
-    return render(
+    if organization is None:
+        return render(
+            request,
+            "console/runs.html",
+            {
+                "organization_required": True,
+                "kind_choices": (),
+                "status_choices": (),
+            },
+        )
+    filter_error = ""
+    try:
+        filters = operations.parse_operation_filters(
+            request.GET,
+            organization=organization,
+        )
+        page = operations.project_operations(
+            organization=organization,
+            filters=filters,
+        )
+    except operations.OperationFilterError as exc:
+        filter_error = str(exc)
+        filters = None
+        page = None
+
+    projects = list(
+        scoping.narrow_to_active_organization(
+            scoping.scoped_projects(request.user),
+            organization,
+            field="organization_id",
+        ).order_by("name")
+    )
+    scenarios = list(
+        scoping.narrow_to_active_organization(
+            scoping.scoped_scenarios(request.user),
+            organization,
+            field="organization_id",
+        )
+        .select_related("project")
+        .order_by("name")
+    )
+    document_sets = list(
+        scoping.narrow_to_active_organization(
+            scoping.scoped_document_sets(request.user),
+            organization,
+            field="organization_id",
+        ).order_by("name")
+    )
+    controls = list(
+        AgentRuntimeControl.objects.filter(
+            Q(scope_type=RuntimeControlScope.PLATFORM) | Q(organization_id=organization.pk),
+            suspended=True,
+        )
+        .select_related("organization", "project", "scenario")
+        .order_by("scope_type", "updated_at")
+    )
+    can_manage_platform = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.RUNTIME_PAUSE,
+    ).allowed
+    can_manage_organization = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.RUNTIME_PAUSE,
+        organization=organization,
+    ).allowed
+    response = render(
         request,
         "console/runs.html",
         {
-            "can_use_question_sets": bool(
-                organization and can_read_question_sets(request.user, organization)
-            )
+            "page": page,
+            "filter_error": filter_error,
+            "applied": request.GET,
+            "kind_choices": [
+                (kind.value, operations.KIND_LABELS[kind]) for kind in operations.OperationKind
+            ],
+            "status_choices": [
+                (status.value, operations.STATUS_LABELS[status])
+                for status in operations.OperationStatusGroup
+            ],
+            "days_choices": (1, 7, 14, 30, 60, 90),
+            "projects": projects,
+            "scenarios": scenarios,
+            "document_sets": document_sets,
+            "controls": controls,
+            "can_manage_platform": can_manage_platform,
+            "can_manage_organization": can_manage_organization,
+            "reason_codes": sorted(RUNTIME_CONTROL_REASON_CODES),
+            "base_query": _query_without_page(request),
         },
     )
+    if filter_error:
+        response.status_code = 400
+    return response
+
+
+@login_required
+@require_POST
+def runtime_control_change(request: HttpRequest) -> HttpResponse:
+    """Resolve trusted scope lineage and reauthorize every control mutation."""
+
+    organization = console_context.resolve_active_organization(request)
+    if organization is None:
+        raise PermissionDenied
+    scope_type = request.POST.get("scope_type", "")
+    target = request.POST.get("target", "")
+    project = None
+    scenario = None
+    control_organization: Organization | None = organization
+    if scope_type == RuntimeControlScope.PLATFORM:
+        control_organization = None
+        if target:
+            raise PermissionDenied
+    elif scope_type == RuntimeControlScope.ORGANIZATION:
+        if target:
+            raise PermissionDenied
+    elif scope_type == RuntimeControlScope.PROJECT:
+        try:
+            target_id = uuid.UUID(target)
+        except (TypeError, ValueError):
+            raise Http404 from None
+        project = AIProject.objects.filter(
+            organization=organization,
+            public_id=target_id,
+        ).first()
+        if project is None:
+            raise Http404
+    elif scope_type == RuntimeControlScope.SCENARIO:
+        try:
+            target_id = uuid.UUID(target)
+        except (TypeError, ValueError):
+            raise Http404 from None
+        scenario = (
+            Scenario.objects.select_related("project")
+            .filter(
+                organization=organization,
+                public_id=target_id,
+            )
+            .first()
+        )
+        if scenario is None:
+            raise Http404
+    else:
+        raise PermissionDenied
+
+    action = request.POST.get("action", "")
+    if action not in {"pause", "resume"}:
+        raise PermissionDenied
+    try:
+        change_runtime_control(
+            user=request.user,
+            scope_type=scope_type,
+            suspended=action == "pause",
+            reason_code=request.POST.get("reason_code", ""),
+            reason=request.POST.get("reason", ""),
+            organization=control_organization,
+            project=project,
+            scenario=scenario,
+        )
+    except RuntimeControlError as exc:
+        if str(exc) == "RUNTIME_CONTROL_FORBIDDEN":
+            raise PermissionDenied from exc
+        messages.error(request, f"Çalışma zamanı kontrolü reddedildi: {exc}")
+    else:
+        messages.success(
+            request,
+            "Çalışma zamanı durduruldu." if action == "pause" else "Çalışma zamanı açıldı.",
+        )
+    return redirect("console:runs")
 
 
 def _scoped_release(user: UserLike, release_id: int) -> ScenarioRelease:
@@ -2517,6 +2681,13 @@ def workflow_run_detail(request: HttpRequest, run_id: uuid.UUID) -> HttpResponse
         "started": run.started_at,
         "finished": run.finished_at,
     }
+    cancel_decision = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.RUNTIME_CANCEL,
+        organization=run.organization,
+        project=run.scenario.project,
+        scenario=run.scenario,
+    )
     return render(
         request,
         "console/workflow_run_detail.html",
@@ -2532,8 +2703,58 @@ def workflow_run_detail(request: HttpRequest, run_id: uuid.UUID) -> HttpResponse
             "events": events,
             "can_recover": run.status == RunStatus.RECOVERY_REQUIRED
             and can_admin_org(request.user, run.organization_id),
+            "can_cancel": cancel_decision.allowed and run.status not in RUN_TERMINAL_STATUSES,
         },
     )
+
+
+@login_required
+@require_POST
+def workflow_run_cancel(request: HttpRequest, run_id: uuid.UUID) -> HttpResponse:
+    """Cooperatively cancel one exact run after native object authorization."""
+
+    run = _scoped_run(request.user, run_id)
+    decision = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.RUNTIME_CANCEL,
+        organization=run.organization,
+        project=run.scenario.project,
+        scenario=run.scenario,
+    )
+    if not decision.allowed:
+        record_event(
+            actor_type="user",
+            actor_id=str(request.user.pk),
+            action="runtime.run_cancel",
+            outcome="deny",
+            organization_id=run.organization_id,
+            resource_type="run",
+            resource_id=str(run.id),
+            reason=f"{decision.reason}:{decision.source}"[:128],
+        )
+        raise PermissionDenied
+    try:
+        with transaction.atomic():
+            request_run_cancellation(
+                organization_id=run.organization_id,
+                run_id=run.id,
+                reason_code="OPERATOR_REQUESTED",
+            )
+            record_event(
+                actor_type="user",
+                actor_id=str(request.user.pk),
+                action="runtime.run_cancel",
+                outcome="allow",
+                organization_id=run.organization_id,
+                resource_type="run",
+                resource_id=str(run.id),
+                reason=f"OPERATOR_REQUESTED:{decision.source}"[:128],
+            )
+    except RunTransitionError as exc:
+        messages.error(request, f"İptal isteği reddedildi: {exc}")
+    else:
+        messages.success(request, "İptal isteği kaydedildi; çalışma güvenli sınırda duracak.")
+    return redirect("console:workflow_run_detail", run_id=run.id)
 
 
 @login_required
@@ -2594,7 +2815,11 @@ def retention_operations(request: HttpRequest) -> HttpResponse:
 
 
 def _scoped_run(user: UserLike, run_id: uuid.UUID) -> Run:
-    run = Run.objects.select_related("organization", "scenario").filter(pk=run_id).first()
+    run = (
+        Run.objects.select_related("organization", "scenario", "scenario__project")
+        .filter(pk=run_id)
+        .first()
+    )
     if run is None:
         raise Http404
     if not _operator_can_access_org(user, run.organization_id):
@@ -3149,6 +3374,29 @@ def document_set_detail(
             id__in=consumer_ids, organization_id=document_set.organization_id
         )
     }
+    document_control_decision = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.DOCUMENT_SET_OPERATIONS_MANAGE,
+        organization=document_set.organization,
+        document_set=document_set,
+    )
+    platform_control_decision = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.PLATFORM_MANAGE,
+        organization=document_set.organization,
+        document_set=document_set,
+    )
+    can_quarantine = (
+        document_control_decision.allowed
+        and document_control_decision.source == AuthoritySource.DOCUMENT_SET_MANAGER
+    ) or (
+        platform_control_decision.allowed
+        and platform_control_decision.source
+        in {
+            AuthoritySource.GLOBAL_ADMINISTRATOR,
+            AuthoritySource.SUPERADMIN_RECOVERY,
+        }
+    )
     return render(
         request,
         "console/document_set_detail.html",
@@ -3207,9 +3455,40 @@ def document_set_detail(
             .select_related("user")
             .order_by("user__username", "user_id"),
             "can_manage_access": can_admin_org(request.user, document_set.organization_id),
+            "can_quarantine": can_quarantine,
             "max_batch_files": int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20)),
         },
     )
+
+
+@login_required
+@require_POST
+def document_set_quarantine_change(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
+    """Apply the separate document-set safety stop through its exact capability boundary."""
+
+    document_set = _scoped_document_set(request.user, public_id=public_id)
+    action = request.POST.get("action", "")
+    if action not in {"quarantine", "restore"}:
+        raise PermissionDenied
+    try:
+        document_services.set_document_set_quarantine(
+            document_set=document_set,
+            actor=request.user,
+            quarantined=action == "quarantine",
+            reason=request.POST.get("reason", ""),
+        )
+    except DocumentSetControlError as exc:
+        if str(exc) == "DOCUMENT_SET_CONTROL_FORBIDDEN":
+            raise PermissionDenied from exc
+        messages.error(request, f"Doküman seti kontrolü reddedildi: {exc}")
+    else:
+        messages.success(
+            request,
+            "Doküman seti karantinaya alındı; yeni ingestion/indeks claim'leri durdu."
+            if action == "quarantine"
+            else "Doküman seti karantinadan çıkarıldı.",
+        )
+    return redirect("console:document_set_detail_public", public_id=document_set.public_id)
 
 
 def _scoped_set_document(

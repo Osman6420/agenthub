@@ -15,6 +15,7 @@ from apps.documents import storage
 from apps.documents.models import (
     Document,
     DocumentSet,
+    DocumentSetStatus,
     DocumentSetVersionStatus,
 )
 from apps.documents.services import publish_document_set_version
@@ -30,6 +31,7 @@ from apps.ingestion.confluence_schema import (
 )
 from apps.ingestion.confluence_services import (
     ConfluenceAuthorizationError,
+    ConfluenceServiceError,
     create_confluence_source,
     create_confluence_sync_run,
     grant_confluence_profile,
@@ -315,6 +317,15 @@ def test_profile_and_source_governance_redacts_endpoint_and_denies_inline_url(
     source.document_set = ungranted_set
     with pytest.raises(ValueError, match="binding is immutable"):
         source.save()
+
+
+def test_quarantined_set_rejects_new_confluence_sync(governed_source: Any) -> None:
+    _platform, _organization, document_set, author, source = governed_source
+    document_set.status = DocumentSetStatus.QUARANTINED
+    document_set.save(update_fields=["status", "updated_at"])
+
+    with pytest.raises(ConfluenceServiceError, match="DOCUMENT_SET_QUARANTINED"):
+        create_confluence_sync_run(actor=author, source=source)
 
 
 def test_non_platform_cannot_register_profile(settings: Any, db: Any) -> None:

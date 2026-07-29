@@ -19,15 +19,16 @@
 </div>
 
 <section class="card">
-  <div class="section-heading"><div><p class="eyebrow">Çalıştırmalar</p><h2>Şu an ne çalışıyor?</h2><p class="muted">Son {{ metrics.recent_hours }} saat penceresi; dikkat gerektirenler kurtarma bekleyenleri de içerir.</p></div></div>
+  <div class="section-heading"><div><p class="eyebrow">Çalıştırmalar</p><h2>Şu an ne çalışıyor?</h2><p class="muted">Aktif ve dikkat gerektiren işler son {{ metrics.operations_days }} gün; tamamlananlar son {{ metrics.recent_hours }} saat penceresindedir.</p></div></div>
   <div class="tiles">
     <div class="tile"><div class="n">{{ metrics.runs.active }}</div><div class="l">Aktif / çalışıyor</div></div>
     <div class="tile"><div class="n">{{ metrics.runs.attention }}</div><div class="l">Dikkat gerektiren</div></div>
     <div class="tile"><div class="n">{{ metrics.runs.done }}</div><div class="l">Son {{ metrics.recent_hours }}s tamamlanan</div></div>
   </div>
   <div class="actions">
-    <a class="button secondary" href="{% url 'console:runs' %}">Tüm çalıştırmalar →</a>
-    {% if metrics.runs.attention %}<a class="button" href="{% url 'console:workflow_runs' %}?bucket=attention">Dikkat gerektirenleri gör →</a>{% endif %}
+    <a class="button secondary" href="{% url 'console:runs' %}?kind=execution&amp;bucket=active&amp;days={{ metrics.operations_days }}">Aktif işleri gör →</a>
+    <a class="button secondary" href="{% url 'console:runs' %}?kind=execution&amp;bucket=done&amp;days=1">Son tamamlananlar →</a>
+    {% if metrics.runs.attention %}<a class="button" href="{% url 'console:runs' %}?kind=execution&amp;bucket=attention&amp;days={{ metrics.operations_days }}">Dikkat gerektirenleri gör →</a>{% endif %}
   </div>
 </section>
 

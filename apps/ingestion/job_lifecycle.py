@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from apps.artifacts.models import ArtifactVersion
 from apps.audit.services import record_event
+from apps.documents.models import DocumentSetStatus
 from apps.ingestion.models import (
     EmbeddingProfile,
     IndexStatus,
@@ -140,6 +141,8 @@ def create_build_job(
     from apps.ingestion.staged_build import pipeline_fingerprint
 
     organization_id = document_set_version.organization_id
+    if document_set_version.document_set.status != DocumentSetStatus.ACTIVE:
+        raise BuildJobError("DOCUMENT_SET_QUARANTINED")
     pipeline = pipeline_fingerprint(
         embedding_profile=embedding_profile,
         chunker="fixed",
@@ -326,6 +329,7 @@ def claim_build_job(*, public_id: str, organization_id: int) -> StagedIndexBuild
         set_tenant_context(organization_id)
         job = (
             StagedIndexBuildJob.objects.select_for_update()
+            .select_related("document_set_version__document_set")
             .filter(public_id=public_id, organization_id=organization_id)
             .first()
         )
@@ -336,6 +340,8 @@ def claim_build_job(*, public_id: str, organization_id: int) -> StagedIndexBuild
         if job.status in {StagedIndexBuildJobStatus.CANCELLED, StagedIndexBuildJobStatus.FAILED}:
             return None
         if job.status == StagedIndexBuildJobStatus.RUNNING:
+            return None
+        if job.document_set_version.document_set.status != DocumentSetStatus.ACTIVE:
             return None
         if job.attempt >= job.max_attempts:
             job.status = StagedIndexBuildJobStatus.FAILED

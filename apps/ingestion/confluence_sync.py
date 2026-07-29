@@ -11,7 +11,12 @@ from django.utils import timezone
 
 from apps.audit.models import ActorType, Outcome
 from apps.audit.services import record_event
-from apps.documents.models import Document, DocumentLifecycle, DocumentVersion
+from apps.documents.models import (
+    Document,
+    DocumentLifecycle,
+    DocumentSetStatus,
+    DocumentVersion,
+)
 from apps.documents.services import (
     DocumentError,
     get_or_create_manual_draft,
@@ -98,6 +103,11 @@ def _claim_run(run_id: int, *, organization_id: int) -> ConfluenceSyncRun | None
         if run is None:
             return None
         if run.status not in {ConfluenceSyncStatus.QUEUED, ConfluenceSyncStatus.RETRY}:
+            return None
+        if (
+            run.source.document_set is None
+            or run.source.document_set.status != DocumentSetStatus.ACTIVE
+        ):
             return None
         run.status = ConfluenceSyncStatus.RUNNING
         run.attempt += 1

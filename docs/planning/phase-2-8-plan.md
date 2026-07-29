@@ -1,7 +1,8 @@
 # AgentHub — Phase 2.8 Plan
 
-> **Status: In progress.** Parts 1–3 are verified and owner-accepted. Parts 4 and 5 are implemented
-> and automated/offline verified; browser/live-provider owner acceptance remains. Parts 6–7 remain.
+> **Status: In progress.** Parts 1–3 are verified and owner-accepted. Parts 4–7 are implemented
+> and automated/offline verified; remaining browser/live-provider owner acceptance is tracked by
+> each part.
 > This is a program plan:
 > every remaining part owns a
 > separate plan, threat model, verification record and acceptance gate. Planned behavior must not
@@ -51,9 +52,12 @@ observability and migrations, and therefore has its own staged acceptance gates.
    diagnostics, exact-release scenario answer evaluation, one-off asks and separate
    retrieval/answer quality measures are implemented. Optional LLM judging remains disabled until
    an approved pinned profile/prompt and privacy/cost review are supplied.
-8. **Part 7 — Unified runs and kill-switch management — Planned.** One filterable operational page
-   across execution/evaluation/ingestion/sync jobs and audited organization/global runtime
-   suspension controls.
+8. **Part 7 — Unified runs and kill-switch management — Implemented and automated/offline
+   verified.** One bounded filterable operational projection spans execution, evaluation,
+   ingestion, index-build and connector-sync jobs. Exact platform/organization/project/scenario
+   runtime controls, native execution cancellation, document-set quarantine, audit rollback,
+   bounded metrics and cooperative transition enforcement are implemented. Authenticated browser
+   owner acceptance and production-scale load evidence remain rollout gates.
 
 Part 2 depends on the Part 1 shell. Part 2.1 depends on the verified Part 2 organization context and
 is the authorization prerequisite for the final Part 4/5/7 enforcement. Part 3 may proceed
@@ -231,8 +235,9 @@ cleanup never shares a single approval.
 
 ## Status and completion
 
-**In progress.** Parts 1–2 are complete. Part 2.1 Slices 1–4 are implemented and automatically
-verified but Part 2.1 is not complete current behavior until Slice 5 lands. Parts 3–7 remain planned.
+**In progress.** Parts 1–3 are verified and owner-accepted. Parts 4–7 are implemented and
+automated/offline verified; their explicit browser/live-provider/scale rollout gates and owner
+acceptance remain.
 
 Phase 2.8 completes only after all seven parts are implemented and verified, required ADRs and
 current-state documentation are updated, destructive operations have their separate approvals and

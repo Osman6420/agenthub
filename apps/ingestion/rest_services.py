@@ -281,6 +281,8 @@ def create_rest_sync_run(
         raise RestServiceError("REST_SOURCE_REQUIRED")
     if not source.is_active or not source.rest_profile_id or not source.rest_contract_id:
         raise RestServiceError("REST_SOURCE_DISABLED_OR_INVALID")
+    if source.document_set is None or source.document_set.status != DocumentSetStatus.ACTIVE:
+        raise RestServiceError("DOCUMENT_SET_QUARANTINED")
     with transaction.atomic():
         set_tenant_context(source.organization_id)
         if not RestPullProfile.objects.filter(

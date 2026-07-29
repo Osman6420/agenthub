@@ -23,6 +23,17 @@
   </p>
 </div>
 
+{% if can_cancel %}
+<div class="card">
+  <h2>Güvenli iptal</h2>
+  <p class="muted">İptal isteği çalışmayı zorla sonlandırmaz; kalıcı durum korunarak bir sonraki güvenli geçiş sınırında uygulanır.</p>
+  <form method="post" action="{% url 'console:workflow_run_cancel' run.id %}">
+    {% csrf_token %}
+    <button type="submit">İptal iste</button>
+  </form>
+</div>
+{% endif %}
+
 {% if can_recover %}
 <div class="card">
   <h2>Recovery kararı</h2>

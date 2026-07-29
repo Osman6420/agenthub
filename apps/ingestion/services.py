@@ -11,6 +11,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.audit.services import record_event
+from apps.documents.models import DocumentSetStatus
 from apps.ingestion.connectors import ConnectorError, get_connector
 from apps.ingestion.models import (
     Chunk,
@@ -34,6 +35,9 @@ class IngestionError(RuntimeError):
 def create_run(*, source: Source, max_attempts: int = 3) -> IngestionRun:
     if not source.is_active:
         raise IngestionError("SOURCE_DISABLED")
+    document_set = source.document_set
+    if document_set is not None and document_set.status != DocumentSetStatus.ACTIVE:
+        raise IngestionError("DOCUMENT_SET_QUARANTINED")
     run = IngestionRun(
         organization_id=source.organization_id,
         source=source,
@@ -48,11 +52,14 @@ def claim_run(run_id: int, organization_id: int) -> IngestionRun | None:
     with transaction.atomic():
         set_tenant_context(organization_id)
         run = (
-            IngestionRun.objects.select_for_update()
-            .select_related("source")
+            IngestionRun.objects.select_for_update(of=("self",))
+            .select_related("source", "source__document_set")
             .get(pk=run_id, organization_id=organization_id)
         )
         if run.status not in {RunStatus.QUEUED, RunStatus.RETRY}:
+            return None
+        document_set = run.source.document_set
+        if document_set is not None and document_set.status != DocumentSetStatus.ACTIVE:
             return None
         run.status = RunStatus.RUNNING
         run.attempt += 1

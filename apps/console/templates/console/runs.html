@@ -1,15 +1,175 @@
 {% extends "console/base.html" %}
-{% block title %}Çalıştırmalar · AgentHub{% endblock %}
+{% block title %}Çalıştırmalar ve kontroller · AgentHub{% endblock %}
 {% block content %}
 <div class="page-heading">
   <div>
     <p class="eyebrow">Operasyon</p>
-    <h1>Çalıştırmalar</h1>
-    <p class="muted">Senaryo ve otomasyon çalışmalarını mevcut yetkili görünümlerinde inceleyin.</p>
+    <h1>Çalıştırmalar ve kontroller</h1>
+    <p class="muted">Senaryo, değerlendirme, hazırlama, indeks ve bağlayıcı işlerini tek, organizasyon kapsamlı görünümde izleyin.</p>
   </div>
 </div>
-<div class="relationship-grid">
-  <section class="card"><h2>Birleşik çalıştırmalar</h2><p class="muted">Tüm senaryo adımlarını, beklemeleri, onayları ve güvenli çalışma izlerini tek listede inceleyin.</p><a class="button secondary" href="{% url 'console:workflow_runs' %}">Çalıştırmaları aç</a></section>
-  {% if can_use_question_sets %}<section class="card"><h2>Soru setleri ve değerlendirme</h2><p class="muted">Exact retrieval ve release hedeflerinde ayrı kalite metrikleri üretin.</p><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setlerini aç</a></section>{% endif %}
-</div>
+
+{% if organization_required %}
+<section class="card" role="status">
+  <h2>Organizasyon seçin</h2>
+  <p class="muted">Operasyon kayıtları organizasyonlar arasında birleştirilmez. Devam etmek için üst menüden etkin organizasyonu seçin.</p>
+</section>
+{% else %}
+<section class="card">
+  <h2>Operasyon akışı</h2>
+  <div class="actions"><a class="button secondary" href="{% url 'console:workflow_runs' %}">Workflow izlerini aç</a></div>
+  <form class="filter-bar" method="get" aria-label="Operasyon filtreleri">
+    <label>İş türü
+      <select name="kind">
+        <option value="">Tümü</option>
+        {% for value, label in kind_choices %}<option value="{{ value }}"{% if applied.kind == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Durum
+      <select name="status">
+        <option value="">Tümü</option>
+        {% for value, label in status_choices %}<option value="{{ value }}"{% if applied.status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Proje
+      <select name="project">
+        <option value="">Tümü</option>
+        {% for project in projects %}<option value="{{ project.public_id }}"{% if applied.project == project.public_id|stringformat:"s" %} selected{% endif %}>{{ project.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Senaryo
+      <select name="scenario">
+        <option value="">Tümü</option>
+        {% for scenario in scenarios %}<option value="{{ scenario.public_id }}"{% if applied.scenario == scenario.public_id|stringformat:"s" %} selected{% endif %}>{{ scenario.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Doküman seti
+      <select name="document_set">
+        <option value="">Tümü</option>
+        {% for document_set in document_sets %}<option value="{{ document_set.public_id }}"{% if applied.document_set == document_set.public_id|stringformat:"s" %} selected{% endif %}>{{ document_set.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Dönem
+      <select name="days">
+        {% for days in days_choices %}<option value="{{ days }}"{% if applied.days == days|stringformat:"s" or not applied.days and days == 30 %} selected{% endif %}>Son {{ days }} gün</option>{% endfor %}
+      </select>
+    </label>
+    <button class="button secondary" type="submit">Filtrele</button>
+    <a class="button secondary" href="{% url 'console:runs' %}">Temizle</a>
+  </form>
+
+  {% if filter_error %}
+  <div class="message error" role="alert">Filtre uygulanmadı: {{ filter_error }}</div>
+  {% elif page.rows %}
+  <div class="table-scroll">
+    <table>
+      <caption class="sr-only">Yetkili organizasyondaki birleşik operasyon kayıtları</caption>
+      <thead><tr><th>Tür</th><th>İş ve bağlam</th><th>Durum</th><th>Aktör</th><th>Başlangıç</th><th>Süre</th><th>Neden</th><th></th></tr></thead>
+      <tbody>
+      {% for row in page.rows %}
+        <tr data-operation-id="{{ row.operation_id }}">
+          <td><span class="chip">{{ row.kind_label }}</span></td>
+          <td><strong>{{ row.name }}</strong><br><span class="muted">{{ row.context }}</span></td>
+          <td><span class="badge {{ row.status_group }}">{{ row.status_label }}</span><br><span class="muted">{{ row.native_status }}</span></td>
+          <td>{{ row.actor_label }}</td>
+          <td>{{ row.started_at|default:row.updated_at }}</td>
+          <td>{% if row.duration_seconds is not None %}{{ row.duration_seconds }} sn{% else %}-{% endif %}</td>
+          <td>{{ row.reason_code|default:"-" }}</td>
+          <td><a href="{{ row.href }}">Yetkili ayrıntı →</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Bu kapsam ve filtrelerle eşleşen operasyon kaydı yok.</p>
+  {% endif %}
+
+  {% if page and page.has_previous or page and page.has_next %}
+  <nav class="pagination" aria-label="Operasyon sayfaları">
+    {% if page.has_previous %}<a href="?{% if base_query %}{{ base_query }}&amp;{% endif %}page={{ page.filters.page|add:"-1" }}">← Önceki</a>{% endif %}
+    <span>Sayfa {{ page.filters.page }} / en fazla 10</span>
+    {% if page.has_next %}<a href="?{% if base_query %}{{ base_query }}&amp;{% endif %}page={{ page.filters.page|add:"1" }}">Sonraki →</a>{% endif %}
+  </nav>
+  {% endif %}
+</section>
+
+<section class="card" aria-labelledby="runtime-controls-title">
+  <h2 id="runtime-controls-title">Çalışma zamanı kontrolleri</h2>
+  <p class="muted">Askıya alma yeni kabul ve güvenli geçişleri durdurur; kayıtları topluca iptal etmez. Daha geniş kapsamlı etkin kontrol her zaman baskındır.</p>
+  {% if controls %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Etkin çalışma zamanı kontrolleri</caption>
+    <thead><tr><th>Kapsam</th><th>Hedef</th><th>Kaynak</th><th>Neden</th><th>Güncelleme</th><th>Devam yetkisi</th><th></th></tr></thead>
+    <tbody>
+    {% for control in controls %}
+      <tr>
+        <td>{{ control.get_scope_type_display }}</td>
+        <td>{% if control.project %}{{ control.project.name }}{% elif control.scenario %}{{ control.scenario.name }}{% elif control.organization %}{{ control.organization.name }}{% else %}Platform{% endif %}</td>
+        <td>{{ control.get_source_display }}</td>
+        <td><strong>{{ control.reason_code }}</strong><br><span class="muted">{{ control.reason }}</span></td>
+        <td>{{ control.updated_at }}</td>
+        <td>{% if control.requires_privileged_resume %}Global Admin / superadmin{% else %}Kapsam yöneticisi{% endif %}</td>
+        <td>
+          {% if control.scope_type == "platform" %}
+            {% if can_manage_platform %}
+              <form method="post" action="{% url 'console:runtime_control_change' %}">{% csrf_token %}
+                <input type="hidden" name="scope_type" value="platform"><input type="hidden" name="action" value="resume">
+                <input type="hidden" name="reason_code" value="manual_safety_stop"><input type="hidden" name="reason" value="Operatör doğrulamasıyla devam">
+                <button class="button secondary" type="submit">Devam ettir</button>
+              </form>
+            {% endif %}
+          {% elif can_manage_organization %}
+            {% if not control.requires_privileged_resume or can_manage_platform %}
+              <form method="post" action="{% url 'console:runtime_control_change' %}">{% csrf_token %}
+                <input type="hidden" name="scope_type" value="{{ control.scope_type }}">
+                {% if control.project %}<input type="hidden" name="target" value="{{ control.project.public_id }}">{% elif control.scenario %}<input type="hidden" name="target" value="{{ control.scenario.public_id }}">{% endif %}
+                <input type="hidden" name="action" value="resume"><input type="hidden" name="reason_code" value="manual_safety_stop"><input type="hidden" name="reason" value="Operatör doğrulamasıyla devam">
+                <button class="button secondary" type="submit">Devam ettir</button>
+              </form>
+            {% endif %}
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted" role="status">Etkin çalışma zamanı kontrolü yok.</p>
+  {% endif %}
+
+  {% if can_manage_organization %}
+  <h3>Yeni güvenlik durdurması</h3>
+  <form class="filter-bar" method="post" action="{% url 'console:runtime_control_change' %}">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="pause">
+    <label>Kapsam
+      <select name="scope_type" required>
+        {% if can_manage_platform %}<option value="platform">Platform</option>{% endif %}
+        <option value="organization">Organizasyon</option>
+        <option value="project">Proje</option>
+        <option value="scenario">Senaryo</option>
+      </select>
+    </label>
+    <label>Hedef
+      <select name="target">
+        <option value="">Platform / etkin organizasyon</option>
+        <optgroup label="Projeler">{% for project in projects %}<option value="{{ project.public_id }}">{{ project.name }}</option>{% endfor %}</optgroup>
+        <optgroup label="Senaryolar">{% for scenario in scenarios %}<option value="{{ scenario.public_id }}">{{ scenario.name }}</option>{% endfor %}</optgroup>
+      </select>
+    </label>
+    <label>Neden kodu
+      <select name="reason_code" required>{% for code in reason_codes %}<option value="{{ code }}">{{ code }}</option>{% endfor %}</select>
+    </label>
+    <label>Açıklama
+      <input name="reason" maxlength="200" required autocomplete="off">
+    </label>
+    <button class="button" type="submit">Güvenli durdur</button>
+  </form>
+  <p class="muted">Platform ve organizasyon kapsamlarında hedefi boş bırakın. Proje/senaryo kapsamı için aynı türden bir hedef seçin; sunucu hedef türünü ve organizasyon soyunu yeniden doğrular.</p>
+  {% else %}
+  <p class="muted">Bu kontroller yalnız Global Admin ve etkin organizasyonun Organization Admin rolüne açıktır. Proje yöneticisi ve senaryo editörü çalışma zamanını durduramaz veya devam ettiremez.</p>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}

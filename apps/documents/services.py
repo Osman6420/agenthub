@@ -30,6 +30,7 @@ from apps.documents.models import (
     DocumentSet,
     DocumentSetGrant,
     DocumentSetMembership,
+    DocumentSetStatus,
     DocumentSetVersion,
     DocumentSetVersionStatus,
     DocumentVersion,
@@ -39,6 +40,7 @@ from apps.documents.models import (
     ScenarioDocumentSetBinding,
 )
 from apps.documents.storage import StorageError, build_object_key, get_object_store
+from apps.identity.authorization import AuthoritySource, Capability, authorize
 from apps.ingestion.models import Source
 from apps.tenancy.identifiers import (
     MAX_ALLOCATION_ATTEMPTS,
@@ -46,6 +48,82 @@ from apps.tenancy.identifiers import (
     allocate_identifier,
 )
 from apps.tenancy.models import Organization
+
+
+class DocumentSetControlError(PermissionError):
+    """Stable document-set operational control failure."""
+
+
+def set_document_set_quarantine(
+    *,
+    document_set: DocumentSet,
+    actor: object,
+    quarantined: bool,
+    reason: str,
+) -> DocumentSet:
+    """Quarantine or restore one set without conveying document-content authority."""
+
+    bounded_reason = reason.strip()
+    if not bounded_reason or len(bounded_reason) > 200:
+        raise DocumentSetControlError("DOCUMENT_SET_CONTROL_REASON_INVALID")
+    operations_decision = authorize(
+        user=actor,
+        capability=Capability.DOCUMENT_SET_OPERATIONS_MANAGE,
+        organization=document_set.organization,
+        document_set=document_set,
+    )
+    platform_decision = authorize(
+        user=actor,
+        capability=Capability.PLATFORM_MANAGE,
+        organization=document_set.organization,
+        document_set=document_set,
+    )
+    decision = operations_decision if operations_decision.allowed else platform_decision
+    allowed_sources = {
+        AuthoritySource.DOCUMENT_SET_MANAGER,
+        AuthoritySource.GLOBAL_ADMINISTRATOR,
+        AuthoritySource.SUPERADMIN_RECOVERY,
+    }
+    if not decision.allowed or decision.source not in allowed_sources:
+        record_event(
+            actor_type="user",
+            actor_id=str(getattr(actor, "pk", "")),
+            action="document_set.quarantine" if quarantined else "document_set.restore",
+            outcome="deny",
+            organization_id=document_set.organization_id,
+            resource_type="document_set",
+            resource_id=str(document_set.public_id),
+            reason="DOCUMENT_SET_CONTROL_FORBIDDEN",
+        )
+        raise DocumentSetControlError("DOCUMENT_SET_CONTROL_FORBIDDEN")
+    with transaction.atomic():
+        locked = DocumentSet.objects.select_for_update().get(
+            pk=document_set.pk,
+            organization_id=document_set.organization_id,
+        )
+        target = DocumentSetStatus.QUARANTINED if quarantined else DocumentSetStatus.ACTIVE
+        if quarantined and locked.status == DocumentSetStatus.ARCHIVED:
+            raise DocumentSetControlError("DOCUMENT_SET_ARCHIVED")
+        if not quarantined and locked.status != DocumentSetStatus.QUARANTINED:
+            raise DocumentSetControlError("DOCUMENT_SET_NOT_QUARANTINED")
+        locked.status = target
+        locked.save(update_fields=["status", "updated_at"])
+        superadmin = decision.source == AuthoritySource.SUPERADMIN_RECOVERY
+        record_event(
+            actor_type="user",
+            actor_id=str(getattr(actor, "pk", "")),
+            action=(
+                "superadmin.document_set_control"
+                if superadmin
+                else ("document_set.quarantine" if quarantined else "document_set.restore")
+            ),
+            outcome="success",
+            organization_id=locked.organization_id,
+            resource_type="document_set",
+            resource_id=str(locked.public_id),
+            reason=f"{'QUARANTINED' if quarantined else 'RESTORED'}:{decision.source}",
+        )
+    return locked
 
 
 class DocumentError(ValueError):

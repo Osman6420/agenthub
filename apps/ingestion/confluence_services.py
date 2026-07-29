@@ -281,6 +281,8 @@ def create_confluence_sync_run(
         raise ConfluenceAuthorizationError("SCENARIO_AUTHOR_REQUIRED")
     if not source.is_active:
         raise ConfluenceServiceError("SOURCE_DISABLED")
+    if source.document_set is None or source.document_set.status != DocumentSetStatus.ACTIVE:
+        raise ConfluenceServiceError("DOCUMENT_SET_QUARANTINED")
     run = ConfluenceSyncRun(
         organization_id=source.organization_id,
         source=source,

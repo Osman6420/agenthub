@@ -265,10 +265,11 @@ def revoke_scenario_document_set_grant(
         scenario=grant.scenario,
         document_set=grant.document_set,
     )
-    if (
-        not initial_decision.allowed
-        or initial_decision.source != AuthoritySource.DOCUMENT_SET_MANAGER
-    ):
+    allowed_sources = {
+        AuthoritySource.DOCUMENT_SET_MANAGER,
+        AuthoritySource.SUPERADMIN_RECOVERY,
+    }
+    if not initial_decision.allowed or initial_decision.source not in allowed_sources:
         _audit(
             actor=actor,
             action="scenario_document_set_access.revoke",
@@ -294,7 +295,7 @@ def revoke_scenario_document_set_grant(
             scenario=locked.scenario,
             document_set=locked.document_set,
         )
-        if not decision.allowed or decision.source != AuthoritySource.DOCUMENT_SET_MANAGER:
+        if not decision.allowed or decision.source not in allowed_sources:
             raise ScenarioDocumentSetAccessError("DOCUMENT_SET_MANAGER_REQUIRED")
         if locked.status == ScenarioDocumentSetGrantStatus.REVOKED:
             return
@@ -304,7 +305,11 @@ def revoke_scenario_document_set_grant(
         locked.save()
         _audit(
             actor=actor,
-            action="scenario_document_set_access.revoke",
+            action=(
+                "superadmin.scenario_document_set_access_revoke"
+                if decision.source == AuthoritySource.SUPERADMIN_RECOVERY
+                else "scenario_document_set_access.revoke"
+            ),
             outcome="success",
             organization_id=locked.organization_id,
             resource_type="scenario_document_set_grant",

@@ -20,6 +20,10 @@ is a Phase 3 hardening item; the initial-stage exception uses a unique strong pa
 2. Confirm an immediate `superadmin.login` audit event and alert.
 3. Perform only the minimum recovery action. Every console route is fail-closed on the pre-action
    `superadmin.console_access` audit write; an audit persistence failure must stop the request.
+   Runtime-control intervention additionally emits `superadmin.runtime_control`; document-set
+   quarantine/restore emits `superadmin.document_set_control`; exceptional scenario grant
+   revocation emits `superadmin.scenario_document_set_access_revoke`. Each action must carry a
+   bounded safe reason and use the exact trusted target.
 4. Record safe public identifiers and outcomes in the incident. Never copy document content,
    secrets, tokens or raw retrieval context into the record.
 5. Verify the repaired object with a non-superuser administrator whenever possible.
@@ -38,3 +42,6 @@ is a Phase 3 hardening item; the initial-stage exception uses a unique strong pa
   controls first or use the separately approved incident exception.
 - Roll back the recovered application state through normal audited services. Never erase audit
   evidence, grant routine superuser access, disable authorization/RLS or reset protected data.
+- Never clear an automatic or policy suspension merely to restore throughput. Confirm the triggering
+  condition is resolved, record the privileged-resume reason and verify broader controls remain
+  effective. Quarantine does not authorize reading document content.

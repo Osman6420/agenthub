@@ -243,9 +243,13 @@ def transition_run(
         sync_lease_token=sync_lease_token,
     )
     set_tenant_context(organization_id)
-    run = Run.objects.select_for_update().get(
-        pk=run_id,
-        organization_id=organization_id,
+    run = (
+        Run.objects.select_for_update()
+        .select_related("scenario")
+        .get(
+            pk=run_id,
+            organization_id=organization_id,
+        )
     )
     replay = run.events.filter(transition_token=transition_token).first()
     if replay is not None:
@@ -335,15 +339,20 @@ def transition_run(
             run.background_claim_expires_at <= transition_now and not claim_may_be_expired
         ):
             raise RunTransitionError("RUN_BACKGROUND_CLAIM_EXPIRED")
-        if target not in {
-            RunStatus.CANCELLED,
-            RunStatus.RECOVERY_REQUIRED,
-            RunStatus.TIMED_OUT,
-        }:
-            from apps.agents.services import runtime_suspended
+    if target not in {
+        RunStatus.CANCELLED,
+        RunStatus.RECOVERY_REQUIRED,
+        RunStatus.TIMED_OUT,
+    }:
+        from apps.agents.services import observe_runtime_suspension, runtime_suspended
 
-            if runtime_suspended(organization_id):
-                raise RunTransitionError("RUN_RUNTIME_SUSPENDED")
+        if runtime_suspended(
+            organization_id,
+            project_id=run.scenario.project_id,
+            scenario_id=run.scenario_id,
+        ):
+            observe_runtime_suspension("transition")
+            raise RunTransitionError("RUN_RUNTIME_SUSPENDED")
     if run.checkpoint_version != expected_checkpoint_version or (
         expected_status is not None and run.status != expected_status
     ):

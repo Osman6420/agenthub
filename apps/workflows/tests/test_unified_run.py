@@ -12,6 +12,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, close_old_connections, connection
 from django.utils import timezone
 
+from apps.agents.models import AgentRuntimeControl, RuntimeControlScope
 from apps.agents.services import set_runtime_suspension
 from apps.audit.models import AuditEvent
 from apps.gateway.execution_context import issue_execution_context
@@ -1311,6 +1312,43 @@ def test_unified_admission_rejects_mismatched_or_unprivileged_signed_context(
                 idempotency_key=key,
                 execution_mode=RunExecutionMode.BACKGROUND,
             )
+
+    assert not Run.objects.exists()
+
+
+@pytest.mark.django_db
+def test_unified_admission_rejects_exact_project_suspension(workflow_fixture) -> None:
+    workflow_version = WorkflowVersion.objects.get(scenario=workflow_fixture.scenario)
+    AgentRuntimeControl.objects.create(
+        scope_type=RuntimeControlScope.PROJECT,
+        organization=workflow_fixture.organization,
+        project=workflow_fixture.scenario.project,
+        suspended=True,
+        reason_code="incident_response",
+        reason="Project incident",
+        updated_by="safety-system",
+    )
+    context = issue_execution_context(
+        organization_id=workflow_fixture.organization.id,
+        project_id=workflow_fixture.scenario.project_id,
+        scenario_id=workflow_fixture.scenario.id,
+        scenario_alias=workflow_fixture.alias,
+        consumer_id=workflow_fixture.consumer.id,
+        capabilities=["workflow_run"],
+        release_id=workflow_fixture.release.id,
+        request_id="project-suspended-admission",
+    )
+
+    with pytest.raises(WorkflowRequestError, match="RUN_RUNTIME_SUSPENDED"):
+        request_unified_run(
+            release=workflow_fixture.release,
+            consumer=workflow_fixture.consumer,
+            workflow_version=workflow_version,
+            execution_context=context,
+            input_payload={"query": "same"},
+            idempotency_key="project-suspended-admission",
+            execution_mode=RunExecutionMode.BACKGROUND,
+        )
 
     assert not Run.objects.exists()
 

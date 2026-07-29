@@ -15,7 +15,12 @@ from django.utils import timezone
 from apps.catalog.models import AIProject, Scenario
 from apps.documents import services as document_services
 from apps.documents import storage
-from apps.documents.models import DocumentSet, DocumentSetVersionStatus, DocumentVersion
+from apps.documents.models import (
+    DocumentSet,
+    DocumentSetStatus,
+    DocumentSetVersionStatus,
+    DocumentVersion,
+)
 from apps.documents.services import bind_scenario_document_set
 from apps.identity.models import DocumentSetManagerAssignment
 from apps.identity.roles import Role
@@ -35,6 +40,7 @@ from apps.ingestion.rest import GovernedRestClient, RestPullError, RestPullItem
 from apps.ingestion.rest_schema import RestContractError, render_path, validate_contract
 from apps.ingestion.rest_services import (
     RestAuthorizationError,
+    RestServiceError,
     configure_sync_schedule,
     create_rest_contract,
     create_rest_source,
@@ -372,6 +378,15 @@ class _SyncClient:
     ) -> bytes:
         self.detail_calls.append(item.external_id)
         return self.contents[item.external_id]
+
+
+def test_quarantined_set_rejects_new_rest_sync(governed_rest: Any) -> None:
+    _platform, author, _organization, document_set, source = governed_rest
+    document_set.status = DocumentSetStatus.QUARANTINED
+    document_set.save(update_fields=["status", "updated_at"])
+
+    with pytest.raises(RestServiceError, match="DOCUMENT_SET_QUARANTINED"):
+        create_rest_sync_run(actor=author, source=source)
 
 
 @pytest.mark.django_db

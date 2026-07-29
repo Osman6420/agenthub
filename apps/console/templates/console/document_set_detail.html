@@ -22,6 +22,22 @@
   <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Release derlemesinde pinlenir</small></div>
 </div>
 
+{% if can_quarantine %}
+<section class="card">
+  <h2>Ingestion güvenlik kontrolü</h2>
+  <p class="muted">Karantina yeni connector sync, ingestion ve indeks claim'lerini durdurur; doküman erişimi veya senaryo retrieve yetkisi vermez.</p>
+  <form method="post" action="{% url 'console:document_set_quarantine_change' set.public_id %}" class="actions">
+    {% csrf_token %}
+    <input type="hidden" name="reason" value="Operatör güvenlik incelemesi">
+    {% if set.status == "quarantined" %}
+      <button class="button secondary" type="submit" name="action" value="restore">Karantinadan çıkar</button>
+    {% else %}
+      <button type="submit" name="action" value="quarantine">Karantinaya al</button>
+    {% endif %}
+  </form>
+</section>
+{% endif %}
+
 {% if can_evaluate and active_index %}
 <section class="card form-card">
   <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>Retrieval'a sor</h2><p class="muted">Exact aktif set/index/profile üzerinde çalışır; soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>

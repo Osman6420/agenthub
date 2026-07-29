@@ -209,6 +209,11 @@ urlpatterns = [
         name="document_set_detail_public",
     ),
     path(
+        "document-sets/id/<uuid:public_id>/quarantine/",
+        views.document_set_quarantine_change,
+        name="document_set_quarantine_change",
+    ),
+    path(
         "document-sets/id/<uuid:public_id>/ask/",
         views.document_set_ask,
         name="document_set_ask",
@@ -379,9 +384,19 @@ urlpatterns = [
         name="document_set_revoke_grant",
     ),
     path("runs/", views.runs, name="runs"),
+    path(
+        "runs/runtime-control/",
+        views.runtime_control_change,
+        name="runtime_control_change",
+    ),
     path("retention/", views.retention_operations, name="retention_operations"),
     path("workflow-runs/", views.workflow_runs, name="workflow_runs"),
     path("workflow-runs/<uuid:run_id>/", views.workflow_run_detail, name="workflow_run_detail"),
+    path(
+        "workflow-runs/<uuid:run_id>/cancel/",
+        views.workflow_run_cancel,
+        name="workflow_run_cancel",
+    ),
     path(
         "workflow-runs/<uuid:run_id>/recovery/",
         views.workflow_run_recovery_decide,

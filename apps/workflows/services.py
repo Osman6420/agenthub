@@ -204,6 +204,16 @@ def request_unified_run(
             raise WorkflowRequestError("IDEMPOTENCY_CONFLICT")
         return existing, False
 
+    from apps.agents.services import observe_runtime_suspension, runtime_suspended
+
+    if runtime_suspended(
+        organization_id,
+        project_id=scenario.project_id,
+        scenario_id=scenario.id,
+    ):
+        observe_runtime_suspension("admission")
+        raise WorkflowRequestError("RUN_RUNTIME_SUSPENDED")
+
     state = {"input": input_payload}
     _assert_state_size(state)
     run = Run(

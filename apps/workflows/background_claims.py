@@ -146,7 +146,7 @@ def claim_background_run(
     set_tenant_context(organization_id)
     run = (
         Run.objects.select_for_update()
-        .select_related("workflow_version", "release")
+        .select_related("workflow_version", "release", "scenario")
         .get(pk=run_id, organization_id=organization_id)
     )
     if run.execution_mode != RunExecutionMode.BACKGROUND:
@@ -162,9 +162,14 @@ def claim_background_run(
         return BackgroundClaimResult(
             "deadline_exceeded", str(run.status), run.checkpoint_version, None
         )
-    from apps.agents.services import runtime_suspended
+    from apps.agents.services import observe_runtime_suspension, runtime_suspended
 
-    if runtime_suspended(organization_id):
+    if runtime_suspended(
+        organization_id,
+        project_id=run.scenario.project_id,
+        scenario_id=run.scenario_id,
+    ):
+        observe_runtime_suspension("claim")
         return BackgroundClaimResult("suspended", str(run.status), run.checkpoint_version, None)
 
     if run.background_claim_token == claim_token:

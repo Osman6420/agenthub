@@ -108,6 +108,21 @@ aggregate metrics. Evaluation tables use direct tenant lineage and PostgreSQL FO
 events are audited without content, and expired generated answers/retrieval evidence can be
 redacted unless legal hold applies.
 
+Phase 2.8 Part 7 keeps every native execution, evaluation, ingestion, index-build and connector-sync
+table authoritative while presenting one bounded organization-scoped operations projection. The
+projection uses closed kinds/status groups, tenant-first querysets, a 90-day maximum range, ten-page
+maximum and fifty rows per page; it exposes only safe metadata and routes actions back through each
+native authorization boundary.
+
+Durable runtime suspension now has exact platform, organization, project and scenario scopes.
+Admission, background claim and every non-terminal transition check the effective hierarchy;
+suspended work retains its durable state and stops cooperatively at a transition boundary rather
+than being mass-cancelled. Pause/resume and individual execution cancellation are distinct,
+CSRF-protected, capability-authorized and fail-closed audited actions. Document-set quarantine is a
+separate document-manager control: it prevents new/claimed ingestion, index and connector work
+without granting document content access. Automatic and policy controls require privileged resume,
+and exceptional superadmin actions keep their dedicated high-severity audit and alert path.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full

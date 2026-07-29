@@ -127,6 +127,36 @@ def test_request_approve_bind_and_revoke_lifecycle(access_fixture) -> None:
     ).exists()
 
 
+def test_superadmin_can_revoke_grant_as_alerted_recovery_action(access_fixture) -> None:
+    fixture = access_fixture
+    access_request = request_scenario_document_set_access(
+        scenario=fixture["scenario"],
+        document_set=fixture["document_set"],
+        purpose="Emergency revocation proof",
+        actor=fixture["project_admin"],
+    )
+    grant = approve_scenario_document_set_access(
+        access_request=access_request,
+        actor=fixture["manager"],
+    )
+    superadmin = get_user_model().objects.create_superuser(
+        username="recovery-admin",
+        password=None,
+    )
+
+    revoke_scenario_document_set_grant(grant=grant, actor=superadmin)
+
+    assert not has_live_scenario_document_set_grant(
+        scenario_id=fixture["scenario"].pk,
+        document_set_id=fixture["document_set"].pk,
+    )
+    assert AuditEvent.objects.filter(
+        action="superadmin.scenario_document_set_access_revoke",
+        outcome="success",
+        actor_id=superadmin.get_username(),
+    ).exists()
+
+
 def test_bind_requires_live_grant(access_fixture) -> None:
     fixture = access_fixture
 

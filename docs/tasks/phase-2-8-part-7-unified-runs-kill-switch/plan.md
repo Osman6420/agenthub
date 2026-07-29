@@ -67,6 +67,24 @@ console experience. A read model must not accidentally create universal cancella
   action merely because it displayed a row.
 - Dashboard links carry signed/allowlisted or server-constructed filters, not trusted tenant IDs.
 
+### Implementation decisions (2026-07-29)
+
+- Keep native job tables authoritative and implement a console-owned, immutable in-memory projection
+  over tenant-first querysets. No polymorphic job table or copied payload is introduced.
+- Use the closed kinds `execution`, `evaluation`, `question_evaluation`, `ingestion`,
+  `index_build`, `confluence_sync` and `rest_sync`; normalize only to `active`, `waiting`,
+  `attention`, `succeeded` and `stopped`.
+- Require an active organization and cap the projection at 50 rows per page, 10 pages, a 90-day
+  date window and the exact per-source prefix needed for the requested page. Invalid kinds,
+  statuses, dates, object identifiers or pages fail closed with a safe validation message.
+- Keep `AgentRuntimeControl` as the compatibility model/table name while expanding its persisted
+  contract to exact platform/organization/project/scenario lineage. Existing global and
+  organization rows migrate in place; runtime callers use the generalized hierarchy.
+- Console mutations resolve trusted scope objects from the active organization, call the central
+  capability boundary, lock the exact control row and write audit in the same transaction.
+  Automatic/policy controls require privileged resume; a normal narrower resume never masks an
+  active broader control.
+
 ## Kill-switch semantics and authorization
 
 | Action | Global Admin | Organization Admin | Project Admin | Scenario Editor | Document Set Manager |
@@ -174,7 +192,10 @@ accessibility suites.
 Roll out read-only projection first and compare it with native counts. Add UI actions only after
 control-service tests and runbook review. Runtime-control migration is additive/preserving before old
 code removal. Rollback hides actions/page and restores native navigation while retaining control
-rows; guarded superadmin command interfaces remain available. Never roll back by clearing suspension state.
+rows; guarded superadmin command interfaces remain available. Schema reversal is fail-closed while
+project/scenario rows exist because collapsing them into one legacy organization row would be
+destructive; remove them only through a separately approved migration. Never roll back by clearing
+suspension state.
 
 ## Risks
 
@@ -193,7 +214,13 @@ becoming routine.
 
 ## Status
 
-**Planned.** Depends on verified Part 3 runtime/control behavior.
+**Implemented and automated/offline verified.** Native job tables remain authoritative; the bounded
+projection, hierarchical runtime controls, native cancellation, document quarantine, worker
+enforcement, audit and bounded metrics are implemented. The live graph was available under the
+registered project matching this checkout; Serena reference lookup was partially degraded by a
+stale deleted `apps/agents/tasks.py` path, so exact references were reconciled with graph traces,
+`rg`, direct source inspection and tests. Authenticated browser owner acceptance and
+production-scale load evidence remain rollout gates.
 
 ## Completion criteria
 

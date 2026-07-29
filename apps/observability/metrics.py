@@ -119,6 +119,18 @@ UNIFIED_RUN_EVENTS = Counter(
     ("event_type",),
     registry=REGISTRY,
 )
+RUNTIME_CONTROL_CHANGES = Counter(
+    "agenthub_runtime_control_changes_total",
+    "Runtime-control decisions by bounded scope, action and outcome.",
+    ("scope", "action", "outcome"),
+    registry=REGISTRY,
+)
+RUNTIME_SUSPENSION_BLOCKS = Counter(
+    "agenthub_runtime_suspension_blocks_total",
+    "Unified runtime work blocked by a persisted suspension at a safe boundary.",
+    ("boundary",),
+    registry=REGISTRY,
+)
 WORKFLOW_RUNS = Counter(
     "agenthub_workflow_runs_total",
     "Durable workflow run state transitions.",
