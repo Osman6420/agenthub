@@ -117,6 +117,7 @@ acceptance gate.
 - [Part 5 plan](../tasks/phase-2-8-part-5-document-profiles-index-automation/plan.md)
 - [Part 6 plan](../tasks/phase-2-8-part-6-question-sets-evaluation/plan.md)
 - [Part 7 plan](../tasks/phase-2-8-part-7-unified-runs-kill-switch/plan.md)
+- [Production static promotion plan](../tasks/phase-2-8-production-static-promotion/plan.md)
 
 Each directory also contains its proportional `threat-model.md` and `verification.md`.
 
@@ -138,7 +139,9 @@ Each directory also contains its proportional `threat-model.md` and `verificatio
   synchronization jobs.
 - Part 3 requires an ADR for the single-engine decision, public API cutover, migration policy and
   rollback boundary before destructive cleanup.
-- No new production dependency is approved by this phase plan.
+- No new production dependency is approved by this program plan. The owner separately approved the
+  fixed-version non-root Nginx static-container dependency and `/static` OpenShift Route change on
+  2026-07-29 under the production static-promotion task.
 
 ## Security, authorization and tenant isolation
 
@@ -245,6 +248,13 @@ evidence, residual risks receive owner acceptance, and completed task records ar
 planning policy.
 
 ## Production promotion gate
+
+> **Repository status: implemented and offline/container verified on 2026-07-29.** The locked
+> frontend build, `collectstatic`, source-map exclusion, checksum inventory, version-matched
+> application/static image targets, production-settings denial, OpenShift static workload/Route,
+> HTTP/MIME/security smoke and Aâ†’Bâ†’A container rollback are implemented. Live registry signature,
+> SBOM/vulnerability policy, rendered environment overlay, OpenShift router/certificate and
+> authenticated staging builder acceptance remain environment promotion gates.
 
 Before Phase 2.8 is promoted to production, the immutable deployment pipeline must build the
 workflow-builder frontend with the pinned lockfile, run Django `collectstatic`, and publish

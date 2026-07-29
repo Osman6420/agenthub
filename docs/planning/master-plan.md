@@ -233,6 +233,15 @@ owner acceptance and production-scale load evidence remain explicit rollout gate
 authorities are the [Part 6 verification record](../tasks/phase-2-8-part-6-question-sets-evaluation/verification.md)
 and [Part 7 verification record](../tasks/phase-2-8-part-7-unified-runs-kill-switch/verification.md).
 
+The Phase 2.8 production static-promotion implementation is offline/container verified. It builds
+the locked workflow-builder and Django static tree into a dedicated non-root OpenShift image,
+requires a matching versioned production static URL, adds router-only `/static` delivery, and proves
+fail-closed image/runtime plus Aâ†’Bâ†’A container rollback. Live registry signature/SBOM/vulnerability
+policy, rendered environment overlay, OpenShift router/certificate and authenticated staging
+builder acceptance remain deployment gates. See the
+[task plan](../tasks/phase-2-8-production-static-promotion/plan.md) and
+[verification](../tasks/phase-2-8-production-static-promotion/verification.md).
+
 ## Cross-cutting concerns
 
 Tenant isolation, server-side authorization, release immutability, secret handling, audit, observability, evaluation gates, idempotency, and rollback apply across components. See [`docs/ai`](../ai/engineering-rules.md).

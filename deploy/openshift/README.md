@@ -6,7 +6,12 @@ resource sizing, routes, approved egress destinations, and platform labels befor
 
 Security invariants:
 
-- only `agenthub-web` has a `Route`;
+- only `agenthub-web` and the public, content-free `agenthub-static` workload have Routes;
+- environment overlays replace the shared `.invalid` Route hostname, application/static image
+  placeholders and static release id together; both images are pinned by digest;
+- `/static` uses the exact same host as the web Route and targets only `agenthub-static`;
+- the static workload runs the owner-approved non-root Nginx image target, has no service-account
+  token or egress, mounts only a bounded ephemeral `/tmp`, and serves collected application assets;
 - MCP is disabled in the base ConfigMap and must be enabled only by an approved
   internal/VPN environment overlay;
 - the metrics endpoint requires a secret-backed scrape bearer token even on the
@@ -16,6 +21,33 @@ Security invariants:
 - namespace traffic is default-deny and workload service accounts are distinct;
 - secrets enter through logical External Secret references, never plaintext manifests;
 - the container image must be pinned by digest in an environment overlay.
+
+## Application and static image promotion
+
+Build both targets from the same commit and release id:
+
+```bash
+docker build --target application -t <registry>/agenthub:<release-id> .
+docker build --target static-runtime \
+  --build-arg STATIC_RELEASE_ID=<release-id> \
+  -t <registry>/agenthub-static:<release-id> .
+```
+
+The build runs locked frontend type checking/tests/build, Django `collectstatic` and the
+fail-closed static inventory before either target completes. The environment overlay must set:
+
+- the web and static images to their immutable registry digests;
+- both Route `spec.host` values to the same approved hostname;
+- `AGENTHUB_STATIC_RELEASE_ID=<release-id>`;
+- `DJANGO_STATIC_URL=/static/<release-id>/`.
+
+Deploy the static workload and verify `/healthz` and required JS/CSS before rolling the web
+workload. Promotion must fail if the two release identifiers differ, a digest is not pinned,
+required assets are missing, or JS/CSS content types are wrong.
+
+Rollback restores the previous web and static image digests plus the matching static release id and
+URL as one reviewed operation. Retain the previous static image for the environment rollback window;
+never delete it during forward rollout.
 
 The reviewed Python-node runner is a separate four-replica, internal-only Deployment. It uses the
 dedicated `deploy/python-runner.Dockerfile`, receives no application ConfigMap or Secret, has no

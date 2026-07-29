@@ -132,9 +132,7 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TIME_LIMIT = 60 * 30
 CELERY_TASK_SOFT_TIME_LIMIT = 60 * 25
 EVALUATION_LLM_JUDGE_ENABLED = env.bool("EVALUATION_LLM_JUDGE_ENABLED", default=False)
-EVALUATION_EVIDENCE_RETENTION_DAYS = env.int(
-    "EVALUATION_EVIDENCE_RETENTION_DAYS", default=30
-)
+EVALUATION_EVIDENCE_RETENTION_DAYS = env.int("EVALUATION_EVIDENCE_RETENTION_DAYS", default=30)
 CELERY_BEAT_SCHEDULE = {
     "dispatch-governed-connector-schedules": {
         "task": "apps.ingestion.tasks.dispatch_connector_schedules",
@@ -365,7 +363,7 @@ USE_I18N = True
 USE_TZ = True
 
 # --- Static -----------------------------------------------------------------
-STATIC_URL = "static/"
+STATIC_URL = env("DJANGO_STATIC_URL", default="/static/")
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # --- Logging ----------------------------------------------------------------

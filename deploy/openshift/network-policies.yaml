@@ -29,6 +29,21 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: agenthub-static-ingress
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: agenthub-static}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {network.openshift.io/policy-group: ingress}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: agenthub-allow-dns
 spec:
   podSelector:

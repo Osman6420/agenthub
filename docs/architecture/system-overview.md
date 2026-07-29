@@ -123,6 +123,15 @@ separate document-manager control: it prevents new/claimed ingestion, index and 
 without granting document content access. Automatic and policy controls require privileged resume,
 and exceptional superadmin actions keep their dedicated high-severity audit and alert path.
 
+Phase 2.8 production static delivery builds the locked React workflow builder inside the immutable
+container pipeline, runs Django `collectstatic`, removes package-supplied source maps and verifies a
+checksum inventory before producing a dedicated non-root Nginx image. Production Django keeps
+`DEBUG=False` and requires a versioned `/static/<release-id>/` URL matching the static image release.
+OpenShift routes `/static` on the same environment-owned hostname to a two-replica, tokenless,
+no-egress static workload; all other paths remain on Uvicorn/Django. Application and static images
+are independently digest-pinned but promoted and rolled back as one matching release pair. These
+assets are repository/container verified; no live OpenShift deployment is claimed.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full

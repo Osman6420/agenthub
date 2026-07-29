@@ -102,3 +102,115 @@ jobs:
 
       - name: Production build (vite)
         run: npm run build
+
+  production-images:
+    name: Immutable application + static images
+    runs-on: ubuntu-latest
+    needs: [quality, frontend]
+    env:
+      STATIC_RELEASE_ID: ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build application image
+        run: |
+          docker build \
+            --file deploy/Dockerfile \
+            --target application \
+            --build-arg STATIC_RELEASE_ID="${STATIC_RELEASE_ID}" \
+            --tag agenthub-application:ci \
+            .
+
+      - name: Build fail-closed static image
+        run: |
+          docker build \
+            --file deploy/Dockerfile \
+            --target static-runtime \
+            --build-arg STATIC_RELEASE_ID="${STATIC_RELEASE_ID}" \
+            --tag agenthub-static:ci \
+            .
+
+      - name: Verify non-root read-only static runtime
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect agenthub-static:ci --format '{{.Config.User}}')" = "101"
+          test "$(docker image inspect agenthub-static:ci \
+            --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" \
+            = "${STATIC_RELEASE_ID}"
+          docker run --detach --rm \
+            --name agenthub-static-ci \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --publish 18080:8080 \
+            agenthub-static:ci
+          trap 'docker rm --force agenthub-static-ci >/dev/null 2>&1 || true' EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18080/healthz >/dev/null; then
+              break
+            fi
+            if [ "${attempt}" = "30" ]; then
+              docker logs agenthub-static-ci
+              exit 1
+            fi
+            sleep 1
+          done
+
+          static_base="http://127.0.0.1:18080/static/${STATIC_RELEASE_ID}"
+          curl --fail --silent --show-error \
+            --output /dev/null \
+            --header 'Accept-Encoding: identity' \
+            --write-out '%{content_type}\n' \
+            "${static_base}/builder/builder.js" | grep -Fx 'application/javascript'
+          curl --fail --silent --show-error \
+            --output /dev/null \
+            --write-out '%{content_type}\n' \
+            "${static_base}/builder/builder.css" | grep -Fx 'text/css'
+          curl --fail --silent --show-error \
+            "${static_base}/asset-manifest.json" \
+            | grep -F "\"release_id\": \"${STATIC_RELEASE_ID}\""
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --path-as-is "${static_base}/../.env")" = "404"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --request POST "${static_base}/builder/builder.js")" = "403"
+
+      - name: Verify production settings and runtime package
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect agenthub-application:ci \
+            --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" \
+            = "${STATIC_RELEASE_ID}"
+          test "$(docker image inspect agenthub-application:ci \
+            --format '{{range .Config.Env}}{{println .}}{{end}}' \
+            | grep '^AGENTHUB_IMAGE_RELEASE_ID=' \
+            | cut -d= -f2-)" = "${STATIC_RELEASE_ID}"
+          common_env=(
+            --env DJANGO_SETTINGS_MODULE=config.settings.production
+            --env DJANGO_SECRET_KEY=ci-only-production-settings-secret
+            --env DJANGO_ALLOWED_HOSTS=agenthub.example.invalid
+            --env AGENTHUB_STATIC_RELEASE_ID="${STATIC_RELEASE_ID}"
+          )
+          docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            "${common_env[@]}" \
+            --env DJANGO_STATIC_URL="/static/${STATIC_RELEASE_ID}/" \
+            agenthub-application:ci \
+            python manage.py check
+
+          if docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            "${common_env[@]}" \
+            --env DJANGO_STATIC_URL=/static/wrong-release/ \
+            agenthub-application:ci \
+            python -c 'import django; django.setup()'; then
+            echo "mismatched application/static release unexpectedly started" >&2
+            exit 1
+          fi
+
+          if docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            "${common_env[@]}" \
+            --env AGENTHUB_IMAGE_RELEASE_ID=wrong-image \
+            --env DJANGO_STATIC_URL="/static/${STATIC_RELEASE_ID}/" \
+            agenthub-application:ci \
+            python -c 'import django; django.setup()'; then
+            echo "mismatched application image/static release unexpectedly started" >&2
+            exit 1
+          fi

@@ -7,6 +7,13 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
+  name: agenthub-static
+  labels: {app.kubernetes.io/part-of: agenthub}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
   name: agenthub-runtime
   labels: {app.kubernetes.io/part-of: agenthub}
 ---
@@ -199,6 +206,60 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: agenthub-static
+  labels: {app.kubernetes.io/name: agenthub-static, app.kubernetes.io/part-of: agenthub}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: agenthub-static}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: agenthub-static, app.kubernetes.io/part-of: agenthub}
+    spec:
+      serviceAccountName: agenthub-static
+      automountServiceAccountToken: false
+      containers:
+        - name: static
+          image: agenthub-static-image-must-be-pinned-by-environment-overlay
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 2
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          volumeMounts:
+            - {name: nginx-tmp, mountPath: /tmp}
+      volumes:
+        - name: nginx-tmp
+          emptyDir:
+            sizeLimit: 16Mi
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agenthub-static
+  labels: {app.kubernetes.io/name: agenthub-static, app.kubernetes.io/part-of: agenthub}
+spec:
+  selector: {app.kubernetes.io/name: agenthub-static}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: agenthub-python-runner
   labels: {app.kubernetes.io/name: agenthub-python-runner, app.kubernetes.io/part-of: agenthub}
 spec:
@@ -265,7 +326,20 @@ metadata:
   name: agenthub-web
   labels: {app.kubernetes.io/name: agenthub-web, app.kubernetes.io/part-of: agenthub}
 spec:
+  host: agenthub-host-must-be-set-by-environment-overlay.invalid
   to: {kind: Service, name: agenthub-web}
+  port: {targetPort: http}
+  tls: {termination: edge, insecureEdgeTerminationPolicy: Redirect}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: agenthub-static
+  labels: {app.kubernetes.io/name: agenthub-static, app.kubernetes.io/part-of: agenthub}
+spec:
+  host: agenthub-host-must-be-set-by-environment-overlay.invalid
+  path: /static
+  to: {kind: Service, name: agenthub-static}
   port: {targetPort: http}
   tls: {termination: edge, insecureEdgeTerminationPolicy: Redirect}
 ---
@@ -275,6 +349,8 @@ metadata:
   name: agenthub-config
   labels: {app.kubernetes.io/part-of: agenthub}
 data:
+  AGENTHUB_STATIC_RELEASE_ID: "agenthub-release-must-be-set-by-environment-overlay"
+  DJANGO_STATIC_URL: "/static/agenthub-release-must-be-set-by-environment-overlay/"
   MCP_ENABLED: "false"
   METRICS_ENABLED: "true"
   OTEL_SERVICE_NAME: "agenthub-web"
