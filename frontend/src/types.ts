@@ -12,8 +12,11 @@ export interface BuilderInitial {
   draft_id?: number;
   project_id?: number;
   scenario_id?: number;
+  scenario_public_id?: string;
   scenario_name?: string;
   project_name?: string;
+  can_compile_release?: boolean;
+  artifact_options_url?: string;
   ai_authoring?: {
     available: boolean;
     message: string;
@@ -25,6 +28,82 @@ export interface BuilderInitial {
     checksum: string;
     body: Record<string, unknown>;
   };
+}
+
+export interface ManifestTypeOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
+export interface ManifestLogicalOption {
+  value: string;
+  label: string;
+  description: string;
+  latest_version: number;
+}
+
+export interface ManifestVersionOption {
+  id: number;
+  version: number;
+  description: string;
+  checksum: string;
+  status: string;
+  pinned_release_count: number;
+}
+
+export interface ManifestOptionsResult {
+  level: "artifact_type" | "logical_artifact" | "exact_version";
+  artifact_type?: string;
+  logical_id?: string;
+  logical_description?: string;
+  roles?: string[];
+  options: ManifestTypeOption[] | ManifestLogicalOption[] | ManifestVersionOption[];
+  limited?: boolean;
+}
+
+export interface ManifestSelectionPayload {
+  artifact_version_id: number;
+  role: string;
+}
+
+export interface ReleaseDiagnostic {
+  code: string;
+  message: string;
+  role?: string;
+  artifact_type?: string;
+  node_id?: string;
+  json_pointer?: string;
+}
+
+export interface ManifestPreflightResult {
+  ok: boolean;
+  diagnostics: ReleaseDiagnostic[];
+  artifact_manifest_sha256?: string;
+}
+
+export interface ManifestCompileResult extends ManifestPreflightResult {
+  release?: {
+    id: number;
+    status: string;
+    artifact_manifest_sha256: string;
+  };
+}
+
+export interface ManifestRequirement {
+  role: string;
+  artifact_type: string;
+  node_ids: string[];
+}
+
+export interface ManifestRequirementsResult extends ManifestPreflightResult {
+  workflow?: {
+    artifact_version_id: number;
+    logical_id: string;
+    version: number;
+    checksum: string;
+  };
+  requirements?: ManifestRequirement[];
 }
 
 export interface NodeFieldSchema {
@@ -164,6 +243,10 @@ export interface AiCandidateResult {
   diagnostics: DiagnosticsResult;
   prompt_contract: { id: string; revision: number; checksum: string };
   authoring_context: { contract: string; checksum: string };
+  repair?: {
+    before_diagnostic_codes: string[];
+    after_diagnostic_codes: string[];
+  };
 }
 
 export interface CapabilityMissingResult {

@@ -12,6 +12,7 @@ single-active constraint guarantees only one active release per scenario.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from django.db import transaction
 from django.utils import timezone
@@ -25,8 +26,72 @@ from apps.releases.models import ReleaseStatus, ScenarioRelease
 MAX_MANIFEST_ROLE_LENGTH = 128
 
 
+_PUBLIC_DIAGNOSTIC_MESSAGES = {
+    "release_compile_failed": "Candidate manifest canonical compiler tarafından reddedildi.",
+    "manifest_empty": "Candidate manifest en az bir exact artifact içermelidir.",
+    "index_version_invalid": "Index version pinleri pozitif tam sayı olmalıdır.",
+    "artifact_unresolved": "Seçilen exact artifact bu senaryo kapsamında çözümlenemedi.",
+    "duplicate_manifest_role": "Manifest rolleri benzersiz olmalıdır.",
+    "role_type_mismatch": "Manifest rolü seçilen artifact type ile uyumlu değildir.",
+    "artifact_validation_failed": "Immutable artifact canonical doğrulamadan geçemedi.",
+    "artifact_checksum_mismatch": "Immutable artifact checksum doğrulaması başarısız oldu.",
+    "tool_binding_invalid": "Tool binding aktif, kayıtlı veya release için uygun değildir.",
+    "workflow_role_invalid": "Ana workflow canonical workflow_definition rolünü kullanmalıdır.",
+    "workflow_compile_failed": "Workflow canonical compiler tarafından reddedildi.",
+    "transform_profile_unpinned": "Transform node için exact transform profile pini eksik.",
+    "child_workflow_invalid": "Child workflow pini eksik, belirsiz veya geçersiz.",
+    "workflow_missing": "Candidate manifest bir canonical workflow_definition pini içermelidir.",
+    "compiled_workflow_invalid": "Derlenen workflow graph yapısı geçersiz.",
+    "agent_policy_invalid": "Agent loop policy derlenmiş graph içinde geçersiz.",
+    "agent_tool_unpinned": "Agent loop için gerekli exact tool binding pini eksik.",
+    "agent_verification_tool_invalid": "Agent doğrulama tool pini eksik veya yan etkisiz değildir.",
+}
+
+
+def _safe_diagnostic_identifier(value: object) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > MAX_MANIFEST_ROLE_LENGTH:
+        return None
+    if not all(character.isalnum() or character in "._-" for character in value):
+        return None
+    return value
+
+
 class CompileError(ValueError):
-    """Raised when a release cannot be compiled from its references."""
+    """Internal compiler failure with a stable, safe operator diagnostic."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "release_compile_failed",
+        role: str | None = None,
+        artifact_type: str | None = None,
+        node_id: str | None = None,
+        json_pointer: str | None = None,
+    ) -> None:
+        self.code = code if code in _PUBLIC_DIAGNOSTIC_MESSAGES else "release_compile_failed"
+        self.role = _safe_diagnostic_identifier(role)
+        self.artifact_type = artifact_type if artifact_type in ArtifactType.values else None
+        self.node_id = _safe_diagnostic_identifier(node_id)
+        self.json_pointer = (
+            json_pointer
+            if isinstance(json_pointer, str)
+            and json_pointer.startswith("/")
+            and len(json_pointer) <= 512
+            else None
+        )
+        super().__init__(message)
+
+    def as_diagnostic(self) -> dict[str, Any]:
+        diagnostic: dict[str, Any] = {
+            "code": self.code,
+            "message": _PUBLIC_DIAGNOSTIC_MESSAGES[self.code],
+        }
+        for key in ("role", "artifact_type", "node_id", "json_pointer"):
+            value = getattr(self, key)
+            if value is not None:
+                diagnostic[key] = value
+        return diagnostic
 
 
 @dataclass(frozen=True)
@@ -78,7 +143,10 @@ def _resolve(scenario: Scenario, ref: ArtifactRef) -> ArtifactVersion:
     if artifact is None:
         raise CompileError(
             f"unresolved reference for role '{ref.role}': "
-            f"{ref.type} {ref.logical_id}:v{ref.version} not found in organization"
+            f"{ref.type} {ref.logical_id}:v{ref.version} not found in organization",
+            code="artifact_unresolved",
+            role=ref.role,
+            artifact_type=ref.type,
         )
     return artifact
 
@@ -93,32 +161,58 @@ def compile_release(
     index_versions: list[int] | None = None,
 ) -> ScenarioRelease:
     if not refs:
-        raise CompileError("a release must reference at least one artifact")
+        raise CompileError(
+            "a release must reference at least one artifact",
+            code="manifest_empty",
+        )
 
     # Optional pinned retrieval indexes. Readiness/tenant checks happen at the
     # promotion gate (Sprint 6); the retriever additionally filters by the release's
     # organization, so a stray pin can never surface another tenant's chunks.
     pinned_indexes = sorted({int(v) for v in (index_versions or [])})
     if any(v <= 0 for v in pinned_indexes):
-        raise CompileError("index version ids must be positive integers")
+        raise CompileError(
+            "index version ids must be positive integers",
+            code="index_version_invalid",
+        )
 
     artifacts_manifest: dict[str, dict[str, object]] = {}
     workflow_checksum = ""
     compiled_workflow_graph: dict[str, object] | None = None
     for ref in refs:
         if ref.role in artifacts_manifest:
-            raise CompileError(f"duplicate role in release: {ref.role}")
+            raise CompileError(
+                f"duplicate role in release: {ref.role}",
+                code="duplicate_manifest_role",
+                role=ref.role,
+                artifact_type=ref.type,
+            )
         if not role_accepts_artifact_type(ref.role, ref.type):
-            raise CompileError(f"role '{ref.role}' is incompatible with artifact type '{ref.type}'")
+            raise CompileError(
+                f"role '{ref.role}' is incompatible with artifact type '{ref.type}'",
+                code="role_type_mismatch",
+                role=ref.role,
+                artifact_type=ref.type,
+            )
         artifact = _resolve(scenario, ref)
         # Defense in depth: re-validate the pinned body at compile time.
         try:
             validate_body(artifact.type, artifact.body)
         except ValueError as exc:
-            raise CompileError(f"role '{ref.role}' failed validation: {exc}") from exc
+            raise CompileError(
+                f"role '{ref.role}' failed validation: {exc}",
+                code="artifact_validation_failed",
+                role=ref.role,
+                artifact_type=ref.type,
+            ) from exc
         # Detect drift between stored checksum and current body.
         if compute_checksum(artifact.body) != artifact.checksum:
-            raise CompileError(f"checksum mismatch for role '{ref.role}'")
+            raise CompileError(
+                f"checksum mismatch for role '{ref.role}'",
+                code="artifact_checksum_mismatch",
+                role=ref.role,
+                artifact_type=ref.type,
+            )
         artifacts_manifest[ref.role] = {
             "type": artifact.type,
             "ref": artifact.ref,
@@ -134,7 +228,12 @@ def compile_release(
                     scenario=scenario, artifact=artifact
                 )
             except ToolRegistryError as exc:
-                raise CompileError(f"role '{ref.role}' tool binding failed: {exc}") from exc
+                raise CompileError(
+                    f"role '{ref.role}' tool binding failed: {exc}",
+                    code="tool_binding_invalid",
+                    role=ref.role,
+                    artifact_type=ref.type,
+                ) from exc
         if artifact.type == "workflow_definition":
             if ref.role.startswith("child_workflow."):
                 # A pinned child runtime (P2.6.5). It is not the parent's own workflow; the
@@ -142,7 +241,10 @@ def compile_release(
                 pass
             elif ref.role != "workflow_definition":
                 raise CompileError(
-                    "workflow definition must use the workflow_definition or child_workflow.* role"
+                    "workflow definition must use the workflow_definition or child_workflow.* role",
+                    code="workflow_role_invalid",
+                    role=ref.role,
+                    artifact_type=ref.type,
                 )
             else:
                 from apps.workflows.compiler import WorkflowCompileError
@@ -155,7 +257,12 @@ def compile_release(
                         created_by=created_by,
                     )
                 except WorkflowCompileError as exc:
-                    raise CompileError(f"workflow compilation failed: {exc}") from exc
+                    raise CompileError(
+                        f"workflow compilation failed: {exc}",
+                        code="workflow_compile_failed",
+                        role=ref.role,
+                        artifact_type=ref.type,
+                    ) from exc
                 workflow_checksum = workflow_version.checksum
                 compiled_workflow_graph = workflow_version.compiled_graph
     if compiled_workflow_graph is not None:
@@ -183,7 +290,10 @@ def compile_release(
                 artifacts_manifest=artifacts_manifest,
             )
         except CompositionCompileError as exc:
-            raise CompileError(str(exc)) from exc
+            raise CompileError(
+                str(exc),
+                code="child_workflow_invalid",
+            ) from exc
 
     # Deny-by-default document-ACL pins (P4.2): compile the scenario's mandatory
     # ``ScenarioDocumentSetBinding``s to published document-set-version ids. A scenario with no
@@ -209,7 +319,12 @@ def compile_release(
                 compiled_workflow_graph, artifacts_manifest
             )
     if not workflow_checksum or compiled_workflow_graph is None:
-        raise CompileError("a release must pin one canonical workflow_definition")
+        raise CompileError(
+            "a release must pin one canonical workflow_definition",
+            code="workflow_missing",
+            role="workflow_definition",
+            artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        )
     manifest_sha = compute_checksum(manifest)
 
     return ScenarioRelease.objects.create(
@@ -259,7 +374,11 @@ def _assert_transform_profiles_pinned(
         entry = manifest.get(role) if isinstance(role, str) else None
         if not isinstance(entry, dict) or entry.get("type") != ArtifactType.TRANSFORM_PROFILE:
             raise CompileError(
-                f"transform node references an unpinned transform_profile role: {role!r}"
+                f"transform node references an unpinned transform_profile role: {role!r}",
+                code="transform_profile_unpinned",
+                role=role if isinstance(role, str) else None,
+                artifact_type=ArtifactType.TRANSFORM_PROFILE,
+                node_id=str(node.get("id", "")),
             )
 
 
@@ -363,7 +482,10 @@ def _assert_agent_loop_tools_pinned(
     }
     nodes = graph.get("nodes")
     if not isinstance(nodes, list):
-        raise CompileError("compiled workflow nodes are invalid")
+        raise CompileError(
+            "compiled workflow nodes are invalid",
+            code="compiled_workflow_invalid",
+        )
     for node in nodes:
         if not isinstance(node, dict) or node.get("type") != "agent_loop":
             continue
@@ -371,31 +493,55 @@ def _assert_agent_loop_tools_pinned(
         config = node.get("config")
         policy = config.get("policy") if isinstance(config, dict) else None
         if not isinstance(policy, dict):
-            raise CompileError(f"agent_loop compiled policy is missing: {node_id}")
+            raise CompileError(
+                f"agent_loop compiled policy is missing: {node_id}",
+                code="agent_policy_invalid",
+                node_id=node_id,
+            )
         declared = policy.get("tools")
         if not isinstance(declared, list) or any(not isinstance(role, str) for role in declared):
-            raise CompileError(f"agent_loop compiled tools are invalid: {node_id}")
+            raise CompileError(
+                f"agent_loop compiled tools are invalid: {node_id}",
+                code="agent_policy_invalid",
+                node_id=node_id,
+            )
         missing = sorted(set(declared) - tool_roles)
         if missing:
             raise CompileError(
-                f"agent_loop declares tools with no pinned tool_binding role: {missing}"
+                f"agent_loop declares tools with no pinned tool_binding role: {missing}",
+                code="agent_tool_unpinned",
+                role=missing[0],
+                artifact_type=ArtifactType.TOOL_BINDING,
+                node_id=node_id,
             )
 
         actions = policy.get("actions")
         verify_roles = actions.get("verify_roles", []) if isinstance(actions, dict) else []
         if not isinstance(verify_roles, list):
-            raise CompileError(f"agent_loop verification roles are invalid: {node_id}")
+            raise CompileError(
+                f"agent_loop verification roles are invalid: {node_id}",
+                code="agent_policy_invalid",
+                node_id=node_id,
+            )
         for role in verify_roles:
             if role == "retrieval":
                 continue
             pinned = manifest.get(str(role), {}).get("tool")
             if not isinstance(pinned, dict):
                 raise CompileError(
-                    f"agent_loop verification role has no pinned tool_binding: {role}"
+                    f"agent_loop verification role has no pinned tool_binding: {role}",
+                    code="agent_verification_tool_invalid",
+                    role=str(role),
+                    artifact_type=ArtifactType.TOOL_BINDING,
+                    node_id=node_id,
                 )
             if pinned.get("side_effecting") or pinned.get("approval_required"):
                 raise CompileError(
-                    f"agent_loop verification role must be a no-side-effect action: {role}"
+                    f"agent_loop verification role must be a no-side-effect action: {role}",
+                    code="agent_verification_tool_invalid",
+                    role=str(role),
+                    artifact_type=ArtifactType.TOOL_BINDING,
+                    node_id=node_id,
                 )
 
 

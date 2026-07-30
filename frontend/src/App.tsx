@@ -4,6 +4,7 @@ import { ApiError, BuilderApi } from "./api";
 import { AiAuthoringPanel } from "./AiAuthoringPanel";
 import { ArtifactDraftEditor } from "./ArtifactDraftEditor";
 import { Editor } from "./Editor";
+import { ScenarioManifestPanel } from "./ScenarioManifestPanel";
 import type { AiCandidateResult, ArtifactDraft, BuilderInitial, CapabilityMissingResult, Draft, NodeSchema, OrgOption } from "./types";
 
 // Top-level bootstrap: pick an organization (from the server-rendered scope), load its
@@ -190,6 +191,25 @@ export function App({
         </button>
         <Editor api={api} schema={schema} draft={active}
           initialDiagnostics={active.id === 0 && transient ? transient.result.diagnostics : undefined}
+          onRepairTransient={active.id === 0 && transient && initial?.scenario_id
+            ? async (body, instruction) => {
+              const result = await api.repairCandidate({
+                organization: orgSlug,
+                project_id: transient.projectId,
+                scenario_id: initial.scenario_id as number,
+                candidate: body,
+                instruction,
+                prompt_contract: transient.result.prompt_contract,
+                authoring_context: transient.result.authoring_context,
+              });
+              if (result.status === "capability_missing") {
+                openCapabilityScaffold(result);
+                return null;
+              }
+              setTransient({ result, projectId: transient.projectId });
+              return result;
+            }
+            : undefined}
           onSaveTransient={active.id === 0 && transient ? async (body, name) => {
             const existing = drafts[0];
             const updateExisting = existing ? window.confirm(
@@ -208,6 +228,12 @@ export function App({
             await reload();
             setActive(saved);
           } : undefined} />
+        {initial?.can_compile_release && initial.scenario_public_id &&
+          initial.artifact_options_url && <ScenarioManifestPanel
+            api={api}
+            scenarioPublicId={initial.scenario_public_id}
+            optionsUrl={initial.artifact_options_url}
+          />}
       </div>
     );
   }
@@ -282,6 +308,13 @@ export function App({
         {canWrite && <button type="button" onClick={() => void createFromActive()}
           style={{ ...openBtn, marginLeft: 8 }}>Yeni taslak olarak düzenle</button>}
       </section>}
+
+      {initial?.can_compile_release && initial.scenario_public_id &&
+        initial.artifact_options_url && <ScenarioManifestPanel
+          api={api}
+          scenarioPublicId={initial.scenario_public_id}
+          optionsUrl={initial.artifact_options_url}
+        />}
 
       <h2 style={{ margin: "20px 0 8px" }}>Sözleşme taslakları</h2>
       {artifactDrafts.length === 0 && <div style={{ color: "#8b95a7" }}>

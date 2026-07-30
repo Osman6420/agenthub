@@ -5,6 +5,48 @@ import { AiAuthoringPanel } from "../AiAuthoringPanel";
 import { BuilderApi } from "../api";
 
 describe("Studio AI authoring panel", () => {
+  it("sends the current transient candidate and stale-detection metadata for repair", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn((_url: string, options?: RequestInit) => {
+      bodies.push(JSON.parse(String(options?.body ?? "{}")) as Record<string, unknown>);
+      return Promise.resolve(new Response(JSON.stringify({
+        status: "workflow_candidate",
+        artifact_type: "workflow_definition",
+        candidate: { api_version: "agenthub/v1", kind: "Workflow" },
+        diagnostics: { ok: true, errors: [] },
+        prompt_contract: { id: "agenthub.workflow-authoring", revision: 1, checksum: "a".repeat(64) },
+        authoring_context: { contract: "agenthub.studio-authoring-context/v1", checksum: "b".repeat(64) },
+        repair: {
+          before_diagnostic_codes: ["workflow_compile_failed"],
+          after_diagnostic_codes: [],
+        },
+      }), { status: 200 }));
+    }));
+    const api = new BuilderApi("/console/api/builder/");
+
+    const result = await api.repairCandidate({
+      organization: "org",
+      project_id: 3,
+      scenario_id: 7,
+      candidate: { api_version: "agenthub/v1", kind: "Workflow" },
+      instruction: "Eksik end node'unu ekle",
+      prompt_contract: { id: "agenthub.workflow-authoring", revision: 1, checksum: "a".repeat(64) },
+      authoring_context: {
+        contract: "agenthub.studio-authoring-context/v1",
+        checksum: "b".repeat(64),
+      },
+    });
+
+    expect(result.status).toBe("workflow_candidate");
+    expect(bodies[0]).toMatchObject({
+      organization: "org",
+      project_id: 3,
+      scenario_id: 7,
+      instruction: "Eksik end node'unu ekle",
+      candidate: { api_version: "agenthub/v1", kind: "Workflow" },
+    });
+  });
+
   it("returns a transient candidate without asking for a name or logical id", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal("fetch", vi.fn((_url: string, options?: RequestInit) => {
@@ -30,6 +72,7 @@ describe("Studio AI authoring panel", () => {
     await vi.waitFor(() => expect(onGenerated).toHaveBeenCalledOnce());
     expect(bodies[0]).toMatchObject({ project_id: 3, scenario_id: 7, description: "akış" });
     expect(screen.queryByLabelText(/logical/i)).not.toBeInTheDocument();
+    await vi.waitFor(() => expect(screen.getByText("Geçici aday üret")).toBeEnabled());
   });
 
   it("keeps capability-missing suggestions transient", async () => {

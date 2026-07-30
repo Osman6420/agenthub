@@ -51,7 +51,7 @@ export interface BuilderController {
   runDiagnostics: () => Promise<void>;
   save: () => Promise<number | undefined>;
   publish: (versionDescription?: string) => Promise<void>;
-  applyJsonCandidate: (body: unknown) => Promise<boolean>;
+  applyJsonCandidate: (body: unknown, allowInvalid?: boolean) => Promise<boolean>;
 }
 
 export function useBuilder(
@@ -256,7 +256,7 @@ export function useBuilder(
     setStatus(`Yayımlandı: ${result.logical_id} v${result.version}`);
   }, [api, draft.id, isDirty, readOnly, revision, save]);
 
-  const applyJsonCandidate = useCallback(async (candidate: unknown) => {
+  const applyJsonCandidate = useCallback(async (candidate: unknown, allowInvalid = false) => {
     if (readOnly || !candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
       setStatus("Geçerli bir JSON nesnesi girin");
       return false;
@@ -266,7 +266,7 @@ export function useBuilder(
       ? await api.transientDiagnostics({ organization: draft.organization, body: bodyCandidate })
       : await api.diagnostics(draft.id, bodyCandidate);
     setDiagnostics(result);
-    if (!result.ok) {
+    if (!result.ok && !allowInvalid) {
       setStatus("JSON canonical workflow doğrulamasından geçmedi");
       return false;
     }
@@ -276,7 +276,9 @@ export function useBuilder(
     setWorkflowId(parsed.workflowId || draft.logical_id);
     setInputNodeId(parsed.inputNodeId);
     setSelectedNodeId(null);
-    setStatus("JSON grafe uygulandı; kaydetmeden önce değişiklikleri inceleyin");
+    setStatus(result.ok
+      ? "JSON grafe uygulandı; kaydetmeden önce değişiklikleri inceleyin"
+      : "AI repair adayı uygulandı; kalan canonical hataları düzeltmeye devam edin");
     return true;
   }, [api, draft.id, draft.logical_id, readOnly]);
 

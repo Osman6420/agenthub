@@ -40,6 +40,19 @@ def validate_description(value: Any) -> str:
     return value
 
 
+def validate_repair_instruction(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise services.BuilderError("description_invalid")
+    value = value.strip()
+    if len(value.encode("utf-8")) > _limit("AI_AUTHORING_MAX_DESCRIPTION_BYTES", 8192):
+        raise services.BuilderError("description_too_large")
+    if any(ord(char) < 32 and char not in "\n\r\t" for char in value):
+        raise services.BuilderError("description_invalid")
+    return value
+
+
 def _depth(value: Any, current: int = 0) -> int:
     if current > _limit("AI_AUTHORING_MAX_JSON_DEPTH", 20):
         raise services.BuilderError("candidate_too_deep")
@@ -86,11 +99,12 @@ def _audit(
     request_id: str,
     artifact_type: str = ArtifactType.WORKFLOW_DEFINITION,
     after: dict[str, Any] | None = None,
+    operation: str = "generate",
 ) -> None:
     record_event(
         actor_type="user",
         actor_id=actor,
-        action="console.builder.ai_candidate.generate",
+        action=f"console.builder.ai_candidate.{operation}",
         outcome=outcome,
         organization_id=org.id,
         resource_type="artifact_candidate",
@@ -113,6 +127,72 @@ def _consume_rate(*, actor_id: int, organization_id: int) -> None:
     except Exception as exc:
         raise services.BuilderError("rate_limit_unavailable") from exc
     raise services.BuilderError("rate_limited")
+
+
+def _scenario_workflow_result(
+    *,
+    structured: dict[str, Any],
+    context: dict[str, Any],
+    contract: AuthoringContract,
+) -> dict[str, Any]:
+    status = structured.get("status")
+    if status == "capability_missing":
+        if set(structured) != {"status", "required_capability", "suggested_custom_node"}:
+            raise services.BuilderError("model_response_invalid")
+        suggestion = structured["suggested_custom_node"]
+        required = structured["required_capability"]
+        expected_suggestion = {
+            "display_name",
+            "purpose",
+            "input_summary",
+            "config_summary",
+            "output_summary",
+        }
+        if (
+            not isinstance(required, str)
+            or not 1 <= len(required) <= 128
+            or not isinstance(suggestion, dict)
+            or set(suggestion) != expected_suggestion
+            or any(
+                not isinstance(value, str) or not 1 <= len(value) <= 1000
+                for value in suggestion.values()
+            )
+        ):
+            raise services.BuilderError("model_response_invalid")
+        return {
+            "status": status,
+            "suggestion": suggestion,
+            "required_capability": required,
+            "authoring_context": {
+                "contract": context["snapshot"]["contract"],
+                "checksum": context["checksum"],
+            },
+        }
+    if status != "workflow_candidate" or set(structured) != {"status", "candidate"}:
+        raise services.BuilderError("model_response_invalid")
+    workflow_candidate = structured.get("candidate")
+    if not isinstance(workflow_candidate, dict):
+        raise services.BuilderError("model_response_invalid")
+    services._validated_body(workflow_candidate)
+    try:
+        validate_workflow_references(workflow_candidate, context)
+    except ValueError as exc:
+        raise services.BuilderError(str(exc)) from exc
+    diagnostics = services.diagnose_artifact(
+        ArtifactType.WORKFLOW_DEFINITION,
+        workflow_candidate,
+    )
+    return {
+        "status": "workflow_candidate",
+        "artifact_type": ArtifactType.WORKFLOW_DEFINITION,
+        "candidate": workflow_candidate,
+        "diagnostics": diagnostics,
+        "prompt_contract": _contract_metadata(contract),
+        "authoring_context": {
+            "contract": context["snapshot"].get("contract", ""),
+            "checksum": context["checksum"],
+        },
+    }
 
 
 def generate_candidate(
@@ -193,30 +273,12 @@ def generate_candidate(
                 "diagnostics": diagnostics,
                 "prompt_contract": _contract_metadata(contract),
             }
-        status = structured.get("status")
-        if status == "capability_missing":
-            if set(structured) != {"status", "required_capability", "suggested_custom_node"}:
-                raise services.BuilderError("model_response_invalid")
-            suggestion = structured["suggested_custom_node"]
-            required = structured["required_capability"]
-            expected_suggestion = {
-                "display_name",
-                "purpose",
-                "input_summary",
-                "config_summary",
-                "output_summary",
-            }
-            if (
-                not isinstance(required, str)
-                or not 1 <= len(required) <= 128
-                or not isinstance(suggestion, dict)
-                or set(suggestion) != expected_suggestion
-                or any(
-                    not isinstance(value, str) or not 1 <= len(value) <= 1000
-                    for value in suggestion.values()
-                )
-            ):
-                raise services.BuilderError("model_response_invalid")
+        result = _scenario_workflow_result(
+            structured=structured,
+            context=context,
+            contract=contract,
+        )
+        if result["status"] == "capability_missing":
             _audit(
                 actor=actor,
                 org=organization,
@@ -229,26 +291,7 @@ def generate_candidate(
                     "context_bytes": context["bytes"],
                 },
             )
-            return {
-                "status": status,
-                "suggestion": suggestion,
-                "required_capability": required,
-                "authoring_context": {
-                    "contract": context["snapshot"]["contract"],
-                    "checksum": context["checksum"],
-                },
-            }
-        if status != "workflow_candidate" or set(structured) != {"status", "candidate"}:
-            raise services.BuilderError("model_response_invalid")
-        workflow_candidate = structured.get("candidate")
-        if not isinstance(workflow_candidate, dict):
-            raise services.BuilderError("model_response_invalid")
-        services._validated_body(workflow_candidate)
-        try:
-            validate_workflow_references(workflow_candidate, context)
-        except ValueError as exc:
-            raise services.BuilderError(str(exc)) from exc
-        diagnostics = services.diagnose_artifact(artifact_type, workflow_candidate)
+            return result
         _audit(
             actor=actor,
             org=organization,
@@ -260,22 +303,12 @@ def generate_candidate(
                 "input_tokens": response.input_tokens,
                 "output_tokens": response.output_tokens,
                 "candidate_bytes": len(response.text.encode("utf-8")),
-                "valid": diagnostics["ok"],
+                "valid": result["diagnostics"]["ok"],
                 "context_checksum": context["checksum"],
                 "context_bytes": context["bytes"],
             },
         )
-        return {
-            "status": "workflow_candidate",
-            "artifact_type": artifact_type,
-            "candidate": workflow_candidate,
-            "diagnostics": diagnostics,
-            "prompt_contract": _contract_metadata(contract),
-            "authoring_context": {
-                "contract": context["snapshot"].get("contract", ""),
-                "checksum": context["checksum"],
-            },
-        }
+        return result
     except AuthoringProviderError as exc:
         _audit(
             actor=actor,
@@ -294,6 +327,164 @@ def generate_candidate(
             reason=exc.code,
             request_id=request_id,
             artifact_type=artifact_type,
+        )
+        raise
+
+
+def _diagnostic_codes(diagnostics: dict[str, Any]) -> list[str]:
+    errors = diagnostics.get("errors", [])
+    if not isinstance(errors, list):
+        return []
+    return sorted(
+        {
+            str(item["code"])
+            for item in errors
+            if isinstance(item, dict) and isinstance(item.get("code"), str)
+        }
+    )
+
+
+def repair_candidate(
+    *,
+    organization: Organization,
+    project: AIProject,
+    scenario: Scenario,
+    actor: str,
+    actor_id: int,
+    candidate: Any,
+    instruction: Any = "",
+    prompt_contract: Any = None,
+    authoring_context: Any = None,
+    request_id: str = "",
+) -> dict[str, Any]:
+    """Run one bounded, human-triggered repair turn over transient state."""
+
+    try:
+        contract = get_authoring_contract(ArtifactType.WORKFLOW_DEFINITION)
+    except AuthoringProviderError as exc:
+        raise services.BuilderError(exc.code.lower()) from exc
+    profile_id = str(getattr(settings, "AI_AUTHORING_MODEL_PROFILE_ID", "")).strip()
+    if not profile_id:
+        raise services.BuilderError("ai_authoring_disabled")
+    instruction = validate_repair_instruction(instruction)
+    try:
+        body = parse_candidate(json.dumps(candidate, ensure_ascii=False))
+    except (TypeError, ValueError) as exc:
+        raise services.BuilderError("candidate_invalid") from exc
+    if prompt_contract is not None and prompt_contract != _contract_metadata(contract):
+        raise services.BuilderError("prompt_contract_mismatch")
+    try:
+        context = build_authoring_context(project=project, scenario=scenario)
+    except ValueError as exc:
+        raise services.BuilderError(str(exc)) from exc
+    if authoring_context is not None and (
+        not isinstance(authoring_context, dict)
+        or authoring_context.get("contract") != context["snapshot"]["contract"]
+        or authoring_context.get("checksum") != context["checksum"]
+    ):
+        raise services.BuilderError("authoring_context_stale")
+    diagnostics_before = services.diagnose_artifact(
+        ArtifactType.WORKFLOW_DEFINITION,
+        body,
+    )
+    try:
+        _consume_rate(actor_id=actor_id, organization_id=organization.id)
+    except services.BuilderError as exc:
+        _audit(
+            actor=actor,
+            org=organization,
+            outcome="deny",
+            reason=exc.code,
+            request_id=request_id,
+            operation="repair",
+        )
+        raise
+    _audit(
+        actor=actor,
+        org=organization,
+        outcome="success",
+        reason="requested",
+        request_id=request_id,
+        operation="repair",
+        after={
+            "candidate_bytes": len(
+                json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ),
+            "instruction_bytes": len(instruction.encode("utf-8")),
+            "before_diagnostic_codes": _diagnostic_codes(diagnostics_before),
+            "context_checksum": context["checksum"],
+            "context_bytes": context["bytes"],
+            "contract_id": contract.contract_id,
+            "contract_revision": contract.revision,
+            "contract_checksum": contract.checksum,
+        },
+    )
+    try:
+        provider = get_authoring_provider()
+        repair = getattr(provider, "repair", None)
+        if not callable(repair):
+            raise AuthoringProviderError("REPAIR_UNAVAILABLE")
+        response = repair(
+            profile_id=profile_id,
+            instruction=instruction,
+            current_candidate=body,
+            diagnostics=diagnostics_before,
+            contract=contract,
+            server_context=context["snapshot"],
+        )
+        structured = parse_candidate(response.text)
+        result = _scenario_workflow_result(
+            structured=structured,
+            context=context,
+            contract=contract,
+        )
+        after_codes = (
+            _diagnostic_codes(result["diagnostics"])
+            if result["status"] == "workflow_candidate"
+            else ["capability_missing"]
+        )
+        result["repair"] = {
+            "before_diagnostic_codes": _diagnostic_codes(diagnostics_before),
+            "after_diagnostic_codes": after_codes,
+        }
+        _audit(
+            actor=actor,
+            org=organization,
+            outcome="success",
+            reason=(
+                "capability_missing" if result["status"] == "capability_missing" else "succeeded"
+            ),
+            request_id=request_id,
+            operation="repair",
+            after={
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "candidate_bytes": len(response.text.encode("utf-8")),
+                "before_diagnostic_codes": _diagnostic_codes(diagnostics_before),
+                "after_diagnostic_codes": after_codes,
+                "context_checksum": context["checksum"],
+                "context_bytes": context["bytes"],
+            },
+        )
+        return result
+    except AuthoringProviderError as exc:
+        _audit(
+            actor=actor,
+            org=organization,
+            outcome="failure",
+            reason=exc.code,
+            request_id=request_id,
+            operation="repair",
+        )
+        raise services.BuilderError(exc.code.lower()) from exc
+    except services.BuilderError as exc:
+        _audit(
+            actor=actor,
+            org=organization,
+            outcome="failure",
+            reason=exc.code,
+            request_id=request_id,
+            operation="repair",
         )
         raise
 

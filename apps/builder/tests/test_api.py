@@ -6,21 +6,28 @@ import json
 from typing import Any
 
 import pytest
+from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.services import create_artifact_version
+from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.tests.conftest import BuilderFixture, simple_workflow
 from apps.catalog.models import AIProject, Scenario
+from apps.identity.roles import Role
 from apps.orchestration.authoring import (
     AuthoringContract,
     AuthoringResponse,
     get_authoring_contract,
 )
+from apps.releases.models import ReleaseStatus, ScenarioRelease
+from apps.tenancy.models import OrganizationMembership
 from apps.tools.models import ToolBinding, ToolDefinition, ToolRisk, ToolStatus
+from apps.workflows.models import WorkflowVersion
 
 pytestmark = pytest.mark.django_db
 
@@ -61,6 +68,33 @@ class FakeAuthoringProvider:
             )
         return self.response
 
+    def repair(
+        self,
+        *,
+        profile_id: str,
+        instruction: str,
+        current_candidate: dict[str, Any],
+        diagnostics: dict[str, Any],
+        contract: AuthoringContract,
+        server_context: dict[str, Any],
+    ) -> AuthoringResponse:
+        self.calls.append(
+            {
+                "operation": "repair",
+                "profile_id": profile_id,
+                "instruction": instruction,
+                "current_candidate": current_candidate,
+                "diagnostics": diagnostics,
+                "artifact_type": contract.artifact_type,
+                "server_context": server_context,
+            }
+        )
+        return AuthoringResponse(
+            json.dumps({"status": "workflow_candidate", "candidate": simple_workflow()}),
+            15,
+            9,
+        )
+
 
 def _post(client: Client, url: str, payload: dict):
     return client.post(url, data=json.dumps(payload), content_type="application/json")
@@ -74,11 +108,13 @@ def _put(client: Client, url: str, payload: dict):
 
 
 def test_unauthenticated_calls_return_401_json(client: Client, bf: BuilderFixture) -> None:
+    scenario = Scenario.objects.create(project=bf.project, slug="auth", name="Auth")
     for url in [
         reverse("builder_api:drafts"),
         reverse("builder_api:artifact_drafts"),
         reverse("builder_api:draft_detail", args=[bf.draft.pk]),
         reverse("builder_api:node_schema") + "?organization=b-org",
+        reverse("builder_api:release_manifest_preflight", args=[scenario.public_id]),
     ]:
         response = client.get(url)
         assert response.status_code == 401
@@ -103,6 +139,222 @@ def test_cross_tenant_draft_is_not_found(client: Client, bf: BuilderFixture) -> 
     response = client.get(reverse("builder_api:draft_detail", args=[bf.draft.pk]))
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "not_found"
+
+
+# --- Scenario Studio release manifest --------------------------------------
+
+
+def _release_manager(bf: BuilderFixture) -> User:
+    manager = User.objects.create_user("release-manager", password="x")  # noqa: S106
+    OrganizationMembership.objects.create(
+        organization=bf.org,
+        user=manager,
+        role=Role.ORGANIZATION_ADMIN,
+    )
+    return manager
+
+
+def _release_scenario_and_workflow(bf: BuilderFixture) -> tuple[Scenario, ArtifactVersion]:
+    scenario = Scenario.objects.create(
+        project=bf.project,
+        slug="release-studio",
+        name="Release Studio",
+    )
+    workflow = create_artifact_version(
+        organization=bf.org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="release_studio_flow",
+        body=simple_workflow(),
+        created_by="author",
+    )
+    return scenario, workflow
+
+
+def test_release_manifest_preflight_is_exact_authorized_and_no_write(
+    client: Client,
+    bf: BuilderFixture,
+) -> None:
+    scenario, workflow = _release_scenario_and_workflow(bf)
+    url = reverse("builder_api:release_manifest_preflight", args=[scenario.public_id])
+    payload = {
+        "items": [
+            {
+                "artifact_version_id": workflow.pk,
+                "role": "workflow_definition",
+            }
+        ]
+    }
+
+    client.force_login(bf.author)
+    assert _post(client, url, payload).status_code == 403
+
+    client.force_login(_release_manager(bf))
+    response = _post(client, url, payload)
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["artifact_manifest_sha256"]
+    assert not ScenarioRelease.objects.exists()
+    assert not WorkflowVersion.objects.exists()
+    assert not AuditEvent.objects.filter(action="console.scenario.release.compile").exists()
+
+    requirements = _post(
+        client,
+        reverse("builder_api:release_manifest_requirements", args=[scenario.public_id]),
+        {"workflow_artifact_id": workflow.pk},
+    )
+    assert requirements.status_code == 200
+    assert requirements.json()["ok"] is True
+    assert requirements.json()["requirements"] == [
+        {
+            "role": "workflow_definition",
+            "artifact_type": "workflow_definition",
+            "node_ids": [],
+        }
+    ]
+    assert not ScenarioRelease.objects.exists()
+    assert not WorkflowVersion.objects.exists()
+
+
+def test_release_manifest_compile_preserves_safe_failure_and_audits_success(
+    client: Client,
+    bf: BuilderFixture,
+) -> None:
+    scenario, workflow = _release_scenario_and_workflow(bf)
+    contract = create_artifact_version(
+        organization=bf.org,
+        artifact_type=ArtifactType.INPUT_CONTRACT,
+        logical_id="request_contract",
+        body={"type": "object"},
+        created_by="author",
+    )
+    url = reverse("builder_api:release_manifest_compile", args=[scenario.public_id])
+    client.force_login(_release_manager(bf))
+
+    rejected = _post(
+        client,
+        url,
+        {
+            "items": [
+                {
+                    "artifact_version_id": contract.pk,
+                    "role": "input_contract",
+                }
+            ]
+        },
+    )
+
+    assert rejected.status_code == 200
+    assert rejected.json() == {
+        "ok": False,
+        "diagnostics": [
+            {
+                "code": "workflow_missing",
+                "message": "Candidate manifest bir canonical workflow_definition pini içermelidir.",
+                "role": "workflow_definition",
+                "artifact_type": "workflow_definition",
+            }
+        ],
+    }
+    assert not ScenarioRelease.objects.exists()
+    assert AuditEvent.objects.filter(
+        action="console.scenario.release.compile",
+        outcome="failure",
+        reason="workflow_missing",
+    ).exists()
+
+    accepted = _post(
+        client,
+        url,
+        {
+            "items": [
+                {
+                    "artifact_version_id": workflow.pk,
+                    "role": "workflow_definition",
+                },
+                {
+                    "artifact_version_id": contract.pk,
+                    "role": "input_contract",
+                },
+            ]
+        },
+    )
+
+    assert accepted.status_code == 201
+    assert accepted.json()["ok"] is True
+    release = ScenarioRelease.objects.get()
+    assert release.status == ReleaseStatus.CANDIDATE
+    assert accepted.json()["release"]["id"] == release.pk
+    assert AuditEvent.objects.filter(
+        action="console.scenario.release.compile",
+        outcome="success",
+        resource_id=str(release.pk),
+    ).exists()
+
+
+def test_release_manifest_foreign_id_is_non_disclosing(
+    client: Client,
+    bf: BuilderFixture,
+) -> None:
+    scenario, _workflow = _release_scenario_and_workflow(bf)
+    foreign = create_artifact_version(
+        organization=bf.other_org,
+        artifact_type=ArtifactType.INPUT_CONTRACT,
+        logical_id="foreign_private",
+        logical_description="FOREIGN_LOGICAL_SECRET",
+        version_description="FOREIGN_VERSION_SECRET",
+        body={"type": "object"},
+        created_by="foreign",
+    )
+    client.force_login(_release_manager(bf))
+
+    response = _post(
+        client,
+        reverse("builder_api:release_manifest_preflight", args=[scenario.public_id]),
+        {
+            "items": [
+                {
+                    "artifact_version_id": foreign.pk,
+                    "role": "input_contract",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["diagnostics"][0]["code"] == "artifact_not_found"
+    rendered = response.content.decode()
+    assert "FOREIGN_LOGICAL_SECRET" not in rendered
+    assert "FOREIGN_VERSION_SECRET" not in rendered
+
+
+def test_release_manifest_compile_rolls_back_when_audit_fails(
+    client: Client,
+    bf: BuilderFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario, workflow = _release_scenario_and_workflow(bf)
+    client.force_login(_release_manager(bf))
+
+    def fail_audit(**_kwargs: Any) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr("apps.builder.api.record_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        _post(
+            client,
+            reverse("builder_api:release_manifest_compile", args=[scenario.public_id]),
+            {
+                "items": [
+                    {
+                        "artifact_version_id": workflow.pk,
+                        "role": "workflow_definition",
+                    }
+                ]
+            },
+        )
+    assert not ScenarioRelease.objects.exists()
+    assert not WorkflowVersion.objects.exists()
 
 
 def test_retrieve_reports_can_write_by_role(client: Client, bf: BuilderFixture) -> None:
@@ -477,6 +729,17 @@ def test_mutations_require_csrf_token(bf: BuilderFixture) -> None:
         {"organization": "b-org", "name": "x", "logical_id": "flow_csrf", "body": {}},
     )
     assert response.status_code == 403
+    response = _post(
+        csrf_client,
+        reverse("builder_api:ai_candidate_repair"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": 1,
+            "candidate": {},
+        },
+    )
+    assert response.status_code == 403
     assert not WorkflowDraft.objects.filter(logical_id="flow_csrf").exists()
     response = _post(
         csrf_client,
@@ -505,6 +768,88 @@ def test_mutations_require_csrf_token(bf: BuilderFixture) -> None:
 
 
 # --- AI-assisted candidates -------------------------------------------------
+
+
+@override_settings(
+    AI_AUTHORING_MODEL_PROFILE_ID="11111111-1111-1111-1111-111111111111",
+    AI_AUTHORING_PROVIDER="apps.builder.tests.test_api.FakeAuthoringProvider",
+)
+def test_ai_repair_is_transient_scoped_and_audited_without_content(
+    client: Client, bf: BuilderFixture
+) -> None:
+    cache.clear()
+    scenario = Scenario.objects.create(
+        organization=bf.org,
+        project=bf.project,
+        slug="repair-loop",
+        name="Repair Loop",
+    )
+    invalid_candidate = {
+        "api_version": "agenthub/v1",
+        "kind": "Workflow",
+        "metadata": {"id": "broken"},
+        "spec": {"input_node": "missing", "nodes": [], "edges": []},
+    }
+    instruction = "Eksik baÅŸlangÄ±Ã§ ve bitiÅŸ node'larÄ±nÄ± ekle."
+    before_drafts = WorkflowDraft.objects.count()
+    FakeAuthoringProvider.calls.clear()
+    client.force_login(bf.author)
+
+    response = _post(
+        client,
+        reverse("builder_api:ai_candidate_repair"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": scenario.pk,
+            "candidate": invalid_candidate,
+            "instruction": instruction,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "workflow_candidate"
+    assert response.json()["diagnostics"]["ok"] is True
+    assert response.json()["repair"]["before_diagnostic_codes"]
+    assert response.json()["repair"]["after_diagnostic_codes"] == []
+    call = FakeAuthoringProvider.calls[0]
+    assert call["operation"] == "repair"
+    assert call["instruction"] == instruction
+    assert call["current_candidate"] == invalid_candidate
+    assert call["diagnostics"]["ok"] is False
+    assert call["server_context"]["scenario"]["slug"] == "repair-loop"
+    assert WorkflowDraft.objects.count() == before_drafts
+    assert not ArtifactVersion.objects.exists()
+    assert not ScenarioRelease.objects.exists()
+    audit_json = json.dumps(
+        list(AuditEvent.objects.filter(action="console.builder.ai_candidate.repair").values()),
+        default=str,
+    )
+    assert instruction not in audit_json
+    assert "missing" not in audit_json
+
+
+def test_ai_repair_requires_author_and_exact_scenario(client: Client, bf: BuilderFixture) -> None:
+    scenario = Scenario.objects.create(
+        organization=bf.org,
+        project=bf.project,
+        slug="repair-scope",
+        name="Repair Scope",
+    )
+    payload = {
+        "organization": bf.org.slug,
+        "project_id": bf.project.pk,
+        "scenario_id": scenario.pk,
+        "candidate": simple_workflow(),
+    }
+    client.force_login(bf.viewer)
+    assert _post(client, reverse("builder_api:ai_candidate_repair"), payload).status_code == 403
+
+    client.force_login(bf.author)
+    payload["scenario_id"] = 987654321
+    response = _post(client, reverse("builder_api:ai_candidate_repair"), payload)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "scenario_not_found"
 
 
 @override_settings(

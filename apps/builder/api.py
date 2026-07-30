@@ -19,15 +19,21 @@ import json
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
+from uuid import UUID
 
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
 
+from apps.audit.services import record_event
 from apps.builder import authoring, services
 from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.node_schema import build_node_schema
 from apps.catalog.models import AIProject, Scenario
+from apps.identity.authorization import Capability, authorize
+from apps.releases import authoring as release_authoring
+from apps.releases.compiler import CompileError, compile_release
 from apps.tenancy.models import Organization
 from apps.tenancy.services import allowed_organization_ids, can_author_scenarios
 
@@ -57,7 +63,11 @@ def operator_api(view: Callable[..., HttpResponse]) -> Callable[..., HttpRespons
 
 
 def _request_id(request: HttpRequest) -> str:
-    return getattr(request, "request_id", "")
+    return str(getattr(request, "request_id", ""))[:64]
+
+
+def _trace_id(request: HttpRequest) -> str:
+    return str(getattr(request, "trace_id", ""))[:64]
 
 
 def _actor(request: HttpRequest) -> str:
@@ -91,6 +101,47 @@ def ai_candidates(request: HttpRequest) -> HttpResponse:
         actor_id=_actor_id(request),
         description=payload.get("description"),
         artifact_type=payload.get("artifact_type", "workflow_definition"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(result)
+
+
+@operator_api
+@require_http_methods(["POST"])
+def ai_candidate_repair(request: HttpRequest) -> HttpResponse:
+    """Run one human-triggered repair turn over an unsaved Scenario Studio candidate."""
+
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(
+        payload,
+        {
+            "organization",
+            "project_id",
+            "scenario_id",
+            "candidate",
+            "instruction",
+            "prompt_contract",
+            "authoring_context",
+        },
+    )
+    org = _resolve_org_in_scope(request, payload.get("organization"))
+    _require_author(request, org.id)
+    project = _resolve_project(org, payload.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    result = authoring.repair_candidate(
+        organization=org,
+        project=project,
+        scenario=scenario,
+        actor=_actor(request),
+        actor_id=_actor_id(request),
+        candidate=payload.get("candidate"),
+        instruction=payload.get("instruction"),
+        prompt_contract=payload.get("prompt_contract"),
+        authoring_context=payload.get("authoring_context"),
         request_id=_request_id(request),
     )
     return JsonResponse(result)
@@ -150,6 +201,155 @@ def transient_diagnostics(request: HttpRequest) -> HttpResponse:
     org = _resolve_org_in_scope(request, payload.get("organization"))
     _require_author(request, org.id)
     return JsonResponse(services.diagnose(payload.get("body")))
+
+
+def _release_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
+    scenario = (
+        Scenario.objects.select_related("organization", "project")
+        .filter(public_id=public_id)
+        .first()
+    )
+    if scenario is None:
+        raise Http404
+    allowed = allowed_organization_ids(request.user)
+    if allowed is not None and scenario.organization_id not in allowed:
+        raise Http404
+    decision = authorize(
+        user=request.user,
+        capability=Capability.SCENARIO_RELEASE,
+        organization=scenario.organization,
+        project=scenario.project,
+        scenario=scenario,
+    )
+    if not decision.allowed:
+        raise PermissionDenied
+    return scenario
+
+
+def _manifest_payload_result(
+    *, scenario: Scenario, payload: dict[str, Any]
+) -> tuple[list[Any] | None, JsonResponse | None]:
+    _reject_unknown_fields(payload, {"items"})
+    try:
+        refs = release_authoring.resolve_manifest_refs(
+            scenario=scenario,
+            items=payload.get("items"),
+        )
+    except release_authoring.ManifestRequestError as exc:
+        return None, JsonResponse(
+            {"ok": False, "diagnostics": [exc.as_diagnostic()]},
+        )
+    return refs, None
+
+
+@operator_api
+@require_http_methods(["POST"])
+def release_manifest_preflight(request: HttpRequest, public_id: UUID) -> HttpResponse:
+    """Run canonical release compilation inside an always-rollback transaction."""
+
+    scenario = _release_scenario(request, public_id)
+    payload = _json_body(
+        request,
+        max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,
+    )
+    refs, error_response = _manifest_payload_result(scenario=scenario, payload=payload)
+    if error_response is not None:
+        return error_response
+    if refs is None:
+        raise services.BuilderError("manifest_invalid")
+    result = release_authoring.preflight_release(
+        scenario=scenario,
+        refs=refs,
+        runtime_version=release_authoring.candidate_runtime_version(scenario),
+        created_by=_actor(request),
+    )
+    return JsonResponse(result.as_dict())
+
+
+@operator_api
+@require_http_methods(["POST"])
+def release_manifest_requirements(request: HttpRequest, public_id: UUID) -> HttpResponse:
+    """Return deterministic manifest roles required by one exact published workflow."""
+
+    scenario = _release_scenario(request, public_id)
+    payload = _json_body(
+        request,
+        max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,
+    )
+    _reject_unknown_fields(payload, {"workflow_artifact_id"})
+    try:
+        result = release_authoring.analyze_workflow_requirements(
+            scenario=scenario,
+            workflow_artifact_id=payload.get("workflow_artifact_id"),
+        )
+    except release_authoring.ManifestRequestError as exc:
+        return JsonResponse({"ok": False, "diagnostics": [exc.as_diagnostic()]})
+    except CompileError as exc:
+        return JsonResponse({"ok": False, "diagnostics": [exc.as_diagnostic()]})
+    return JsonResponse({"ok": True, "diagnostics": [], **result})
+
+
+@operator_api
+@require_http_methods(["POST"])
+def release_manifest_compile(request: HttpRequest, public_id: UUID) -> HttpResponse:
+    """Create one audited candidate or return a safe canonical diagnostic."""
+
+    scenario = _release_scenario(request, public_id)
+    payload = _json_body(
+        request,
+        max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,
+    )
+    refs, error_response = _manifest_payload_result(scenario=scenario, payload=payload)
+    if error_response is not None:
+        return error_response
+    if refs is None:
+        raise services.BuilderError("manifest_invalid")
+    try:
+        with transaction.atomic():
+            release = compile_release(
+                scenario=scenario,
+                refs=refs,
+                runtime_version=release_authoring.candidate_runtime_version(scenario),
+                created_by=_actor(request),
+            )
+            record_event(
+                actor_type="user",
+                actor_id=_actor(request),
+                action="console.scenario.release.compile",
+                outcome="success",
+                organization_id=scenario.organization_id,
+                resource_type="scenario_release",
+                resource_id=str(release.pk),
+                reason=release.artifact_manifest_sha256,
+                request_id=_request_id(request),
+                trace_id=_trace_id(request),
+            )
+    except CompileError as exc:
+        record_event(
+            actor_type="user",
+            actor_id=_actor(request),
+            action="console.scenario.release.compile",
+            outcome="failure",
+            organization_id=scenario.organization_id,
+            resource_type="scenario",
+            resource_id=str(scenario.pk),
+            reason=exc.code,
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+        return JsonResponse({"ok": False, "diagnostics": [exc.as_diagnostic()]})
+    return JsonResponse(
+        {
+            "ok": True,
+            "diagnostics": [],
+            "release": {
+                "id": release.pk,
+                "status": release.status,
+                "artifact_manifest_sha256": release.artifact_manifest_sha256,
+            },
+        },
+        status=201,
+    )
 
 
 def _json_body(request: HttpRequest, *, max_bytes: int | None = None) -> dict[str, Any]:

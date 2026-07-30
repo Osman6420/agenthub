@@ -227,7 +227,7 @@ Log in as `editor` (or `admin`) and open **Builder** (`/console/builder/`).
 | 2.11 | Log in as `auditor`, open the same draft | Read-only: palette/save/publish disabled |
 | 2.12 | Open a scenario and choose **Scenario Studio** | Builder opens with that scenario/project context; unrelated drafts are absent |
 | 2.13 | Open the same draft in two tabs, save in tab A, then save tab B | Tab B receives a stale-revision conflict and keeps its unsaved candidate |
-| 2.14 | As `releaser`, select compatible immutable artifacts on the scenario page and compile | A candidate release shows exact roles, versions and checksums; active release is unchanged |
+| 2.14 | As `releaser`, open the scenario's **Scenario Studio**, select a published workflow in **Candidate manifest**, choose exact dependency versions, run preflight and compile | Required roles are shown from canonical workflow analysis; a candidate release shows exact roles, versions and checksums; active release is unchanged |
 | 2.15 | Repeat as `auditor`, then forge a foreign/incompatible artifact ID | Auditor has no compile action; forged input fails without creating a release or disclosing the artifact |
 | 2.16 | Publish a valid `agenthub/transform/v1` profile and compile a candidate that pins it | Exact immutable version/checksum is retained; active runtime is unchanged |
 | 2.17 | Add an unknown operation, code field, malformed pointer or excessive nesting | Publication/compile fails with a stable content-free validation code |
@@ -246,6 +246,10 @@ Log in as `editor` (or `admin`) and open **Builder** (`/console/builder/`).
 | 2.24 | Open an existing scenario with an active workflow but no linked draft, then choose the active-workflow editing action | The exact checksum-matching active body is copied to a new scenario draft; the active release and immutable artifact remain unchanged |
 | 2.25 | Repeat 2.21–2.24 as `auditor` and with a foreign-tenant scenario URL | Auditor can inspect but cannot edit/copy; foreign scenario is not disclosed |
 | 2.26 | Select every workflow node and inspect its configuration panel | Generate shows optional prompt/model role fields; format output, condition, tool and custom show their supported fields; input, retrieve, validate contract and end correctly state that they have no configuration |
+| 2.27 | Build an invalid candidate manifest, run preflight, then compile without fixing it | Safe code/reason is shown inline; every selected artifact/version/role remains available for correction and no release/workflow version is created |
+| 2.28 | Add two catalog node types and one different third node, validate, save and publish; then pin that exact workflow in the Studio manifest | Graph and JSON stay equivalent; dependency roles appear and each exact version remains an explicit operator choice |
+| 2.29 | Generate an invalid transient AI workflow, enter a correction instruction and choose **AI ile düzelt** | Fresh diagnostics/context drive one bounded repair turn; the replacement is revalidated, the before/after safe codes are shown and no DB row exists until **Kaydet** |
+| 2.30 | Make the repair provider fail or return malformed/stale references | The current graph/JSON remains unchanged, a safe error is shown and no draft/artifact/release/runtime action occurs |
 
 The published artifact then follows the normal compile → eval → promote path (§4).
 
@@ -460,9 +464,10 @@ $env:AI_AUTHORING_PROVIDER = 'apps.orchestration.authoring.OpenAICompatibleAutho
 ```
 
 Open a scenario's Studio. Preflight must report that AI authoring is ready. Generate a candidate,
-inspect diagnostics, explicitly transfer it to a draft, and confirm that no artifact or release was
-created. Then unset `AI_AUTHORING_MODEL_PROFILE_ID`, restart web, and confirm the Studio shows the
-actionable disabled message while existing drafts and artifacts remain intact.
+inspect diagnostics, run one **AI ile düzelt** turn, explicitly transfer the accepted result to a
+draft, and confirm that generation/repair created no artifact or release. Then unset
+`AI_AUTHORING_MODEL_PROFILE_ID`, restart web, and confirm the Studio shows the actionable disabled
+message while existing drafts and artifacts remain intact.
 
 ## 10. Re-seed / reset
 

@@ -1438,9 +1438,6 @@ def scenario_detail(
             ),
             "release_rows": release_rows,
             "artifact_type_descriptions": ARTIFACT_TYPE_DESCRIPTIONS,
-            "artifact_options_url": reverse(
-                "console:scenario_artifact_options", args=[scenario.public_id]
-            ),
             "invocation_guidance": _invocation_guidance(
                 active_release, aliases[0].alias if aliases else None
             ),
@@ -1460,7 +1457,13 @@ def scenario_detail(
                 project=scenario.project,
                 scenario=scenario,
             ).allowed,
-            "can_compile_release": can_manage_scenario_releases(request.user, organization_id),
+            "can_compile_release": authorize_operator(
+                user=request.user,
+                capability=OperatorCapability.SCENARIO_RELEASE,
+                organization=scenario.organization,
+                project=scenario.project,
+                scenario=scenario,
+            ).allowed,
             "editor_assignments": scenario.editor_assignments.filter(
                 status=DelegatedAssignmentStatus.ACTIVE
             )
@@ -1478,7 +1481,13 @@ def scenario_detail(
 @require_GET
 def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonResponse:
     scenario = _scoped_scenario(request.user, public_id=public_id)
-    if not can_manage_scenario_releases(request.user, scenario.organization_id):
+    if not authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.SCENARIO_RELEASE,
+        organization=scenario.organization,
+        project=scenario.project,
+        scenario=scenario,
+    ).allowed:
         raise PermissionDenied
     if scenario.organization.status != OrganizationStatus.ACTIVE:
         raise PermissionDenied
@@ -1585,7 +1594,13 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
 def scenario_compile_candidate(request: HttpRequest, public_id: object) -> HttpResponse:
     scenario = _scoped_scenario(request.user, public_id=public_id)
     organization_id = scenario.organization_id
-    if not can_manage_scenario_releases(request.user, organization_id):
+    if not authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.SCENARIO_RELEASE,
+        organization=scenario.organization,
+        project=scenario.project,
+        scenario=scenario,
+    ).allowed:
         raise PermissionDenied
     if scenario.organization.status != OrganizationStatus.ACTIVE:
         raise PermissionDenied
@@ -1637,8 +1652,24 @@ def scenario_compile_candidate(request: HttpRequest, public_id: object) -> HttpR
                 request_id=_request_id(request),
                 trace_id=_trace_id(request),
             )
-    except CompileError:
-        messages.error(request, "Candidate release canonical compiler tarafından reddedildi.")
+    except CompileError as exc:
+        diagnostic = exc.as_diagnostic()
+        record_event(
+            actor_type="user",
+            actor_id=request.user.get_username(),
+            action="console.scenario.release.compile",
+            outcome="failure",
+            organization_id=organization_id,
+            resource_type="scenario",
+            resource_id=str(scenario.pk),
+            reason=diagnostic["code"],
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+        messages.error(
+            request,
+            f"{diagnostic['message']} ({diagnostic['code']})",
+        )
         return redirect("console:scenario_detail_public", public_id=scenario.public_id)
     messages.success(request, f"Candidate release #{release.pk} oluşturuldu; runtime değişmedi.")
     return redirect("console:release_detail", release_id=release.pk)
@@ -2863,9 +2894,23 @@ def builder(request: HttpRequest) -> HttpResponse:
             "organization": scenario.organization.slug,
             "project_id": scenario.project_id,
             "scenario_id": scenario.pk,
+            "scenario_public_id": str(scenario.public_id),
             "scenario_name": scenario.name,
             "project_name": scenario.project.name,
         }
+        release_decision = authorize_operator(
+            user=request.user,
+            capability=OperatorCapability.SCENARIO_RELEASE,
+            organization=scenario.organization,
+            project=scenario.project,
+            scenario=scenario,
+        )
+        initial["can_compile_release"] = release_decision.allowed
+        if release_decision.allowed:
+            initial["artifact_options_url"] = reverse(
+                "console:scenario_artifact_options",
+                args=[scenario.public_id],
+            )
         active_release = ScenarioRelease.objects.filter(
             scenario=scenario, status=ReleaseStatus.ACTIVE
         ).first()

@@ -111,6 +111,36 @@ describe("end-to-end builder flow", () => {
     expect(calls.some((call) => call.url.endsWith("/drafts/1/diagnostics/"))).toBe(true);
   });
 
+  it("can apply an invalid transient AI repair candidate for another feedback turn", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      ok: false,
+      errors: [{ code: "end_missing", message: "End node eksik." }],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+    const api = new BuilderApi("/console/api/builder/");
+    const transient = draftFixture({ id: 0, can_write: true });
+    const { result } = renderHook(() => useBuilder(api, schema, transient));
+    const candidate = {
+      api_version: "agenthub/v1",
+      kind: "Workflow",
+      metadata: { id: "repair_turn_2" },
+      spec: {
+        input_node: "request",
+        nodes: [{ id: "request", type: "input" }],
+        edges: [],
+      },
+    };
+
+    await act(async () => {
+      expect(await result.current.applyJsonCandidate(candidate, true)).toBe(true);
+    });
+    expect(result.current.workflowId).toBe("repair_turn_2");
+    expect(result.current.diagnostics?.ok).toBe(false);
+    expect(result.current.status).toContain("düzeltmeye devam edin");
+  });
+
   it("builds a graph, validates, saves, and publishes through the backend API", async () => {
     document.cookie = "csrftoken=tok-123";
     const calls = mockFetch();

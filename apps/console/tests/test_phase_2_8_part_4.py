@@ -217,9 +217,11 @@ def test_scenario_page_uses_dependent_selector_and_compiler_mode_curl(client: Cl
     body = response.content.decode()
 
     assert response.status_code == 200
-    assert "1. Artifact type" in body
-    assert "2. Logical artifact" in body
-    assert "3. Exact version" in body
+    assert "1. Artifact type" not in body
+    assert "2. Logical artifact" not in body
+    assert "3. Exact version" not in body
+    assert "Scenario Studio release panelindedir" in body
+    assert f"scenario={scenario.public_id}" in body
     assert 'name="role_' not in body
     assert "/v1/chat/completions" in body
     assert "/v1/responses" in body

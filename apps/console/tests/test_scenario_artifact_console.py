@@ -401,7 +401,26 @@ def test_scenario_studio_bootstrap_names_context_and_projects_exact_active_workf
     body = response.content.decode()
     assert response.status_code == 200
     assert f'"scenario_id": {scenario.pk}' in body
+    assert f'"scenario_public_id": "{scenario.public_id}"' in body
     assert f'"scenario_name": "{scenario.name}"' in body
     assert f'"project_name": "{project.name}"' in body
+    assert '"can_compile_release": false' in body
+    assert '"artifact_options_url"' not in body
     assert '"logical_id": "active_flow"' in body
     assert workflow.checksum in body
+
+    client.force_login(_member("studio-admin", org, Role.ORGANIZATION_ADMIN))
+    manager_response = client.get(
+        reverse("console:builder"),
+        {"organization": org.slug, "scenario": str(scenario.public_id)},
+    )
+    manager_body = manager_response.content.decode()
+    assert manager_response.status_code == 200
+    assert '"can_compile_release": true' in manager_body
+    assert (
+        reverse("console:scenario_artifact_options", args=[scenario.public_id]).replace(
+            "/", "\\u002F"
+        )
+        in manager_body
+        or reverse("console:scenario_artifact_options", args=[scenario.public_id]) in manager_body
+    )

@@ -11,8 +11,24 @@ app_name = "builder_api"
 urlpatterns = [
     path("node-schema/", api.node_schema, name="node_schema"),
     path("ai-candidates/", api.ai_candidates, name="ai_candidates"),
+    path("ai-candidates/repair/", api.ai_candidate_repair, name="ai_candidate_repair"),
     path("ai-candidates/accept/", api.ai_candidate_accept, name="ai_candidate_accept"),
     path("transient-diagnostics/", api.transient_diagnostics, name="transient_diagnostics"),
+    path(
+        "scenarios/<uuid:public_id>/release-manifest/preflight/",
+        api.release_manifest_preflight,
+        name="release_manifest_preflight",
+    ),
+    path(
+        "scenarios/<uuid:public_id>/release-manifest/requirements/",
+        api.release_manifest_requirements,
+        name="release_manifest_requirements",
+    ),
+    path(
+        "scenarios/<uuid:public_id>/release-manifest/compile/",
+        api.release_manifest_compile,
+        name="release_manifest_compile",
+    ),
     path("artifact-drafts/", api.artifact_drafts, name="artifact_drafts"),
     path(
         "artifact-drafts/<int:pk>/",

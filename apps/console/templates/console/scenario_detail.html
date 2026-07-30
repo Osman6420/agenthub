@@ -86,28 +86,7 @@
 <section class="card" id="configuration">
   <div class="section-heading"><div><p class="eyebrow">Scenario Studio</p><h2>Workflow draft'ları</h2><p class="muted">Yalnız bu senaryoya bağlı mutable authoring state gösterilir; aktif release pini değildir.</p></div>{% if can_write %}<a href="{% url 'console:builder' %}?organization={{ scenario.organization.slug }}&amp;scenario={{ scenario.public_id }}">Yeni draft</a>{% else %}<button type="button" class="button" disabled aria-disabled="true" title="{{ author_reason }}">Yeni draft</button>{% endif %}</div>
   {% for draft in project_drafts %}<div class="access-row"><div><strong>{{ draft.name }}</strong><p class="muted mono">{{ draft.logical_id }} · revision {{ draft.revision }} · son publish v{{ draft.last_published_version }}</p></div>{% if can_write %}<a class="button secondary" href="{% url 'console:builder' %}?organization={{ draft.organization.slug }}&amp;scenario={{ scenario.public_id }}&amp;draft={{ draft.id }}">Grafikte aç</a>{% else %}<button type="button" class="button secondary" disabled aria-disabled="true" title="{{ author_reason }}">Grafikte aç</button>{% endif %}</div>{% empty %}<p class="muted">Bu senaryoya bağlı workflow draft'ı yok.</p>{% endfor %}
-</section>
-
-<section class="card">
-  <div class="section-heading"><div><p class="eyebrow">Reusable artifact registry</p><h2>Exact candidate manifest hazırla</h2><p class="muted">Seçim yalnız immutable exact version/checksum pinler ve candidate oluşturur; publish, evaluation veya promotion yapmaz.</p></div></div>
-  {% if can_compile_release %}
-  <form method="post" action="{% url 'console:scenario_compile_candidate' scenario.public_id %}"
-        data-artifact-selector data-options-url="{{ artifact_options_url }}">{% csrf_token %}
-    <div class="relationship-card">
-      <label>1. Artifact type<select data-artifact-type required><option value="">Type seçin</option></select></label>
-      <p class="muted" data-artifact-type-description>Artifact türünün çalışma zamanındaki rolü burada açıklanır.</p>
-      <label>2. Logical artifact<select data-logical-artifact required disabled><option value="">Önce type seçin</option></select></label>
-      <p class="muted" data-logical-description>Logical artifact’ın sürümler boyunca değişmeyen amacı.</p>
-      <label>3. Exact version<select data-exact-version required disabled><option value="">Önce logical artifact seçin</option></select></label>
-      <p class="muted" data-version-description>Exact immutable sürümün içeriği/değişikliği, checksum ve dependency etkisi.</p>
-      <label>Manifest rolü<select data-manifest-role required disabled><option value="">Önce version seçin</option></select></label>
-      <button class="button secondary" type="button" data-add-artifact disabled>Manifest’e ekle</button>
-      <div class="msg error" role="alert" data-selector-error hidden></div>
-    </div>
-    <div data-selected-artifacts><p class="muted" data-empty-selection>Henüz exact version seçilmedi.</p></div>
-    <button class="button primary" type="submit" data-compile-release disabled>Candidate release derle</button>
-  </form>
-  {% else %}<p class="muted">Artifact kataloğu ve candidate derleme yalnız Global Administrator veya organizasyon yöneticisine açıktır. Senaryo editörleri Studio’da draft hazırlayıp test edebilir ancak release pinleyemez.</p>{% endif %}
+  {% if can_compile_release %}<div class="notice"><strong>Release adayı:</strong> Exact manifest hazırlama, canonical preflight ve candidate compile artık seçimleri hata halinde koruyan Scenario Studio release panelindedir. <a href="{% url 'console:builder' %}?organization={{ scenario.organization.slug }}&amp;scenario={{ scenario.public_id }}">Studio’da aç</a></div>{% endif %}
 </section>
 
 <details class="card form-card">
@@ -172,5 +151,4 @@
   </tbody></table></div>{% else %}<p class="muted">Bu senaryoyu çağırmaya yetkili istemci yok.</p>{% endif %}
 </section>
 <script src="{% static 'console/copy_text.js' %}" defer></script>
-<script src="{% static 'console/artifact_selector.js' %}" defer></script>
 {% endblock %}

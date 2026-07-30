@@ -9,7 +9,7 @@ import { Toolbar } from "./components/Toolbar";
 import { WorkflowNode } from "./components/WorkflowNode";
 import { ApiError, type BuilderApi } from "./api";
 import { useBuilder } from "./useBuilder";
-import type { DiagnosticsResult, Draft, NodeSchema } from "./types";
+import type { AiCandidateResult, DiagnosticsResult, Draft, NodeSchema } from "./types";
 
 import "@xyflow/react/dist/style.css";
 
@@ -20,12 +20,17 @@ export function Editor({
   schema,
   draft,
   onSaveTransient,
+  onRepairTransient,
   initialDiagnostics,
 }: {
   api: BuilderApi;
   schema: NodeSchema;
   draft: Draft;
   onSaveTransient?: (body: Record<string, unknown>, name: string) => Promise<void>;
+  onRepairTransient?: (
+    body: Record<string, unknown>,
+    instruction: string,
+  ) => Promise<AiCandidateResult | null>;
   initialDiagnostics?: DiagnosticsResult;
 }) {
   const builder = useBuilder(api, schema, draft, initialDiagnostics ?? null);
@@ -33,6 +38,8 @@ export function Editor({
   const [view, setView] = useState<"graph" | "json">("graph");
   const [jsonText, setJsonText] = useState(() => JSON.stringify(draft.body, null, 2));
   const [transientName, setTransientName] = useState(draft.name);
+  const [repairInstruction, setRepairInstruction] = useState("");
+  const [repairSummary, setRepairSummary] = useState("");
   const wrapper = useRef<HTMLDivElement>(null);
   const jsonDirty = view === "json" && jsonText !== JSON.stringify(builder.body, null, 2);
 
@@ -147,7 +154,33 @@ export function Editor({
             }}>
             Kaydet
           </button>
+          {onRepairTransient && <>
+            <input aria-label="AI düzeltme talimatı" value={repairInstruction}
+              placeholder="Örn. eksik end node'unu ekle"
+              onChange={(event) => setRepairInstruction(event.target.value)} />
+            <button type="button" disabled={busy} onClick={() => {
+              setBusy(true);
+              setRepairSummary("");
+              void onRepairTransient(
+                builder.body as unknown as Record<string, unknown>,
+                repairInstruction,
+              ).then(async (result) => {
+                if (!result) return;
+                if (await builder.applyJsonCandidate(result.candidate, true)) {
+                  setRepairInstruction("");
+                  const before = result.repair?.before_diagnostic_codes.join(", ") || "yok";
+                  const after = result.repair?.after_diagnostic_codes.join(", ") || "yok";
+                  setRepairSummary(`AI repair: önce ${before}; sonra ${after}`);
+                }
+              }).catch((error: unknown) => {
+                builder.setStatusError(
+                  error instanceof ApiError ? `${error.code}: ${error.message}` : String(error),
+                );
+              }).finally(() => setBusy(false));
+            }}>AI ile düzelt</button>
+          </>}
           <span style={{ marginLeft: 8 }}>Henüz DB kaydı değildir; yayımlama ayrı adımdır.</span>
+          {repairSummary && <div role="status">{repairSummary}</div>}
           {builder.diagnostics && !builder.diagnostics.ok && <div role="alert">
             {builder.diagnostics.errors.map((error) => <div key={error.code}>
               {error.code}: {error.message}

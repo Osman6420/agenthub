@@ -1224,9 +1224,17 @@ Yalnız JSON döndür; açıklama veya Markdown fence ekleme.
 - Mutable workflow and artifact drafts carry an integer revision. Update, delete and workflow
   publication require the revision the editor read; a stale write returns `stale_revision` with
   HTTP 409 and does not replace the stored body.
-- The scenario page lists only immutable `ArtifactVersion` records from the scenario organization.
-  A release manager can assign unique manifest roles and compile an exact candidate pin; selection
-  never edits or clones the artifact and never promotes the candidate.
+- Scenario Studio contains the release manager's exact candidate-manifest composer. The scenario
+  overview keeps release status/history and links to Studio; it does not provide a second editable
+  composer. A failed preflight or compile returns safe structured canonical diagnostics and leaves
+  the browser's bounded in-memory selection intact.
+- Selecting an exact published workflow asks the canonical workflow compiler for its required
+  manifest roles. These requirements are assistance only: the operator still selects every exact
+  immutable artifact version, and final candidate compilation re-resolves and revalidates all pins.
+- A transient AI workflow candidate can be repaired one human-triggered turn at a time. The server
+  rebuilds scenario context and diagnostics, applies existing egress/rate limits, validates the
+  complete replacement candidate and returns only safe diagnostic-code changes. Repair never
+  saves, publishes, compiles, evaluates, promotes, activates or invokes anything.
 - Reserved artifact-type roles and their dotted variants accept only the matching artifact type.
   `workflow_definition` must use its canonical reserved role. Agent behavior is authored inside
   a workflow's closed `agent_loop` node rather than a separate artifact type. The release

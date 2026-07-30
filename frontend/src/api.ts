@@ -10,6 +10,11 @@ import type {
   ArtifactDraft,
   Draft,
   DiagnosticsResult,
+  ManifestCompileResult,
+  ManifestOptionsResult,
+  ManifestPreflightResult,
+  ManifestRequirementsResult,
+  ManifestSelectionPayload,
   NodeSchema,
 } from "./types";
 
@@ -74,6 +79,21 @@ export class BuilderApi {
     });
   }
 
+  repairCandidate(payload: {
+    organization: string;
+    project_id: number;
+    scenario_id: number;
+    candidate: Record<string, unknown>;
+    instruction?: string;
+    prompt_contract?: AiCandidateResult["prompt_contract"];
+    authoring_context?: AiCandidateResult["authoring_context"];
+  }): Promise<AiCandidateResult | CapabilityMissingResult> {
+    return request(this.url("/ai-candidates/repair/"), {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
   acceptCandidate(payload: {
     organization: string; project_id: number; name: string; logical_id?: string;
     scenario_id?: number;
@@ -91,6 +111,46 @@ export class BuilderApi {
   transientDiagnostics(payload: { organization: string; body: Record<string, unknown> }): Promise<DiagnosticsResult> {
     return request(this.url("/transient-diagnostics/"), {
       method: "POST", body: JSON.stringify(payload),
+    });
+  }
+
+  manifestOptions(
+    optionsUrl: string,
+    params: { artifact_type?: string; logical_id?: string } = {},
+  ): Promise<ManifestOptionsResult> {
+    const url = new URL(optionsUrl, window.location.origin);
+    if (params.artifact_type) url.searchParams.set("artifact_type", params.artifact_type);
+    if (params.logical_id) url.searchParams.set("logical_id", params.logical_id);
+    return request<ManifestOptionsResult>(url.toString());
+  }
+
+  preflightManifest(
+    scenarioPublicId: string,
+    items: ManifestSelectionPayload[],
+  ): Promise<ManifestPreflightResult> {
+    return request(this.url(`/scenarios/${encodeURIComponent(scenarioPublicId)}/release-manifest/preflight/`), {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    });
+  }
+
+  manifestRequirements(
+    scenarioPublicId: string,
+    workflowArtifactId: number,
+  ): Promise<ManifestRequirementsResult> {
+    return request(this.url(`/scenarios/${encodeURIComponent(scenarioPublicId)}/release-manifest/requirements/`), {
+      method: "POST",
+      body: JSON.stringify({ workflow_artifact_id: workflowArtifactId }),
+    });
+  }
+
+  compileManifest(
+    scenarioPublicId: string,
+    items: ManifestSelectionPayload[],
+  ): Promise<ManifestCompileResult> {
+    return request(this.url(`/scenarios/${encodeURIComponent(scenarioPublicId)}/release-manifest/compile/`), {
+      method: "POST",
+      body: JSON.stringify({ items }),
     });
   }
 
