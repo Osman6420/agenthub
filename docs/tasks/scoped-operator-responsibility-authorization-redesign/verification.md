@@ -45,8 +45,8 @@ role-era test suite has not yet been rewritten.
 
 ## Checks not complete
 
-- Repository-wide test collection finds 988 tests but stops on 14 legacy test modules importing
-  deleted role/delegated-assignment symbols. Thirty-eight test files still contain role-era setup
+- Repository-wide test collection finds 1,062 tests but stops on 6 legacy test modules importing
+  deleted role/delegated-assignment symbols. Thirty-one test files still contain role-era setup
   and require semantic replacement with typed responsibilities; compatibility aliases were not
   added because they would preserve the authorization model being removed.
 - Full unit/integration suite was therefore not run to completion.
