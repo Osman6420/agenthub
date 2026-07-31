@@ -219,6 +219,7 @@ def create_artifact_draft(
     *,
     organization: Organization,
     project: AIProject,
+    scenario: Scenario,
     artifact_type: str,
     name: str,
     logical_id: str,
@@ -232,6 +233,8 @@ def create_artifact_draft(
         raise BuilderError("unsupported_artifact_type")
     if project.organization_id != organization.id:
         raise BuilderError("project_mismatch")
+    if scenario.organization_id != organization.id or scenario.project_id != project.id:
+        raise BuilderError("scenario_mismatch")
     name = (name or "").strip()
     logical_id = (logical_id or "").strip()
     if not name:
@@ -257,6 +260,7 @@ def create_artifact_draft(
     draft = ArtifactDraft.objects.create(
         organization=organization,
         project=project,
+        scenario=scenario,
         artifact_type=artifact_type,
         name=name,
         logical_id=logical_id,

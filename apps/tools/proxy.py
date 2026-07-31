@@ -72,7 +72,6 @@ class ResolvedTool:
     risk: str
     side_effecting: bool
     approval_required: bool
-    approver_roles: tuple[str, ...]
     timeout_seconds: int
     max_response_bytes: int
     allowed_input_fields: tuple[str, ...]
@@ -120,7 +119,6 @@ def resolve_release_tool(release: ScenarioRelease, role: str) -> ResolvedTool:
         str(definition_spec.get("output_contract_ref", "")),
         ArtifactType.OUTPUT_CONTRACT,
     )
-    approval = binding_spec.get("approval", {})
     return ResolvedTool(
         role=role,
         definition_ref=str(pin.get("definition_ref", "")),
@@ -133,8 +131,12 @@ def resolve_release_tool(release: ScenarioRelease, role: str) -> ResolvedTool:
         secret_ref=definition_spec.get("secret_ref"),
         risk=str(definition_spec["risk"]),
         side_effecting=bool(definition_spec["side_effecting"]),
-        approval_required=bool(pin.get("approval_required", approval.get("required", False))),
-        approver_roles=tuple(approval.get("approver_roles", [])),
+        approval_required=bool(
+            pin.get(
+                "approval_required",
+                binding_spec.get("approval", {}).get("required", False),
+            )
+        ),
         timeout_seconds=int(definition_spec["timeout_seconds"]),
         max_response_bytes=int(definition_spec["max_response_bytes"]),
         allowed_input_fields=tuple(binding_spec.get("allowed_input_fields", [])),

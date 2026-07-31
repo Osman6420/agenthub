@@ -328,8 +328,6 @@ class RunWait(TimeStampedModel):
     payload_schema = models.JSONField(default=dict, blank=True)
     output_mapping = models.JSONField(default=list, blank=True)
     requester_actor_id = models.CharField(max_length=200)
-    allowed_roles = models.JSONField(default=list, blank=True)
-    deny_self_decision = models.BooleanField(default=True)
     deadline_at = models.DateTimeField()
     consumed_at = models.DateTimeField(null=True, blank=True)
     consumed_by = models.CharField(max_length=200, blank=True)

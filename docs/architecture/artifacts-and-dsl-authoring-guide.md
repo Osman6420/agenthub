@@ -928,21 +928,17 @@ credential, field, approval ve rate-limit kontrollerini uygular.
     "allowed_input_fields": ["query"],
     "allowed_output_fields": ["status", "result"],
     "approval": {
-      "required": true,
-      "approver_roles": ["approver", "release_manager"],
-      "self_approval_allowed": false
+      "required": true
     },
     "rate_limit_per_minute": 30
   }
 }
 ```
 
-Field listeleri en fazla 50 alan; alan adı en fazla 128 karakterdir. Approver role listesi non-empty,
-en fazla 8 ve yalnız şu değerlerden oluşur:
-
-```text
-approver, release_manager, organization_admin, platform_admin
-```
+Field listeleri en fazla 50 alan; alan adı en fazla 128 karakterdir. Artifact yalnız onay gerekip
+gerekmediğini bildirir. Karar yetkisi artifact içindeki rol metninden gelmez; çağrının exact
+senaryosundaki aktif `scenario_approver` sorumluluğundan sunucu tarafında hesaplanır. Self-approval
+politikası da artifact girdisi değildir ve tipli insan kimlikleri üzerinden merkezi uygulanır.
 
 Definition geniş capability’yi, binding scenario/release için daraltmayı temsil eder.
 

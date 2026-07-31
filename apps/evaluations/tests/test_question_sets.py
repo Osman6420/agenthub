@@ -33,14 +33,19 @@ from apps.evaluations.question_services import (
     score_retrieval,
     update_question_set_draft,
 )
-from apps.identity.models import DocumentSetManagerAssignment
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.ingestion.models import IndexStatus, IndexVersion
 from apps.observability.metrics import render_metrics
 from apps.orchestration.providers import ModelResponse
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.retrieval.providers import StaticRetrievalProvider
 from apps.retrieval.types import RetrievedChunk
-from apps.tenancy.models import Organization, OrganizationMembership, Role
+from apps.tenancy.models import Organization, OrganizationMembership
 
 pytestmark = pytest.mark.django_db
 
@@ -50,10 +55,15 @@ def _admin(organization: Organization, username: str = "admin"):
         username=username,
         password="test-password",  # noqa: S106
     )
-    OrganizationMembership.objects.create(
+    membership = OrganizationMembership.objects.create(
         organization=organization,
         user=user,
-        role=Role.ORGANIZATION_ADMIN,
+    )
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=user,
     )
     return user
 
@@ -80,10 +90,15 @@ def _retrieval_target(organization: Organization, user):
         name="Policy",
         actor="admin",
     )
-    DocumentSetManagerAssignment.objects.create(
+    membership = OrganizationMembership.objects.get(
+        organization=organization,
+        user=user,
+    )
+    DocumentSetResponsibilityAssignment.objects.create(
         organization=organization,
         document_set=document_set,
-        user=user,
+        membership=membership,
+        responsibility=DocumentSetResponsibility.MANAGER,
         assigned_by=user,
     )
     set_version = document_services.create_document_set_version(

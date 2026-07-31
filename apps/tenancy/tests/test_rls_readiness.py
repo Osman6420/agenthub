@@ -69,15 +69,16 @@ def test_provisioning_sql_names_every_protected_table() -> None:
     assert "UPDATE ON auth_user" not in sql
 
 
-# The owner-approved inventory for the authorization-bearing access/assignment tables. Revocation on
-# all five is a status change, never a row delete, so who held which authority stays reconstructable
+# The owner-approved inventory for the authorization-bearing access/assignment tables. Revocation
+# is a status change, never a row delete, so who held which authority stays reconstructable
 # from the table itself and the role never needs DELETE.
 ACCESS_AUTHORITY_GRANTS = {
     "documents_scenariodocumentsetaccessrequest": ("SELECT", "INSERT", "UPDATE"),
     "documents_scenariodocumentsetgrant": ("SELECT", "INSERT", "UPDATE"),
-    "identity_projectadministratorassignment": ("SELECT", "INSERT", "UPDATE"),
-    "identity_scenarioeditorassignment": ("SELECT", "INSERT", "UPDATE"),
-    "identity_documentsetmanagerassignment": ("SELECT", "INSERT", "UPDATE"),
+    "identity_organizationresponsibilityassignment": ("SELECT", "INSERT", "UPDATE"),
+    "identity_projectresponsibilityassignment": ("SELECT", "INSERT", "UPDATE"),
+    "identity_scenarioresponsibilityassignment": ("SELECT", "INSERT", "UPDATE"),
+    "identity_documentsetresponsibilityassignment": ("SELECT", "INSERT", "UPDATE"),
 }
 
 

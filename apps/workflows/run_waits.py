@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from apps.artifacts.validation import compute_checksum
 from apps.audit.services import record_event
+from apps.identity.authorization import Capability, authorize
 from apps.tenancy.context import set_tenant_context
 from apps.workflows.models import (
     RUN_TERMINAL_STATUSES,
@@ -197,14 +198,6 @@ def _bounded_json(value: Any, *, error_code: str, maximum: int) -> Any:
     return value
 
 
-def _safe_roles(roles: set[str] | None) -> set[str]:
-    if roles is None:
-        return set()
-    if any(not isinstance(role, str) or not role or len(role) > 64 for role in roles):
-        raise RunWaitError("RUN_WAIT_ACTOR_INVALID")
-    return set(roles)
-
-
 def _audit(
     *,
     organization_id: int,
@@ -238,8 +231,6 @@ def suspend_run_for_wait(
     deadline_at: datetime,
     payload_schema: dict[str, Any] | None = None,
     output_mapping: list[dict[str, Any]] | None = None,
-    allowed_roles: list[str] | None = None,
-    deny_self_decision: bool = True,
     step_delta: int = 0,
 ) -> RunWaitCreation:
     """Atomically checkpoint a claimed background Run and create one resume authority."""
@@ -261,9 +252,6 @@ def suspend_run_for_wait(
         error_code="RUN_WAIT_CONFIG_INVALID",
         maximum=MAX_WAIT_CONFIG_BYTES,
     )
-    roles = allowed_roles or []
-    if any(not isinstance(role, str) or not role or len(role) > 64 for role in roles):
-        raise RunWaitError("RUN_WAIT_CONFIG_INVALID")
     try:
         jsonschema.Draft202012Validator.check_schema(schema)
     except jsonschema.SchemaError:
@@ -311,11 +299,9 @@ def suspend_run_for_wait(
         resume_token_hash=_token_hash(resume_token),
         pending_checksum=compute_checksum(
             {
-                "allowed_roles": roles,
                 "compiled_checksum": run.compiled_checksum,
                 "compiler_version": run.compiler_version,
                 "deadline_at": effective_deadline.isoformat(),
-                "deny_self_decision": bool(deny_self_decision),
                 "kind": kind,
                 "node_id": node_id,
                 "output_mapping": mapping,
@@ -332,8 +318,6 @@ def suspend_run_for_wait(
         payload_schema=schema,
         output_mapping=mapping,
         requester_actor_id=run.actor_id,
-        allowed_roles=roles,
-        deny_self_decision=bool(deny_self_decision),
         deadline_at=effective_deadline,
     )
     wait.full_clean()
@@ -352,7 +336,7 @@ def _consume_wait(
     run: Run,
     wait: RunWait,
     actor_id: str,
-    roles: set[str],
+    actor: Any | None,
     data: dict[str, Any],
     resume_checksum: str,
 ) -> tuple[RunWaitResume | None, str | None]:
@@ -423,23 +407,20 @@ def _consume_wait(
         )
         return None, "RUN_WAIT_NOT_FOUND"
     if wait.kind in {RunAwaitingKind.APPROVAL, RunAwaitingKind.HUMAN}:
-        allowed = set(wait.allowed_roles)
-        if not allowed or not roles.intersection(allowed):
+        decision = authorize(
+            user=actor,
+            capability=Capability.SCENARIO_APPROVAL_DECIDE,
+            organization=run.organization,
+            project=run.scenario.project,
+            scenario=run.scenario,
+        )
+        if not decision.allowed:
             _audit(
                 organization_id=organization_id,
                 actor_id=actor_id,
                 resource_id=str(wait.id),
                 outcome="deny",
                 reason="RUN_WAIT_ACTOR_NOT_AUTHORIZED",
-            )
-            return None, "RUN_WAIT_NOT_FOUND"
-        if wait.deny_self_decision and actor_id == wait.requester_actor_id:
-            _audit(
-                organization_id=organization_id,
-                actor_id=actor_id,
-                resource_id=str(wait.id),
-                outcome="deny",
-                reason="RUN_WAIT_SELF_DECISION_FORBIDDEN",
             )
             return None, "RUN_WAIT_NOT_FOUND"
     try:
@@ -522,7 +503,6 @@ def resume_run_wait(
     resume_token: uuid.UUID,
     actor_id: str,
     payload: dict[str, Any],
-    actor_roles: set[str] | None = None,
 ) -> RunWaitResume:
     """Consume an exact wait token once and atomically queue the owning Run."""
 
@@ -530,7 +510,6 @@ def resume_run_wait(
         raise RunWaitError("RUN_WAIT_ACTOR_INVALID")
     if not isinstance(resume_token, uuid.UUID):
         raise RunWaitError("RUN_WAIT_NOT_FOUND")
-    roles = _safe_roles(actor_roles)
     data = _bounded_json(
         payload,
         error_code="RUN_WAIT_PAYLOAD_INVALID",
@@ -561,9 +540,13 @@ def resume_run_wait(
             )
             error = "RUN_WAIT_NOT_FOUND"
         else:
-            run = Run.objects.select_for_update().get(
-                pk=candidate.run_id,
-                organization_id=organization_id,
+            run = (
+                Run.objects.select_for_update()
+                .select_related("organization", "scenario__project")
+                .get(
+                    pk=candidate.run_id,
+                    organization_id=organization_id,
+                )
             )
             wait = RunWait.objects.select_for_update().get(
                 pk=candidate.pk,
@@ -574,7 +557,7 @@ def resume_run_wait(
                 run=run,
                 wait=wait,
                 actor_id=actor_id,
-                roles=roles,
+                actor=None,
                 data=data,
                 resume_checksum=resume_checksum,
             )
@@ -589,15 +572,14 @@ def decide_run_human_task(
     *,
     organization_id: int,
     wait_id: uuid.UUID,
-    actor_id: str,
-    actor_roles: set[str],
+    actor: Any,
     payload: dict[str, Any],
 ) -> RunWaitResume:
     """Consume one human wait by server-authorized operator identity, not by bearer token."""
 
+    actor_id = actor.get_username() if getattr(actor, "is_authenticated", False) else ""
     if not actor_id or len(actor_id) > 200 or not isinstance(wait_id, uuid.UUID):
         raise RunWaitError("RUN_WAIT_ACTOR_INVALID")
-    roles = _safe_roles(actor_roles)
     data = _bounded_json(
         payload,
         error_code="RUN_WAIT_PAYLOAD_INVALID",
@@ -611,6 +593,7 @@ def decide_run_human_task(
         set_tenant_context(organization_id)
         run = (
             Run.objects.select_for_update()
+            .select_related("organization", "scenario__project")
             .filter(
                 waits__id=wait_id,
                 waits__organization_id=organization_id,
@@ -631,7 +614,7 @@ def decide_run_human_task(
                 run=run,
                 wait=wait,
                 actor_id=actor_id,
-                roles=roles,
+                actor=actor,
                 data=data,
                 resume_checksum=compute_checksum(data),
             )

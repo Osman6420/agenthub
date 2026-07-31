@@ -520,7 +520,6 @@ def _run_tool_step(
             tool_input=tool_input,
             idempotency_key=idempotency_key,
             consumer_capabilities=capabilities,
-            requested_by=run.consumer.subject,
         )
     except ToolApprovalError as exc:
         raise AgentRuntimeError(f"TOOL_{exc.code}") from None

@@ -44,7 +44,7 @@
 
 <section class="card" id="access">
   <div class="section-heading"><div><h2>Senaryo erişimi</h2><p class="muted">Senaryo editörlüğü operasyon veya ham doküman içeriği yetkisi vermez.</p></div>{% if can_manage_access %}<a class="button secondary" href="{% url 'console:organization_members' %}">Erişimi yönet</a>{% endif %}</div>
-  {% for assignment in editor_assignments %}<div class="access-row"><strong>{{ assignment.user.get_username }}</strong><span class="badge">Senaryo editörü</span></div>{% empty %}<p class="muted">Atanmış senaryo editörü yok.</p>{% endfor %}
+  {% for assignment in editor_assignments %}<div class="access-row"><strong>{{ assignment.membership.user.get_username }}</strong><span class="badge">{{ assignment.get_responsibility_display }}</span></div>{% empty %}<p class="muted">Atanmış senaryo sorumluluğu yok.</p>{% endfor %}
 </section>
 
 <section class="card">

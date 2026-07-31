@@ -1,27 +1,30 @@
-"""Audited mutation boundary for delegated operator assignments."""
+"""Audited mutation boundary for typed operator responsibility assignments."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.audit.services import record_event
 from apps.identity.authorization import Capability, authorize
 from apps.identity.models import (
-    DelegatedAssignmentStatus,
-    DocumentSetManagerAssignment,
-    ProjectAdministratorAssignment,
-    ScenarioEditorAssignment,
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+    ResponsibilityStatus,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
 )
-from apps.tenancy.models import Organization, OrganizationMembership
+from apps.tenancy.models import MembershipStatus, Organization, OrganizationMembership
 
 
 class AssignmentError(PermissionError):
-    """Stable, content-free delegated-assignment failure."""
-
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
@@ -36,7 +39,7 @@ def _audit(
     resource_type: str,
     resource_id: str,
     reason: str,
-    target_user_id: int,
+    membership_id: int,
     request_id: str,
     trace_id: str,
 ) -> None:
@@ -51,85 +54,169 @@ def _audit(
         reason=reason,
         request_id=request_id,
         trace_id=trace_id,
-        after={"target_user_id": target_user_id} if outcome == "success" else None,
+        after={"membership_id": membership_id} if outcome == "success" else None,
     )
 
 
-def _validate_target_user(
-    *,
-    organization: Organization,
-    target_user: Any,
-) -> None:
-    if (
-        not getattr(target_user, "is_active", False)
-        or getattr(target_user, "is_superuser", False)
-        or not OrganizationMembership.objects.select_for_update()
-        .filter(organization_id=organization.pk, user_id=target_user.pk)
-        .exists()
-    ):
+def _locked_membership(
+    *, organization: Organization, membership: OrganizationMembership
+) -> OrganizationMembership:
+    locked = (
+        OrganizationMembership.objects.select_for_update()
+        .select_related("user")
+        .filter(
+            pk=membership.pk,
+            organization_id=organization.pk,
+            status=MembershipStatus.ACTIVE,
+            user__is_active=True,
+            user__is_superuser=False,
+        )
+        .first()
+    )
+    if locked is None:
         raise AssignmentError("ELIGIBLE_ORGANIZATION_MEMBER_REQUIRED")
+    return locked
 
 
 def _create_or_reinstate(
     model: Any,
     *,
     organization: Organization,
-    target_user: Any,
+    membership: OrganizationMembership,
+    responsibility: str,
     actor: Any,
+    expires_at: Any = None,
     **scope: Any,
 ) -> Any:
-    """Grant the assignment, reusing a revoked row so revocation history survives re-grant."""
     existing = (
         model.objects.select_for_update()
-        .filter(organization=organization, user=target_user, **scope)
+        .filter(
+            organization=organization,
+            membership=membership,
+            responsibility=responsibility,
+            **scope,
+        )
         .first()
     )
     if existing is None:
         return model.objects.create(
             organization=organization,
-            user=target_user,
+            membership=membership,
+            responsibility=responsibility,
             assigned_by=actor,
+            expires_at=expires_at,
             **scope,
         )
-    if existing.status == DelegatedAssignmentStatus.ACTIVE:
+    if existing.status == ResponsibilityStatus.ACTIVE and (
+        existing.expires_at is None or existing.expires_at > timezone.now()
+    ):
         raise AssignmentError("ASSIGNMENT_ALREADY_EXISTS")
-    existing.status = DelegatedAssignmentStatus.ACTIVE
+    existing.status = ResponsibilityStatus.ACTIVE
     existing.revoked_by = None
     existing.revoked_at = None
     existing.assigned_by = actor
-    # `save()` re-runs model validation here on purpose: reinstating must re-prove the target is
-    # still an eligible, active member of the organization.
+    existing.expires_at = expires_at
     existing.save()
     return existing
 
 
-def assign_project_administrator(
+def _require_org_assignment_admin(*, actor: Any, organization: Organization) -> None:
+    decision = authorize(
+        user=actor,
+        capability=Capability.RESPONSIBILITY_MANAGE,
+        organization=organization,
+    )
+    if not decision.allowed:
+        raise AssignmentError(decision.reason)
+
+
+def grant_organization_responsibility(
     *,
-    project: Any,
-    target_user: Any,
+    organization: Organization,
+    membership: OrganizationMembership,
+    responsibility: str,
     actor: Any,
+    expires_at: Any = None,
     request_id: str = "",
     trace_id: str = "",
-) -> ProjectAdministratorAssignment:
-    action = "delegated_assignment.project_administrator.create"
-    resource_id = str(project.public_id)
+) -> OrganizationResponsibilityAssignment:
+    action = "responsibility.organization.create"
+    try:
+        with transaction.atomic():
+            locked_org = Organization.objects.select_for_update().get(pk=organization.pk)
+            _require_org_assignment_admin(actor=actor, organization=locked_org)
+            locked_member = _locked_membership(
+                organization=locked_org,
+                membership=membership,
+            )
+            if responsibility not in OrganizationResponsibility.values:
+                raise AssignmentError("INVALID_RESPONSIBILITY")
+            assignment = _create_or_reinstate(
+                OrganizationResponsibilityAssignment,
+                organization=locked_org,
+                membership=locked_member,
+                responsibility=responsibility,
+                actor=actor,
+                expires_at=expires_at,
+            )
+            _audit(
+                actor=actor,
+                organization_id=locked_org.pk,
+                action=action,
+                outcome="success",
+                resource_type="organization_responsibility_assignment",
+                resource_id=str(assignment.pk),
+                reason="ASSIGNMENT_CREATED",
+                membership_id=locked_member.pk,
+                request_id=request_id,
+                trace_id=trace_id,
+            )
+            return assignment
+    except (AssignmentError, ValidationError, IntegrityError) as exc:
+        reason = exc.code if isinstance(exc, AssignmentError) else "INVALID_ASSIGNMENT_SCOPE"
+        _audit(
+            actor=actor,
+            organization_id=organization.pk,
+            action=action,
+            outcome="deny",
+            resource_type="organization",
+            resource_id=str(organization.pk),
+            reason=reason,
+            membership_id=membership.pk,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        raise AssignmentError(reason) from exc
+
+
+def grant_project_responsibility(
+    *,
+    project: Any,
+    membership: OrganizationMembership,
+    responsibility: str,
+    actor: Any,
+    expires_at: Any = None,
+    request_id: str = "",
+    trace_id: str = "",
+) -> ProjectResponsibilityAssignment:
+    action = "responsibility.project.create"
     try:
         with transaction.atomic():
             organization = Organization.objects.select_for_update().get(pk=project.organization_id)
-            decision = authorize(
-                user=actor,
-                capability=Capability.ORGANIZATION_MANAGE,
+            _require_org_assignment_admin(actor=actor, organization=organization)
+            locked_member = _locked_membership(
                 organization=organization,
-                project=project,
+                membership=membership,
             )
-            if not decision.allowed:
-                raise AssignmentError(decision.reason)
-            _validate_target_user(organization=organization, target_user=target_user)
+            if responsibility not in ProjectResponsibility.values:
+                raise AssignmentError("INVALID_RESPONSIBILITY")
             assignment = _create_or_reinstate(
-                ProjectAdministratorAssignment,
+                ProjectResponsibilityAssignment,
                 organization=organization,
-                target_user=target_user,
+                membership=locked_member,
+                responsibility=responsibility,
                 actor=actor,
+                expires_at=expires_at,
                 project=project,
             )
             _audit(
@@ -137,71 +224,79 @@ def assign_project_administrator(
                 organization_id=organization.pk,
                 action=action,
                 outcome="success",
-                resource_type="project_administrator_assignment",
+                resource_type="project_responsibility_assignment",
                 resource_id=str(assignment.pk),
                 reason="ASSIGNMENT_CREATED",
-                target_user_id=target_user.pk,
+                membership_id=locked_member.pk,
                 request_id=request_id,
                 trace_id=trace_id,
             )
             return assignment
     except (AssignmentError, ValidationError, IntegrityError) as exc:
-        reason = (
-            "ASSIGNMENT_ALREADY_EXISTS"
-            if isinstance(exc, IntegrityError)
-            else exc.code
-            if isinstance(exc, AssignmentError)
-            else "INVALID_ASSIGNMENT_SCOPE"
-        )
+        reason = exc.code if isinstance(exc, AssignmentError) else "INVALID_ASSIGNMENT_SCOPE"
         _audit(
             actor=actor,
             organization_id=project.organization_id,
             action=action,
             outcome="deny",
             resource_type="project",
-            resource_id=resource_id,
+            resource_id=str(project.public_id),
             reason=reason,
-            target_user_id=target_user.pk,
+            membership_id=membership.pk,
             request_id=request_id,
             trace_id=trace_id,
         )
         raise AssignmentError(reason) from exc
 
 
-def assign_scenario_editor(
+def grant_scenario_responsibility(
     *,
     scenario: Any,
-    target_user: Any,
+    membership: OrganizationMembership,
+    responsibility: str,
     actor: Any,
+    expires_at: Any = None,
     request_id: str = "",
     trace_id: str = "",
-) -> ScenarioEditorAssignment:
-    action = "delegated_assignment.scenario_editor.create"
-    resource_id = str(scenario.public_id)
+) -> ScenarioResponsibilityAssignment:
+    action = "responsibility.scenario.create"
     try:
         with transaction.atomic():
             organization = Organization.objects.select_for_update().get(pk=scenario.organization_id)
-            organization_decision = authorize(
-                user=actor,
-                capability=Capability.ORGANIZATION_MANAGE,
+            if responsibility in {
+                ScenarioResponsibility.VIEWER,
+                ScenarioResponsibility.EDITOR,
+            }:
+                org_decision = authorize(
+                    user=actor,
+                    capability=Capability.RESPONSIBILITY_MANAGE,
+                    organization=organization,
+                    scenario=scenario,
+                )
+                project_decision = authorize(
+                    user=actor,
+                    capability=Capability.PROJECT_MANAGE,
+                    organization=organization,
+                    project=scenario.project,
+                    scenario=scenario,
+                )
+                if not org_decision.allowed and not project_decision.allowed:
+                    raise AssignmentError("SCENARIO_RESPONSIBILITY_DELEGATION_DENIED")
+            else:
+                _require_org_assignment_admin(actor=actor, organization=organization)
+            locked_member = _locked_membership(
                 organization=organization,
-                scenario=scenario,
+                membership=membership,
             )
-            project_decision = authorize(
-                user=actor,
-                capability=Capability.PROJECT_MANAGE,
-                organization=organization,
-                project=scenario.project,
-                scenario=scenario,
-            )
-            if not organization_decision.allowed and not project_decision.allowed:
-                raise AssignmentError("SCENARIO_EDITOR_DELEGATION_DENIED")
-            _validate_target_user(organization=organization, target_user=target_user)
+            if responsibility not in ScenarioResponsibility.values:
+                raise AssignmentError("INVALID_RESPONSIBILITY")
             assignment = _create_or_reinstate(
-                ScenarioEditorAssignment,
+                ScenarioResponsibilityAssignment,
                 organization=organization,
-                target_user=target_user,
+                membership=locked_member,
+                responsibility=responsibility,
                 actor=actor,
+                expires_at=expires_at,
                 scenario=scenario,
             )
             _audit(
@@ -209,66 +304,61 @@ def assign_scenario_editor(
                 organization_id=organization.pk,
                 action=action,
                 outcome="success",
-                resource_type="scenario_editor_assignment",
+                resource_type="scenario_responsibility_assignment",
                 resource_id=str(assignment.pk),
                 reason="ASSIGNMENT_CREATED",
-                target_user_id=target_user.pk,
+                membership_id=locked_member.pk,
                 request_id=request_id,
                 trace_id=trace_id,
             )
             return assignment
     except (AssignmentError, ValidationError, IntegrityError) as exc:
-        reason = (
-            "ASSIGNMENT_ALREADY_EXISTS"
-            if isinstance(exc, IntegrityError)
-            else exc.code
-            if isinstance(exc, AssignmentError)
-            else "INVALID_ASSIGNMENT_SCOPE"
-        )
+        reason = exc.code if isinstance(exc, AssignmentError) else "INVALID_ASSIGNMENT_SCOPE"
         _audit(
             actor=actor,
             organization_id=scenario.organization_id,
             action=action,
             outcome="deny",
             resource_type="scenario",
-            resource_id=resource_id,
+            resource_id=str(scenario.public_id),
             reason=reason,
-            target_user_id=target_user.pk,
+            membership_id=membership.pk,
             request_id=request_id,
             trace_id=trace_id,
         )
         raise AssignmentError(reason) from exc
 
 
-def assign_document_set_manager(
+def grant_document_set_responsibility(
     *,
     document_set: Any,
-    target_user: Any,
+    membership: OrganizationMembership,
+    responsibility: str,
     actor: Any,
+    expires_at: Any = None,
     request_id: str = "",
     trace_id: str = "",
-) -> DocumentSetManagerAssignment:
-    action = "delegated_assignment.document_set_manager.create"
-    resource_id = str(document_set.public_id)
+) -> DocumentSetResponsibilityAssignment:
+    action = "responsibility.document_set.create"
     try:
         with transaction.atomic():
             organization = Organization.objects.select_for_update().get(
                 pk=document_set.organization_id
             )
-            decision = authorize(
-                user=actor,
-                capability=Capability.ORGANIZATION_MANAGE,
+            _require_org_assignment_admin(actor=actor, organization=organization)
+            locked_member = _locked_membership(
                 organization=organization,
-                document_set=document_set,
+                membership=membership,
             )
-            if not decision.allowed:
-                raise AssignmentError(decision.reason)
-            _validate_target_user(organization=organization, target_user=target_user)
+            if responsibility not in DocumentSetResponsibility.values:
+                raise AssignmentError("INVALID_RESPONSIBILITY")
             assignment = _create_or_reinstate(
-                DocumentSetManagerAssignment,
+                DocumentSetResponsibilityAssignment,
                 organization=organization,
-                target_user=target_user,
+                membership=locked_member,
+                responsibility=responsibility,
                 actor=actor,
+                expires_at=expires_at,
                 document_set=document_set,
             )
             _audit(
@@ -276,128 +366,109 @@ def assign_document_set_manager(
                 organization_id=organization.pk,
                 action=action,
                 outcome="success",
-                resource_type="document_set_manager_assignment",
+                resource_type="document_set_responsibility_assignment",
                 resource_id=str(assignment.pk),
                 reason="ASSIGNMENT_CREATED",
-                target_user_id=target_user.pk,
+                membership_id=locked_member.pk,
                 request_id=request_id,
                 trace_id=trace_id,
             )
             return assignment
     except (AssignmentError, ValidationError, IntegrityError) as exc:
-        reason = (
-            "ASSIGNMENT_ALREADY_EXISTS"
-            if isinstance(exc, IntegrityError)
-            else exc.code
-            if isinstance(exc, AssignmentError)
-            else "INVALID_ASSIGNMENT_SCOPE"
-        )
+        reason = exc.code if isinstance(exc, AssignmentError) else "INVALID_ASSIGNMENT_SCOPE"
         _audit(
             actor=actor,
             organization_id=document_set.organization_id,
             action=action,
             outcome="deny",
             resource_type="document_set",
-            resource_id=resource_id,
+            resource_id=str(document_set.public_id),
             reason=reason,
-            target_user_id=target_user.pk,
+            membership_id=membership.pk,
             request_id=request_id,
             trace_id=trace_id,
         )
         raise AssignmentError(reason) from exc
 
 
-def remove_delegated_assignment(
+def remove_responsibility_assignment(
     *,
     assignment: Any,
     actor: Any,
     request_id: str = "",
     trace_id: str = "",
 ) -> None:
-    """Revoke one exact assignment; required audit failure restores its active state.
-
-    The row is never deleted, so who held which authority stays reconstructable from the
-    table itself rather than only from the audit trail.
-    """
-
     model = type(assignment)
-    if model is ProjectAdministratorAssignment:
-        assignment_type = "project_administrator"
-        target = assignment.project
-        authorization_kwargs = {"project": target}
-    elif model is ScenarioEditorAssignment:
-        assignment_type = "scenario_editor"
-        target = assignment.scenario
-        authorization_kwargs = {"project": target.project, "scenario": target}
-    elif model is DocumentSetManagerAssignment:
-        assignment_type = "document_set_manager"
-        target = assignment.document_set
-        authorization_kwargs = {"document_set": target}
-    else:
-        raise AssignmentError("UNKNOWN_ASSIGNMENT_TYPE")
-
-    action = f"delegated_assignment.{assignment_type}.delete"
-    organization_id = assignment.organization_id
-    assignment_id = assignment.pk
-    target_user_id = assignment.user_id
+    organization = assignment.organization
+    responsibility = assignment.responsibility
+    action = f"responsibility.{model._meta.model_name}.revoke"
     try:
-        with transaction.atomic():
-            organization = Organization.objects.select_for_update().get(pk=organization_id)
-            locked = model.objects.select_for_update().get(
-                pk=assignment_id,
-                organization_id=organization.pk,
-                status=DelegatedAssignmentStatus.ACTIVE,
-            )
-            organization_decision = authorize(
+        if model is ScenarioResponsibilityAssignment and responsibility in {
+            ScenarioResponsibility.VIEWER,
+            ScenarioResponsibility.EDITOR,
+        }:
+            org_decision = authorize(
                 user=actor,
-                capability=Capability.ORGANIZATION_MANAGE,
+                capability=Capability.RESPONSIBILITY_MANAGE,
                 organization=organization,
-                **authorization_kwargs,
             )
-            project_decision = (
-                authorize(
-                    user=actor,
-                    capability=Capability.PROJECT_MANAGE,
-                    organization=organization,
-                    **authorization_kwargs,
+            project_decision = authorize(
+                user=actor,
+                capability=Capability.PROJECT_MANAGE,
+                organization=organization,
+                project=assignment.scenario.project,
+                scenario=assignment.scenario,
+            )
+            if not org_decision.allowed and not project_decision.allowed:
+                raise AssignmentError("RESPONSIBILITY_REVOCATION_DENIED")
+        else:
+            _require_org_assignment_admin(actor=actor, organization=organization)
+
+        with transaction.atomic():
+            Organization.objects.select_for_update().get(pk=organization.pk)
+            locked = model.objects.select_for_update().get(pk=assignment.pk)
+            if locked.status != ResponsibilityStatus.ACTIVE:
+                raise AssignmentError("ASSIGNMENT_NOT_ACTIVE")
+            if (
+                model is OrganizationResponsibilityAssignment
+                and responsibility == OrganizationResponsibility.ADMINISTRATOR
+                and not OrganizationResponsibilityAssignment.objects.filter(
+                    organization_id=organization.pk,
+                    responsibility=OrganizationResponsibility.ADMINISTRATOR,
+                    status=ResponsibilityStatus.ACTIVE,
+                    membership__status=MembershipStatus.ACTIVE,
                 )
-                if model is ScenarioEditorAssignment
-                else None
-            )
-            if not organization_decision.allowed and not (
-                project_decision is not None and project_decision.allowed
+                .exclude(pk=locked.pk)
+                .exists()
             ):
-                raise AssignmentError("ASSIGNMENT_REMOVAL_DENIED")
-            # A queryset update, not `save()`: model validation requires an active member, and an
-            # assignment must stay revocable after the user leaves the organization.
-            model.objects.filter(pk=locked.pk).update(
-                status=DelegatedAssignmentStatus.REVOKED,
-                revoked_by=actor,
-                revoked_at=timezone.now(),
-            )
+                raise AssignmentError("LAST_ORGANIZATION_ADMIN")
+            locked.status = ResponsibilityStatus.REVOKED
+            locked.revoked_by = actor
+            locked.revoked_at = timezone.now()
+            locked.save(update_fields=["status", "revoked_by", "revoked_at", "updated_at"])
             _audit(
                 actor=actor,
                 organization_id=organization.pk,
                 action=action,
                 outcome="success",
-                resource_type=f"{assignment_type}_assignment",
-                resource_id=str(assignment_id),
-                reason="ASSIGNMENT_REMOVED",
-                target_user_id=target_user_id,
+                resource_type=model._meta.model_name,
+                resource_id=str(locked.pk),
+                reason="ASSIGNMENT_REVOKED",
+                membership_id=locked.membership_id,
                 request_id=request_id,
                 trace_id=trace_id,
             )
-    except (AssignmentError, ObjectDoesNotExist) as exc:
+    except (AssignmentError, ValidationError, model.DoesNotExist) as exc:
         reason = exc.code if isinstance(exc, AssignmentError) else "ASSIGNMENT_NOT_FOUND"
         _audit(
             actor=actor,
-            organization_id=organization_id,
+            organization_id=organization.pk,
             action=action,
             outcome="deny",
-            resource_type=f"{assignment_type}_assignment",
-            resource_id=str(assignment_id),
+            resource_type=model._meta.model_name,
+            resource_id=str(getattr(assignment, "pk", "")),
             reason=reason,
-            target_user_id=target_user_id,
+            membership_id=getattr(assignment, "membership_id", None),
             request_id=request_id,
             trace_id=trace_id,
         )

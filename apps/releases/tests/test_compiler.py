@@ -448,8 +448,6 @@ def _compile_tool_release(scenario: Scenario, *, approval_required: bool) -> Sce
                 "allowed_output_fields": ["answer"],
                 "approval": {
                     "required": approval_required,
-                    "approver_roles": ["approver"],
-                    "self_approval_allowed": False,
                 },
             },
         },

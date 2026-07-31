@@ -33,12 +33,6 @@ from apps.evaluations.models import (
 )
 from apps.evaluations.services import EvalError, execute_release_input
 from apps.identity.authorization import Capability, authorize
-from apps.identity.models import (
-    DelegatedAssignmentStatus,
-    DocumentSetManagerAssignment,
-    ProjectAdministratorAssignment,
-    ScenarioEditorAssignment,
-)
 from apps.ingestion.models import IndexStatus, IndexVersion
 from apps.observability.metrics import (
     QUESTION_EVAL_CASES,
@@ -75,26 +69,12 @@ class OneOffResult:
 
 
 def can_manage_question_sets(user: Any, organization: Any) -> bool:
-    """Question sets are organization-owned but writable only by an author role."""
-
-    if authorize(
+    """Organization-owned evaluation assets require organization administration."""
+    return authorize(
         user=user,
         capability=Capability.ORGANIZATION_MANAGE,
         organization=organization,
-    ).allowed:
-        return True
-    if not getattr(user, "is_authenticated", False) or not getattr(user, "is_active", False):
-        return False
-    filters = {
-        "organization_id": organization.pk,
-        "user_id": user.pk,
-        "status": DelegatedAssignmentStatus.ACTIVE,
-    }
-    return (
-        DocumentSetManagerAssignment.objects.filter(**filters).exists()
-        or ProjectAdministratorAssignment.objects.filter(**filters).exists()
-        or ScenarioEditorAssignment.objects.filter(**filters).exists()
-    )
+    ).allowed
 
 
 def can_read_question_sets(user: Any, organization: Any) -> bool:

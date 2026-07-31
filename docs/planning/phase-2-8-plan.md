@@ -36,23 +36,29 @@ observability and migrations, and therefore has its own staged acceptance gates.
    service, delegated assignments, scenario-to-document-set grants, responsive Access UI and
    superadmin recovery controls are complete. See the
    [Part 2.1 archive](archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md).
-4. **Part 3 — Unified workflow engine — Verified.** One `workflow_definition`, compiler, runtime,
+4. **Part 2.2 — Responsibility-based operator authorization redesign — Planned.** Replace the
+   transitional single-role membership plus delegated-assignment model with roleless membership,
+   typed scope responsibilities, exact scenario approval and typed human/consumer identity. The
+   owner declared the current environment disposable demo data; no legacy role backfill is
+   required. See the
+   [Part 2.2 task plan](../tasks/scoped-operator-responsibility-authorization-redesign/plan.md).
+5. **Part 3 — Unified workflow engine — Verified.** One `workflow_definition`, compiler, runtime,
    Run/Event model and public run surface now govern RAG, workflow and agent execution.
-5. **Part 4 — Scenario authoring, reusable artifacts and release experience — Implemented and
+6. **Part 4 — Scenario authoring, reusable artifacts and release experience — Implemented and
    automated/offline verified.** Preset-led scenario creation, contextual Studio, typed exact
    artifact selectors with logical/version descriptions, compiler-derived invocation guidance and
    governed AI-authoring preflight are implemented. Browser/live-provider owner acceptance remains.
-6. **Part 5 — Document profiles, document manager and index automation — Implemented and
+7. **Part 5 — Document profiles, document manager and index automation — Implemented and
    automated/offline verified.** Set-only document management, exact chunking/retrieval profiles,
    keyword/vector/hybrid search, opt-in summary-to-document-to-content routing, optional
    provenance-bound summaries and idempotent staged index preparation are implemented; activation
    remains explicit. Destructive cleanup is not authorized.
-7. **Part 6 — Question sets and retrieval/answer evaluation — Implemented and automated
+8. **Part 6 — Question sets and retrieval/answer evaluation — Implemented and automated
    verified.** Reusable immutable-versioned question sets, exact-target document retrieval
    diagnostics, exact-release scenario answer evaluation, one-off asks and separate
    retrieval/answer quality measures are implemented. Optional LLM judging remains disabled until
    an approved pinned profile/prompt and privacy/cost review are supplied.
-8. **Part 7 — Unified runs and kill-switch management — Implemented and automated/offline
+9. **Part 7 — Unified runs and kill-switch management — Implemented and automated/offline
    verified.** One bounded filterable operational projection spans execution, evaluation,
    ingestion, index-build and connector-sync jobs. Exact platform/organization/project/scenario
    runtime controls, native execution cancellation, document-set quarantine, audit rollback,
@@ -60,7 +66,9 @@ observability and migrations, and therefore has its own staged acceptance gates.
    owner acceptance and production-scale load evidence remain rollout gates.
 
 Part 2 depends on the Part 1 shell. Part 2.1 depends on the verified Part 2 organization context and
-is the authorization prerequisite for the final Part 4/5/7 enforcement. Part 3 may proceed
+is the current authorization prerequisite for the final Part 4/5/7 enforcement. Planned Part 2.2
+supersedes the Part 2/2.1 authorization model and therefore must reverify every Part 4/5/6/7
+authorization caller before cutover. Part 3 may proceed
 independently at backend level but must use
 the Part 1 console shell for its operator surfaces. Part 4 depends on Part 3 because presets replace
 scenario types. Part 5 depends on Part 2 for document-manager authority but not on Part 3. Part 6
@@ -74,13 +82,15 @@ acceptance gate.
   first authorized organization by deterministic `name`, `slug`, `pk` ordering becomes active.
 - Active organization is navigation state, never an authorization input. Reads and writes always
   authorize the trusted target and tenant lineage server-side.
-- Organization membership remains one role per user per organization. `document_manager` is a
-  document-only role; it is not a combination of scenario or release roles.
-- The target authorization model is defined by the
+- The currently verified Part 2/2.1 implementation keeps one role per organization membership.
+  Planned Part 2.2 replaces this transitional behavior with roleless membership and explicit typed
+  responsibilities; current-behavior documentation must not claim that cutover before verification.
+- The current authorization model is defined by the
   [Part 2.1 scoped authorization and superadmin-recovery archive](archive/phase-2-8-part-2-1-scoped-authorization-superadmin-recovery-2026-07-24/plan.md).
-  Daily Global Admin is an application role on a non-superuser account; Django superuser is a
-  separate superadmin recovery identity. Delegated authority is organization-, project-,
-  scenario- or document-set-scoped.
+  The planned replacement is defined by the
+  [Part 2.2 responsibility redesign](../tasks/scoped-operator-responsibility-authorization-redesign/plan.md).
+  Daily Global Admin remains an explicit application responsibility on a non-superuser account;
+  Django superuser remains a separate superadmin recovery identity.
 - Release/publish/rollback authority belongs only to Global Admin and the owning Organization
   Admin. Project Admin and Scenario Editor may prepare and test but cannot publish.
 - There is no person-level `document_set_user` target role. A Document Set Manager grants a
@@ -112,6 +122,7 @@ acceptance gate.
 ## Part records
 
 - [Part 2 archive](archive/phase-2-8-part-2-organization-access-management-2026-07-22/plan.md)
+- [Part 2.2 responsibility-based authorization redesign](../tasks/scoped-operator-responsibility-authorization-redesign/plan.md)
 - [Part 3 archive](archive/phase-2-8-part-3-unified-workflow-engine-2026-07-28/plan.md)
 - [Part 4 plan](../tasks/phase-2-8-part-4-scenario-authoring-release-experience/plan.md)
 - [Part 5 plan](../tasks/phase-2-8-part-5-document-profiles-index-automation/plan.md)
@@ -176,6 +187,10 @@ Each directory also contains its proportional `threat-model.md` and `verificatio
 ## Migration and cutover policy
 
 - Parts 2, 5 and 6 use additive/reversible schema changes until their own cleanup gate is approved.
+- Planned Part 2.2 uses the owner-declared disposable demo-data assumption: it does not backfill
+  legacy roles and proposes an exact-target local `Fresh` reset after its ADR, inventory,
+  clean-migrate/seed proof, separate implementation approval and final destructive-target review.
+  It has no production migration path.
 - Part 3 uses staged gates for inventory/ADR, DSL/compiler parity, additive unified Run/Event state
   machine, consumer migration, destructive readiness, atomic removal and documentation closure.
   Mixed old/new compiled contracts or workers are not permitted at the atomic cutover.
@@ -202,6 +217,8 @@ Each directory also contains its proportional `threat-model.md` and `verificatio
 ## Phase acceptance criteria
 
 - [x] Part 1 is implemented, verified, owner-accepted and archived.
+- [ ] Part 2.2 responsibility authorization redesign is implemented, verified, owner-accepted and
+      supersedes the Part 2/2.1 authorization decisions.
 - [ ] Parts 2–7 each have an approved plan and threat model before implementation.
 - [ ] Every part records implementation and verification as separate states with repository-standard
       evidence.
@@ -242,10 +259,10 @@ cleanup never shares a single approval.
 automated/offline verified; their explicit browser/live-provider/scale rollout gates and owner
 acceptance remain.
 
-Phase 2.8 completes only after all seven parts are implemented and verified, required ADRs and
-current-state documentation are updated, destructive operations have their separate approvals and
-evidence, residual risks receive owner acceptance, and completed task records are archived under the
-planning policy.
+Phase 2.8 completes only after the original seven parts and the planned Part 2.2 authorization
+redesign are implemented and verified, required ADRs and current-state documentation are updated,
+destructive operations have their separate approvals and evidence, residual risks receive owner
+acceptance, and completed task records are archived under the planning policy.
 
 ## Production promotion gate
 

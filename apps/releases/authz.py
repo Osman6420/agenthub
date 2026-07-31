@@ -21,11 +21,13 @@ class ReleaseAuthorizationError(PermissionError):
         super().__init__(code)
 
 
-def resolve_release_manager(*, username: str, organization_id: int) -> AbstractBaseUser:
-    """Resolve ``username`` and require central release authority in the organization."""
+def resolve_release_manager(
+    *, username: str, organization_id: int, scenario: object
+) -> AbstractBaseUser:
+    """Resolve ``username`` and require release authority for one exact scenario."""
     user = get_user_model().objects.filter(username=username).first()
     if user is None:
         raise ReleaseAuthorizationError("UNKNOWN_ACTOR")
-    if not can_manage_scenario_releases(user, organization_id):
+    if not can_manage_scenario_releases(user, organization_id, scenario=scenario):
         raise ReleaseAuthorizationError("NOT_RELEASE_MANAGER")
     return user

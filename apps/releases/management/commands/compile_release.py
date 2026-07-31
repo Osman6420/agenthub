@@ -116,7 +116,9 @@ class Command(BaseCommand):
             # requires an authorized release manager, a passing eval, and ready indexes.
             try:
                 resolve_release_manager(
-                    username=options["actor"], organization_id=scenario.project.organization_id
+                    username=options["actor"],
+                    organization_id=scenario.project.organization_id,
+                    scenario=scenario,
                 )
             except ReleaseAuthorizationError as exc:
                 raise CommandError(f"not authorized to promote: {exc.code}") from exc

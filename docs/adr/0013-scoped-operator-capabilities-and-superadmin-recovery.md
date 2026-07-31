@@ -1,6 +1,6 @@
 # ADR 0013: Scoped operator capabilities and superadmin recovery
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0015](0015-responsibility-based-operator-authorization.md)
 - **Date:** 2026-07-23
 
 ## Context

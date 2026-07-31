@@ -1,10 +1,9 @@
-"""Central human-operator capability evaluation for Phase 2.8 Part 2.1.
+"""Central deny-by-default human-operator responsibility evaluation.
 
-Callers must pass trusted model lineage, never an organization selected by the
-client. Object-scoped assignments are added to this boundary in later slices.
-Until those rows exist, this module intentionally recognizes only the additive
-Global Administrator, the owning Organization Administrator, and the exceptional
-Django superadmin recovery identity.
+Membership establishes tenant affiliation only. Every object read or action is
+authorized from an active, unexpired typed responsibility assignment. Callers
+must pass trusted persisted targets; workspace/session values are navigation
+state and never authority.
 """
 
 from __future__ import annotations
@@ -13,29 +12,52 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from django.db.models import Q, QuerySet
+from django.utils import timezone
+
 from apps.identity.models import (
-    DelegatedAssignmentStatus,
-    DocumentSetManagerAssignment,
-    GlobalAdministrator,
-    ProjectAdministratorAssignment,
-    ScenarioEditorAssignment,
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    PlatformResponsibility,
+    PlatformResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+    ResponsibilityStatus,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
 )
-from apps.identity.roles import Role
-from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
+from apps.tenancy.models import (
+    MembershipStatus,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
 
 
 class Capability(StrEnum):
     PLATFORM_MANAGE = "platform.manage"
+    ORGANIZATION_VIEW = "organization.view"
     ORGANIZATION_MANAGE = "organization.manage"
+    MEMBERSHIP_MANAGE = "membership.manage"
+    RESPONSIBILITY_MANAGE = "responsibility.manage"
+    AUDIT_VIEW = "audit.view"
+    PROJECT_VIEW = "project.view"
     PROJECT_MANAGE = "project.manage"
+    SCENARIO_CREATE = "scenario.create"
+    SCENARIO_VIEW = "scenario.view"
     SCENARIO_EDIT = "scenario.edit"
     SCENARIO_TEST = "scenario.test"
     SCENARIO_RELEASE = "scenario.release"
+    SCENARIO_APPROVAL_VIEW = "scenario.approval.view"
+    SCENARIO_APPROVAL_DECIDE = "scenario.approval.decide"
     DOCUMENT_SET_METADATA_READ = "document_set.metadata.read"
     DOCUMENT_SET_RETRIEVE_GRANT = "document_set.retrieve.grant"
     DOCUMENT_SET_CONTENT_READ = "document_set.content.read"
     DOCUMENT_SET_CONTENT_MANAGE = "document_set.content.manage"
     DOCUMENT_SET_OPERATIONS_MANAGE = "document_set.operations.manage"
+    RUNTIME_VIEW = "runtime.view"
     RUNTIME_CANCEL = "runtime.cancel"
     RUNTIME_PAUSE = "runtime.pause"
     RUNTIME_RESUME = "runtime.resume"
@@ -43,11 +65,12 @@ class Capability(StrEnum):
 
 class AuthoritySource(StrEnum):
     NONE = "none"
-    GLOBAL_ADMINISTRATOR = "global_administrator"
-    ORGANIZATION_ADMINISTRATOR = "organization_administrator"
-    PROJECT_ADMINISTRATOR = "project_administrator"
-    SCENARIO_EDITOR = "scenario_editor"
-    DOCUMENT_SET_MANAGER = "document_set_manager"
+    PLATFORM_RESPONSIBILITY = "platform_responsibility"
+    ORGANIZATION_RESPONSIBILITY = "organization_responsibility"
+    PROJECT_RESPONSIBILITY = "project_responsibility"
+    SCENARIO_RESPONSIBILITY = "scenario_responsibility"
+    DOCUMENT_SET_RESPONSIBILITY = "document_set_responsibility"
+    MEMBERSHIP_SHELL = "membership_shell"
     SUPERADMIN_RECOVERY = "superadmin_recovery"
 
 
@@ -56,43 +79,136 @@ class AuthorizationDecision:
     allowed: bool
     source: AuthoritySource
     reason: str
+    assignment_id: int | None = None
 
 
 _GLOBAL_ADMIN_CAPABILITIES = frozenset(
     {
         Capability.PLATFORM_MANAGE,
+        Capability.ORGANIZATION_VIEW,
         Capability.ORGANIZATION_MANAGE,
+        Capability.MEMBERSHIP_MANAGE,
+        Capability.RESPONSIBILITY_MANAGE,
+        Capability.AUDIT_VIEW,
+        Capability.PROJECT_VIEW,
         Capability.PROJECT_MANAGE,
-        Capability.SCENARIO_EDIT,
-        Capability.SCENARIO_TEST,
-        Capability.SCENARIO_RELEASE,
+        Capability.SCENARIO_VIEW,
         Capability.DOCUMENT_SET_METADATA_READ,
-        Capability.RUNTIME_CANCEL,
-        Capability.RUNTIME_PAUSE,
-        Capability.RUNTIME_RESUME,
+        Capability.RUNTIME_VIEW,
     }
 )
 
-_ORGANIZATION_ADMIN_CAPABILITIES = frozenset(
+_ORGANIZATION_ADMIN_CAPABILITIES = _GLOBAL_ADMIN_CAPABILITIES - {
+    Capability.PLATFORM_MANAGE,
+}
+
+_ORGANIZATION_AUDITOR_CAPABILITIES = frozenset(
     {
-        Capability.ORGANIZATION_MANAGE,
-        Capability.PROJECT_MANAGE,
-        Capability.SCENARIO_EDIT,
-        Capability.SCENARIO_TEST,
-        Capability.SCENARIO_RELEASE,
+        Capability.ORGANIZATION_VIEW,
+        Capability.AUDIT_VIEW,
+        Capability.PROJECT_VIEW,
+        Capability.SCENARIO_VIEW,
         Capability.DOCUMENT_SET_METADATA_READ,
-        Capability.RUNTIME_CANCEL,
-        Capability.RUNTIME_PAUSE,
-        Capability.RUNTIME_RESUME,
+        Capability.RUNTIME_VIEW,
     }
 )
 
-_READ_CAPABILITIES = frozenset(
+_PROJECT_RESPONSIBILITY_CAPABILITIES = {
+    ProjectResponsibility.VIEWER: frozenset(
+        {
+            Capability.PROJECT_VIEW,
+            Capability.SCENARIO_VIEW,
+        }
+    ),
+    ProjectResponsibility.ADMINISTRATOR: frozenset(
+        {
+            Capability.PROJECT_VIEW,
+            Capability.PROJECT_MANAGE,
+            Capability.SCENARIO_CREATE,
+            Capability.SCENARIO_VIEW,
+            Capability.DOCUMENT_SET_METADATA_READ,
+        }
+    ),
+}
+
+_SCENARIO_RESPONSIBILITY_CAPABILITIES = {
+    ScenarioResponsibility.VIEWER: frozenset({Capability.SCENARIO_VIEW}),
+    ScenarioResponsibility.EDITOR: frozenset(
+        {
+            Capability.SCENARIO_VIEW,
+            Capability.SCENARIO_EDIT,
+            Capability.SCENARIO_TEST,
+        }
+    ),
+    ScenarioResponsibility.RELEASE_MANAGER: frozenset(
+        {
+            Capability.SCENARIO_VIEW,
+            Capability.SCENARIO_RELEASE,
+        }
+    ),
+    ScenarioResponsibility.RUNTIME_OPERATOR: frozenset(
+        {
+            Capability.SCENARIO_VIEW,
+            Capability.RUNTIME_VIEW,
+            Capability.RUNTIME_CANCEL,
+            Capability.RUNTIME_PAUSE,
+            Capability.RUNTIME_RESUME,
+        }
+    ),
+    ScenarioResponsibility.APPROVER: frozenset(
+        {
+            Capability.SCENARIO_VIEW,
+            Capability.SCENARIO_APPROVAL_VIEW,
+            Capability.SCENARIO_APPROVAL_DECIDE,
+        }
+    ),
+}
+
+_DOCUMENT_SET_RESPONSIBILITY_CAPABILITIES = {
+    DocumentSetResponsibility.METADATA_VIEWER: frozenset({Capability.DOCUMENT_SET_METADATA_READ}),
+    DocumentSetResponsibility.CONTENT_READER: frozenset(
+        {
+            Capability.DOCUMENT_SET_METADATA_READ,
+            Capability.DOCUMENT_SET_CONTENT_READ,
+        }
+    ),
+    DocumentSetResponsibility.MANAGER: frozenset(
+        {
+            Capability.DOCUMENT_SET_METADATA_READ,
+            Capability.DOCUMENT_SET_RETRIEVE_GRANT,
+            Capability.DOCUMENT_SET_CONTENT_READ,
+            Capability.DOCUMENT_SET_CONTENT_MANAGE,
+            Capability.DOCUMENT_SET_OPERATIONS_MANAGE,
+        }
+    ),
+}
+
+_INACTIVE_ORGANIZATION_READ_CAPABILITIES = frozenset(
     {
+        Capability.ORGANIZATION_VIEW,
+        Capability.AUDIT_VIEW,
+        Capability.PROJECT_VIEW,
+        Capability.SCENARIO_VIEW,
         Capability.DOCUMENT_SET_METADATA_READ,
         Capability.DOCUMENT_SET_CONTENT_READ,
+        Capability.RUNTIME_VIEW,
+        Capability.SCENARIO_APPROVAL_VIEW,
     }
 )
+
+
+def _active_assignments(queryset: QuerySet[Any]) -> QuerySet[Any]:
+    now = timezone.now()
+    return queryset.filter(
+        status=ResponsibilityStatus.ACTIVE,
+        membership__status=MembershipStatus.ACTIVE,
+        membership__user__is_active=True,
+        membership__user__is_superuser=False,
+    ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+
+
+def _allow(source: AuthoritySource, assignment: Any, reason: str) -> AuthorizationDecision:
+    return AuthorizationDecision(True, source, reason, getattr(assignment, "pk", None))
 
 
 def authorize(
@@ -104,7 +220,7 @@ def authorize(
     scenario: Any | None = None,
     document_set: Any | None = None,
 ) -> AuthorizationDecision:
-    """Return a stable, content-free decision for one trusted target scope."""
+    """Return a stable decision for one exact trusted target scope."""
 
     if not getattr(user, "is_authenticated", False) or not getattr(user, "is_active", False):
         return AuthorizationDecision(
@@ -135,112 +251,116 @@ def authorize(
             "SUPERADMIN_RECOVERY",
         )
 
+    platform_assignment = PlatformResponsibilityAssignment.objects.filter(
+        user_id=user.pk,
+        user__is_active=True,
+        user__is_superuser=False,
+        responsibility=PlatformResponsibility.GLOBAL_ADMINISTRATOR,
+        status=ResponsibilityStatus.ACTIVE,
+    ).first()
+    if platform_assignment is not None and capability in _GLOBAL_ADMIN_CAPABILITIES:
+        return _allow(
+            AuthoritySource.PLATFORM_RESPONSIBILITY,
+            platform_assignment,
+            "GLOBAL_ADMINISTRATOR",
+        )
+
+    if effective_organization is None:
+        return AuthorizationDecision(False, AuthoritySource.NONE, "TRUSTED_ORGANIZATION_REQUIRED")
+
+    membership = OrganizationMembership.objects.filter(
+        organization_id=effective_organization.pk,
+        user_id=user.pk,
+        status=MembershipStatus.ACTIVE,
+        user__is_active=True,
+        user__is_superuser=False,
+    ).first()
+    if membership is None:
+        return AuthorizationDecision(False, AuthoritySource.NONE, "ACTIVE_MEMBERSHIP_REQUIRED")
+
     if (
-        effective_organization is not None
-        and effective_organization.status != OrganizationStatus.ACTIVE
-        and capability not in _READ_CAPABILITIES
+        effective_organization.status != OrganizationStatus.ACTIVE
+        and capability not in _INACTIVE_ORGANIZATION_READ_CAPABILITIES
     ):
         return AuthorizationDecision(False, AuthoritySource.NONE, "ORGANIZATION_INACTIVE")
 
-    is_global_administrator = GlobalAdministrator.objects.filter(user_id=user.pk).exists()
-    if is_global_administrator:
-        if capability in _GLOBAL_ADMIN_CAPABILITIES:
-            return AuthorizationDecision(
-                True, AuthoritySource.GLOBAL_ADMINISTRATOR, "GLOBAL_ADMINISTRATOR"
-            )
+    if capability == Capability.ORGANIZATION_VIEW:
+        return _allow(AuthoritySource.MEMBERSHIP_SHELL, membership, "ACTIVE_MEMBERSHIP")
 
-    if effective_organization is None:
-        if is_global_administrator:
-            return AuthorizationDecision(
-                False,
-                AuthoritySource.GLOBAL_ADMINISTRATOR,
-                "GLOBAL_ADMINISTRATOR_CAPABILITY_EXCLUDED",
-            )
-        return AuthorizationDecision(False, AuthoritySource.NONE, "TRUSTED_ORGANIZATION_REQUIRED")
-
-    is_organization_administrator = OrganizationMembership.objects.filter(
-        organization_id=effective_organization.pk,
-        user_id=user.pk,
-        role=Role.ORGANIZATION_ADMIN,
-    ).exists()
-    if is_organization_administrator:
-        if capability in _ORGANIZATION_ADMIN_CAPABILITIES:
-            return AuthorizationDecision(
-                True,
-                AuthoritySource.ORGANIZATION_ADMINISTRATOR,
-                "ORGANIZATION_ADMINISTRATOR",
+    organization_assignments = _active_assignments(
+        OrganizationResponsibilityAssignment.objects.filter(
+            organization_id=effective_organization.pk,
+            membership_id=membership.pk,
+        )
+    )
+    for assignment in organization_assignments:
+        allowed = (
+            _ORGANIZATION_ADMIN_CAPABILITIES
+            if assignment.responsibility == OrganizationResponsibility.ADMINISTRATOR
+            else _ORGANIZATION_AUDITOR_CAPABILITIES
+            if assignment.responsibility == OrganizationResponsibility.AUDITOR
+            else frozenset()
+        )
+        if capability in allowed:
+            return _allow(
+                AuthoritySource.ORGANIZATION_RESPONSIBILITY,
+                assignment,
+                assignment.responsibility.upper(),
             )
 
     effective_project = project or (scenario.project if scenario is not None else None)
-    if (
-        effective_project is not None
-        and ProjectAdministratorAssignment.objects.filter(
-            organization_id=effective_organization.pk,
-            project_id=effective_project.pk,
-            user_id=user.pk,
-            status=DelegatedAssignmentStatus.ACTIVE,
-        ).exists()
-    ):
-        if capability in {
-            Capability.PROJECT_MANAGE,
-            Capability.SCENARIO_EDIT,
-            Capability.SCENARIO_TEST,
-            Capability.DOCUMENT_SET_METADATA_READ,
-        }:
-            return AuthorizationDecision(
-                True,
-                AuthoritySource.PROJECT_ADMINISTRATOR,
-                "PROJECT_ADMINISTRATOR",
+    if effective_project is not None:
+        project_assignments = _active_assignments(
+            ProjectResponsibilityAssignment.objects.filter(
+                organization_id=effective_organization.pk,
+                membership_id=membership.pk,
+                project_id=effective_project.pk,
             )
+        )
+        for assignment in project_assignments:
+            if capability in _PROJECT_RESPONSIBILITY_CAPABILITIES.get(
+                assignment.responsibility, frozenset()
+            ):
+                return _allow(
+                    AuthoritySource.PROJECT_RESPONSIBILITY,
+                    assignment,
+                    assignment.responsibility.upper(),
+                )
 
-    if (
-        scenario is not None
-        and ScenarioEditorAssignment.objects.filter(
-            organization_id=effective_organization.pk,
-            scenario_id=scenario.pk,
-            user_id=user.pk,
-            status=DelegatedAssignmentStatus.ACTIVE,
-        ).exists()
-    ):
-        if capability in {
-            Capability.SCENARIO_EDIT,
-            Capability.SCENARIO_TEST,
-            Capability.DOCUMENT_SET_METADATA_READ,
-        }:
-            return AuthorizationDecision(True, AuthoritySource.SCENARIO_EDITOR, "SCENARIO_EDITOR")
-
-    if (
-        document_set is not None
-        and DocumentSetManagerAssignment.objects.filter(
-            organization_id=effective_organization.pk,
-            document_set_id=document_set.pk,
-            user_id=user.pk,
-            status=DelegatedAssignmentStatus.ACTIVE,
-        ).exists()
-    ):
-        if capability in {
-            Capability.DOCUMENT_SET_METADATA_READ,
-            Capability.DOCUMENT_SET_RETRIEVE_GRANT,
-            Capability.DOCUMENT_SET_CONTENT_READ,
-            Capability.DOCUMENT_SET_CONTENT_MANAGE,
-            Capability.DOCUMENT_SET_OPERATIONS_MANAGE,
-        }:
-            return AuthorizationDecision(
-                True,
-                AuthoritySource.DOCUMENT_SET_MANAGER,
-                "DOCUMENT_SET_MANAGER",
+    if scenario is not None:
+        scenario_assignments = _active_assignments(
+            ScenarioResponsibilityAssignment.objects.filter(
+                organization_id=effective_organization.pk,
+                membership_id=membership.pk,
+                scenario_id=scenario.pk,
             )
+        )
+        for assignment in scenario_assignments:
+            if capability in _SCENARIO_RESPONSIBILITY_CAPABILITIES.get(
+                assignment.responsibility, frozenset()
+            ):
+                return _allow(
+                    AuthoritySource.SCENARIO_RESPONSIBILITY,
+                    assignment,
+                    assignment.responsibility.upper(),
+                )
 
-    if is_global_administrator:
-        return AuthorizationDecision(
-            False,
-            AuthoritySource.GLOBAL_ADMINISTRATOR,
-            "GLOBAL_ADMINISTRATOR_CAPABILITY_EXCLUDED",
+    if document_set is not None:
+        document_assignments = _active_assignments(
+            DocumentSetResponsibilityAssignment.objects.filter(
+                organization_id=effective_organization.pk,
+                membership_id=membership.pk,
+                document_set_id=document_set.pk,
+            )
         )
-    if is_organization_administrator:
-        return AuthorizationDecision(
-            False,
-            AuthoritySource.ORGANIZATION_ADMINISTRATOR,
-            "ORGANIZATION_ADMINISTRATOR_CAPABILITY_EXCLUDED",
-        )
+        for assignment in document_assignments:
+            if capability in _DOCUMENT_SET_RESPONSIBILITY_CAPABILITIES.get(
+                assignment.responsibility, frozenset()
+            ):
+                return _allow(
+                    AuthoritySource.DOCUMENT_SET_RESPONSIBILITY,
+                    assignment,
+                    assignment.responsibility.upper(),
+                )
+
     return AuthorizationDecision(False, AuthoritySource.NONE, "CAPABILITY_NOT_GRANTED")

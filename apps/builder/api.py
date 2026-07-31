@@ -8,9 +8,8 @@ non-authoritative: it renders backend state and diagnostics; every decision is r
 here on the server.
 
 Authorization:
-- read (list/retrieve/diagnostics/node-schema) is membership-scoped
-  (:func:`allowed_organization_ids`);
-- create/update/delete/publish require ``can_author_scenarios`` in the target organization.
+- organization-shell discovery is membership-scoped;
+- protected draft content and every mutation require exact scenario-editor authority.
 """
 
 from __future__ import annotations
@@ -88,11 +87,18 @@ def ai_candidates(request: HttpRequest) -> HttpResponse:
         payload, {"organization", "project_id", "scenario_id", "description", "artifact_type"}
     )
     org = _resolve_org_in_scope(request, payload.get("organization"))
-    _require_author(request, org.id)
     project = _resolve_project(org, payload.get("project_id"))
     if project is None:
         raise services.BuilderError("project_required")
     scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
     result = authoring.generate_candidate(
         organization=org,
         project=project,
@@ -125,13 +131,18 @@ def ai_candidate_repair(request: HttpRequest) -> HttpResponse:
         },
     )
     org = _resolve_org_in_scope(request, payload.get("organization"))
-    _require_author(request, org.id)
     project = _resolve_project(org, payload.get("project_id"))
     if project is None:
         raise services.BuilderError("project_required")
     scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
     if scenario is None:
         raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
     result = authoring.repair_candidate(
         organization=org,
         project=project,
@@ -168,14 +179,22 @@ def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
         },
     )
     org = _resolve_org_in_scope(request, payload.get("organization"))
-    _require_author(request, org.id)
     project = _resolve_project(org, payload.get("project_id"))
     if project is None:
         raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
     draft = authoring.accept_candidate(
         organization=org,
         project=project,
-        scenario=_resolve_scenario(org, project, payload.get("scenario_id")),
+        scenario=scenario,
         actor=_actor(request),
         name=payload.get("name", ""),
         logical_id=payload.get("logical_id", ""),
@@ -198,8 +217,7 @@ def transient_diagnostics(request: HttpRequest) -> HttpResponse:
     """Canonical validation for an unsaved Studio candidate; never persists it."""
     payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
     _reject_unknown_fields(payload, {"organization", "body"})
-    org = _resolve_org_in_scope(request, payload.get("organization"))
-    _require_author(request, org.id)
+    _resolve_org_in_scope(request, payload.get("organization"))
     return JsonResponse(services.diagnose(payload.get("body")))
 
 
@@ -385,14 +403,60 @@ def _resolve_org_in_scope(request: HttpRequest, ref: Any) -> Organization:
     return org
 
 
-def _require_author(request: HttpRequest, organization_id: int) -> None:
-    if not can_author_scenarios(request.user, organization_id):
+def _can_author(
+    request: HttpRequest,
+    *,
+    organization_id: int,
+    project: AIProject | None,
+    scenario: Scenario | None,
+) -> bool:
+    if project is None or scenario is None:
+        return False
+    return can_author_scenarios(
+        request.user,
+        organization_id,
+        project=project,
+        scenario=scenario,
+    )
+
+
+def _can_view(
+    request: HttpRequest,
+    *,
+    organization: Organization,
+    project: AIProject | None,
+    scenario: Scenario | None,
+) -> bool:
+    if project is None or scenario is None:
+        return False
+    return authorize(
+        user=request.user,
+        capability=Capability.SCENARIO_VIEW,
+        organization=organization,
+        project=project,
+        scenario=scenario,
+    ).allowed
+
+
+def _require_author(
+    request: HttpRequest,
+    *,
+    organization_id: int,
+    project: AIProject | None,
+    scenario: Scenario | None,
+) -> None:
+    if not _can_author(
+        request,
+        organization_id=organization_id,
+        project=project,
+        scenario=scenario,
+    ):
         raise PermissionDenied
 
 
 def _scoped_draft(request: HttpRequest, pk: int) -> WorkflowDraft:
     allowed = allowed_organization_ids(request.user)
-    qs = WorkflowDraft.objects.select_related("organization", "project")
+    qs = WorkflowDraft.objects.select_related("organization", "project", "scenario")
     if allowed is not None:
         qs = qs.filter(organization_id__in=allowed)
     draft = qs.filter(pk=pk).first()
@@ -403,7 +467,7 @@ def _scoped_draft(request: HttpRequest, pk: int) -> WorkflowDraft:
 
 def _scoped_artifact_draft(request: HttpRequest, pk: int) -> ArtifactDraft:
     allowed = allowed_organization_ids(request.user)
-    qs = ArtifactDraft.objects.select_related("organization", "project")
+    qs = ArtifactDraft.objects.select_related("organization", "project", "scenario")
     if allowed is not None:
         qs = qs.filter(organization_id__in=allowed)
     draft = qs.filter(pk=pk).first()
@@ -444,6 +508,7 @@ def _serialize_artifact_draft(draft: ArtifactDraft, *, can_write: bool) -> dict[
         "organization": draft.organization.slug,
         "organization_id": draft.organization_id,
         "project_id": draft.project_id,
+        "scenario_id": draft.scenario_id,
         "name": draft.name,
         "logical_id": draft.logical_id,
         "body": draft.body,
@@ -461,7 +526,7 @@ def node_schema(request: HttpRequest) -> HttpResponse:
     org = _resolve_org_in_scope(request, request.GET.get("organization"))
     schema = build_node_schema(organization_id=org.id)
     schema["organization"] = org.slug
-    schema["can_write"] = can_author_scenarios(request.user, org.id)
+    schema["can_write"] = False
     schema["projects"] = [
         {"id": project.id, "slug": project.slug, "name": project.name}
         for project in AIProject.objects.filter(organization=org).order_by("name", "id")
@@ -490,9 +555,20 @@ def drafts(request: HttpRequest) -> HttpResponse:
                 "last_published_version": d.last_published_version,
                 "updated_at": d.updated_at.isoformat(),
                 "revision": d.revision,
-                "can_write": can_author_scenarios(request.user, d.organization_id),
+                "can_write": _can_author(
+                    request,
+                    organization_id=d.organization_id,
+                    project=d.project,
+                    scenario=d.scenario,
+                ),
             }
             for d in qs
+            if _can_view(
+                request,
+                organization=d.organization,
+                project=d.project,
+                scenario=d.scenario,
+            )
         ]
         return JsonResponse({"drafts": items})
 
@@ -510,9 +586,18 @@ def drafts(request: HttpRequest) -> HttpResponse:
         },
     )
     org = _resolve_org_in_scope(request, payload.get("organization"))
-    _require_author(request, org.id)
     project = _resolve_project(org, payload.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
     scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
     draft = services.create_draft(
         organization=org,
         name=payload.get("name", ""),
@@ -531,11 +616,28 @@ def drafts(request: HttpRequest) -> HttpResponse:
 @require_http_methods(["GET", "PUT", "DELETE"])
 def draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
     draft = _scoped_draft(request, pk)
-    can_write = can_author_scenarios(request.user, draft.organization_id)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    can_write = _can_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
     if request.method == "GET":
         return JsonResponse(_serialize(draft, can_write=can_write))
 
-    _require_author(request, draft.organization_id)
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
     if request.method == "DELETE":
         payload = _json_body(request)
         _reject_unknown_fields(payload, {"revision"})
@@ -565,6 +667,13 @@ def draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
 @require_http_methods(["POST"])
 def draft_diagnostics(request: HttpRequest, pk: int) -> HttpResponse:
     draft = _scoped_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
     payload = _json_body(request)
     # Allow validating an unsaved editor body; fall back to the stored draft body.
     body = payload["body"] if "body" in payload else draft.body
@@ -575,7 +684,12 @@ def draft_diagnostics(request: HttpRequest, pk: int) -> HttpResponse:
 @require_http_methods(["POST"])
 def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
     draft = _scoped_draft(request, pk)
-    _require_author(request, draft.organization_id)
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
     payload = _json_body(request)
     _reject_unknown_fields(payload, {"revision", "version_description"})
     artifact = services.publish_draft(
@@ -605,7 +719,7 @@ def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
 @require_http_methods(["GET"])
 def artifact_drafts(request: HttpRequest) -> HttpResponse:
     allowed = allowed_organization_ids(request.user)
-    qs = ArtifactDraft.objects.select_related("organization", "project")
+    qs = ArtifactDraft.objects.select_related("organization", "project", "scenario")
     if allowed is not None:
         qs = qs.filter(organization_id__in=allowed)
     return JsonResponse(
@@ -613,9 +727,20 @@ def artifact_drafts(request: HttpRequest) -> HttpResponse:
             "drafts": [
                 _serialize_artifact_draft(
                     draft,
-                    can_write=can_author_scenarios(request.user, draft.organization_id),
+                    can_write=_can_author(
+                        request,
+                        organization_id=draft.organization_id,
+                        project=draft.project,
+                        scenario=draft.scenario,
+                    ),
                 )
                 for draft in qs
+                if _can_view(
+                    request,
+                    organization=draft.organization,
+                    project=draft.project,
+                    scenario=draft.scenario,
+                )
             ]
         }
     )
@@ -625,10 +750,27 @@ def artifact_drafts(request: HttpRequest) -> HttpResponse:
 @require_http_methods(["GET", "PUT", "DELETE"])
 def artifact_draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
     draft = _scoped_artifact_draft(request, pk)
-    can_write = can_author_scenarios(request.user, draft.organization_id)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    can_write = _can_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
     if request.method == "GET":
         return JsonResponse(_serialize_artifact_draft(draft, can_write=can_write))
-    _require_author(request, draft.organization_id)
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
     if request.method == "DELETE":
         payload = _json_body(request)
         _reject_unknown_fields(payload, {"revision"})
@@ -656,6 +798,13 @@ def artifact_draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
 @require_http_methods(["POST"])
 def artifact_draft_diagnostics(request: HttpRequest, pk: int) -> HttpResponse:
     draft = _scoped_artifact_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
     payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
     _reject_unknown_fields(payload, {"body"})
     body = payload["body"] if "body" in payload else draft.body

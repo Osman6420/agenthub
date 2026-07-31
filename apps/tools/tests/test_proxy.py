@@ -41,7 +41,6 @@ def _tool(**overrides: Any) -> ResolvedTool:
         "role": "tool_binding.search",
         "definition_ref": "search:v1",
         "binding_checksum": "deadbeef",
-        "approver_roles": ("approver",),
         "protocol": "http",
         "method": "GET",
         "destination": {"scheme": "https", "host": "api.example.com", "port": 443},
@@ -271,8 +270,6 @@ def _binding_body() -> dict:
             "allowed_output_fields": ["status", "echo"],
             "approval": {
                 "required": False,
-                "approver_roles": ["approver"],
-                "self_approval_allowed": False,
             },
         },
     }

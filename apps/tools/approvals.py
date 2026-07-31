@@ -65,7 +65,7 @@ def request_tool_invocation(
     tool_input: dict[str, Any],
     idempotency_key: str,
     consumer_capabilities: list[str],
-    requested_by: str,
+    initiated_by_user: Any | None = None,
 ) -> ToolInvocation:
     if not idempotency_key or len(idempotency_key) > _MAX_KEY_LENGTH:
         raise ToolApprovalError("IDEMPOTENCY_KEY_REQUIRED")
@@ -74,7 +74,13 @@ def request_tool_invocation(
     required = Capability.TOOL_CALL_SIDE_EFFECT if tool.side_effecting else Capability.TOOL_CALL
     if required not in consumer_capabilities:
         with transaction.atomic():
-            _audit("tool.request", "deny", consumer, reason="CAPABILITY_DENIED", actor=requested_by)
+            _audit(
+                "tool.request",
+                "deny",
+                consumer,
+                reason="CAPABILITY_DENIED",
+                actor=consumer.subject,
+            )
         raise ToolApprovalError("CAPABILITY_DENIED")
 
     # Validate the request up front so an approver never reviews an invalid request.
@@ -130,8 +136,7 @@ def request_tool_invocation(
                 organization_id=consumer.organization_id,
                 invocation=invocation,
                 request_checksum=checksum,
-                approver_roles=list(tool.approver_roles),
-                requested_by=requested_by,
+                initiated_by_user=initiated_by_user,
                 status=ApprovalStatus.PENDING,
                 expires_at=timezone.now() + timedelta(seconds=APPROVAL_TTL_SECONDS),
             )
@@ -140,7 +145,7 @@ def request_tool_invocation(
                 "allow",
                 consumer,
                 reason="APPROVAL_PENDING",
-                actor=requested_by,
+                actor=consumer.subject,
                 resource_id=str(invocation.pk),
             )
         else:
@@ -149,7 +154,7 @@ def request_tool_invocation(
                 "allow",
                 consumer,
                 reason="AUTO_APPROVED",
-                actor=requested_by,
+                actor=consumer.subject,
                 resource_id=str(invocation.pk),
             )
     return invocation
@@ -159,8 +164,7 @@ def decide_approval(
     *,
     approval_id: int,
     organization_id: int,
-    actor: str,
-    actor_roles: list[str],
+    actor: Any,
     approve: bool,
     reason: str = "",
 ) -> ApprovalRequest:
@@ -178,29 +182,54 @@ def decide_approval(
 
         invocation = ToolInvocation.objects.select_for_update().get(pk=approval.invocation_id)
         now = timezone.now()
+        scenario = invocation.scenario
+        from apps.identity.authorization import Capability as OperatorCapability
+        from apps.identity.authorization import authorize as authorize_operator
+
+        decision = authorize_operator(
+            user=actor,
+            capability=OperatorCapability.SCENARIO_APPROVAL_DECIDE,
+            organization=approval.organization,
+            project=scenario.project,
+            scenario=scenario,
+        )
+        actor_name = actor.get_username()
         if now >= approval.expires_at:
             approval.status = ApprovalStatus.EXPIRED
             approval.decided_at = now
             approval.save(update_fields=["status", "decided_at", "updated_at"])
             _set_invocation_terminal(invocation, ToolInvocationStatus.EXPIRED, "APPROVAL_EXPIRED")
-            _audit_actor("tool.approval_decide", "deny", approval, actor, "APPROVAL_EXPIRED")
+            _audit_actor("tool.approval_decide", "deny", approval, actor_name, "APPROVAL_EXPIRED")
             error = "APPROVAL_EXPIRED"
-        elif not set(actor_roles) & set(approval.approver_roles):
-            _audit_actor("tool.approval_decide", "deny", approval, actor, "APPROVER_NOT_AUTHORIZED")
+        elif not decision.allowed:
+            _audit_actor(
+                "tool.approval_decide",
+                "deny",
+                approval,
+                actor_name,
+                "APPROVER_NOT_AUTHORIZED",
+            )
             error = "APPROVER_NOT_AUTHORIZED"
-        elif actor == approval.requested_by:
-            # Separation of duties: the requester can never approve their own request.
-            _audit_actor("tool.approval_decide", "deny", approval, actor, "SELF_APPROVAL_FORBIDDEN")
+        elif approval.initiated_by_user_id == actor.pk:
+            # Human separation of duties applies only when both identities are
+            # verified users. Consumer and user identifiers are distinct types.
+            _audit_actor(
+                "tool.approval_decide",
+                "deny",
+                approval,
+                actor_name,
+                "SELF_APPROVAL_FORBIDDEN",
+            )
             error = "SELF_APPROVAL_FORBIDDEN"
         else:
             approval.status = ApprovalStatus.APPROVED if approve else ApprovalStatus.REJECTED
-            approval.decided_by = actor
+            approval.decided_by_user = actor
             approval.decision_reason = reason[:64]
             approval.decided_at = now
             approval.save(
                 update_fields=[
                     "status",
-                    "decided_by",
+                    "decided_by_user",
                     "decision_reason",
                     "decided_at",
                     "updated_at",
@@ -215,7 +244,7 @@ def decide_approval(
                 "tool.approval_decide",
                 "allow",
                 approval,
-                actor,
+                actor_name,
                 "APPROVED" if approve else "REJECTED",
             )
     if error is not None:
@@ -298,7 +327,7 @@ def execute_invocation(
 
 
 @transaction.atomic
-def cancel_invocation(*, invocation_id: int, organization_id: int, actor: str) -> ToolInvocation:
+def cancel_invocation(*, invocation_id: int, organization_id: int, actor: Any) -> ToolInvocation:
     invocation = (
         ToolInvocation.objects.select_for_update()
         .filter(pk=invocation_id, organization_id=organization_id)
@@ -316,10 +345,16 @@ def cancel_invocation(*, invocation_id: int, organization_id: int, actor: str) -
     )
     if approval is not None:
         approval.status = ApprovalStatus.CANCELLED
-        approval.decided_by = actor
+        approval.decided_by_user = actor
         approval.decided_at = timezone.now()
-        approval.save(update_fields=["status", "decided_by", "decided_at", "updated_at"])
-    _audit_outcome(invocation, "success", "CANCELLED", actor_type="user", actor=actor)
+        approval.save(update_fields=["status", "decided_by_user", "decided_at", "updated_at"])
+    _audit_outcome(
+        invocation,
+        "success",
+        "CANCELLED",
+        actor_type="user",
+        actor=actor.get_username(),
+    )
     return invocation
 
 

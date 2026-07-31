@@ -1,9 +1,4 @@
-"""Tenant authorization helpers.
-
-These are the single source of truth for "which organizations may this user see".
-Every tenant-scoped queryset in the console and (later) the gateway must derive its
-scope from here so isolation cannot be bypassed by a forgotten filter in a view.
-"""
+"""Tenant membership lifecycle and responsibility-backed compatibility facades."""
 
 from __future__ import annotations
 
@@ -11,17 +6,35 @@ from collections.abc import Iterable
 from typing import Any, cast
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
+from django.db import IntegrityError, transaction
+from django.utils import timezone
 
-from apps.identity.roles import Role
-from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
+from apps.tenancy.models import (
+    MembershipStatus,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
+
+UserLike = AbstractBaseUser | AnonymousUser
+
+
+class MembershipManagementError(Exception):
+    """Safe membership-management failure with a stable operator-facing code."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
 
 
 def create_console_organization(
     *, name: str, status: str, initial_admin: Any | None = None
 ) -> Organization:
-    """Create an organization and, when supplied, its required initial admin atomically."""
-    from django.db import IntegrityError, transaction
-
+    """Create an organization, roleless member and non-expiring admin assignment atomically."""
+    from apps.identity.models import (
+        OrganizationResponsibility,
+        OrganizationResponsibilityAssignment,
+    )
     from apps.tenancy.identifiers import (
         MAX_ALLOCATION_ATTEMPTS,
         IdentifierAllocationError,
@@ -39,10 +52,16 @@ def create_console_organization(
             with transaction.atomic():
                 organization = Organization.objects.create(slug=slug, name=name, status=status)
                 if initial_admin is not None:
-                    OrganizationMembership.objects.create(
+                    membership = OrganizationMembership.objects.create(
                         organization=organization,
                         user=initial_admin,
-                        role=Role.ORGANIZATION_ADMIN,
+                        created_by=initial_admin,
+                    )
+                    OrganizationResponsibilityAssignment.objects.create(
+                        organization=organization,
+                        membership=membership,
+                        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+                        assigned_by=initial_admin,
                     )
                 return organization
         except IntegrityError:
@@ -52,41 +71,51 @@ def create_console_organization(
     raise IdentifierAllocationError
 
 
-UserLike = AbstractBaseUser | AnonymousUser
+def _has_platform_responsibility(user: UserLike) -> bool:
+    if not getattr(user, "is_authenticated", False) or not getattr(user, "is_active", False):
+        return False
+    from apps.identity.models import (
+        PlatformResponsibility,
+        PlatformResponsibilityAssignment,
+        ResponsibilityStatus,
+    )
+
+    return PlatformResponsibilityAssignment.objects.filter(
+        user_id=cast(AbstractBaseUser, user).pk,
+        responsibility=PlatformResponsibility.GLOBAL_ADMINISTRATOR,
+        status=ResponsibilityStatus.ACTIVE,
+    ).exists()
 
 
 def is_platform_admin(user: UserLike) -> bool:
-    """Platform admins (Django superusers) may cross organization boundaries."""
-    return bool(getattr(user, "is_authenticated", False) and getattr(user, "is_superuser", False))
+    """Return daily platform authority or exceptional superadmin recovery."""
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and getattr(user, "is_active", False)
+        and (getattr(user, "is_superuser", False) or _has_platform_responsibility(user))
+    )
 
 
 def allowed_organization_ids(user: UserLike) -> set[int] | None:
-    """IDs of organizations the user may access.
-
-    Returns ``None`` to mean "all organizations" (platform admin). Returns an empty
-    set for anonymous or membership-less users. Callers must treat ``None`` as an
-    unrestricted scope and anything else as an explicit allowlist.
-    """
+    """Organization-shell scope; object visibility is evaluated separately."""
     if not getattr(user, "is_authenticated", False):
         return set()
     if is_platform_admin(user):
         return None
-    # Past the guards the user is a concrete authenticated account with a pk.
     concrete = cast(AbstractBaseUser, user)
     return set(
-        OrganizationMembership.objects.filter(user_id=concrete.pk).values_list(
-            "organization_id", flat=True
-        )
+        OrganizationMembership.objects.filter(
+            user_id=concrete.pk,
+            user__is_active=True,
+            status=MembershipStatus.ACTIVE,
+        ).values_list("organization_id", flat=True)
     )
 
 
 def scope_organizations(user: UserLike) -> Iterable[Organization]:
-    """Organization queryset limited to the user's allowed scope."""
     allowed = allowed_organization_ids(user)
     qs = Organization.objects.all()
-    if allowed is None:
-        return qs
-    return qs.filter(id__in=allowed)
+    return qs if allowed is None else qs.filter(id__in=allowed)
 
 
 def user_can_access_organization(user: UserLike, organization_id: int) -> bool:
@@ -94,78 +123,105 @@ def user_can_access_organization(user: UserLike, organization_id: int) -> bool:
     return allowed is None or organization_id in allowed
 
 
-# --- Write authorization (role-gated) ---------------------------------------
-# Read scope is membership-based (above); creating records additionally requires the
-# right role in the target organization. A disabled organization is read-only even for a
-# platform_admin; reactivation is a separate platform lifecycle operation, not an operational write.
-
-_ADMIN_ROLES = frozenset({Role.ORGANIZATION_ADMIN})
-_SCENARIO_AUTHOR_ROLES = frozenset(
-    {Role.ORGANIZATION_ADMIN, Role.PROJECT_OWNER, Role.SCENARIO_EDITOR}
-)
-_DOCUMENT_MANAGER_ROLES = frozenset(
-    {
-        Role.ORGANIZATION_ADMIN,
-        Role.DOCUMENT_MANAGER,
-        Role.PROJECT_OWNER,
-        Role.SCENARIO_EDITOR,
-    }
-)
-
-
-def user_roles_in_org(user: UserLike, organization_id: int) -> set[str]:
-    if not getattr(user, "is_authenticated", False):
-        return set()
-    concrete = cast(AbstractBaseUser, user)
-    return set(
-        OrganizationMembership.objects.filter(
-            user_id=concrete.pk, organization_id=organization_id
-        ).values_list("role", flat=True)
-    )
-
-
 def can_create_organization(user: UserLike) -> bool:
-    """Only platform admins may create organizations."""
     return is_platform_admin(user)
 
 
-def _organization_accepts_mutations(organization_id: int) -> bool:
-    """Disabled tenants remain readable but reject every operational mutation."""
-
-    return Organization.objects.filter(
-        pk=organization_id, status=OrganizationStatus.ACTIVE
-    ).exists()
+def _organization(organization_id: int) -> Organization | None:
+    return Organization.objects.filter(pk=organization_id).first()
 
 
 def can_admin_org(user: UserLike, organization_id: int) -> bool:
-    if not _organization_accepts_mutations(organization_id):
-        return False
-    return is_platform_admin(user) or bool(_ADMIN_ROLES & user_roles_in_org(user, organization_id))
+    from apps.identity.authorization import Capability, authorize
 
-
-def can_author_scenarios(user: UserLike, organization_id: int) -> bool:
-    if not _organization_accepts_mutations(organization_id):
-        return False
-    return is_platform_admin(user) or bool(
-        _SCENARIO_AUTHOR_ROLES & user_roles_in_org(user, organization_id)
+    organization = _organization(organization_id)
+    return bool(
+        organization is not None
+        and authorize(
+            user=user,
+            capability=Capability.ORGANIZATION_MANAGE,
+            organization=organization,
+        ).allowed
     )
 
 
-def can_manage_documents(user: UserLike, organization_id: int) -> bool:
-    """Allow document-plane mutations without granting scenario or tenant administration."""
-    if not _organization_accepts_mutations(organization_id):
+def can_author_scenarios(
+    user: UserLike,
+    organization_id: int,
+    *,
+    project: Any | None = None,
+    scenario: Any | None = None,
+) -> bool:
+    """Compatibility facade; callers should pass the exact project/scenario target."""
+    from apps.identity.authorization import Capability, authorize
+
+    organization = _organization(organization_id)
+    if organization is None:
         return False
-    return is_platform_admin(user) or bool(
-        _DOCUMENT_MANAGER_ROLES & user_roles_in_org(user, organization_id)
+    if project is not None or scenario is not None:
+        return authorize(
+            user=user,
+            capability=Capability.SCENARIO_EDIT,
+            organization=organization,
+            project=project,
+            scenario=scenario,
+        ).allowed
+
+    # Authoring is protected content access. A target-less request can never prove
+    # exact scenario authority, including for organization administrators.
+    return False
+
+
+def can_manage_documents(
+    user: UserLike,
+    organization_id: int,
+    *,
+    document_set: Any | None = None,
+) -> bool:
+    """Compatibility facade; mutations must pass the exact document set."""
+    from apps.identity.authorization import Capability, authorize
+
+    organization = _organization(organization_id)
+    if organization is None:
+        return False
+    if document_set is not None:
+        return authorize(
+            user=user,
+            capability=Capability.DOCUMENT_SET_CONTENT_MANAGE,
+            organization=organization,
+            document_set=document_set,
+        ).allowed
+    # Content authority is never organization-wide. Set managers must pass their
+    # exact set; callers creating metadata use a separate organization capability.
+    return False
+
+
+def can_manage_document(user: UserLike, document: Any) -> bool:
+    """Authorize a manager of an exact set containing the document."""
+    if not getattr(user, "is_authenticated", False):
+        return False
+    from django.db.models import Q
+
+    from apps.identity.models import (
+        DocumentSetResponsibility,
+        DocumentSetResponsibilityAssignment,
+        ResponsibilityStatus,
     )
 
-
-class MembershipManagementError(Exception):
-    """Safe membership-management failure with a stable operator-facing code."""
-
-    def __init__(self, code: str) -> None:
-        self.code = code
-        super().__init__(code)
+    now = timezone.now()
+    return (
+        DocumentSetResponsibilityAssignment.objects.filter(
+            organization_id=document.organization_id,
+            membership__user_id=cast(AbstractBaseUser, user).pk,
+            membership__status=MembershipStatus.ACTIVE,
+            membership__user__is_active=True,
+            responsibility=DocumentSetResponsibility.MANAGER,
+            status=ResponsibilityStatus.ACTIVE,
+            document_set__versions__memberships__document_version__document=document,
+        )
+        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+        .exists()
+    )
 
 
 def _record_membership_event(
@@ -200,178 +256,291 @@ def add_organization_membership(
     *,
     organization: Organization,
     user: Any,
-    role: str,
     actor: Any,
     request_id: str = "",
     trace_id: str = "",
 ) -> OrganizationMembership:
-    from django.db import IntegrityError, transaction
-
-    if role not in Role.values or role == Role.PLATFORM_ADMIN:
-        raise MembershipManagementError("INVALID_ROLE")
     if not can_admin_org(actor, organization.pk):
         raise MembershipManagementError("ADMIN_REQUIRED_OR_ORGANIZATION_INACTIVE")
     try:
         with transaction.atomic():
             Organization.objects.select_for_update().get(pk=organization.pk)
+            existing = (
+                OrganizationMembership.objects.select_for_update()
+                .filter(
+                    organization=organization,
+                    user=user,
+                )
+                .first()
+            )
+            if existing is not None:
+                if existing.status == MembershipStatus.ACTIVE:
+                    raise MembershipManagementError("MEMBERSHIP_ALREADY_EXISTS")
+                existing.status = MembershipStatus.ACTIVE
+                existing.revoked_by = None
+                existing.revoked_at = None
+                existing.created_by = actor
+                existing.save(
+                    update_fields=[
+                        "status",
+                        "revoked_by",
+                        "revoked_at",
+                        "created_by",
+                        "updated_at",
+                    ]
+                )
+                _record_membership_event(
+                    actor=actor,
+                    organization_id=organization.pk,
+                    action="organization_membership.reactivate",
+                    membership_id=existing.pk,
+                    before={"status": MembershipStatus.REVOKED},
+                    after={"status": MembershipStatus.ACTIVE},
+                    request_id=request_id,
+                    trace_id=trace_id,
+                )
+                return existing
             membership = OrganizationMembership.objects.create(
-                organization=organization, user=user, role=role
+                organization=organization,
+                user=user,
+                created_by=actor,
             )
             _record_membership_event(
                 actor=actor,
                 organization_id=organization.pk,
                 action="organization_membership.create",
                 membership_id=membership.pk,
-                after={"role": role},
+                after={"status": MembershipStatus.ACTIVE},
                 request_id=request_id,
                 trace_id=trace_id,
             )
             return membership
     except IntegrityError as exc:
-        if OrganizationMembership.objects.filter(
-            organization=organization,
-            user=user,
-        ).exists():
-            raise MembershipManagementError("MEMBERSHIP_ALREADY_EXISTS") from exc
-        raise
+        raise MembershipManagementError("MEMBERSHIP_ALREADY_EXISTS") from exc
 
 
-def change_organization_membership(
-    *,
-    membership: OrganizationMembership,
-    role: str,
-    actor: Any,
-    request_id: str = "",
-    trace_id: str = "",
-) -> OrganizationMembership:
-    from django.db import transaction
+def _active_organization_admin_count(
+    *, organization_id: int, excluding_membership_id: int | None = None
+) -> int:
+    from apps.identity.models import (
+        OrganizationResponsibility,
+        OrganizationResponsibilityAssignment,
+        ResponsibilityStatus,
+    )
 
-    if role not in Role.values or role == Role.PLATFORM_ADMIN:
-        raise MembershipManagementError("INVALID_ROLE")
-    if not can_admin_org(actor, membership.organization_id):
-        raise MembershipManagementError("ADMIN_REQUIRED_OR_ORGANIZATION_INACTIVE")
-    with transaction.atomic():
-        Organization.objects.select_for_update().get(pk=membership.organization_id)
-        locked = OrganizationMembership.objects.select_for_update().get(pk=membership.pk)
-        old_role = locked.role
-        if old_role == Role.ORGANIZATION_ADMIN and role != Role.ORGANIZATION_ADMIN:
-            if (
-                not OrganizationMembership.objects.filter(
-                    organization_id=locked.organization_id, role=Role.ORGANIZATION_ADMIN
-                )
-                .exclude(pk=locked.pk)
-                .exists()
-            ):
-                raise MembershipManagementError("LAST_ORGANIZATION_ADMIN")
-        locked.role = role
-        locked.save(update_fields=["role", "updated_at"])
-        _record_membership_event(
-            actor=actor,
-            organization_id=locked.organization_id,
-            action="organization_membership.update",
-            membership_id=locked.pk,
-            before={"role": old_role},
-            after={"role": role},
-            request_id=request_id,
-            trace_id=trace_id,
-        )
-        return locked
+    qs = OrganizationResponsibilityAssignment.objects.filter(
+        organization_id=organization_id,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        status=ResponsibilityStatus.ACTIVE,
+        membership__status=MembershipStatus.ACTIVE,
+    )
+    if excluding_membership_id is not None:
+        qs = qs.exclude(membership_id=excluding_membership_id)
+    return qs.count()
 
 
 def remove_organization_membership(
     *, membership: OrganizationMembership, actor: Any, request_id: str = "", trace_id: str = ""
 ) -> None:
-    from django.db import transaction
+    """Revoke membership and every active responsibility atomically."""
+    from apps.identity.models import (
+        DocumentSetResponsibilityAssignment,
+        OrganizationResponsibilityAssignment,
+        ProjectResponsibilityAssignment,
+        ResponsibilityStatus,
+        ScenarioResponsibilityAssignment,
+    )
 
     if not can_admin_org(actor, membership.organization_id):
         raise MembershipManagementError("ADMIN_REQUIRED_OR_ORGANIZATION_INACTIVE")
     with transaction.atomic():
         Organization.objects.select_for_update().get(pk=membership.organization_id)
         locked = OrganizationMembership.objects.select_for_update().get(pk=membership.pk)
+        if locked.status != MembershipStatus.ACTIVE:
+            raise MembershipManagementError("MEMBERSHIP_NOT_ACTIVE")
         if (
-            locked.role == Role.ORGANIZATION_ADMIN
-            and not OrganizationMembership.objects.filter(
-                organization_id=locked.organization_id, role=Role.ORGANIZATION_ADMIN
+            OrganizationResponsibilityAssignment.objects.filter(
+                organization_id=locked.organization_id,
+                membership_id=locked.pk,
+                responsibility="organization_administrator",
+                status=ResponsibilityStatus.ACTIVE,
+            ).exists()
+            and _active_organization_admin_count(
+                organization_id=locked.organization_id,
+                excluding_membership_id=locked.pk,
             )
-            .exclude(pk=locked.pk)
-            .exists()
+            == 0
         ):
             raise MembershipManagementError("LAST_ORGANIZATION_ADMIN")
-        organization_id = locked.organization_id
-        membership_id = locked.pk
-        old_role = locked.role
-        locked.delete()
+
+        now = timezone.now()
+        for model in (
+            OrganizationResponsibilityAssignment,
+            ProjectResponsibilityAssignment,
+            ScenarioResponsibilityAssignment,
+            DocumentSetResponsibilityAssignment,
+        ):
+            active_assignments = list(
+                model.objects.filter(
+                    membership_id=locked.pk,
+                    status=ResponsibilityStatus.ACTIVE,
+                )
+            )
+            model.objects.filter(
+                membership_id=locked.pk,
+                status=ResponsibilityStatus.ACTIVE,
+            ).update(
+                status=ResponsibilityStatus.REVOKED,
+                revoked_by=actor,
+                revoked_at=now,
+                updated_at=now,
+            )
+            from apps.audit.services import record_event
+
+            for assignment in active_assignments:
+                record_event(
+                    actor_type="user",
+                    actor_id=actor.get_username(),
+                    action="responsibility.revoke_with_membership",
+                    outcome="success",
+                    organization_id=locked.organization_id,
+                    resource_type=model._meta.model_name,
+                    resource_id=str(assignment.pk),
+                    reason="MEMBERSHIP_REVOKED",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    before={"status": ResponsibilityStatus.ACTIVE},
+                    after={"status": ResponsibilityStatus.REVOKED},
+                )
+        locked.status = MembershipStatus.REVOKED
+        locked.revoked_by = actor
+        locked.revoked_at = now
+        locked.save(update_fields=["status", "revoked_by", "revoked_at", "updated_at"])
         _record_membership_event(
             actor=actor,
-            organization_id=organization_id,
-            action="organization_membership.delete",
-            membership_id=membership_id,
-            before={"role": old_role},
+            organization_id=locked.organization_id,
+            action="organization_membership.revoke",
+            membership_id=locked.pk,
+            before={"status": MembershipStatus.ACTIVE},
+            after={"status": MembershipStatus.REVOKED},
             request_id=request_id,
             trace_id=trace_id,
         )
 
 
-def can_manage_scenario_releases(user: UserLike, organization_id: int) -> bool:
-    """Return whether ``user`` has central scenario-release authority."""
-    organization = Organization.objects.filter(pk=organization_id).first()
-    if organization is None or organization.status != OrganizationStatus.ACTIVE:
-        return False
-
-    # Local import avoids making the tenant visibility module part of identity's
-    # model-import cycle while this compatibility facade is migrated caller by caller.
+def can_manage_scenario_releases(
+    user: UserLike,
+    organization_id: int,
+    *,
+    scenario: Any | None = None,
+) -> bool:
     from apps.identity.authorization import Capability, authorize
 
-    return authorize(
-        user=user,
-        capability=Capability.SCENARIO_RELEASE,
-        organization=organization,
-    ).allowed
+    organization = _organization(organization_id)
+    return bool(
+        organization is not None
+        and authorize(
+            user=user,
+            capability=Capability.SCENARIO_RELEASE,
+            organization=organization,
+            scenario=scenario,
+        ).allowed
+    )
 
 
 def can_manage_document_set_operations(user: UserLike, document_set: Any) -> bool:
-    """Return whether ``user`` may operate the exact active document set."""
-    organization = document_set.organization
-    if organization.status != OrganizationStatus.ACTIVE:
-        return False
-
     from apps.identity.authorization import Capability, authorize
 
     return authorize(
         user=user,
         capability=Capability.DOCUMENT_SET_OPERATIONS_MANAGE,
-        organization=organization,
+        organization=document_set.organization,
         document_set=document_set,
     ).allowed
 
 
 def admin_organization_ids(user: UserLike) -> set[int] | None:
-    """Active organizations the user may administer (None = all active, platform admin)."""
     if is_platform_admin(user):
         return None
     if not getattr(user, "is_authenticated", False):
         return set()
-    concrete = cast(AbstractBaseUser, user)
+    from apps.identity.models import (
+        OrganizationResponsibility,
+        OrganizationResponsibilityAssignment,
+        ResponsibilityStatus,
+    )
+
     return set(
-        OrganizationMembership.objects.filter(
-            user_id=concrete.pk,
-            role__in=_ADMIN_ROLES,
+        OrganizationResponsibilityAssignment.objects.filter(
+            membership__user_id=cast(AbstractBaseUser, user).pk,
+            membership__status=MembershipStatus.ACTIVE,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            status=ResponsibilityStatus.ACTIVE,
             organization__status=OrganizationStatus.ACTIVE,
         ).values_list("organization_id", flat=True)
     )
 
 
 def author_organization_ids(user: UserLike) -> set[int] | None:
-    """Active organizations where the user may author scenarios (None = all active)."""
     if is_platform_admin(user):
         return None
     if not getattr(user, "is_authenticated", False):
         return set()
-    concrete = cast(AbstractBaseUser, user)
+    from apps.identity.models import (
+        OrganizationResponsibility,
+        OrganizationResponsibilityAssignment,
+        ProjectResponsibility,
+        ProjectResponsibilityAssignment,
+        ResponsibilityStatus,
+        ScenarioResponsibility,
+        ScenarioResponsibilityAssignment,
+    )
+
+    user_id = cast(AbstractBaseUser, user).pk
+    common = {
+        "membership__user_id": user_id,
+        "membership__status": MembershipStatus.ACTIVE,
+        "status": ResponsibilityStatus.ACTIVE,
+        "organization__status": OrganizationStatus.ACTIVE,
+    }
+    ids = set(
+        OrganizationResponsibilityAssignment.objects.filter(
+            **common,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        ).values_list("organization_id", flat=True)
+    )
+    ids.update(
+        ProjectResponsibilityAssignment.objects.filter(
+            **common,
+            responsibility=ProjectResponsibility.ADMINISTRATOR,
+        ).values_list("organization_id", flat=True)
+    )
+    ids.update(
+        ScenarioResponsibilityAssignment.objects.filter(
+            **common,
+            responsibility=ScenarioResponsibility.EDITOR,
+        ).values_list("organization_id", flat=True)
+    )
+    return ids
+
+
+def document_manager_organization_ids(user: UserLike) -> set[int] | None:
+    if is_platform_admin(user):
+        return None
+    if not getattr(user, "is_authenticated", False):
+        return set()
+    from apps.identity.models import (
+        DocumentSetResponsibility,
+        DocumentSetResponsibilityAssignment,
+        ResponsibilityStatus,
+    )
+
     return set(
-        OrganizationMembership.objects.filter(
-            user_id=concrete.pk,
-            role__in=_SCENARIO_AUTHOR_ROLES,
+        DocumentSetResponsibilityAssignment.objects.filter(
+            membership__user_id=cast(AbstractBaseUser, user).pk,
+            membership__status=MembershipStatus.ACTIVE,
+            responsibility=DocumentSetResponsibility.MANAGER,
+            status=ResponsibilityStatus.ACTIVE,
             organization__status=OrganizationStatus.ACTIVE,
         ).values_list("organization_id", flat=True)
     )

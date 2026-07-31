@@ -13,8 +13,6 @@ from typing import Any
 from django.conf import settings
 from django.db import models
 
-from apps.identity.roles import Role
-
 
 class TimeStampedModel(models.Model):
     """Abstract base adding created/updated timestamps to domain records."""
@@ -64,24 +62,67 @@ class Organization(TimeStampedModel):
         return self.status == OrganizationStatus.ACTIVE
 
 
+class MembershipStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    REVOKED = "revoked", "Revoked"
+
+
 class OrganizationMembership(TimeStampedModel):
-    """Maps a user to an organization with a role."""
+    """Records roleless affiliation between one active human and an organization."""
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="memberships"
     )
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="org_memberships"
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="org_memberships"
     )
-    role = models.CharField(max_length=32, choices=Role.choices)
+    status = models.CharField(
+        max_length=16,
+        choices=MembershipStatus.choices,
+        default=MembershipStatus.ACTIVE,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="created_organization_memberships",
+    )
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="revoked_organization_memberships",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["organization", "user"],
                 name="uniq_membership_org_user",
-            )
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status=MembershipStatus.ACTIVE,
+                        revoked_at__isnull=True,
+                        revoked_by__isnull=True,
+                    )
+                    | models.Q(
+                        status=MembershipStatus.REVOKED,
+                        revoked_at__isnull=False,
+                        revoked_by__isnull=False,
+                    )
+                ),
+                name="organization_membership_revocation_complete",
+            ),
         ]
 
     def __str__(self) -> str:
-        return f"{self.user_id}@{self.organization_id}:{self.role}"
+        return f"{self.user_id}@{self.organization_id}:{self.status}"
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == MembershipStatus.ACTIVE

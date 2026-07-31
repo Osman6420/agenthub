@@ -16,6 +16,7 @@ GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) TO :"app_role";
 -- RLS because identity is not yet known at lookup time; application authorization remains primary.
 GRANT SELECT, INSERT, UPDATE ON tenancy_organization, tenancy_organizationmembership TO :"app_role";
 GRANT SELECT, INSERT, UPDATE, DELETE ON identity_consumer, identity_consumertoken TO :"app_role";
+GRANT SELECT, INSERT, UPDATE ON identity_platformresponsibilityassignment TO :"app_role";
 GRANT SELECT ON auth_group, auth_permission, django_content_type TO :"app_role";
 GRANT SELECT ON auth_user TO :"app_role";
 GRANT UPDATE(last_login) ON auth_user TO :"app_role";
@@ -45,8 +46,10 @@ GRANT SELECT ON
     evaluations_questioncase, evaluations_questionevaluationevidence,
     evaluations_questionevaluationrun, evaluations_questionset, evaluations_questionsetversion,
     gateway_idempotencyrecord, identity_consumerbinding,
-    identity_documentsetmanagerassignment, identity_projectadministratorassignment,
-    identity_scenarioeditorassignment,
+    identity_documentsetresponsibilityassignment,
+    identity_organizationresponsibilityassignment,
+    identity_projectresponsibilityassignment,
+    identity_scenarioresponsibilityassignment,
     ingestion_chunk, ingestion_confluencedocumentcursor, ingestion_confluencesyncrun,
     ingestion_connectorschedulepromotiontarget, ingestion_connectorsyncschedule,
     ingestion_documentocrjob, ingestion_indexeddocument, ingestion_indexversion,
@@ -86,8 +89,10 @@ GRANT INSERT, UPDATE ON
     evaluations_evalrun, evaluations_questionevaluationevidence,
     evaluations_questionevaluationrun, evaluations_questionset,
     gateway_idempotencyrecord, identity_consumerbinding,
-    identity_documentsetmanagerassignment, identity_projectadministratorassignment,
-    identity_scenarioeditorassignment,
+    identity_documentsetresponsibilityassignment,
+    identity_organizationresponsibilityassignment,
+    identity_projectresponsibilityassignment,
+    identity_scenarioresponsibilityassignment,
     ingestion_confluencedocumentcursor, ingestion_confluencesyncrun,
     ingestion_connectorschedulepromotiontarget, ingestion_connectorsyncschedule,
     ingestion_documentocrjob, ingestion_indexversion, ingestion_ingestionrun,

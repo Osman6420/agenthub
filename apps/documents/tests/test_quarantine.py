@@ -10,41 +10,50 @@ from apps.documents.services import (
     DocumentSetControlError,
     set_document_set_quarantine,
 )
-from apps.identity.models import DocumentSetManagerAssignment, GlobalAdministrator
-from apps.identity.roles import Role
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
 pytestmark = pytest.mark.django_db
 
 
-def _member(username: str, organization: Organization, role: str) -> Any:
+def _member(username: str, organization: Organization) -> tuple[Any, OrganizationMembership]:
     user = User.objects.create_user(username=username, password=None)
-    OrganizationMembership.objects.create(
+    membership = OrganizationMembership.objects.create(
         organization=organization,
         user=user,
-        role=role,
     )
-    return user
+    return user, membership
 
 
-def test_document_manager_and_global_admin_quarantine_without_content_grant() -> None:
+def test_document_manager_and_superadmin_recovery_quarantine_without_content_grant() -> None:
     organization = Organization.objects.create(slug="docs", name="Docs")
     document_set = DocumentSet.objects.create(
         organization=organization,
         logical_id="safe-set",
         name="Safe Set",
     )
-    organization_admin = _member("org-admin", organization, Role.ORGANIZATION_ADMIN)
-    manager = _member("set-manager", organization, Role.AUDITOR)
-    DocumentSetManagerAssignment.objects.create(
+    organization_admin, admin_membership = _member("org-admin", organization)
+    OrganizationResponsibilityAssignment.objects.create(
         organization=organization,
-        document_set=document_set,
-        user=manager,
+        membership=admin_membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
         assigned_by=organization_admin,
     )
-    global_user = User.objects.create_user(username="global-admin", password=None)
-    GlobalAdministrator.objects.create(user=global_user)
+    manager, manager_membership = _member("set-manager", organization)
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=organization,
+        document_set=document_set,
+        membership=manager_membership,
+        responsibility=DocumentSetResponsibility.MANAGER,
+        assigned_by=organization_admin,
+    )
+    recovery = User.objects.create_superuser(username="recovery", password=None)
 
     quarantined = set_document_set_quarantine(
         document_set=document_set,
@@ -64,7 +73,7 @@ def test_document_manager_and_global_admin_quarantine_without_content_grant() ->
 
     restored = set_document_set_quarantine(
         document_set=quarantined,
-        actor=global_user,
+        actor=recovery,
         quarantined=False,
         reason="Global safety review",
     )
@@ -80,12 +89,19 @@ def test_quarantine_audit_failure_rolls_back(
         logical_id="safe-set",
         name="Safe Set",
     )
-    organization_admin = _member("org-admin", organization, Role.ORGANIZATION_ADMIN)
-    manager = _member("set-manager", organization, Role.AUDITOR)
-    DocumentSetManagerAssignment.objects.create(
+    organization_admin, admin_membership = _member("org-admin", organization)
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=admin_membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=organization_admin,
+    )
+    manager, manager_membership = _member("set-manager", organization)
+    DocumentSetResponsibilityAssignment.objects.create(
         organization=organization,
         document_set=document_set,
-        user=manager,
+        membership=manager_membership,
+        responsibility=DocumentSetResponsibility.MANAGER,
         assigned_by=organization_admin,
     )
 

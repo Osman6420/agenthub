@@ -183,11 +183,6 @@ urlpatterns = [
     path("access/members/", views.organization_members, name="organization_members"),
     path("access/members/add/", views.organization_member_add, name="organization_member_add"),
     path(
-        "access/members/<int:membership_id>/role/",
-        views.organization_member_role,
-        name="organization_member_role",
-    ),
-    path(
         "access/members/<int:membership_id>/remove/",
         views.organization_member_remove,
         name="organization_member_remove",

@@ -20,8 +20,6 @@ MAX_PARALLEL_DURATION_SECONDS = 300
 MAX_BRANCH_STATE_BYTES = 262_144
 MAX_PARALLEL_STATE_BYTES = 1_048_576
 MAX_WAIT_SECONDS = 2_592_000
-MAX_DECISION_ROLES = 16
-
 # Pinned child-composition bounds (P2.6.5 / ADR-0009). A call-site may only *lower* the
 # nesting depth. This is a compile-time bound; the runtime re-enforces it plus
 # cumulative budgets and an ancestry/depth guard.
@@ -394,41 +392,13 @@ def _validate_node(
         _require_exact_keys(
             config,
             {
-                "allowed_decision_roles",
                 "decision_schema",
                 "timeout_seconds",
-                "deny_self_decision",
-                "escalation_role",
-                "escalation_timeout_seconds",
             },
             "human_task config",
-            optional={
-                "deny_self_decision",
-                "escalation_role",
-                "escalation_timeout_seconds",
-            },
         )
-        roles = config.get("allowed_decision_roles")
-        if not isinstance(roles, list) or not roles or len(roles) > MAX_DECISION_ROLES:
-            raise WorkflowCompileError("human_task decision roles are invalid")
-        canonical_roles = [_identifier(role, "human_task decision role") for role in roles]
-        if len(set(canonical_roles)) != len(canonical_roles):
-            raise WorkflowCompileError("human_task decision roles must be unique")
-        config["allowed_decision_roles"] = canonical_roles
         _validate_wait_schema(config.get("decision_schema"), "human_task decision_schema")
         _wait_seconds(config.get("timeout_seconds"), "human_task timeout_seconds")
-        if "deny_self_decision" in config and not isinstance(config["deny_self_decision"], bool):
-            raise WorkflowCompileError("human_task deny_self_decision must be boolean")
-        if "escalation_role" in config:
-            _identifier(config["escalation_role"], "human_task escalation_role")
-            if "escalation_timeout_seconds" not in config:
-                raise WorkflowCompileError("human_task escalation timeout is required")
-            _wait_seconds(
-                config["escalation_timeout_seconds"],
-                "human_task escalation_timeout_seconds",
-            )
-        elif "escalation_timeout_seconds" in config:
-            raise WorkflowCompileError("human_task escalation role is required")
         if output_mapping is None:
             raise WorkflowCompileError("human_task requires output_mapping")
     elif node_type == "timer":

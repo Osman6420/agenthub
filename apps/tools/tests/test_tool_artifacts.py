@@ -51,8 +51,6 @@ def _binding() -> dict:
             "allowed_output_fields": ["results"],
             "approval": {
                 "required": False,
-                "approver_roles": ["approver"],
-                "self_approval_allowed": False,
             },
         },
     }
@@ -123,10 +121,8 @@ def test_mcp_tool_rejects_http_method() -> None:
     [
         lambda b: b.__setitem__("kind", "Nope"),
         lambda b: b["spec"].__setitem__("tool_ref", "no-version"),
-        lambda b: b["spec"]["approval"].__setitem__("approver_roles", []),
-        lambda b: b["spec"]["approval"].__setitem__("approver_roles", ["intern"]),
+        lambda b: b["spec"]["approval"].__setitem__("legacy_approver_role", "approver"),
         lambda b: b["spec"]["approval"].__setitem__("required", "true"),
-        lambda b: b["spec"]["approval"].__setitem__("self_approval_allowed", 1),
         lambda b: b["spec"].__setitem__("allowed_input_fields", "query"),
         lambda b: b["spec"].__setitem__("allowed_output_fields", ["x"] * 51),
         lambda b: b["spec"].__setitem__("surprise", True),

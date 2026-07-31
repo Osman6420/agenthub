@@ -9,7 +9,6 @@ organization, and only a known capability allowlist (v3 plan §9, §10.2).
 from __future__ import annotations
 
 import uuid
-from typing import cast
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -17,6 +16,7 @@ from django.db import models
 
 from apps.identity.capabilities import validate_capabilities
 from apps.tenancy.models import (
+    MembershipStatus,
     Organization,
     OrganizationMembership,
     TimeStampedModel,
@@ -24,61 +24,49 @@ from apps.tenancy.models import (
 )
 
 
-class GlobalAdministrator(TimeStampedModel):
-    """The single daily application administrator identity.
-
-    This is deliberately separate from Django's exceptional ``is_superuser``
-    recovery identity. Assignment is performed through an audited service in a
-    later Part 2.1 delivery slice; ordinary organization membership forms must
-    never expose this model.
-    """
-
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="global_administrator",
-    )
-    scope = models.CharField(max_length=16, default="global", unique=True, editable=False)
-
-    class Meta:
-        verbose_name = "global administrator"
-        constraints = [
-            models.CheckConstraint(
-                condition=models.Q(scope="global"),
-                name="global_administrator_single_scope",
-            )
-        ]
-
-    def clean(self) -> None:
-        if self.scope != "global":
-            raise ValidationError({"scope": "global administrator scope must be global"})
-        if self.user_id and self.user.is_superuser:
-            raise ValidationError(
-                {"user": "global administrator must be separate from the recovery superadmin"}
-            )
-        if self.user_id and not self.user.is_active:
-            raise ValidationError({"user": "global administrator must be active"})
-
-    def __str__(self) -> str:
-        return f"global-administrator:{self.user_id}"
-
-
-class DelegatedAssignmentStatus(models.TextChoices):
+class ResponsibilityStatus(models.TextChoices):
     ACTIVE = "active", "Active"
     REVOKED = "revoked", "Revoked"
 
 
-def _revocation_constraint(name: str) -> models.CheckConstraint:
-    """A revoked assignment must record who withdrew it and when; an active one must not."""
+class PlatformResponsibility(models.TextChoices):
+    GLOBAL_ADMINISTRATOR = "global_administrator", "Global administrator"
+
+
+class OrganizationResponsibility(models.TextChoices):
+    ADMINISTRATOR = "organization_administrator", "Organization administrator"
+    AUDITOR = "organization_auditor", "Organization auditor"
+
+
+class ProjectResponsibility(models.TextChoices):
+    VIEWER = "project_viewer", "Project viewer"
+    ADMINISTRATOR = "project_administrator", "Project administrator"
+
+
+class ScenarioResponsibility(models.TextChoices):
+    VIEWER = "scenario_viewer", "Scenario viewer"
+    EDITOR = "scenario_editor", "Scenario editor"
+    RELEASE_MANAGER = "scenario_release_manager", "Scenario release manager"
+    RUNTIME_OPERATOR = "scenario_runtime_operator", "Scenario runtime operator"
+    APPROVER = "scenario_approver", "Scenario approver"
+
+
+class DocumentSetResponsibility(models.TextChoices):
+    METADATA_VIEWER = "document_set_metadata_viewer", "Document-set metadata viewer"
+    CONTENT_READER = "document_set_content_reader", "Document-set content reader"
+    MANAGER = "document_set_manager", "Document-set manager"
+
+
+def _responsibility_revocation_constraint(name: str) -> models.CheckConstraint:
     return models.CheckConstraint(
         condition=(
             models.Q(
-                status=DelegatedAssignmentStatus.ACTIVE,
+                status=ResponsibilityStatus.ACTIVE,
                 revoked_at__isnull=True,
                 revoked_by__isnull=True,
             )
             | models.Q(
-                status=DelegatedAssignmentStatus.REVOKED,
+                status=ResponsibilityStatus.REVOKED,
                 revoked_at__isnull=False,
                 revoked_by__isnull=False,
             )
@@ -87,207 +75,221 @@ def _revocation_constraint(name: str) -> models.CheckConstraint:
     )
 
 
-class ProjectAdministratorAssignment(TimeStampedModel):
-    """Delegates administration of one project to one organization member."""
+class PlatformResponsibilityAssignment(TimeStampedModel):
+    """Daily platform authority, separate from exceptional Django superuser recovery."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="platform_responsibility_assignments",
+    )
+    responsibility = models.CharField(
+        max_length=48,
+        choices=PlatformResponsibility.choices,
+        default=PlatformResponsibility.GLOBAL_ADMINISTRATOR,
+    )
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="created_platform_responsibility_assignments",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=ResponsibilityStatus.choices,
+        default=ResponsibilityStatus.ACTIVE,
+    )
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="revoked_platform_responsibility_assignments",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["responsibility"],
+                condition=models.Q(status=ResponsibilityStatus.ACTIVE),
+                name="uniq_active_platform_responsibility",
+            ),
+            _responsibility_revocation_constraint(
+                "platform_responsibility_assignment_revocation_complete"
+            ),
+        ]
+
+    def clean(self) -> None:
+        if self.user_id and (self.user.is_superuser or not self.user.is_active):
+            raise ValidationError(
+                {"user": "platform responsibility requires an active non-superuser"}
+            )
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        self.full_clean()
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
+
+
+class TenantResponsibilityAssignment(TimeStampedModel):
+    """Shared lifecycle/provenance contract for exact tenant responsibility rows."""
 
     organization = models.ForeignKey(
         Organization,
         on_delete=models.CASCADE,
-        related_name="project_administrator_assignments",
+        related_name="+",
     )
-    user = models.ForeignKey(
+    membership = models.ForeignKey(
+        OrganizationMembership,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    assigned_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="project_administrator_assignments",
+        on_delete=models.PROTECT,
+        related_name="+",
     )
+    status = models.CharField(
+        max_length=16,
+        choices=ResponsibilityStatus.choices,
+        default=ResponsibilityStatus.ACTIVE,
+    )
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        abstract = True
+
+    def _validate_membership(self, target_organization_id: int | None) -> None:
+        if not self.membership_id:
+            return
+        membership = self.membership
+        if (
+            membership.organization_id != self.organization_id
+            or target_organization_id != self.organization_id
+        ):
+            raise ValidationError("responsibility scope must stay inside membership organization")
+        if membership.status != MembershipStatus.ACTIVE:
+            raise ValidationError("responsibility requires an active organization membership")
+        if not membership.user.is_active or membership.user.is_superuser:
+            raise ValidationError("responsibility requires an active non-superuser member")
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        self.full_clean()
+        super().save(*args, **kwargs)  # type: ignore[arg-type]
+
+
+class OrganizationResponsibilityAssignment(TenantResponsibilityAssignment):
+    responsibility = models.CharField(max_length=48, choices=OrganizationResponsibility.choices)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "membership", "responsibility"],
+                name="uniq_organization_responsibility_assignment",
+            ),
+            _responsibility_revocation_constraint(
+                "organization_responsibility_assignment_revocation_complete"
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(
+                    responsibility=OrganizationResponsibility.ADMINISTRATOR,
+                    expires_at__isnull=False,
+                ),
+                name="organization_administrator_non_expiring",
+            ),
+        ]
+        ordering = ["organization_id", "membership_id", "responsibility"]
+
+    def clean(self) -> None:
+        self._validate_membership(self.organization_id)
+        if (
+            self.responsibility == OrganizationResponsibility.ADMINISTRATOR
+            and self.expires_at is not None
+        ):
+            raise ValidationError({"expires_at": "organization administrator cannot expire"})
+
+
+class ProjectResponsibilityAssignment(TenantResponsibilityAssignment):
     project = models.ForeignKey(
         "catalog.AIProject",
         on_delete=models.CASCADE,
-        related_name="administrator_assignments",
+        related_name="responsibility_assignments",
     )
-    assigned_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="created_project_administrator_assignments",
-    )
-    status = models.CharField(
-        max_length=16,
-        choices=DelegatedAssignmentStatus.choices,
-        default=DelegatedAssignmentStatus.ACTIVE,
-    )
-    revoked_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="revoked_project_administrator_assignments",
-    )
-    revoked_at = models.DateTimeField(null=True, blank=True)
+    responsibility = models.CharField(max_length=48, choices=ProjectResponsibility.choices)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["project", "user"],
-                name="uniq_project_administrator_assignment",
+                fields=["project", "membership", "responsibility"],
+                name="uniq_project_responsibility_assignment",
             ),
-            _revocation_constraint("project_administrator_assignment_revocation_complete"),
+            _responsibility_revocation_constraint(
+                "project_responsibility_assignment_revocation_complete"
+            ),
         ]
-        ordering = ["organization_id", "project_id", "user_id"]
+        ordering = ["organization_id", "project_id", "membership_id", "responsibility"]
 
     def clean(self) -> None:
-        _validate_delegated_assignment(
-            organization_id=self.organization_id,
-            target_organization_id=self.project.organization_id if self.project_id else None,
-            user=self.user if self.user_id else None,
-        )
-
-    def save(self, *args: object, **kwargs: object) -> None:
-        self.full_clean()
-        super().save(*args, **kwargs)  # type: ignore[arg-type]
+        self._validate_membership(self.project.organization_id if self.project_id else None)
 
 
-class ScenarioEditorAssignment(TimeStampedModel):
-    """Delegates edit and test authority over one scenario."""
-
-    organization = models.ForeignKey(
-        Organization,
-        on_delete=models.CASCADE,
-        related_name="scenario_editor_assignments",
-    )
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="scenario_editor_assignments",
-    )
+class ScenarioResponsibilityAssignment(TenantResponsibilityAssignment):
     scenario = models.ForeignKey(
         "catalog.Scenario",
         on_delete=models.CASCADE,
-        related_name="editor_assignments",
+        related_name="responsibility_assignments",
     )
-    assigned_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="created_scenario_editor_assignments",
-    )
-    status = models.CharField(
-        max_length=16,
-        choices=DelegatedAssignmentStatus.choices,
-        default=DelegatedAssignmentStatus.ACTIVE,
-    )
-    revoked_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="revoked_scenario_editor_assignments",
-    )
-    revoked_at = models.DateTimeField(null=True, blank=True)
+    responsibility = models.CharField(max_length=48, choices=ScenarioResponsibility.choices)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["scenario", "user"],
-                name="uniq_scenario_editor_assignment",
+                fields=["scenario", "membership", "responsibility"],
+                name="uniq_scenario_responsibility_assignment",
             ),
-            _revocation_constraint("scenario_editor_assignment_revocation_complete"),
+            _responsibility_revocation_constraint(
+                "scenario_responsibility_assignment_revocation_complete"
+            ),
         ]
-        ordering = ["organization_id", "scenario_id", "user_id"]
+        ordering = ["organization_id", "scenario_id", "membership_id", "responsibility"]
 
     def clean(self) -> None:
-        _validate_delegated_assignment(
-            organization_id=self.organization_id,
-            target_organization_id=self.scenario.organization_id if self.scenario_id else None,
-            user=self.user if self.user_id else None,
-        )
-
-    def save(self, *args: object, **kwargs: object) -> None:
-        self.full_clean()
-        super().save(*args, **kwargs)  # type: ignore[arg-type]
+        self._validate_membership(self.scenario.organization_id if self.scenario_id else None)
 
 
-class DocumentSetManagerAssignment(TimeStampedModel):
-    """Delegates content and operational responsibility for one document set."""
-
-    organization = models.ForeignKey(
-        Organization,
-        on_delete=models.CASCADE,
-        related_name="document_set_manager_assignments",
-    )
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="document_set_manager_assignments",
-    )
+class DocumentSetResponsibilityAssignment(TenantResponsibilityAssignment):
     document_set = models.ForeignKey(
         "documents.DocumentSet",
         on_delete=models.CASCADE,
-        related_name="manager_assignments",
+        related_name="responsibility_assignments",
     )
-    assigned_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="created_document_set_manager_assignments",
-    )
-    status = models.CharField(
-        max_length=16,
-        choices=DelegatedAssignmentStatus.choices,
-        default=DelegatedAssignmentStatus.ACTIVE,
-    )
-    revoked_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="revoked_document_set_manager_assignments",
-    )
-    revoked_at = models.DateTimeField(null=True, blank=True)
+    responsibility = models.CharField(max_length=48, choices=DocumentSetResponsibility.choices)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["document_set", "user"],
-                name="uniq_document_set_manager_assignment",
+                fields=["document_set", "membership", "responsibility"],
+                name="uniq_document_set_responsibility_assignment",
             ),
-            _revocation_constraint("document_set_manager_assignment_revocation_complete"),
+            _responsibility_revocation_constraint(
+                "document_set_responsibility_assignment_revocation_complete"
+            ),
         ]
-        ordering = ["organization_id", "document_set_id", "user_id"]
+        ordering = ["organization_id", "document_set_id", "membership_id", "responsibility"]
 
     def clean(self) -> None:
-        _validate_delegated_assignment(
-            organization_id=self.organization_id,
-            target_organization_id=(
-                self.document_set.organization_id if self.document_set_id else None
-            ),
-            user=self.user if self.user_id else None,
+        self._validate_membership(
+            self.document_set.organization_id if self.document_set_id else None
         )
-
-    def save(self, *args: object, **kwargs: object) -> None:
-        self.full_clean()
-        super().save(*args, **kwargs)  # type: ignore[arg-type]
-
-
-def _validate_delegated_assignment(
-    *,
-    organization_id: int | None,
-    target_organization_id: int | None,
-    user: object | None,
-) -> None:
-    if organization_id and target_organization_id != organization_id:
-        raise ValidationError("assignment target must belong to the same organization")
-    if user is not None:
-        if not getattr(user, "is_active", False):
-            raise ValidationError("assignment user must be active")
-        if getattr(user, "is_superuser", False):
-            raise ValidationError("recovery superadmin cannot receive delegated assignments")
-        user_id = cast(int | str | None, getattr(user, "pk", None))
-        if user_id is None or (
-            organization_id
-            and not OrganizationMembership.objects.filter(
-                organization_id=organization_id,
-                user_id=user_id,
-            ).exists()
-        ):
-            raise ValidationError("assignment user must be an organization member")
 
 
 class ConsumerProtocol(models.TextChoices):

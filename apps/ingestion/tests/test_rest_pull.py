@@ -22,8 +22,10 @@ from apps.documents.models import (
     DocumentVersion,
 )
 from apps.documents.services import bind_scenario_document_set
-from apps.identity.models import DocumentSetManagerAssignment
-from apps.identity.roles import Role
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+)
 from apps.ingestion.automation import ConnectorAutomationError, claim_connector_automation
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
 from apps.ingestion.models import (
@@ -305,9 +307,7 @@ def governed_rest(db: Any) -> tuple[Any, Any, Organization, DocumentSet, Any]:
     )
     platform = get_user_model().objects.create_superuser(username="platform", password=None)
     author = get_user_model().objects.create_user(username="author")
-    OrganizationMembership.objects.create(
-        organization=organization, user=author, role=Role.SCENARIO_EDITOR
-    )
+    OrganizationMembership.objects.create(organization=organization, user=author)
     profile = register_rest_profile(
         actor=platform,
         base_url="https://api.example.com",
@@ -561,13 +561,15 @@ def test_schedule_does_not_queue_behind_manual_pending_run(
 def test_document_set_manager_can_select_exact_safe_promotion_target(governed_rest: Any) -> None:
     platform, _, organization, document_set, source = governed_rest
     manager = get_user_model().objects.create_user(username="release-manager")
-    OrganizationMembership.objects.create(
-        organization=organization, user=manager, role=Role.AUDITOR
+    membership = OrganizationMembership.objects.create(
+        organization=organization,
+        user=manager,
     )
-    assignment = DocumentSetManagerAssignment.objects.create(
+    assignment = DocumentSetResponsibilityAssignment.objects.create(
         organization=organization,
         document_set=document_set,
-        user=manager,
+        membership=membership,
+        responsibility=DocumentSetResponsibility.MANAGER,
         assigned_by=platform,
     )
     project = AIProject.objects.create(organization=organization, slug="p", name="P")

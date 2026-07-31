@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -298,12 +299,23 @@ class ApprovalRequest(TimeStampedModel):
         ToolInvocation, on_delete=models.PROTECT, related_name="approval"
     )
     request_checksum = models.CharField(max_length=64)
-    approver_roles = models.JSONField(default=list)
-    requested_by = models.CharField(max_length=200)
+    initiated_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="requested_tool_approvals",
+    )
     status = models.CharField(
         max_length=16, choices=ApprovalStatus.choices, default=ApprovalStatus.PENDING
     )
-    decided_by = models.CharField(max_length=200, blank=True)
+    decided_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="decided_tool_approvals",
+    )
     decision_reason = models.CharField(max_length=64, blank=True)
     expires_at = models.DateTimeField()
     decided_at = models.DateTimeField(null=True, blank=True)

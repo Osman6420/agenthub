@@ -82,20 +82,20 @@ carries a tenant selector and can never *grant* a permission.
 Every protected operation is checked server-side along **object, action, tenant, and
 field**:
 
-- **Read scope** is membership-based: `allowed_organization_ids(user)` is the single source
-  of truth for "which organizations may this user see," so a forgotten filter in one view
-  cannot widen visibility.
-- **Write gates** are role-based in the *target* organization: e.g. authoring requires
-  `can_author_scenarios`; releases require `can_manage_releases`. Platform admin (superuser)
-  may cross org boundaries.
+- **Membership is only a tenant shell:** `allowed_organization_ids(user)` decides which
+  organization shells may be presented; object querysets are independently narrowed from active,
+  unexpired typed responsibilities.
+- **Action gates are exact-target responsibility checks:** project, scenario and document-set
+  mutations pass trusted persisted targets to the central evaluator. A sibling assignment never
+  widens to an organization.
 - **Workspace state grants nothing:** the console always presents one revalidated organization,
   and an authorized object deep link changes that presentation state only after exact-object
   authorization. Forged, stale and revoked session values fall back without widening scope.
-- **Document-only least privilege:** `can_manage_documents` adds `document_manager` to existing
-  document authority without granting project, scenario, consumer, release or membership actions.
-- **Membership invariants:** organization/member changes are row-locked, cannot assign
-  `platform_admin`, cannot remove/change the last organization admin, and roll back if required
-  audit persistence fails.
+- **Protected content stays explicit:** organization/global administration does not imply document
+  content, scenario editing, release, runtime-control, or approval authority.
+- **Membership invariants:** membership and responsibility changes are row-locked, cannot assign
+  recovery superusers, cannot remove the last organization administrator, revoke dependent
+  responsibilities atomically, and roll back if required audit persistence fails.
 - **Field-level** exposure is curated: responses project only safe fields (for example the
   builder's node-schema returns tool binding **role names**, never endpoints or secrets).
 
@@ -189,7 +189,11 @@ channel:
 High-risk, side-effecting tools require a durable approval:
 
 - A **request-checksum binding** prevents swapping the input after approval.
-- **Separation of duties**: the approver must differ from the requester.
+- **Scenario-scoped decision authority:** only an active `scenario_approver` assignment for the
+  invocation's exact scenario may decide.
+- **Typed separation of duties:** self-approval is denied only when the verified human initiator
+  and verified human decision-maker are the same user. Consumer subjects and user identities are
+  never compared as if they were the same identity class.
 - **30-minute expiry**, **idempotent resume that never double-executes**, and an
   **`outcome_unknown`** state for a dispatched-but-unconfirmed call that is **never retried**
   (no duplicated side effects).

@@ -55,10 +55,11 @@ is the status authority for automated and remaining manual/PostgreSQL evidence.
 Phase 2.8 Part 2 removes the cross-organization workspace state. Session selection is revalidated
 on every request and only narrows already-authorized querysets; authorized deep links align the
 workspace only after exact-object authorization. Platform organization creation atomically creates
-the initial organization-admin membership. Membership lifecycle services lock the organization and
-target row, preserve at least one organization admin, and write required audit events in the same
-transaction. `document_manager` extends document/set/source/index authority without entering the
-scenario, consumer, release or membership role sets. Project, document-set and consumer creation
+the initial roleless membership plus organization-administrator responsibility. Membership and
+responsibility lifecycle services lock the organization and target row, preserve at least one
+organization administrator, and write required audit events in the same transaction. Exact
+document-set responsibilities never enter scenario, consumer, release, or membership authority.
+Project, document-set and consumer creation
 derive organization from the active workspace; scenario creation derives project from its
 authorized contextual route.
 

@@ -30,7 +30,11 @@ class Command(BaseCommand):
             raise CommandError(f"release not found: {options['target']}")
         organization_id = target.scenario.project.organization_id
         try:
-            resolve_release_manager(username=options["actor"], organization_id=organization_id)
+            resolve_release_manager(
+                username=options["actor"],
+                organization_id=organization_id,
+                scenario=target.scenario,
+            )
         except ReleaseAuthorizationError as exc:
             raise CommandError(f"not authorized: {exc.code}") from exc
         try:

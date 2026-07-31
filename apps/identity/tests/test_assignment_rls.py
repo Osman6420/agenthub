@@ -9,8 +9,10 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 
 from apps.catalog.models import AIProject
-from apps.identity.models import ProjectAdministratorAssignment
-from apps.identity.roles import Role
+from apps.identity.models import (
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+)
 from apps.tenancy.models import Organization, OrganizationMembership
 
 pytestmark = [
@@ -19,9 +21,10 @@ pytestmark = [
 ]
 
 _TABLES = (
-    "identity_projectadministratorassignment",
-    "identity_scenarioeditorassignment",
-    "identity_documentsetmanagerassignment",
+    "identity_organizationresponsibilityassignment",
+    "identity_projectresponsibilityassignment",
+    "identity_scenarioresponsibilityassignment",
+    "identity_documentsetresponsibilityassignment",
 )
 
 
@@ -45,29 +48,25 @@ def test_project_assignment_is_hidden_outside_tenant_scope() -> None:
     organization = Organization.objects.create(slug="assignment-rls", name="Assignment RLS")
     actor = get_user_model().objects.create_user(username="rls-actor", password=None)
     target = get_user_model().objects.create_user(username="rls-target", password=None)
-    OrganizationMembership.objects.create(
-        organization=organization,
-        user=actor,
-        role=Role.ORGANIZATION_ADMIN,
-    )
-    OrganizationMembership.objects.create(
+    OrganizationMembership.objects.create(organization=organization, user=actor)
+    membership = OrganizationMembership.objects.create(
         organization=organization,
         user=target,
-        role=Role.AUDITOR,
     )
     project = AIProject.objects.create(
         organization=organization,
         slug="rls-project",
         name="RLS Project",
     )
-    ProjectAdministratorAssignment.objects.create(
+    ProjectResponsibilityAssignment.objects.create(
         organization=organization,
         project=project,
-        user=target,
+        membership=membership,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
         assigned_by=actor,
     )
     role = f"assignment_rls_{uuid.uuid4().hex[:12]}"
-    table = _TABLES[0]
+    table = "identity_projectresponsibilityassignment"
 
     with connection.cursor() as cursor:
         cursor.execute(f'CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN')  # noqa: S608

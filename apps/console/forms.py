@@ -19,8 +19,14 @@ from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet, ScenarioDocumentSetBinding
 from apps.identity.capabilities import Capability
-from apps.identity.models import Consumer, ConsumerBinding
-from apps.identity.roles import Role
+from apps.identity.models import (
+    Consumer,
+    ConsumerBinding,
+    DocumentSetResponsibility,
+    OrganizationResponsibility,
+    ProjectResponsibility,
+    ScenarioResponsibility,
+)
 from apps.ingestion.models import (
     ConfluenceProfile,
     ConfluenceProfileStatus,
@@ -36,14 +42,13 @@ from apps.ingestion.models import (
     TenantConfluenceProfileGrant,
     TenantRestPullProfileGrant,
 )
-from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
+from apps.tenancy.models import (
+    MembershipStatus,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
 from apps.tenancy.services import admin_organization_ids, author_organization_ids
-
-APPLICATION_MEMBERSHIP_ROLE_CHOICES = [
-    choice
-    for choice in Role.choices
-    if choice[0] in {Role.ORGANIZATION_ADMIN, Role.APPROVER, Role.AUDITOR}
-]
 
 
 def _scope(qs: QuerySet, ids: set[int] | None, field: str = "id") -> QuerySet:
@@ -61,24 +66,10 @@ class OrganizationForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
 
 
-class ProjectOwnerChoiceField(forms.ModelChoiceField):
-    def label_from_instance(self, membership: OrganizationMembership) -> str:
-        return (
-            f"{membership.user.get_username()} · {membership.organization.name} · "
-            f"{membership.get_role_display()}"
-        )
-
-
 class ProjectForm(forms.ModelForm):
-    owner_membership = ProjectOwnerChoiceField(
-        queryset=OrganizationMembership.objects.none(),
-        label="Proje sahibi",
-        help_text="Yalnız seçilen organizasyonun yönetici veya proje sahibi üyeleri atanabilir.",
-    )
-
     class Meta:
         model = AIProject
-        fields = ["name", "owner_membership", "risk_level", "status"]
+        fields = ["name", "risk_level", "status"]
         labels = {"name": "Proje adı"}
         help_texts = {"name": "Kalıcı proje kimliği otomatik oluşturulur."}
 
@@ -86,32 +77,6 @@ class ProjectForm(forms.ModelForm):
         self, *args: Any, user: Any = None, organization: Organization | None = None, **kwargs: Any
     ) -> None:
         super().__init__(*args, **kwargs)
-        memberships = OrganizationMembership.objects.select_related("organization", "user").filter(
-            organization__status=OrganizationStatus.ACTIVE,
-            role__in=[Role.ORGANIZATION_ADMIN, Role.PROJECT_OWNER],
-        )
-        memberships = (
-            memberships.filter(organization=organization)
-            if organization is not None
-            else memberships.none()
-        )
-        cast(
-            forms.ModelChoiceField, self.fields["owner_membership"]
-        ).queryset = memberships.order_by("organization__name", "user__username")
-
-    def clean(self) -> dict[str, Any] | None:
-        cleaned_data = super().clean()
-        if cleaned_data is None:
-            return None
-        owner_membership = cleaned_data.get("owner_membership")
-        owner_queryset = cast(forms.ModelChoiceField, self.fields["owner_membership"]).queryset
-        if owner_membership and (
-            owner_queryset is None or not owner_queryset.filter(pk=owner_membership.pk).exists()
-        ):
-            self.add_error(
-                "owner_membership", "Seçilen proje sahibi bu organizasyonun uygun bir üyesi değil."
-            )
-        return cleaned_data
 
 
 SCENARIO_PRESET_CHOICES = [
@@ -167,40 +132,31 @@ class ConsumerForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
 
 
+class DirectoryUserChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, user: Any) -> str:
+        return user.get_username()
+
+
 class MembershipCreateForm(forms.Form):
-    user = forms.CharField(
-        max_length=150,
-        label="Kullanıcı adı",
-        help_text="Mevcut ve etkin directory kullanıcısının tam kullanıcı adını girin.",
-        strip=True,
-    )
-    role = forms.ChoiceField(
-        choices=APPLICATION_MEMBERSHIP_ROLE_CHOICES,
-        label="Rol",
+    user = DirectoryUserChoiceField(
+        queryset=get_user_model().objects.none(),
+        label="Kullanıcı",
+        help_text="Organizasyona henüz eklenmemiş etkin bir kullanıcı seçin.",
     )
 
     def __init__(self, *args: Any, organization: Organization, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.organization = organization
-
-    def clean_user(self) -> Any:
-        username = self.cleaned_data["user"]
-        user = get_user_model().objects.filter(username=username, is_active=True).first()
-        if (
-            user is None
-            or OrganizationMembership.objects.filter(
-                organization=self.organization, user=user
-            ).exists()
-        ):
-            raise forms.ValidationError("Kullanıcı eklenemiyor.")
-        return user
-
-
-class MembershipRoleForm(forms.Form):
-    role = forms.ChoiceField(
-        choices=APPLICATION_MEMBERSHIP_ROLE_CHOICES,
-        label="Rol",
-    )
+        existing_user_ids = OrganizationMembership.objects.filter(
+            organization=organization,
+            status=MembershipStatus.ACTIVE,
+        ).values_list("user_id", flat=True)
+        self.fields["user"].queryset = (
+            get_user_model()
+            .objects.filter(is_active=True, is_superuser=False)
+            .exclude(id__in=existing_user_ids)
+            .order_by("username")
+        )
 
 
 class AssignmentMemberChoiceField(forms.ModelChoiceField):
@@ -209,16 +165,13 @@ class AssignmentMemberChoiceField(forms.ModelChoiceField):
 
 
 class DelegatedAssignmentForm(forms.Form):
-    PROJECT_ADMINISTRATOR = "project_administrator"
-    SCENARIO_EDITOR = "scenario_editor"
-    DOCUMENT_SET_MANAGER = "document_set_manager"
-
     responsibility = forms.ChoiceField(
-        choices=[
-            (PROJECT_ADMINISTRATOR, "Project Administrator"),
-            (SCENARIO_EDITOR, "Scenario Editor"),
-            (DOCUMENT_SET_MANAGER, "Document Set Manager"),
-        ],
+        choices=(
+            list(OrganizationResponsibility.choices)
+            + list(ProjectResponsibility.choices)
+            + list(ScenarioResponsibility.choices)
+            + list(DocumentSetResponsibility.choices)
+        ),
         label="Sorumluluk",
     )
     member = AssignmentMemberChoiceField(
@@ -240,6 +193,12 @@ class DelegatedAssignmentForm(forms.Form):
         required=False,
         label="Doküman seti",
     )
+    expires_at = forms.DateTimeField(
+        required=False,
+        label="Bitiş zamanı",
+        help_text="Boş bırakılırsa sorumluluk süresizdir.",
+        widget=forms.DateTimeInput(attrs={"type": "datetime-local"}),
+    )
 
     def __init__(self, *args: Any, organization: Organization, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -247,6 +206,7 @@ class DelegatedAssignmentForm(forms.Form):
             OrganizationMembership.objects.select_related("user")
             .filter(
                 organization=organization,
+                status=MembershipStatus.ACTIVE,
                 user__is_active=True,
                 user__is_superuser=False,
             )
@@ -271,10 +231,22 @@ class DelegatedAssignmentForm(forms.Form):
         responsibility = cleaned_data.get("responsibility")
         if not isinstance(responsibility, str):
             return cleaned_data
+        if (
+            responsibility == OrganizationResponsibility.ADMINISTRATOR
+            and cleaned_data.get("expires_at") is not None
+        ):
+            self.add_error("expires_at", "Organizasyon yöneticisi süreli atanamaz.")
         target_field = {
-            self.PROJECT_ADMINISTRATOR: "project",
-            self.SCENARIO_EDITOR: "scenario",
-            self.DOCUMENT_SET_MANAGER: "document_set",
+            ProjectResponsibility.VIEWER: "project",
+            ProjectResponsibility.ADMINISTRATOR: "project",
+            ScenarioResponsibility.VIEWER: "scenario",
+            ScenarioResponsibility.EDITOR: "scenario",
+            ScenarioResponsibility.RELEASE_MANAGER: "scenario",
+            ScenarioResponsibility.RUNTIME_OPERATOR: "scenario",
+            ScenarioResponsibility.APPROVER: "scenario",
+            DocumentSetResponsibility.METADATA_VIEWER: "document_set",
+            DocumentSetResponsibility.CONTENT_READER: "document_set",
+            DocumentSetResponsibility.MANAGER: "document_set",
         }.get(responsibility)
         if target_field is None:
             return cleaned_data

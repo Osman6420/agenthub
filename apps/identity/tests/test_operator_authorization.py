@@ -4,8 +4,12 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 from apps.identity.authorization import AuthoritySource, Capability, authorize
-from apps.identity.models import GlobalAdministrator
-from apps.identity.roles import Role
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    PlatformResponsibility,
+    PlatformResponsibilityAssignment,
+)
 from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
 
 pytestmark = pytest.mark.django_db
@@ -25,35 +29,49 @@ def test_global_administrator_is_single_non_superuser_identity() -> None:
     daily = _user("daily-admin")
     recovery = _user("recovery-admin", superuser=True)
     inactive = _user("inactive-admin", active=False)
-    GlobalAdministrator(user=daily).full_clean()
+    PlatformResponsibilityAssignment(user=daily, assigned_by=daily).full_clean()
 
     with pytest.raises(ValidationError):
-        GlobalAdministrator(user=recovery).full_clean()
+        PlatformResponsibilityAssignment(user=recovery, assigned_by=daily).full_clean()
     with pytest.raises(ValidationError):
-        GlobalAdministrator(user=inactive).full_clean()
+        PlatformResponsibilityAssignment(user=inactive, assigned_by=daily).full_clean()
     with pytest.raises(ValidationError):
-        GlobalAdministrator(user=daily, scope="not-global").full_clean()
+        PlatformResponsibilityAssignment(
+            user=daily,
+            responsibility="not-global",
+            assigned_by=daily,
+        ).full_clean()
 
 
 def test_global_administrator_singleton_is_database_enforced() -> None:
-    GlobalAdministrator.objects.create(user=_user("first-global-admin"))
+    first = _user("first-global-admin")
+    PlatformResponsibilityAssignment.objects.create(user=first, assigned_by=first)
 
     with pytest.raises(IntegrityError), transaction.atomic():
-        GlobalAdministrator.objects.create(user=_user("second-global-admin"))
+        second = _user("second-global-admin")
+        PlatformResponsibilityAssignment.objects.bulk_create(
+            [PlatformResponsibilityAssignment(user=second, assigned_by=second)]
+        )
 
 
 def test_global_administrator_has_admin_but_not_document_content_authority() -> None:
     user = _user("global-admin")
-    GlobalAdministrator.objects.create(user=user)
+    PlatformResponsibilityAssignment.objects.create(
+        user=user,
+        responsibility=PlatformResponsibility.GLOBAL_ADMINISTRATOR,
+        assigned_by=user,
+    )
 
-    allowed = authorize(user=user, capability=Capability.SCENARIO_RELEASE)
+    allowed = authorize(user=user, capability=Capability.PLATFORM_MANAGE)
+    release_excluded = authorize(user=user, capability=Capability.SCENARIO_RELEASE)
     excluded = authorize(user=user, capability=Capability.DOCUMENT_SET_CONTENT_READ)
     grant_excluded = authorize(user=user, capability=Capability.DOCUMENT_SET_RETRIEVE_GRANT)
 
     assert allowed.allowed is True
-    assert allowed.source == AuthoritySource.GLOBAL_ADMINISTRATOR
+    assert allowed.source == AuthoritySource.PLATFORM_RESPONSIBILITY
+    assert release_excluded.allowed is False
     assert excluded.allowed is False
-    assert excluded.reason == "GLOBAL_ADMINISTRATOR_CAPABILITY_EXCLUDED"
+    assert excluded.reason == "TRUSTED_ORGANIZATION_REQUIRED"
     assert grant_excluded.allowed is False
 
 
@@ -61,9 +79,18 @@ def test_organization_administrator_is_tenant_bound_and_content_excluded() -> No
     user = _user("org-admin")
     own = Organization.objects.create(slug="own", name="Own")
     foreign = Organization.objects.create(slug="foreign", name="Foreign")
-    OrganizationMembership.objects.create(organization=own, user=user, role=Role.ORGANIZATION_ADMIN)
+    membership = OrganizationMembership.objects.create(organization=own, user=user)
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=own,
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=user,
+    )
 
-    assert authorize(user=user, capability=Capability.SCENARIO_RELEASE, organization=own).allowed
+    assert authorize(user=user, capability=Capability.ORGANIZATION_MANAGE, organization=own).allowed
+    assert not authorize(
+        user=user, capability=Capability.SCENARIO_RELEASE, organization=own
+    ).allowed
     assert not authorize(
         user=user, capability=Capability.SCENARIO_RELEASE, organization=foreign
     ).allowed
@@ -77,8 +104,12 @@ def test_disabled_organization_denies_normal_administrator_mutation() -> None:
     organization = Organization.objects.create(
         slug="disabled", name="Disabled", status=OrganizationStatus.DISABLED
     )
-    OrganizationMembership.objects.create(
-        organization=organization, user=user, role=Role.ORGANIZATION_ADMIN
+    membership = OrganizationMembership.objects.create(organization=organization, user=user)
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=user,
     )
 
     decision = authorize(
@@ -89,14 +120,14 @@ def test_disabled_organization_denies_normal_administrator_mutation() -> None:
     assert decision.reason == "ORGANIZATION_INACTIVE"
 
     global_user = _user("global-disabled-admin")
-    GlobalAdministrator.objects.create(user=global_user)
+    PlatformResponsibilityAssignment.objects.create(user=global_user, assigned_by=global_user)
     global_decision = authorize(
         user=global_user,
         capability=Capability.SCENARIO_RELEASE,
         organization=organization,
     )
     assert not global_decision.allowed
-    assert global_decision.reason == "ORGANIZATION_INACTIVE"
+    assert global_decision.reason == "ACTIVE_MEMBERSHIP_REQUIRED"
 
 
 def test_superadmin_is_explicit_recovery_source_and_anonymous_is_denied() -> None:

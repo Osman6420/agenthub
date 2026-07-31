@@ -72,16 +72,13 @@ def set_document_set_quarantine(
         organization=document_set.organization,
         document_set=document_set,
     )
-    platform_decision = authorize(
+    recovery_decision = authorize(
         user=actor,
         capability=Capability.PLATFORM_MANAGE,
-        organization=document_set.organization,
-        document_set=document_set,
     )
-    decision = operations_decision if operations_decision.allowed else platform_decision
+    decision = operations_decision if operations_decision.allowed else recovery_decision
     allowed_sources = {
-        AuthoritySource.DOCUMENT_SET_MANAGER,
-        AuthoritySource.GLOBAL_ADMINISTRATOR,
+        AuthoritySource.DOCUMENT_SET_RESPONSIBILITY,
         AuthoritySource.SUPERADMIN_RECOVERY,
     }
     if not decision.allowed or decision.source not in allowed_sources:

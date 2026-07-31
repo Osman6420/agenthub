@@ -14,8 +14,17 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, LifecycleStatus, Scenario, ScenarioAlias
 from apps.identity.capabilities import Capability
-from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
-from apps.identity.roles import Role
+from apps.identity.models import (
+    Consumer,
+    ConsumerBinding,
+    ConsumerProtocol,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.tokens import create_token
 from apps.releases.compiler import ArtifactRef, compile_release, promote_release
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -31,11 +40,12 @@ ORG_SLUG = "demo"
 CONSUMER_SUBJECT = "demo-client"
 MCP_CONSUMER_SUBJECT = "demo-mcp-client"
 OPERATORS = (
-    ("admin", Role.ORGANIZATION_ADMIN, True),
-    ("editor", Role.SCENARIO_EDITOR, False),
-    ("releaser", Role.RELEASE_MANAGER, False),
-    ("approver", Role.APPROVER, False),
-    ("auditor", Role.AUDITOR, False),
+    "admin",
+    "project-admin",
+    "editor",
+    "releaser",
+    "approver",
+    "auditor",
 )
 
 
@@ -45,6 +55,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("--password", default="")
         parser.add_argument("--reset", action="store_true")
+        parser.add_argument("--no-print-secrets", action="store_true")
 
     def handle(self, *args: Any, **options: Any) -> None:
         password = str(options["password"] or secrets.token_urlsafe(9))
@@ -55,7 +66,7 @@ class Command(BaseCommand):
                 slug=ORG_SLUG,
                 defaults={"name": "Demo Org"},
             )
-            self._ensure_operators(organization, password)
+            memberships = self._ensure_operators(organization, password)
             project, _created = AIProject.objects.get_or_create(
                 organization=organization,
                 slug="workflows",
@@ -98,6 +109,12 @@ class Command(BaseCommand):
                     ),
                 ),
             )
+            self._ensure_responsibilities(
+                organization=organization,
+                project=project,
+                scenarios=scenarios,
+                memberships=memberships,
+            )
             rest = self._ensure_consumer(
                 organization,
                 subject=CONSUMER_SUBJECT,
@@ -116,9 +133,10 @@ class Command(BaseCommand):
             _, mcp_token = create_token(mcp, f"demo-mcp-{secrets.token_hex(3)}")
 
         self.stdout.write(self.style.SUCCESS("Demo workflow tenant ready."))
-        self.stdout.write(f"operator password: {password}")
-        self.stdout.write(f"REST token: {rest_token}")
-        self.stdout.write(f"MCP token: {mcp_token}")
+        if not options["no_print_secrets"]:
+            self.stdout.write(f"operator password: {password}")
+            self.stdout.write(f"REST token: {rest_token}")
+            self.stdout.write(f"MCP token: {mcp_token}")
         self.stdout.write("Canonical API: POST /v1/responses")
 
     def _reset(self) -> None:
@@ -149,18 +167,64 @@ class Command(BaseCommand):
         organization.delete()
 
     @staticmethod
-    def _ensure_operators(organization: Organization, password: str) -> None:
-        for username, role, is_superuser in OPERATORS:
+    def _ensure_operators(
+        organization: Organization, password: str
+    ) -> dict[str, OrganizationMembership]:
+        memberships: dict[str, OrganizationMembership] = {}
+        for username in OPERATORS:
             user, _created = User.objects.get_or_create(username=username)
-            user.is_staff = is_superuser
-            user.is_superuser = is_superuser
+            user.is_staff = False
+            user.is_superuser = False
             user.set_password(password)
             user.save()
-            OrganizationMembership.objects.update_or_create(
+            membership, _created = OrganizationMembership.objects.update_or_create(
                 organization=organization,
                 user=user,
-                defaults={"role": role},
             )
+            memberships[username] = membership
+        return memberships
+
+    @staticmethod
+    def _ensure_responsibilities(
+        *,
+        organization: Organization,
+        project: AIProject,
+        scenarios: tuple[Scenario, ...],
+        memberships: dict[str, OrganizationMembership],
+    ) -> None:
+        admin = memberships["admin"]
+        OrganizationResponsibilityAssignment.objects.update_or_create(
+            organization=organization,
+            membership=admin,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            defaults={"assigned_by": admin.user},
+        )
+        OrganizationResponsibilityAssignment.objects.update_or_create(
+            organization=organization,
+            membership=memberships["auditor"],
+            responsibility=OrganizationResponsibility.AUDITOR,
+            defaults={"assigned_by": admin.user},
+        )
+        ProjectResponsibilityAssignment.objects.update_or_create(
+            organization=organization,
+            project=project,
+            membership=memberships["project-admin"],
+            responsibility=ProjectResponsibility.ADMINISTRATOR,
+            defaults={"assigned_by": admin.user},
+        )
+        for scenario in scenarios:
+            for username, responsibility in (
+                ("editor", ScenarioResponsibility.EDITOR),
+                ("releaser", ScenarioResponsibility.RELEASE_MANAGER),
+                ("approver", ScenarioResponsibility.APPROVER),
+            ):
+                ScenarioResponsibilityAssignment.objects.update_or_create(
+                    organization=organization,
+                    scenario=scenario,
+                    membership=memberships[username],
+                    responsibility=responsibility,
+                    defaults={"assigned_by": admin.user},
+                )
 
     @staticmethod
     def _ensure_scenario(

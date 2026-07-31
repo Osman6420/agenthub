@@ -6,15 +6,21 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.identity.capabilities import Capability
-from apps.identity.models import Consumer, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.releases.compiler import ArtifactRef, compile_release
-from apps.tenancy.models import Organization
+from apps.tenancy.models import Organization, OrganizationMembership
 from apps.tools.adapters import ToolAdapterRequest, ToolAdapterResponse, ToolAdapterUncertain
 from apps.tools.approvals import (
     ToolApprovalError,
@@ -86,8 +92,6 @@ def _binding_body(*, required: bool) -> dict:
             "allowed_output_fields": ["status", "echo"],
             "approval": {
                 "required": required,
-                "approver_roles": ["approver"],
-                "self_approval_allowed": False,
             },
         },
     }
@@ -163,7 +167,24 @@ def _setup(*, risk: str, side_effecting: bool, required: bool):
     return release, consumer
 
 
-def _request(release, consumer, *, key="k1", tool_input=None):
+def _operator(release, username: str = "operator-1", *, authorized: bool = True):
+    user = get_user_model().objects.create_user(username=username)
+    membership = OrganizationMembership.objects.create(
+        organization=release.scenario.organization,
+        user=user,
+    )
+    if authorized:
+        ScenarioResponsibilityAssignment.objects.create(
+            organization=release.scenario.organization,
+            scenario=release.scenario,
+            membership=membership,
+            responsibility=ScenarioResponsibility.APPROVER,
+            assigned_by=user,
+        )
+    return user
+
+
+def _request(release, consumer, *, key="k1", tool_input=None, initiated_by_user=None):
     return request_tool_invocation(
         release=release,
         consumer=consumer,
@@ -171,7 +192,7 @@ def _request(release, consumer, *, key="k1", tool_input=None):
         tool_input=tool_input or {"query": "hi"},
         idempotency_key=key,
         consumer_capabilities=CAPS,
-        requested_by=consumer.subject,
+        initiated_by_user=initiated_by_user,
     )
 
 
@@ -198,12 +219,12 @@ def test_high_risk_requires_approval_then_resumes() -> None:
     assert invocation.status == ToolInvocationStatus.PENDING_APPROVAL
     approval = ApprovalRequest.objects.get(invocation=invocation)
     assert approval.status == ApprovalStatus.PENDING
+    actor = _operator(release)
 
     decide_approval(
         approval_id=approval.pk,
         organization_id=consumer.organization_id,
-        actor="operator-1",
-        actor_roles=["approver"],
+        actor=actor,
         approve=True,
     )
     invocation.refresh_from_db()
@@ -220,14 +241,14 @@ def test_high_risk_requires_approval_then_resumes() -> None:
 @pytest.mark.django_db
 def test_self_approval_is_forbidden() -> None:
     release, consumer = _setup(risk="high", side_effecting=True, required=True)
-    invocation = _request(release, consumer)
+    actor = _operator(release, consumer.subject)
+    invocation = _request(release, consumer, initiated_by_user=actor)
     approval = ApprovalRequest.objects.get(invocation=invocation)
     with pytest.raises(ToolApprovalError, match="SELF_APPROVAL_FORBIDDEN"):
         decide_approval(
             approval_id=approval.pk,
             organization_id=consumer.organization_id,
-            actor=consumer.subject,  # same as requester
-            actor_roles=["approver"],
+            actor=actor,
             approve=True,
         )
 
@@ -237,12 +258,12 @@ def test_unauthorized_approver_is_denied() -> None:
     release, consumer = _setup(risk="high", side_effecting=True, required=True)
     invocation = _request(release, consumer)
     approval = ApprovalRequest.objects.get(invocation=invocation)
+    actor = _operator(release, authorized=False)
     with pytest.raises(ToolApprovalError, match="APPROVER_NOT_AUTHORIZED"):
         decide_approval(
             approval_id=approval.pk,
             organization_id=consumer.organization_id,
-            actor="operator-1",
-            actor_roles=["auditor"],
+            actor=actor,
             approve=True,
         )
 
@@ -254,12 +275,12 @@ def test_expired_approval_is_denied_and_invocation_expires() -> None:
     approval = ApprovalRequest.objects.get(invocation=invocation)
     approval.expires_at = timezone.now() - timedelta(seconds=1)
     approval.save(update_fields=["expires_at"])
+    actor = _operator(release)
     with pytest.raises(ToolApprovalError, match="APPROVAL_EXPIRED"):
         decide_approval(
             approval_id=approval.pk,
             organization_id=consumer.organization_id,
-            actor="operator-1",
-            actor_roles=["approver"],
+            actor=actor,
             approve=True,
         )
     invocation.refresh_from_db()
@@ -272,12 +293,12 @@ def test_cross_tenant_decision_is_not_found() -> None:
     invocation = _request(release, consumer)
     approval = ApprovalRequest.objects.get(invocation=invocation)
     other = Organization.objects.create(slug="other", name="Other")
+    actor = _operator(release)
     with pytest.raises(ToolApprovalError, match="APPROVAL_NOT_FOUND"):
         decide_approval(
             approval_id=approval.pk,
             organization_id=other.pk,
-            actor="operator-1",
-            actor_roles=["approver"],
+            actor=actor,
             approve=True,
         )
 
@@ -297,11 +318,11 @@ def test_input_swap_after_approval_is_denied() -> None:
     release, consumer = _setup(risk="high", side_effecting=True, required=True)
     invocation = _request(release, consumer)
     approval = ApprovalRequest.objects.get(invocation=invocation)
+    actor = _operator(release)
     decide_approval(
         approval_id=approval.pk,
         organization_id=consumer.organization_id,
-        actor="operator-1",
-        actor_roles=["approver"],
+        actor=actor,
         approve=True,
     )
     with pytest.raises(ToolApprovalError, match="REQUEST_CHECKSUM_MISMATCH"):
@@ -368,11 +389,11 @@ def test_rejected_invocation_does_not_execute() -> None:
     release, consumer = _setup(risk="high", side_effecting=True, required=True)
     invocation = _request(release, consumer)
     approval = ApprovalRequest.objects.get(invocation=invocation)
+    actor = _operator(release)
     decide_approval(
         approval_id=approval.pk,
         organization_id=consumer.organization_id,
-        actor="operator-1",
-        actor_roles=["approver"],
+        actor=actor,
         approve=False,
     )
     invocation.refresh_from_db()
@@ -400,7 +421,6 @@ def test_capability_denied_at_request() -> None:
             tool_input={"query": "hi"},
             idempotency_key="k1",
             consumer_capabilities=[],
-            requested_by=consumer.subject,
         )
     assert ToolInvocation.objects.count() == 0
 
@@ -409,8 +429,11 @@ def test_capability_denied_at_request() -> None:
 def test_cancel_pending_invocation() -> None:
     release, consumer = _setup(risk="high", side_effecting=True, required=True)
     invocation = _request(release, consumer)
+    actor = _operator(release)
     cancelled = cancel_invocation(
-        invocation_id=invocation.pk, organization_id=consumer.organization_id, actor="operator-1"
+        invocation_id=invocation.pk,
+        organization_id=consumer.organization_id,
+        actor=actor,
     )
     assert cancelled.status == ToolInvocationStatus.CANCELLED
     approval = ApprovalRequest.objects.get(invocation=invocation)

@@ -40,6 +40,7 @@ from apps.tenancy.models import Organization
 from apps.tenancy.services import (
     allowed_organization_ids,
     can_admin_org,
+    can_manage_document,
     can_manage_documents,
 )
 
@@ -159,7 +160,7 @@ def _serialize_document(document: Document, *, request: HttpRequest, detail: boo
         "lifecycle_state": document.lifecycle_state,
         "deleted_at": document.deleted_at.isoformat() if document.deleted_at else None,
         "updated_at": document.updated_at.isoformat(),
-        "can_write": can_manage_documents(request.user, document.organization_id),
+        "can_write": can_manage_document(request.user, document),
         "can_purge": can_admin_org(request.user, document.organization_id),
     }
     if detail:
@@ -190,7 +191,11 @@ def _serialize_set(document_set: DocumentSet, *, request: HttpRequest) -> dict:
             {"id": v.pk, "version": v.version, "status": v.status}
             for v in document_set.versions.all().order_by("version")
         ],
-        "can_write": can_manage_documents(request.user, document_set.organization_id),
+        "can_write": can_manage_documents(
+            request.user,
+            document_set.organization_id,
+            document_set=document_set,
+        ),
     }
 
 

@@ -2,8 +2,8 @@
 
 This guide explains how to operate AgentHub through the console: signing in, navigating
 the tenant-scoped surfaces, authoring workflows visually with the Sprint 11 builder, and
-taking a scenario from draft to a served release. It is written for tenant operators
-(scenario editors, project owners, org admins, release managers, approvers, auditors).
+taking a scenario from draft to a served release. It is written for tenant operators with
+explicit organization, project, scenario, or document-set responsibilities.
 
 > AgentHub is a governed, multi-tenant platform for shipping RAG, workflow, and agent
 > scenarios behind a single public API. Everything an operator publishes is an **immutable,
@@ -22,24 +22,25 @@ taking a scenario from draft to a served release. It is written for tenant opera
 3. After login you land on the **Dashboard** for one validated organization. The last valid
    selection is retained; otherwise the first authorized organization is selected deterministically.
 
-**What you can see and do is decided entirely on the server** from your directory group /
-role membership. The UI never grants access the backend would deny.
+**What you can see and do is decided entirely on the server** from active, unexpired,
+exact-scope responsibility assignments. The UI never grants access the backend would deny.
 
-### Roles at a glance
+### Responsibilities at a glance
 
-| Role | Can do |
+| Scope / responsibility | Can do |
 | --- | --- |
-| `platform_admin` (superuser) | Everything, across all organizations; create organizations |
-| `organization_admin` | Administer an org: consumers, bindings, authoring, releases |
-| `document_manager` | Manage document sets, documents, sources and indexes; no project, scenario, consumer, release or membership administration |
-| `project_owner` | Author scenarios/artifacts in the org |
-| `scenario_editor` | Author scenarios/artifacts and **workflow drafts** |
-| `release_manager` | Compile/promote/rollback releases, start/stop canaries |
-| `approver` | Decide tool-invocation approvals |
-| `auditor` | Read-only visibility (no authoring) |
+| Platform / global administrator | Manage platform and organization shells; recovery superuser remains separate |
+| Organization / administrator | Manage members, responsibilities, consumers and safe metadata; does not implicitly edit, release, approve, or read protected document content |
+| Organization / auditor | Read safe organization metadata and audit records |
+| Project / viewer or administrator | View one project; an administrator manages its structure and may delegate scenario viewer/editor responsibility |
+| Scenario / viewer or editor | View one scenario, or edit/test that exact scenario |
+| Scenario / release manager | Compile/promote/rollback releases for that exact scenario |
+| Scenario / runtime operator | View and control runs for that exact scenario |
+| Scenario / approver | View and decide approvals for that exact scenario |
+| Document set / metadata viewer, content reader, or manager | Increasing access to one exact document set; never grants scenario/release authority |
 
-Read access is **membership-scoped** (you see only your organizations). Write actions
-additionally require the right role in the **target** organization.
+Organization membership only establishes tenant affiliation and makes the organization shell
+visible. It grants no project, scenario, approval, release, runtime, or protected-content access.
 
 ---
 
@@ -56,10 +57,10 @@ and role checks remain authoritative. There is no cross-organization console vie
 | **Dokümanlar** | Doküman setleri; set ayrıntısında içerik, sürüm, indeks ve kaynak görevleri |
 | **İstemciler** | API istemcileri, protokol bilgileri, kimlik bilgileri ve senaryo erişim bağları |
 | **Çalıştırmalar** | Mevcut agent, workflow ve recovery yüzeylerine tenant-scoped giriş |
-| **Kullanıcılar ve yetkiler** | Organizasyon yöneticileri için tek-rol üyelik yönetimi; son organizasyon yöneticisi kaldırılamaz |
+| **Kullanıcılar ve yetkiler** | Rol içermeyen üyelik ve ayrı, tam kapsamlı sorumluluk yönetimi; son organizasyon yöneticisi kaldırılamaz |
 
-Platform yöneticisi **Yeni organizasyon** ile organizasyonu ve zorunlu ilk
-`organization_admin` üyeliğini atomik oluşturur. Yeni proje, doküman seti ve istemci seçili
+Platform yöneticisi **Yeni organizasyon** ile organizasyonu, ilk üyeliği ve zorunlu
+organizasyon-yöneticisi sorumluluğunu atomik oluşturur. Yeni proje, doküman seti ve istemci seçili
 organizasyondan; yeni senaryo ise açıldığı proje URL'sinden türetilir. Bu formlarda parent tenant
 seçicisi bulunmaz ve gönderilen ek parent alanları dikkate alınmaz.
 
@@ -140,9 +141,8 @@ varsayılmamalıdır. Metadata şeması, ingestion lineage'ı, PostgreSQL indeks
 modlarında ortak uygulama Faz 3'te birlikte teslim edilecektir.
 
 İndeks hazır
-olduğunda `document_manager`, mevcut belge yazarları ve organizasyon yöneticileri belge/index
-adımlarını yürütebilir; release yaşam döngüsü ayrı `release_manager`/`organization_admin` yetkisini
-korur.
+olduğunda yalnız exact document-set manager sorumluluğu belge/index adımlarını yürütebilir;
+release yaşam döngüsü exact scenario release-manager sorumluluğunda kalır.
 Çalışma alanı taslak, yayımlanmış set, building/promotable indeks ve aktif indeks durumlarını gerçek
 önkoşullardan hesaplayarak ayrı gösterir. Exact preparation seçimi sonraki yayımlanan sürümler için
 otomatik staged hazırlığı açabilir; bu otomasyon aktif indeks pointer'ını değiştirmez. Set, belge ve

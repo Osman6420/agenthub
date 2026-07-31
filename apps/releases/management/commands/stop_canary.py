@@ -30,7 +30,11 @@ class Command(BaseCommand):
             raise CommandError(f"canary not found: {options['canary']}")
         organization_id = canary.scenario.project.organization_id
         try:
-            resolve_release_manager(username=options["actor"], organization_id=organization_id)
+            resolve_release_manager(
+                username=options["actor"],
+                organization_id=organization_id,
+                scenario=canary.scenario,
+            )
         except ReleaseAuthorizationError as exc:
             raise CommandError(f"not authorized: {exc.code}") from exc
         try:

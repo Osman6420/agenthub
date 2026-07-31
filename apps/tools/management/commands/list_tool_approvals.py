@@ -29,5 +29,6 @@ class Command(BaseCommand):
         for approval in pending:
             self.stdout.write(
                 f"approval id={approval.pk} invocation={approval.invocation_id} "
-                f"expires_at={approval.expires_at.isoformat()} roles={approval.approver_roles}"
+                f"expires_at={approval.expires_at.isoformat()} "
+                f"scenario={approval.invocation.scenario_id}"
             )

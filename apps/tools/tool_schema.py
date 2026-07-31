@@ -21,7 +21,6 @@ MAX_PATH_PREFIX_LENGTH = 200
 MAX_SECRET_REF_LENGTH = 200
 MAX_FIELD_NAME_LENGTH = 128
 MAX_FIELDS = 50
-MAX_APPROVER_ROLES = 8
 
 MAX_TIMEOUT_SECONDS = 30
 MAX_RESPONSE_BYTES = 1_048_576
@@ -32,9 +31,6 @@ ALLOWED_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"})
 # ``critical`` is intentionally absent: critical tools are disabled in this release.
 ALLOWED_RISKS = frozenset({"low", "medium", "high"})
 ALLOWED_SCHEMES = frozenset({"https"})
-ALLOWED_APPROVER_ROLES = frozenset(
-    {"approver", "release_manager", "organization_admin", "platform_admin"}
-)
 DISALLOWED_HOST_SUFFIXES = frozenset({"local", "internal", "localhost", "localdomain"})
 DISALLOWED_HOSTS = frozenset({"localhost", "metadata.google.internal", "metadata"})
 
@@ -139,16 +135,8 @@ def validate_tool_binding_body(body: dict[str, Any]) -> None:
     _field_list(spec.get("allowed_output_fields"), "allowed_output_fields")
 
     approval = _mapping(spec.get("approval"), "approval")
-    _require_exact_keys(
-        approval, {"required", "approver_roles", "self_approval_allowed"}, "approval"
-    )
+    _require_exact_keys(approval, {"required"}, "approval")
     _boolean(approval.get("required"), "approval.required")
-    _boolean(approval.get("self_approval_allowed"), "approval.self_approval_allowed")
-    roles = approval.get("approver_roles")
-    if not isinstance(roles, list) or not roles or len(roles) > MAX_APPROVER_ROLES:
-        raise ToolArtifactError("approver_roles must be a bounded non-empty list")
-    if any(role not in ALLOWED_APPROVER_ROLES for role in roles):
-        raise ToolArtifactError("approver_roles contains an unknown role")
 
     if "rate_limit_per_minute" in spec:
         _bounded_int(spec.get("rate_limit_per_minute"), 1, MAX_RATE_LIMIT, "rate_limit_per_minute")

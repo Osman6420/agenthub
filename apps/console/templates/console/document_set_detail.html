@@ -47,7 +47,7 @@
 
 <div class="card" id="access">
   <div class="section-heading"><div><h2>Doküman seti erişimi</h2><p class="muted">Atanmış yöneticiler bu setin içerik ve indeks operasyonlarını yönetebilir.</p></div>{% if can_manage_access %}<a class="button secondary" href="{% url 'console:organization_members' %}">Erişimi yönet</a>{% endif %}</div>
-  {% for assignment in manager_assignments %}<div class="access-row"><strong>{{ assignment.user.get_username }}</strong><span class="badge">Doküman seti yöneticisi</span></div>{% empty %}<p class="muted">Atanmış doküman seti yöneticisi yok.</p>{% endfor %}
+  {% for assignment in manager_assignments %}<div class="access-row"><strong>{{ assignment.membership.user.get_username }}</strong><span class="badge">{{ assignment.get_responsibility_display }}</span></div>{% empty %}<p class="muted">Atanmış doküman seti sorumluluğu yok.</p>{% endfor %}
 </div>
 
 <div class="card" id="documents">

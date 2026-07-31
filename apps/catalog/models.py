@@ -9,14 +9,11 @@ within an organization.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
-from typing import cast
 
 from django.db import models
 
 from apps.tenancy.models import (
     Organization,
-    OrganizationMembership,
     TimeStampedModel,
     ensure_immutable_public_id,
 )
@@ -55,14 +52,8 @@ class AIProject(TimeStampedModel):
     )
     slug = models.SlugField(max_length=64)
     name = models.CharField(max_length=200)
-    owner_membership = models.ForeignKey(
-        OrganizationMembership,
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="owned_projects",
-    )
-    # Compatibility label for existing rows and the current GitOps contract. It is not authority.
+    # Informational GitOps metadata only. Authorization is expressed by scoped
+    # responsibility assignments, never by this label.
     owner = models.CharField(max_length=200, blank=True)
     risk_level = models.CharField(
         max_length=16, choices=RiskLevel.choices, default=RiskLevel.MEDIUM
@@ -84,18 +75,6 @@ class AIProject(TimeStampedModel):
 
     def save(self, *args: object, **kwargs: object) -> None:
         ensure_immutable_public_id(self)
-        if self.owner_membership_id:
-            membership = OrganizationMembership.objects.select_related("user").get(
-                pk=self.owner_membership_id
-            )
-            if membership.organization_id != self.organization_id:
-                raise ValueError("project owner membership must belong to project organization")
-            self.owner = membership.user.get_username()
-            update_fields = kwargs.get("update_fields")
-            if update_fields is not None:
-                fields = set(cast(Iterable[str], update_fields))
-                if "owner_membership" in fields:
-                    kwargs["update_fields"] = fields | {"owner"}
         super().save(*args, **kwargs)  # type: ignore[arg-type]
 
 

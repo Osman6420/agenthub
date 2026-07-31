@@ -62,11 +62,9 @@ def register_tool_binding(*, artifact: ArtifactVersion) -> ToolBinding:
         organization_id=artifact.organization_id, tool_ref=str(spec["tool_ref"])
     )
     approval = spec["approval"]
-    # Fail-closed policy invariant: a high-risk side-effecting tool must require
-    # approval and must forbid self-approval (v3 plan §17 approved decisions).
-    if definition.requires_approval and (
-        not approval["required"] or approval["self_approval_allowed"]
-    ):
+    # Fail-closed policy invariant: high-risk side effects require approval.
+    # Approver authority and typed human SoD are server policy, not artifact input.
+    if definition.requires_approval and not approval["required"]:
         raise ToolRegistryError("HIGH_RISK_REQUIRES_APPROVAL")
 
     existing = ToolBinding.objects.filter(

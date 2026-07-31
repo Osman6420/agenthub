@@ -182,12 +182,8 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
         "category": "control",
         "supports_mapping": True,
         "fields": [
-            {"name": "allowed_decision_roles", "kind": "list", "required": True},
             {"name": "decision_schema", "kind": "object", "required": True},
             {"name": "timeout_seconds", "kind": "integer", "required": True},
-            {"name": "deny_self_decision", "kind": "boolean", "required": False},
-            {"name": "escalation_role", "kind": "identifier", "required": False},
-            {"name": "escalation_timeout_seconds", "kind": "integer", "required": False},
         ],
     },
     {

@@ -527,11 +527,14 @@ def accept_candidate(
     if artifact_type != ArtifactType.WORKFLOW_DEFINITION:
         if project is None:
             raise services.BuilderError("project_required")
+        if scenario is None:
+            raise services.BuilderError("scenario_required")
         if draft_id is not None:
             raise services.BuilderError("draft_id_not_supported")
         return services.create_artifact_draft(
             organization=organization,
             project=project,
+            scenario=scenario,
             artifact_type=artifact_type,
             name=name,
             logical_id=logical_id,

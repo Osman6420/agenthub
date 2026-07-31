@@ -15,11 +15,13 @@ from apps.catalog.models import AIProject, Scenario
 from apps.evaluations.services import run_eval
 from apps.identity.models import (
     Consumer,
-    GlobalAdministrator,
-    ProjectAdministratorAssignment,
-    ScenarioEditorAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
 )
-from apps.identity.roles import Role
 from apps.ingestion.models import IndexStatus, IndexVersion, Source
 from apps.orchestration.resolver import resolve_bundle
 from apps.releases.compiler import ArtifactRef, compile_release
@@ -217,43 +219,70 @@ def test_can_manage_scenario_releases_uses_scoped_capability() -> None:
         name="Scoped",
     )
     user_model = get_user_model()
-    global_admin = user_model.objects.create_user(username="global", password="x")  # noqa: S106
     org_admin = user_model.objects.create_user(username="oa", password="x")  # noqa: S106
-    legacy_manager = user_model.objects.create_user(username="rm", password="x")  # noqa: S106
+    release_manager = user_model.objects.create_user(username="rm", password="x")  # noqa: S106
     project_admin = user_model.objects.create_user(username="pa", password="x")  # noqa: S106
     scenario_editor = user_model.objects.create_user(username="se", password="x")  # noqa: S106
     stranger = user_model.objects.create_user(username="ns", password="x")  # noqa: S106
-    GlobalAdministrator.objects.create(user=global_admin)
-    OrganizationMembership.objects.create(
-        organization=org, user=org_admin, role=Role.ORGANIZATION_ADMIN
-    )
-    OrganizationMembership.objects.create(
-        organization=org, user=legacy_manager, role=Role.RELEASE_MANAGER
-    )
-    OrganizationMembership.objects.create(organization=org, user=project_admin, role=Role.AUDITOR)
-    ProjectAdministratorAssignment.objects.create(
+    org_admin_membership = OrganizationMembership.objects.create(
         organization=org,
-        project=project,
-        user=project_admin,
+        user=org_admin,
+    )
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=org_admin_membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
         assigned_by=org_admin,
     )
-    OrganizationMembership.objects.create(organization=org, user=scenario_editor, role=Role.AUDITOR)
-    ScenarioEditorAssignment.objects.create(
+    release_membership = OrganizationMembership.objects.create(
+        organization=org,
+        user=release_manager,
+    )
+    ScenarioResponsibilityAssignment.objects.create(
         organization=org,
         scenario=scenario,
-        user=scenario_editor,
+        membership=release_membership,
+        responsibility=ScenarioResponsibility.RELEASE_MANAGER,
         assigned_by=org_admin,
     )
-    OrganizationMembership.objects.create(organization=org, user=stranger, role=Role.AUDITOR)
+    project_membership = OrganizationMembership.objects.create(
+        organization=org,
+        user=project_admin,
+    )
+    ProjectResponsibilityAssignment.objects.create(
+        organization=org,
+        project=project,
+        membership=project_membership,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=org_admin,
+    )
+    editor_membership = OrganizationMembership.objects.create(
+        organization=org,
+        user=scenario_editor,
+    )
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=org,
+        scenario=scenario,
+        membership=editor_membership,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=org_admin,
+    )
+    OrganizationMembership.objects.create(organization=org, user=stranger)
 
-    assert can_manage_scenario_releases(global_admin, org.pk) is True
-    assert can_manage_scenario_releases(global_admin, foreign_org.pk) is True
-    assert can_manage_scenario_releases(org_admin, org.pk) is True
-    assert can_manage_scenario_releases(org_admin, foreign_org.pk) is False
-    assert can_manage_scenario_releases(legacy_manager, org.pk) is False
-    assert can_manage_scenario_releases(project_admin, org.pk) is False
-    assert can_manage_scenario_releases(scenario_editor, org.pk) is False
-    assert can_manage_scenario_releases(stranger, org.pk) is False
+    assert can_manage_scenario_releases(
+        release_manager,
+        org.pk,
+        scenario=scenario,
+    )
+    assert not can_manage_scenario_releases(org_admin, org.pk, scenario=scenario)
+    assert not can_manage_scenario_releases(
+        release_manager,
+        foreign_org.pk,
+        scenario=scenario,
+    )
+    assert not can_manage_scenario_releases(project_admin, org.pk, scenario=scenario)
+    assert not can_manage_scenario_releases(scenario_editor, org.pk, scenario=scenario)
+    assert not can_manage_scenario_releases(stranger, org.pk, scenario=scenario)
 
 
 def _consumer(scenario: Scenario, subject: str) -> Consumer:

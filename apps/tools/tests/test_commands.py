@@ -87,8 +87,6 @@ def _pending_approval() -> tuple[Organization, ApprovalRequest, ToolInvocation]:
                 "allowed_output_fields": ["status", "echo"],
                 "approval": {
                     "required": True,
-                    "approver_roles": ["approver"],
-                    "self_approval_allowed": False,
                 },
             },
         },
@@ -123,7 +121,6 @@ def _pending_approval() -> tuple[Organization, ApprovalRequest, ToolInvocation]:
         tool_input={"query": "hi"},
         idempotency_key="k1",
         consumer_capabilities=CAPS,
-        requested_by=consumer.subject,
     )
     approval = ApprovalRequest.objects.get(invocation=invocation)
     return org, approval, invocation

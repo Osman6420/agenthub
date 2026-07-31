@@ -41,7 +41,7 @@ def _definition_body(*, risk: str = "low", side_effecting: bool = False) -> dict
     }
 
 
-def _binding_body(*, required: bool = False, self_approval: bool = False) -> dict:
+def _binding_body(*, required: bool = False) -> dict:
     return {
         "api_version": "agenthub/v1",
         "kind": "ToolBinding",
@@ -52,8 +52,6 @@ def _binding_body(*, required: bool = False, self_approval: bool = False) -> dic
             "allowed_output_fields": ["results"],
             "approval": {
                 "required": required,
-                "approver_roles": ["approver"],
-                "self_approval_allowed": self_approval,
             },
         },
     }
@@ -136,11 +134,6 @@ def test_high_risk_side_effecting_tool_requires_approval() -> None:
     # Approval not required -> denied.
     with pytest.raises(ToolRegistryError, match="HIGH_RISK_REQUIRES_APPROVAL"):
         register_tool_binding(artifact=_make_binding_artifact(org, _binding_body(required=False)))
-    # Self-approval allowed -> denied.
-    with pytest.raises(ToolRegistryError, match="HIGH_RISK_REQUIRES_APPROVAL"):
-        register_tool_binding(
-            artifact=_make_binding_artifact(org, _binding_body(required=True, self_approval=True))
-        )
 
 
 @pytest.mark.django_db
@@ -148,7 +141,7 @@ def test_high_risk_binding_with_valid_approval_registers() -> None:
     org = _org()
     _make_definition(org, _definition_body(risk="high", side_effecting=True))
     binding = register_tool_binding(
-        artifact=_make_binding_artifact(org, _binding_body(required=True, self_approval=False))
+        artifact=_make_binding_artifact(org, _binding_body(required=True))
     )
     assert binding.approval_required is True
     assert binding.status == ToolStatus.ACTIVE

@@ -138,12 +138,6 @@ def _transition_token(claim_token: uuid.UUID, purpose: str) -> uuid.UUID:
 
 def _wait_node_supported(node: dict[str, Any]) -> bool:
     config = node["config"]
-    if node["type"] == "human_task" and (
-        # RunWait carries no escalation policy, so an authored escalation would be silently
-        # dropped. Refuse the graph instead of weakening the authored control.
-        config.get("escalation_role") or config.get("escalation_timeout_seconds")
-    ):
-        return False
     duration = "delay_seconds" if node["type"] == "timer" else "timeout_seconds"
     return isinstance(config.get(duration), int) and config[duration] > 0
 
@@ -337,24 +331,20 @@ def _wait_arguments(node: dict[str, Any]) -> dict[str, Any]:
     config = node["config"]
     node_type = node["type"]
     schema: dict[str, Any]
-    roles: list[str]
     if node_type == "timer":
-        seconds, schema, roles = int(config["delay_seconds"]), {}, []
+        seconds, schema = int(config["delay_seconds"]), {}
     elif node_type == "event_wait":
         seconds = int(config["timeout_seconds"])
-        schema, roles = config.get("payload_schema") or {}, []
+        schema = config.get("payload_schema") or {}
     else:
         seconds = int(config["timeout_seconds"])
         schema = config.get("decision_schema") or {}
-        roles = list(config.get("allowed_decision_roles") or [])
     return {
         "kind": _WAIT_KIND_BY_NODE_TYPE[node_type],
         "node_id": str(node["id"]),
         "deadline_at": timezone.now() + timedelta(seconds=seconds),
         "payload_schema": schema,
         "output_mapping": list(node.get("output_mapping", [])),
-        "allowed_roles": roles,
-        "deny_self_decision": bool(config.get("deny_self_decision", True)),
     }
 
 
@@ -467,7 +457,6 @@ def _invoke_tool(*, run: Run, node: dict[str, Any], state: dict[str, Any]) -> An
             tool_input=envelope,
             idempotency_key=run_tool_idempotency_key(run.id, str(node["id"])),
             consumer_capabilities=capabilities,
-            requested_by=run.consumer.subject,
         )
         if invocation.status == ToolInvocationStatus.APPROVED:
             invocation = execute_invocation(

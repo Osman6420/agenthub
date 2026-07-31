@@ -89,6 +89,13 @@ class ArtifactDraft(TimeStampedModel):
         blank=True,
         related_name="artifact_drafts",
     )
+    scenario = models.ForeignKey(
+        "catalog.Scenario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="artifact_drafts",
+    )
     artifact_type = models.CharField(
         max_length=32,
         choices=[

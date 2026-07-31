@@ -260,11 +260,7 @@ def change_runtime_control(
             not suspended
             and control is not None
             and control.requires_privileged_resume
-            and decision.source
-            not in {
-                AuthoritySource.GLOBAL_ADMINISTRATOR,
-                AuthoritySource.SUPERADMIN_RECOVERY,
-            }
+            and decision.source != AuthoritySource.SUPERADMIN_RECOVERY
         ):
             privileged_resume_denied = True
         else:

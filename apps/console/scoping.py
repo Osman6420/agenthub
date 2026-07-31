@@ -1,24 +1,81 @@
-"""Tenant-scoped querysets for console screens.
-
-Every console list derives its scope from :func:`allowed_organization_ids` so a
-missing filter in a template can never widen what an operator sees.
-"""
+"""Responsibility-scoped querysets for human-operator console screens."""
 
 from __future__ import annotations
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
+from django.utils import timezone
 
 from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import Document, DocumentSet, DocumentSetVersion
-from apps.identity.models import Consumer
+from apps.identity.models import (
+    Consumer,
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibilityAssignment,
+    ResponsibilityStatus,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.ingestion.models import ConnectorType, Source
 from apps.releases.models import ScenarioRelease
-from apps.tenancy.models import Organization
-from apps.tenancy.services import allowed_organization_ids
+from apps.tenancy.models import MembershipStatus, Organization
+from apps.tenancy.services import allowed_organization_ids, is_platform_admin
 from apps.workflows.models import Run
 
 UserLike = object
+
+
+def _active_assignment_filter(user: UserLike) -> dict[str, object]:
+    return {
+        "membership__user_id": getattr(user, "pk", None),
+        "membership__status": MembershipStatus.ACTIVE,
+        "membership__user__is_active": True,
+        "status": ResponsibilityStatus.ACTIVE,
+    }
+
+
+def _active_expiry() -> Q:
+    return Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
+
+
+def _organization_responsibility_ids(user: UserLike) -> set[int]:
+    return set(
+        OrganizationResponsibilityAssignment.objects.filter(**_active_assignment_filter(user))
+        .filter(_active_expiry())
+        .values_list("organization_id", flat=True)
+    )
+
+
+def _project_responsibility_ids(user: UserLike) -> set[int]:
+    return set(
+        ProjectResponsibilityAssignment.objects.filter(**_active_assignment_filter(user))
+        .filter(_active_expiry())
+        .values_list("project_id", flat=True)
+    )
+
+
+def _scenario_responsibility_ids(
+    user: UserLike, responsibilities: tuple[str, ...] | None = None
+) -> set[int]:
+    queryset = ScenarioResponsibilityAssignment.objects.filter(
+        **_active_assignment_filter(user)
+    ).filter(_active_expiry())
+    if responsibilities is not None:
+        queryset = queryset.filter(responsibility__in=responsibilities)
+    return set(queryset.values_list("scenario_id", flat=True))
+
+
+def _document_set_responsibility_ids(
+    user: UserLike, responsibilities: tuple[str, ...] | None = None
+) -> set[int]:
+    queryset = DocumentSetResponsibilityAssignment.objects.filter(
+        **_active_assignment_filter(user)
+    ).filter(_active_expiry())
+    if responsibilities is not None:
+        queryset = queryset.filter(responsibility__in=responsibilities)
+    return set(queryset.values_list("document_set_id", flat=True))
 
 
 def scoped_organizations(user: UserLike) -> QuerySet[Organization]:
@@ -28,59 +85,107 @@ def scoped_organizations(user: UserLike) -> QuerySet[Organization]:
 
 
 def scoped_projects(user: UserLike) -> QuerySet[AIProject]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
-    qs = AIProject.objects.select_related("organization", "owner_membership__user")
-    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+    qs = AIProject.objects.select_related("organization")
+    if is_platform_admin(user):  # type: ignore[arg-type]
+        return qs
+    organization_ids = _organization_responsibility_ids(user)
+    project_ids = _project_responsibility_ids(user)
+    scenario_project_ids = (
+        ScenarioResponsibilityAssignment.objects.filter(**_active_assignment_filter(user))
+        .filter(_active_expiry())
+        .values_list("scenario__project_id", flat=True)
+    )
+    return qs.filter(
+        Q(organization_id__in=organization_ids)
+        | Q(id__in=project_ids)
+        | Q(id__in=scenario_project_ids)
+    ).distinct()
 
 
 def scoped_scenarios(user: UserLike) -> QuerySet[Scenario]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = Scenario.objects.select_related("project", "project__organization")
-    return qs if allowed is None else qs.filter(project__organization_id__in=allowed)
+    if is_platform_admin(user):  # type: ignore[arg-type]
+        return qs
+    return qs.filter(
+        Q(organization_id__in=_organization_responsibility_ids(user))
+        | Q(project_id__in=_project_responsibility_ids(user))
+        | Q(id__in=_scenario_responsibility_ids(user))
+    ).distinct()
 
 
 def scoped_consumers(user: UserLike) -> QuerySet[Consumer]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = Consumer.objects.select_related("organization")
-    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+    return (
+        qs
+        if is_platform_admin(user)  # type: ignore[arg-type]
+        else qs.filter(organization_id__in=_organization_responsibility_ids(user))
+    )
 
 
 def scoped_artifacts(user: UserLike) -> QuerySet[ArtifactVersion]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = ArtifactVersion.objects.select_related("organization")
-    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+    return (
+        qs
+        if is_platform_admin(user)  # type: ignore[arg-type]
+        else qs.filter(organization_id__in=_organization_responsibility_ids(user))
+    )
 
 
 def scoped_releases(user: UserLike) -> QuerySet[ScenarioRelease]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = ScenarioRelease.objects.select_related(
         "scenario", "scenario__project", "scenario__project__organization"
     )
-    return qs if allowed is None else qs.filter(scenario__project__organization_id__in=allowed)
+    if is_platform_admin(user):  # type: ignore[arg-type]
+        return qs
+    visible_scenarios = scoped_scenarios(user).values_list("id", flat=True)
+    return qs.filter(scenario_id__in=visible_scenarios)
 
 
 def scoped_runs(user: UserLike) -> QuerySet[Run]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = Run.objects.select_related("organization", "scenario", "scenario__project")
-    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+    if is_platform_admin(user):  # type: ignore[arg-type]
+        return qs
+    scenario_ids = _scenario_responsibility_ids(user, (ScenarioResponsibility.RUNTIME_OPERATOR,))
+    return qs.filter(
+        Q(organization_id__in=_organization_responsibility_ids(user))
+        | Q(scenario_id__in=scenario_ids)
+    ).distinct()
 
 
 def scoped_documents(user: UserLike) -> QuerySet[Document]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = Document.objects.select_related("organization")
-    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+    if is_platform_admin(user):  # type: ignore[arg-type]
+        return qs
+    set_ids = _document_set_responsibility_ids(
+        user,
+        (
+            DocumentSetResponsibility.CONTENT_READER,
+            DocumentSetResponsibility.MANAGER,
+        ),
+    )
+    return qs.filter(
+        versions__memberships__document_set_version__document_set_id__in=set_ids
+    ).distinct()
 
 
 def scoped_document_sets(user: UserLike) -> QuerySet[DocumentSet]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = DocumentSet.objects.select_related("organization")
-    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+    if is_platform_admin(user):  # type: ignore[arg-type]
+        return qs
+    return qs.filter(
+        Q(organization_id__in=_organization_responsibility_ids(user))
+        | Q(id__in=_document_set_responsibility_ids(user))
+    ).distinct()
 
 
 def scoped_document_set_versions(user: UserLike) -> QuerySet[DocumentSetVersion]:
-    allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = DocumentSetVersion.objects.select_related("document_set", "organization")
-    return qs if allowed is None else qs.filter(organization_id__in=allowed)
+    if is_platform_admin(user):  # type: ignore[arg-type]
+        return qs
+    return qs.filter(
+        Q(organization_id__in=_organization_responsibility_ids(user))
+        | Q(document_set_id__in=_document_set_responsibility_ids(user))
+    ).distinct()
 
 
 def narrow_to_active_organization(

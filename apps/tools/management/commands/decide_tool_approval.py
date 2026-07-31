@@ -7,7 +7,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.tools.approvals import ToolApprovalError, decide_approval
-from apps.tools.authz import resolve_actor_roles
+from apps.tools.authz import resolve_actor
 from apps.tools.models import ApprovalRequest
 
 
@@ -26,17 +26,14 @@ class Command(BaseCommand):
         approval = ApprovalRequest.objects.filter(pk=options["approval"]).first()
         if approval is None:
             raise CommandError(f"approval not found: {options['approval']}")
-        roles = resolve_actor_roles(
-            username=options["actor"], organization_id=approval.organization_id
-        )
-        if roles is None:
+        actor = resolve_actor(username=options["actor"])
+        if actor is None:
             raise CommandError("not authorized: UNKNOWN_ACTOR")
         try:
             decided = decide_approval(
                 approval_id=approval.pk,
                 organization_id=approval.organization_id,
-                actor=options["actor"],
-                actor_roles=roles,
+                actor=actor,
                 approve=bool(options["approve"]),
                 reason=options["reason"],
             )

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, close_old_connections, connection
 from django.utils import timezone
@@ -16,7 +17,11 @@ from apps.agents.models import AgentRuntimeControl, RuntimeControlScope
 from apps.agents.services import set_runtime_suspension
 from apps.audit.models import AuditEvent
 from apps.gateway.execution_context import issue_execution_context
-from apps.tenancy.models import Organization
+from apps.identity.models import (
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
+from apps.tenancy.models import Organization, OrganizationMembership
 from apps.tenancy.rls import inspect_rls_readiness, protected_tenant_tables
 from apps.workflows.background_claims import (
     BackgroundClaimError,
@@ -1882,13 +1887,28 @@ def _human_node(**config) -> dict:
         "id": "review",
         "type": "human_task",
         "config": {
-            "allowed_decision_roles": ["approver"],
             "decision_schema": _DECISION_SCHEMA,
             "timeout_seconds": 60,
             **config,
         },
         "output_mapping": [{"from": "/payload/approved", "to": "/decisions/approved"}],
     }
+
+
+def _scenario_approver(workflow_fixture, username: str = "reviewer"):
+    user = get_user_model().objects.create_user(username=username)
+    membership = OrganizationMembership.objects.create(
+        organization=workflow_fixture.organization,
+        user=user,
+    )
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=workflow_fixture.organization,
+        scenario=workflow_fixture.scenario,
+        membership=membership,
+        responsibility=ScenarioResponsibility.APPROVER,
+        assigned_by=user,
+    )
+    return user
 
 
 def _install_graph(workflow_fixture, nodes: list[dict], edges: list[dict]) -> None:
@@ -1963,12 +1983,18 @@ def test_bounded_executor_suspends_at_a_human_task_and_resumes_at_the_successor(
     # checkpoint and never be handed to a node.
     assert run.checkpoint["__resume_node"] == "format"
 
-    resume_run_wait(
+    with pytest.raises(RunWaitError, match="RUN_WAIT_NOT_FOUND"):
+        resume_run_wait(
+            organization_id=run.organization_id,
+            resume_token=suspended.resume_token,
+            actor_id="reviewer",
+            payload={"approved": True},
+        )
+    decide_run_human_task(
         organization_id=run.organization_id,
-        resume_token=suspended.resume_token,
-        actor_id="reviewer",
+        wait_id=suspended.wait_id,
+        actor=_scenario_approver(workflow_fixture),
         payload={"approved": True},
-        actor_roles={"approver"},
     )
     run.refresh_from_db()
     assert run.status == "queued"
@@ -2000,12 +2026,12 @@ def test_authorized_operator_decides_human_wait_without_resume_token(
     run = _queued_background_run(workflow_fixture, key="operator-human-task")
     suspended = _execute_queued(run)
     assert suspended.wait_id is not None
+    approver = _scenario_approver(workflow_fixture)
 
     decided = decide_run_human_task(
         organization_id=run.organization_id,
         wait_id=suspended.wait_id,
-        actor_id="reviewer",
-        actor_roles={"approver"},
+        actor=approver,
         payload={"approved": True},
     )
 
