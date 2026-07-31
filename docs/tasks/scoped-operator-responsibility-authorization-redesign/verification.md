@@ -2,8 +2,7 @@
 
 Date: 2026-07-31
 
-Status: implementation evidence recorded; task remains open because the repository-wide legacy
-role-era test suite has not yet been rewritten.
+Status: repository-wide role-era test conversion complete; SQLite suite and static checks pass.
 
 ## Implemented and verified
 
@@ -42,21 +41,27 @@ role-era test suite has not yet been rewritten.
 - Runtime-source scan found no legacy membership role, delegated assignment class,
   `approver_roles`, workflow `allowed_roles`, workflow `allowed_decision_roles` or
   `self_approval_allowed` authorization path.
+- Repository-wide SQLite suite: `1047 passed, 60 skipped`. All skips require PostgreSQL/RLS,
+  PostgreSQL locking/advisory locks, or the PostgreSQL app-role environment.
+- Builder exact-scope suite: `73 passed`.
+- Final `ruff check apps`: passed.
+- Final `python manage.py makemigrations --check --dry-run`: no changes detected.
+- `git diff --check`: passed.
+- Legacy collection failures and role-bearing fixtures were replaced with explicit organization,
+  project, scenario and document-set responsibilities. No compatibility authority was restored.
 
 ## Checks not complete
 
-- Repository-wide test collection finds 1,062 tests but stops on 6 legacy test modules importing
-  deleted role/delegated-assignment symbols. Thirty-one test files still contain role-era setup
-  and require semantic replacement with typed responsibilities; compatibility aliases were not
-  added because they would preserve the authorization model being removed.
-- Full unit/integration suite was therefore not run to completion.
-- Mypy/type-check, browser accessibility/responsive journeys, frontend build/tests, secret scan and
-  worker/CLI exhaustive regression were not rerun after the final workflow/Builder tightening.
+- The 60 PostgreSQL/RLS/locking tests were skipped by the SQLite test environment in the final
+  repository-wide run. Earlier focused PostgreSQL evidence remains recorded above, but the full
+  repository suite was not rerun against PostgreSQL after the legacy fixture conversion.
+- Mypy/type-check, authenticated browser accessibility/responsive journeys, frontend build/tests
+  and secret scan were not rerun for this test-conversion increment.
 
 ## Residual risk
 
-- Unmigrated legacy tests can conceal regressions in older console, document, ingestion, release,
-  agent and workflow paths even though focused new-model tests pass.
+- PostgreSQL-specific RLS, grant and concurrency behavior still depends on the earlier focused
+  evidence until a final full PostgreSQL run is executed.
 - Artifact drafts created before the clean cutover may have a null scenario and are deliberately
   inaccessible as protected content. The authorized demo reset removed such rows; production
   in-place migration is out of scope.

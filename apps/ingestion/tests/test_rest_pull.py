@@ -307,7 +307,14 @@ def governed_rest(db: Any) -> tuple[Any, Any, Organization, DocumentSet, Any]:
     )
     platform = get_user_model().objects.create_superuser(username="platform", password=None)
     author = get_user_model().objects.create_user(username="author")
-    OrganizationMembership.objects.create(organization=organization, user=author)
+    membership = OrganizationMembership.objects.create(organization=organization, user=author)
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=membership,
+        document_set=document_set,
+        responsibility=DocumentSetResponsibility.MANAGER,
+        assigned_by=author,
+    )
     profile = register_rest_profile(
         actor=platform,
         base_url="https://api.example.com",
@@ -336,6 +343,7 @@ def governed_rest(db: Any) -> tuple[Any, Any, Organization, DocumentSet, Any]:
     contract = create_rest_contract(
         actor=author,
         organization=organization,
+        document_set=document_set,
         logical_id="kb-contract",
         revision=1,
         definition=_definition(),
@@ -517,7 +525,7 @@ def test_schedule_dispatches_one_slot_without_backlog(
 @pytest.mark.django_db
 def test_schedule_rejects_unapproved_automatic_promotion(governed_rest: Any) -> None:
     _, author, _, _, source = governed_rest
-    with pytest.raises(RestAuthorizationError, match="RELEASE_MANAGER_REQUIRED"):
+    with pytest.raises(RestServiceError, match="PROMOTION_TARGET_REQUIRED"):
         configure_sync_schedule(
             actor=author,
             source=source,

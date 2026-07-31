@@ -13,6 +13,12 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.builder.models import WorkflowDraft
 from apps.catalog.models import AIProject, Scenario
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus, ScenarioRelease
@@ -24,7 +30,35 @@ User = get_user_model()
 
 def _member(username: str, org: Organization, role: str) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.ORGANIZATION_ADMIN:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
+    elif role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    scenario_responsibility = {
+        Role.SCENARIO_EDITOR: ScenarioResponsibility.EDITOR,
+        Role.AUDITOR: ScenarioResponsibility.VIEWER,
+        Role.ORGANIZATION_ADMIN: ScenarioResponsibility.RELEASE_MANAGER,
+    }.get(role)
+    if scenario_responsibility is not None:
+        for scenario in Scenario.objects.filter(project__organization=org):
+            ScenarioResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                scenario=scenario,
+                responsibility=scenario_responsibility,
+                assigned_by=user,
+            )
     return user
 
 

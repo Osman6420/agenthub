@@ -162,12 +162,18 @@ def create_rest_contract(
     *,
     actor: UserLike,
     organization: Organization,
+    document_set: DocumentSet,
     logical_id: str,
     revision: int,
     definition: dict[str, Any],
 ) -> RestPullContract:
     actor_id = _actor_id(actor)
-    if not can_manage_documents(actor, organization.id):
+    if (
+        document_set.organization_id != organization.id
+        or not can_manage_documents(
+            actor, organization.id, document_set=document_set
+        )
+    ):
         _audit(
             "rest_contract.create",
             actor_id,
@@ -219,7 +225,7 @@ def create_rest_source(
     inputs: dict[str, Any],
 ) -> Source:
     actor_id = _actor_id(actor)
-    if not can_manage_documents(actor, organization.id):
+    if not can_manage_documents(actor, organization.id, document_set=document_set):
         raise RestAuthorizationError("SCENARIO_AUTHOR_REQUIRED")
     if (
         document_set.organization_id != organization.id
@@ -275,7 +281,9 @@ def create_rest_sync_run(
     *, actor: UserLike, source: Source, max_attempts: int = 3, request_id: str = ""
 ) -> RestSyncRun:
     actor_id = _actor_id(actor)
-    if not can_manage_documents(actor, source.organization_id):
+    if source.document_set is None or not can_manage_documents(
+        actor, source.organization_id, document_set=source.document_set
+    ):
         raise RestAuthorizationError("SCENARIO_AUTHOR_REQUIRED")
     if source.connector_type != ConnectorType.GENERIC_REST:
         raise RestServiceError("REST_SOURCE_REQUIRED")
@@ -361,7 +369,9 @@ def configure_sync_schedule(
         if not targets:
             raise RestServiceError("PROMOTION_TARGET_REQUIRED")
     else:
-        if not can_manage_documents(actor, organization_id):
+        if source.document_set is None or not can_manage_documents(
+            actor, organization_id, document_set=source.document_set
+        ):
             raise RestAuthorizationError("SCENARIO_AUTHOR_REQUIRED")
         if targets:
             raise RestServiceError("PROMOTION_TARGETS_NOT_ALLOWED")

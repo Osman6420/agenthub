@@ -14,7 +14,17 @@ from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario, ScenarioAlias
 from apps.documents.models import DocumentSet, DocumentSetGrant, ScenarioDocumentSetBinding
-from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerBinding,
+    ConsumerProtocol,
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus
@@ -27,7 +37,36 @@ pytestmark = pytest.mark.django_db
 
 def _member(username: str, organization: Organization, role: str) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=organization, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=organization, user=user)
+    if role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    scenario_responsibility = {
+        Role.AUDITOR: ScenarioResponsibility.VIEWER,
+        Role.SCENARIO_EDITOR: ScenarioResponsibility.EDITOR,
+    }.get(role)
+    if scenario_responsibility is not None:
+        for scenario in Scenario.objects.filter(project__organization=organization):
+            ScenarioResponsibilityAssignment.objects.create(
+                organization=organization,
+                membership=membership,
+                scenario=scenario,
+                responsibility=scenario_responsibility,
+                assigned_by=user,
+            )
+    if role == Role.SCENARIO_EDITOR:
+        for document_set in DocumentSet.objects.filter(organization=organization):
+            DocumentSetResponsibilityAssignment.objects.create(
+                organization=organization,
+                membership=membership,
+                document_set=document_set,
+                responsibility=DocumentSetResponsibility.MANAGER,
+                assigned_by=user,
+            )
     return user
 
 

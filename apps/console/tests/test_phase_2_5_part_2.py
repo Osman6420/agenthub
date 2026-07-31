@@ -18,10 +18,17 @@ from apps.console.forms import (
     ProjectForm,
     ScenarioForm,
 )
-from apps.documents.models import Document, DocumentLifecycle, DocumentSet
+from apps.documents import services as document_services
+from apps.documents.models import DocumentLifecycle, DocumentSet
 from apps.documents.services import create_console_document_set
-from apps.identity.models import Consumer, ConsumerProtocol
-from apps.identity.roles import Role
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.tenancy.identifiers import IdentifierAllocationError, allocate_identifier
 from apps.tenancy.models import Organization, OrganizationMembership
 from apps.tenancy.services import create_console_organization
@@ -31,8 +38,12 @@ pytestmark = pytest.mark.django_db
 
 def _member_client(organization: Organization) -> Client:
     user = get_user_model().objects.create_user(username="part2-author")
-    OrganizationMembership.objects.create(
-        organization=organization, user=user, role=Role.ORGANIZATION_ADMIN
+    membership = OrganizationMembership.objects.create(organization=organization, user=user)
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=user,
     )
     client = Client()
     client.force_login(user)
@@ -98,9 +109,28 @@ def test_uuid_routes_are_canonical_and_legacy_routes_remain_scoped() -> None:
     scenario = Scenario.objects.create(
         organization=organization, project=project, slug="s", name="S"
     )
-    document = Document.objects.create(organization=organization, logical_id="d")
     document_set = DocumentSet.objects.create(
         organization=organization, logical_id="set", name="Set"
+    )
+    draft = document_services.get_or_create_manual_draft(
+        document_set=document_set, actor="test"
+    )
+    document = document_services.upload_document(
+        organization=organization,
+        logical_id="d",
+        title="D",
+        mime_type="text/plain",
+        data=b"d",
+        actor="test",
+        document_set_version=draft,
+    ).document
+    route_user = get_user_model().objects.get(username="part2-author")
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=OrganizationMembership.objects.get(organization=organization, user=route_user),
+        document_set=document_set,
+        responsibility=DocumentSetResponsibility.MANAGER,
+        assigned_by=route_user,
     )
     consumer = Consumer.objects.create(
         organization=organization, subject="sub", name="Consumer", protocol=ConsumerProtocol.REST

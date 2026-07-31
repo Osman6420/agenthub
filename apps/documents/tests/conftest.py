@@ -8,7 +8,10 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.documents import storage
-from apps.identity.roles import Role
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.tenancy.models import Organization, OrganizationMembership
 
 
@@ -41,15 +44,17 @@ def df(db: object) -> DocFixture:
     other = Organization.objects.create(slug="d-other", name="Other Org")
 
     admin = User.objects.create_user("d-admin", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
-        organization=org, user=admin, role=Role.ORGANIZATION_ADMIN
+    admin_membership = OrganizationMembership.objects.create(organization=org, user=admin)
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=admin_membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=admin,
     )
     author = User.objects.create_user("d-author", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=author, role=Role.SCENARIO_EDITOR)
+    OrganizationMembership.objects.create(organization=org, user=author)
     viewer = User.objects.create_user("d-viewer", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=viewer, role=Role.AUDITOR)
+    OrganizationMembership.objects.create(organization=org, user=viewer)
     outsider = User.objects.create_user("d-outsider", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
-        organization=other, user=outsider, role=Role.SCENARIO_EDITOR
-    )
+    OrganizationMembership.objects.create(organization=other, user=outsider)
     return DocFixture(org, other, admin, author, viewer, outsider)

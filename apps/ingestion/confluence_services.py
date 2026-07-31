@@ -190,7 +190,7 @@ def create_confluence_source(
     connector_config: dict[str, Any],
 ) -> Source:
     actor_id = str(getattr(actor, "pk", "anonymous"))
-    if not can_manage_documents(actor, organization.id):
+    if not can_manage_documents(actor, organization.id, document_set=document_set):
         record_event(
             actor_type=ActorType.USER,
             actor_id=actor_id,
@@ -266,7 +266,9 @@ def create_confluence_sync_run(
     actor_id = str(getattr(actor, "pk", "anonymous"))
     if source.connector_type != ConnectorType.CONFLUENCE_DC or not source.confluence_profile_id:
         raise ConfluenceServiceError("CONFLUENCE_SOURCE_REQUIRED")
-    if not can_manage_documents(actor, source.organization_id):
+    if source.document_set is None or not can_manage_documents(
+        actor, source.organization_id, document_set=source.document_set
+    ):
         record_event(
             actor_type=ActorType.USER,
             actor_id=actor_id,

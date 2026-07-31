@@ -14,6 +14,12 @@ from django.urls import reverse
 from apps.audit.models import AuditEvent
 from apps.documents import services, storage
 from apps.documents.models import DocumentLifecycle, DocumentSetMembership, DocumentSetVersionStatus
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
 
@@ -31,7 +37,38 @@ def _memory_store(settings: Any) -> Iterator[None]:
 
 def _member(username: str, org: Organization, role: str) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.ORGANIZATION_ADMIN:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
+        for document_set in org.document_sets.all():
+            DocumentSetResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                document_set=document_set,
+                responsibility=DocumentSetResponsibility.MANAGER,
+                assigned_by=user,
+            )
+    elif role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    else:
+        for document_set in org.document_sets.all():
+            DocumentSetResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                document_set=document_set,
+                responsibility=DocumentSetResponsibility.MANAGER,
+                assigned_by=user,
+            )
     return user
 
 
@@ -87,7 +124,7 @@ def test_advanced_inventory_lists_only_administered_organizations(client: Client
     reader_document.logical_id = "reader-secret"
     reader_document.save(update_fields=["logical_id"])
     user = _member("mixed-role", org_admin, Role.ORGANIZATION_ADMIN)
-    OrganizationMembership.objects.create(organization=org_reader, user=user, role=Role.AUDITOR)
+    OrganizationMembership.objects.create(organization=org_reader, user=user)
     client.force_login(user)
 
     body = client.get(reverse("console:advanced_document_inventory")).content.decode()
@@ -100,7 +137,15 @@ def test_advanced_inventory_lists_only_administered_organizations(client: Client
 def test_set_document_detail_shows_lineage_without_storage_secrets(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
     document_set, document, draft, _ = _set_with_draft(org)
-    client.force_login(_member("reader", org, Role.AUDITOR))
+    reader = _member("reader", org, Role.AUDITOR)
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(organization=org, user=reader),
+        document_set=document_set,
+        responsibility=DocumentSetResponsibility.CONTENT_READER,
+        assigned_by=reader,
+    )
+    client.force_login(reader)
 
     response = client.get(
         reverse(

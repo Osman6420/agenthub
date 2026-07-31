@@ -19,21 +19,36 @@ from apps.evaluations.models import (
     QuestionSetVersion,
 )
 from apps.evaluations.question_services import create_question_set, publish_question_set
-from apps.tenancy.models import Organization, OrganizationMembership, Role
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
+from apps.tenancy.models import Organization, OrganizationMembership
 
 pytestmark = pytest.mark.django_db
 
 
-def _member(organization: Organization, username: str, role: str):
+def _member(
+    organization: Organization,
+    username: str,
+    *,
+    organization_admin: bool = False,
+):
     user = get_user_model().objects.create_user(
         username=username,
         password="test-password",  # noqa: S106
     )
-    OrganizationMembership.objects.create(
+    membership = OrganizationMembership.objects.create(
         organization=organization,
         user=user,
-        role=role,
     )
+    if organization_admin:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
     return user
 
 
@@ -51,7 +66,7 @@ def _cases() -> list[dict[str, object]]:
 
 def test_question_set_console_creates_updates_and_publishes_exact_version() -> None:
     organization = Organization.objects.create(slug="part6", name="Part 6")
-    user = _member(organization, "admin", Role.ORGANIZATION_ADMIN)
+    user = _member(organization, "admin", organization_admin=True)
     client = Client()
     client.force_login(user)
     response = client.post(
@@ -82,8 +97,8 @@ def test_question_set_console_creates_updates_and_publishes_exact_version() -> N
 
 def test_auditor_cannot_read_confidential_question_set_or_mutate_it() -> None:
     organization = Organization.objects.create(slug="private", name="Private")
-    admin = _member(organization, "admin", Role.ORGANIZATION_ADMIN)
-    auditor = _member(organization, "auditor", Role.AUDITOR)
+    admin = _member(organization, "admin", organization_admin=True)
+    auditor = _member(organization, "auditor")
     question_set = create_question_set(
         organization=organization,
         user=admin,
@@ -112,8 +127,8 @@ def test_auditor_cannot_read_confidential_question_set_or_mutate_it() -> None:
 def test_cross_tenant_question_set_identifier_is_non_disclosing() -> None:
     first = Organization.objects.create(slug="first-p6", name="First")
     second = Organization.objects.create(slug="second-p6", name="Second")
-    first_admin = _member(first, "first-admin", Role.ORGANIZATION_ADMIN)
-    second_admin = _member(second, "second-admin", Role.ORGANIZATION_ADMIN)
+    first_admin = _member(first, "first-admin", organization_admin=True)
+    second_admin = _member(second, "second-admin", organization_admin=True)
     foreign = create_question_set(
         organization=second,
         user=second_admin,
@@ -135,7 +150,7 @@ def test_cross_tenant_question_set_identifier_is_non_disclosing() -> None:
 
 def test_evaluation_detail_filters_evidence_and_shows_safe_judge_result() -> None:
     organization = Organization.objects.create(slug="result-filter", name="Result filter")
-    user = _member(organization, "result-admin", Role.ORGANIZATION_ADMIN)
+    user = _member(organization, "result-admin", organization_admin=True)
     question_set = QuestionSet.objects.create(
         organization=organization,
         name="Filters",

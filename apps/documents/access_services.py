@@ -77,8 +77,8 @@ def request_scenario_document_set_access(
                 document_set=document_set,
             )
             if not decision.allowed or decision.source not in {
-                AuthoritySource.PROJECT_ADMINISTRATOR,
-                AuthoritySource.SCENARIO_EDITOR,
+                AuthoritySource.PROJECT_RESPONSIBILITY,
+                AuthoritySource.SCENARIO_RESPONSIBILITY,
             }:
                 raise ScenarioDocumentSetAccessError("SCENARIO_ACCESS_REQUEST_DENIED")
             access_request = ScenarioDocumentSetAccessRequest.objects.create(
@@ -143,7 +143,10 @@ def approve_scenario_document_set_access(
                 scenario=locked.scenario,
                 document_set=locked.document_set,
             )
-            if not decision.allowed or decision.source != AuthoritySource.DOCUMENT_SET_MANAGER:
+            if (
+                not decision.allowed
+                or decision.source != AuthoritySource.DOCUMENT_SET_RESPONSIBILITY
+            ):
                 raise ScenarioDocumentSetAccessError("DOCUMENT_SET_MANAGER_REQUIRED")
             if locked.status != ScenarioDocumentSetRequestStatus.PENDING:
                 raise ScenarioDocumentSetAccessError("REQUEST_NOT_PENDING")
@@ -216,7 +219,10 @@ def reject_scenario_document_set_access(
                 scenario=locked.scenario,
                 document_set=locked.document_set,
             )
-            if not decision.allowed or decision.source != AuthoritySource.DOCUMENT_SET_MANAGER:
+            if (
+                not decision.allowed
+                or decision.source != AuthoritySource.DOCUMENT_SET_RESPONSIBILITY
+            ):
                 raise ScenarioDocumentSetAccessError("DOCUMENT_SET_MANAGER_REQUIRED")
             if locked.status != ScenarioDocumentSetRequestStatus.PENDING:
                 raise ScenarioDocumentSetAccessError("REQUEST_NOT_PENDING")
@@ -266,7 +272,7 @@ def revoke_scenario_document_set_grant(
         document_set=grant.document_set,
     )
     allowed_sources = {
-        AuthoritySource.DOCUMENT_SET_MANAGER,
+        AuthoritySource.DOCUMENT_SET_RESPONSIBILITY,
         AuthoritySource.SUPERADMIN_RECOVERY,
     }
     if not initial_decision.allowed or initial_decision.source not in allowed_sources:
@@ -348,8 +354,8 @@ def bind_authorized_scenario_document_set(
         document_set=document_set,
     )
     if not decision.allowed or decision.source not in {
-        AuthoritySource.PROJECT_ADMINISTRATOR,
-        AuthoritySource.SCENARIO_EDITOR,
+        AuthoritySource.PROJECT_RESPONSIBILITY,
+        AuthoritySource.SCENARIO_RESPONSIBILITY,
     }:
         raise ScenarioDocumentSetAccessError("SCENARIO_BIND_DENIED")
     if not has_live_scenario_document_set_grant(

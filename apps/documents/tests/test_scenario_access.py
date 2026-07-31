@@ -19,10 +19,17 @@ from apps.documents.models import (
     ScenarioDocumentSetGrant,
 )
 from apps.identity.assignment_services import (
-    assign_document_set_manager,
-    assign_project_administrator,
+    grant_document_set_responsibility,
+    grant_project_responsibility,
+    grant_scenario_responsibility,
 )
-from apps.identity.roles import Role
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ScenarioResponsibility,
+)
 from apps.tenancy.models import Organization, OrganizationMembership
 
 pytestmark = pytest.mark.django_db
@@ -37,16 +44,21 @@ def access_fixture():
         name: user_model.objects.create_user(username=f"access-{name}", password=None)
         for name in ("admin", "project", "manager", "outsider")
     }
+    memberships = {}
     for name in ("admin", "project", "manager"):
-        OrganizationMembership.objects.create(
+        memberships[name] = OrganizationMembership.objects.create(
             organization=organization,
             user=users[name],
-            role=Role.ORGANIZATION_ADMIN if name == "admin" else Role.AUDITOR,
         )
     OrganizationMembership.objects.create(
         organization=foreign,
         user=users["outsider"],
-        role=Role.AUDITOR,
+    )
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=memberships["admin"],
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=users["admin"],
     )
     project = AIProject.objects.create(
         organization=organization,
@@ -69,14 +81,22 @@ def access_fixture():
         logical_id="foreign",
         name="Foreign",
     )
-    assign_project_administrator(
+    grant_project_responsibility(
         project=project,
-        target_user=users["project"],
+        membership=memberships["project"],
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
         actor=users["admin"],
     )
-    assign_document_set_manager(
+    grant_scenario_responsibility(
+        scenario=scenario,
+        membership=memberships["project"],
+        responsibility=ScenarioResponsibility.EDITOR,
+        actor=users["project"],
+    )
+    grant_document_set_responsibility(
         document_set=document_set,
-        target_user=users["manager"],
+        membership=memberships["manager"],
+        responsibility=DocumentSetResponsibility.MANAGER,
         actor=users["admin"],
     )
     return {

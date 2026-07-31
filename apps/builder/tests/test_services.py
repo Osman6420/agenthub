@@ -90,9 +90,10 @@ def test_artifact_draft_create_rolls_back_when_audit_fails(
 
     monkeypatch.setattr(services, "record_event", fail_audit)
     with pytest.raises(RuntimeError, match="audit unavailable"):
-        services.create_artifact_draft(
-            organization=bf.org,
-            project=bf.project,
+            services.create_artifact_draft(
+                organization=bf.org,
+                project=bf.project,
+                scenario=bf.scenario,
             artifact_type="input_contract",
             name="Girdi",
             logical_id="input_v1",
@@ -107,9 +108,10 @@ def test_artifact_draft_rejects_unbounded_prompt_metadata_before_write(
     bf: BuilderFixture,
 ) -> None:
     with pytest.raises(services.BuilderError, match="prompt_contract_invalid"):
-        services.create_artifact_draft(
-            organization=bf.org,
-            project=bf.project,
+            services.create_artifact_draft(
+                organization=bf.org,
+                project=bf.project,
+                scenario=bf.scenario,
             artifact_type="input_contract",
             name="Girdi",
             logical_id="input_v1",

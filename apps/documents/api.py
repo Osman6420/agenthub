@@ -105,8 +105,27 @@ def _resolve_org_in_scope(request: HttpRequest, ref: Any) -> Organization:
     return org
 
 
-def _require_author(request: HttpRequest, organization_id: int) -> None:
-    if not can_manage_documents(request.user, organization_id):
+def _require_author(request: HttpRequest, document_set: DocumentSet) -> None:
+    if not can_manage_documents(
+        request.user,
+        document_set.organization_id,
+        document_set=document_set,
+    ):
+        raise PermissionDenied
+
+
+def _require_document_author(request: HttpRequest, document: Document) -> None:
+    document_sets = DocumentSet.objects.filter(
+        versions__memberships__document_version__document=document
+    ).distinct()
+    if not any(
+        can_manage_documents(
+            request.user,
+            document_set.organization_id,
+            document_set=document_set,
+        )
+        for document_set in document_sets
+    ):
         raise PermissionDenied
 
 
@@ -211,7 +230,6 @@ def documents(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"documents": items})
 
     org = _resolve_org_in_scope(request, request.POST.get("organization"))
-    _require_author(request, org.id)
     try:
         set_version_id = int(request.POST.get("document_set_version", ""))
     except (TypeError, ValueError) as exc:
@@ -230,6 +248,7 @@ def documents(request: HttpRequest) -> HttpResponse:
     )
     if set_version is None:
         raise Http404
+    _require_author(request, set_version.document_set)
     upload = request.FILES.get("file")
     if upload is None:
         raise services.DocumentError("file_required", "a multipart 'file' field is required")
@@ -261,7 +280,7 @@ def document_detail(request: HttpRequest, pk: int) -> HttpResponse:
     document = _scoped_document(request, pk)
     if request.method == "GET":
         return JsonResponse(_serialize_document(document, request=request, detail=True))
-    _require_author(request, document.organization_id)
+    _require_document_author(request, document)
     services.soft_delete_document(document, actor=_actor(request), request_id=_request_id(request))
     return JsonResponse({"soft_deleted": True})
 
@@ -271,6 +290,7 @@ def document_detail(request: HttpRequest, pk: int) -> HttpResponse:
 def document_purge(request: HttpRequest, pk: int) -> HttpResponse:
     document = _scoped_document(request, pk)
     _require_admin(request, document.organization_id)
+    _require_document_author(request, document)
     removed = services.purge_document(
         document, actor=_actor(request), request_id=_request_id(request)
     )
@@ -288,7 +308,7 @@ def document_sets(request: HttpRequest) -> HttpResponse:
 
     payload = _json_body(request)
     org = _resolve_org_in_scope(request, payload.get("organization"))
-    _require_author(request, org.id)
+    _require_admin(request, org.id)
     document_set = services.create_document_set(
         organization=org,
         logical_id=payload.get("logical_id", ""),
@@ -303,7 +323,7 @@ def document_sets(request: HttpRequest) -> HttpResponse:
 @require_http_methods(["POST"])
 def document_set_versions(request: HttpRequest, pk: int) -> HttpResponse:
     document_set = _scoped_set(request, pk)
-    _require_author(request, document_set.organization_id)
+    _require_author(request, document_set)
     version = services.create_document_set_version(
         document_set=document_set, actor=_actor(request), request_id=_request_id(request)
     )
@@ -316,7 +336,7 @@ def document_set_versions(request: HttpRequest, pk: int) -> HttpResponse:
 @require_http_methods(["POST"])
 def set_version_members(request: HttpRequest, pk: int) -> HttpResponse:
     set_version = _scoped_set_version(request, pk)
-    _require_author(request, set_version.organization_id)
+    _require_author(request, set_version.document_set)
     payload = _json_body(request)
     document_version = (
         _scoped(request, DocumentVersion.objects.all())
@@ -339,7 +359,7 @@ def set_version_members(request: HttpRequest, pk: int) -> HttpResponse:
 @require_http_methods(["POST"])
 def set_version_publish(request: HttpRequest, pk: int) -> HttpResponse:
     set_version = _scoped_set_version(request, pk)
-    _require_author(request, set_version.organization_id)
+    _require_author(request, set_version.document_set)
     published = services.publish_document_set_version(
         set_version=set_version, actor=_actor(request), request_id=_request_id(request)
     )

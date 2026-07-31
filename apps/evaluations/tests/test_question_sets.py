@@ -38,6 +38,8 @@ from apps.identity.models import (
     DocumentSetResponsibilityAssignment,
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
 )
 from apps.ingestion.models import IndexStatus, IndexVersion
 from apps.observability.metrics import render_metrics
@@ -66,6 +68,18 @@ def _admin(organization: Organization, username: str = "admin"):
         assigned_by=user,
     )
     return user
+
+
+def _grant_scenario_tester(user, release) -> None:
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=release.scenario.organization,
+        membership=OrganizationMembership.objects.get(
+            organization=release.scenario.organization, user=user
+        ),
+        scenario=release.scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=user,
+    )
 
 
 def _cases(*, with_anchor: bool = True) -> list[dict[str, object]]:
@@ -445,6 +459,7 @@ def test_answer_evaluation_pins_release_and_keeps_answer_metrics_independent() -
         expected_revision=question_set.draft_revision,
     )
     release = _release(organization)
+    _grant_scenario_tester(user, release)
     run, created = create_answer_evaluation(
         user=user,
         question_set_version=version,
@@ -504,6 +519,7 @@ def test_pinned_judge_success_and_malformed_output_have_explicit_states(
         expected_revision=question_set.draft_revision,
     )
     release = _release(organization)
+    _grant_scenario_tester(user, release)
     model = create_artifact_version(
         organization=organization,
         artifact_type=ArtifactType.MODEL_PROFILE,

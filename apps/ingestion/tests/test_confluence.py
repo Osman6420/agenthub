@@ -19,7 +19,10 @@ from apps.documents.models import (
     DocumentSetVersionStatus,
 )
 from apps.documents.services import publish_document_set_version
-from apps.identity.roles import Role
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+)
 from apps.ingestion.confluence import (
     ConfluenceDataCenterClient,
     ConfluenceError,
@@ -231,8 +234,13 @@ def governed_source(db: Any) -> tuple[Any, Organization, DocumentSet, Any, Any]:
     )
     platform = get_user_model().objects.create_superuser(username="platform", password=None)
     author = get_user_model().objects.create_user(username="author")
-    OrganizationMembership.objects.create(
-        organization=organization, user=author, role=Role.SCENARIO_EDITOR
+    membership = OrganizationMembership.objects.create(organization=organization, user=author)
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=membership,
+        document_set=document_set,
+        responsibility=DocumentSetResponsibility.MANAGER,
+        assigned_by=author,
     )
     profile = register_confluence_profile(
         actor=platform,
@@ -299,7 +307,7 @@ def test_profile_and_source_governance_redacts_endpoint_and_denies_inline_url(
     ungranted_set = DocumentSet.objects.create(
         organization=organization, logical_id="other-kb", name="Other KB"
     )
-    with pytest.raises(ConfluenceAuthorizationError, match="PROFILE_NOT_GRANTED"):
+    with pytest.raises(ConfluenceAuthorizationError, match="SCENARIO_AUTHOR_REQUIRED"):
         create_confluence_source(
             actor=author,
             organization=organization,
@@ -312,7 +320,7 @@ def test_profile_and_source_governance_redacts_endpoint_and_denies_inline_url(
     assert AuditEvent.objects.filter(
         action="confluence_source.create",
         outcome="deny",
-        reason="CONFLUENCE_PROFILE_NOT_GRANTED",
+        reason="SCENARIO_AUTHOR_REQUIRED",
     ).exists()
     source.document_set = ungranted_set
     with pytest.raises(ValueError, match="binding is immutable"):

@@ -14,7 +14,12 @@ from django.urls import reverse
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.services import bind_scenario_document_set, create_document_set
-from apps.identity.models import DocumentSetManagerAssignment
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.ingestion.models import (
     ConfluenceProfile,
@@ -38,7 +43,30 @@ User = get_user_model()
 
 def _member(username: str, org: Organization, role: str) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.ORGANIZATION_ADMIN:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
+    elif role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    elif role in {Role.SCENARIO_EDITOR, Role.PROJECT_OWNER}:
+        for document_set in org.document_sets.all():
+            DocumentSetResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                document_set=document_set,
+                responsibility=DocumentSetResponsibility.MANAGER,
+                assigned_by=user,
+            )
     return user
 
 
@@ -114,6 +142,7 @@ def _rest_source(org: Organization, document_set: Any, actor: Any) -> Source:
     contract = create_rest_contract(
         actor=actor,
         organization=org,
+        document_set=document_set,
         logical_id="documents",
         revision=1,
         definition=_definition(),
@@ -352,13 +381,14 @@ def test_schedule_role_split_and_bound_promotion_target(client: Client) -> None:
         f"schedule-{source.pk}-automation_mode": ScheduleAutomationMode.PROMOTE_IF_SAFE,
         f"schedule-{source.pk}-scenarios": [str(scenario.pk)],
     }
-    assert client.post(url, promote_payload).status_code == 403
+    assert client.post(url, promote_payload).status_code == 302
 
     manager = _member("set-manager", org, Role.AUDITOR)
-    DocumentSetManagerAssignment.objects.create(
+    DocumentSetResponsibilityAssignment.objects.create(
         organization=org,
         document_set=document_set,
-        user=manager,
+        membership=OrganizationMembership.objects.get(organization=org, user=manager),
+        responsibility=DocumentSetResponsibility.MANAGER,
         assigned_by=manager,
     )
     client.force_login(manager)

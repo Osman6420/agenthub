@@ -11,7 +11,12 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.identity.capabilities import Capability
-from apps.identity.models import Consumer, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -128,7 +133,25 @@ def _pending_approval() -> tuple[Organization, ApprovalRequest, ToolInvocation]:
 
 def _operator(org: Organization, username: str, role: str) -> None:
     user = get_user_model().objects.create_user(username=username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.APPROVER:
+        for scenario in Scenario.objects.filter(project__organization=org):
+            ScenarioResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                scenario=scenario,
+                responsibility=ScenarioResponsibility.APPROVER,
+                assigned_by=user,
+            )
+    elif role == "runtime_operator":
+        for scenario in Scenario.objects.filter(project__organization=org):
+            ScenarioResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                scenario=scenario,
+                responsibility=ScenarioResponsibility.RUNTIME_OPERATOR,
+                assigned_by=user,
+            )
 
 
 @pytest.mark.django_db
@@ -174,7 +197,7 @@ def test_list_command_shows_pending(capsys: pytest.CaptureFixture[str]) -> None:
 @pytest.mark.django_db
 def test_cancel_command_cancels_invocation() -> None:
     org, _approval, invocation = _pending_approval()
-    _operator(org, "op", Role.APPROVER)
+    _operator(org, "op", "runtime_operator")
     call_command("cancel_tool_invocation", "--invocation", str(invocation.pk), "--actor", "op")
     invocation.refresh_from_db()
     assert invocation.status == ToolInvocationStatus.CANCELLED

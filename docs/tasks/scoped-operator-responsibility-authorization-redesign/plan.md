@@ -572,9 +572,10 @@ In progress. Implementation authorization was granted by the owner on 2026-07-30
 SQLite/PostgreSQL migration evidence and exact local Compose target review were completed; the
 owner-authorized local demo database was flushed and reseeded with roleless memberships and typed
 responsibilities on 2026-07-31. Builder protected content and workflow human decisions now use
-exact scenario authority; workflow-authored role strings were removed. Focused SQLite/PostgreSQL,
-RLS, approval, Builder and workflow tests pass. Full legacy-test replacement, browser/accessibility,
-type-check and closure review remain.
+exact scenario authority; workflow-authored role strings were removed. The repository-wide
+role-era test conversion is complete and the final SQLite suite passes 1,047 tests with 60
+PostgreSQL-only skips. Ruff and migration-drift checks pass. Full PostgreSQL regression,
+browser/accessibility, type-check and final task archival remain.
 
 ## Completion criteria
 

@@ -22,7 +22,12 @@ from apps.documents.services import (
     create_document_set,
     publish_document_set_version,
 )
-from apps.identity.models import DocumentSetManagerAssignment
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.ingestion.models import (
     EmbeddingProfile,
@@ -49,7 +54,30 @@ def _memory_store(settings: Any) -> Iterator[None]:
 
 def _member(username: str, org: Organization, role: str) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.ORGANIZATION_ADMIN:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
+    elif role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    elif role in {Role.PROJECT_OWNER, Role.DOCUMENT_MANAGER}:
+        for document_set in org.document_sets.all():
+            DocumentSetResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                document_set=document_set,
+                responsibility=DocumentSetResponsibility.MANAGER,
+                assigned_by=user,
+            )
     return user
 
 
@@ -275,17 +303,18 @@ def test_index_promotion_requires_document_set_manager(client: Client) -> None:
     )
     url = reverse("console:document_set_promote_index", args=[index.pk])
 
-    client.force_login(_member("owner", org, Role.PROJECT_OWNER))
+    client.force_login(_member("owner", org, Role.AUDITOR))
     assert client.post(url).status_code == 403
     client.force_login(_member("foreign-release", other, Role.RELEASE_MANAGER))
     assert client.post(url).status_code == 404
     client.force_login(_member("legacy-release", org, Role.RELEASE_MANAGER))
-    assert client.post(url).status_code == 403
+    assert client.post(url).status_code == 404
     manager = _member("set-manager", org, Role.AUDITOR)
-    DocumentSetManagerAssignment.objects.create(
+    DocumentSetResponsibilityAssignment.objects.create(
         organization=org,
         document_set=document_set,
-        user=manager,
+        membership=OrganizationMembership.objects.get(organization=org, user=manager),
+        responsibility=DocumentSetResponsibility.MANAGER,
         assigned_by=manager,
     )
     client.force_login(manager)

@@ -31,7 +31,16 @@ from apps.documents.models import (
     DocumentVersion,
     ParseStatus,
 )
-from apps.identity.models import Consumer, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -49,9 +58,19 @@ def _member(
     username: str, org: Organization, role: str = Role.AUDITOR, *others: Organization
 ) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
-    for extra in others:
-        OrganizationMembership.objects.create(organization=extra, user=user, role=role)
+    for organization in (org, *others):
+        membership = OrganizationMembership.objects.create(organization=organization, user=user)
+        responsibility = {
+            Role.ORGANIZATION_ADMIN: OrganizationResponsibility.ADMINISTRATOR,
+            Role.AUDITOR: OrganizationResponsibility.AUDITOR,
+        }.get(role)
+        if responsibility is not None:
+            OrganizationResponsibilityAssignment.objects.create(
+                organization=organization,
+                membership=membership,
+                responsibility=responsibility,
+                assigned_by=user,
+            )
     return user
 
 
@@ -205,7 +224,15 @@ def test_auditor_sees_disabled_studio_button_and_no_builder_link(client: Client)
 def test_author_sees_active_studio_link(client: Client) -> None:
     org = _org("org")
     scenario = _scenario(org)
-    client.force_login(_member("editor", org, Role.SCENARIO_EDITOR))
+    editor = _member("editor", org, Role.SCENARIO_EDITOR)
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(organization=org, user=editor),
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=editor,
+    )
+    client.force_login(editor)
     body = client.get(reverse("console:scenario_detail", args=[scenario.pk])).content.decode()
     assert f"scenario={scenario.public_id}" in body  # the scenario-scoped Studio link renders
 
@@ -296,7 +323,15 @@ def test_document_chunk_view_returns_none_off_postgres() -> None:
 def test_document_detail_hides_chunk_section_for_auditor(client: Client) -> None:
     org = _org("org")
     document_set, document = _document_in_set(org)
-    client.force_login(_member("auditor", org, Role.AUDITOR))
+    auditor = _member("auditor", org, Role.AUDITOR)
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(organization=org, user=auditor),
+        document_set=document_set,
+        responsibility=DocumentSetResponsibility.CONTENT_READER,
+        assigned_by=auditor,
+    )
+    client.force_login(auditor)
     response = client.get(
         reverse(
             "console:document_set_document_detail",

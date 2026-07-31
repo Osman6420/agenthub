@@ -18,7 +18,10 @@ from apps.audit.models import AuditEvent
 from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.tests.conftest import BuilderFixture, simple_workflow
 from apps.catalog.models import AIProject, Scenario
-from apps.identity.roles import Role
+from apps.identity.models import (
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.orchestration.authoring import (
     AuthoringContract,
     AuthoringResponse,
@@ -146,11 +149,15 @@ def test_cross_tenant_draft_is_not_found(client: Client, bf: BuilderFixture) -> 
 
 def _release_manager(bf: BuilderFixture) -> User:
     manager = User.objects.create_user("release-manager", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
-        organization=bf.org,
-        user=manager,
-        role=Role.ORGANIZATION_ADMIN,
-    )
+    membership = OrganizationMembership.objects.create(organization=bf.org, user=manager)
+    for scenario in Scenario.objects.filter(project=bf.project):
+        ScenarioResponsibilityAssignment.objects.create(
+            organization=bf.org,
+            membership=membership,
+            scenario=scenario,
+            responsibility=ScenarioResponsibility.RELEASE_MANAGER,
+            assigned_by=manager,
+        )
     return manager
 
 
@@ -376,7 +383,14 @@ def test_author_creates_draft(client: Client, bf: BuilderFixture) -> None:
     response = _post(
         client,
         reverse("builder_api:drafts"),
-        {"organization": "b-org", "name": "New flow", "logical_id": "flow_b", "body": {}},
+        {
+            "organization": "b-org",
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "name": "New flow",
+            "logical_id": "flow_b",
+            "body": {},
+        },
     )
     assert response.status_code == 201
     assert WorkflowDraft.objects.filter(organization=bf.org, logical_id="flow_b").exists()
@@ -387,6 +401,13 @@ def test_author_creates_scenario_scoped_draft_and_rejects_foreign_scenario(
     client: Client, bf: BuilderFixture
 ) -> None:
     scenario = Scenario.objects.create(project=bf.project, slug="studio", name="Studio")
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=bf.org,
+        membership=OrganizationMembership.objects.get(organization=bf.org, user=bf.author),
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=bf.author,
+    )
     foreign_project = AIProject.objects.create(
         organization=bf.other_org, slug="foreign", name="Foreign"
     )
@@ -428,7 +449,14 @@ def test_non_author_cannot_create(client: Client, bf: BuilderFixture) -> None:
     response = _post(
         client,
         reverse("builder_api:drafts"),
-        {"organization": "b-org", "name": "x", "logical_id": "flow_c", "body": {}},
+        {
+            "organization": "b-org",
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "name": "x",
+            "logical_id": "flow_c",
+            "body": {},
+        },
     )
     assert response.status_code == 403
     assert not WorkflowDraft.objects.filter(logical_id="flow_c").exists()
@@ -450,7 +478,14 @@ def test_duplicate_logical_id_is_rejected(client: Client, bf: BuilderFixture) ->
     response = _post(
         client,
         reverse("builder_api:drafts"),
-        {"organization": "b-org", "name": "dup", "logical_id": "flow_a", "body": {}},
+        {
+            "organization": "b-org",
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "name": "dup",
+            "logical_id": "flow_a",
+            "body": {},
+        },
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "duplicate_logical_id"
@@ -784,6 +819,13 @@ def test_ai_repair_is_transient_scoped_and_audited_without_content(
         slug="repair-loop",
         name="Repair Loop",
     )
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=bf.org,
+        membership=OrganizationMembership.objects.get(organization=bf.org, user=bf.author),
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=bf.author,
+    )
     invalid_candidate = {
         "api_version": "agenthub/v1",
         "kind": "Workflow",
@@ -861,6 +903,11 @@ def test_ai_candidate_is_transient_then_explicitly_accepted(
 ) -> None:
     cache.clear()
     FakeAuthoringProvider.calls.clear()
+    FakeAuthoringProvider.response = AuthoringResponse(
+        json.dumps({"status": "workflow_candidate", "candidate": simple_workflow()}),
+        12,
+        8,
+    )
     client.force_login(bf.author)
     generated = _post(
         client,
@@ -868,6 +915,7 @@ def test_ai_candidate_is_transient_then_explicitly_accepted(
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "description": "Bir giriş ve bitiş akışı oluştur.",
         },
     )
@@ -891,6 +939,13 @@ def test_studio_ai_uses_scoped_context_and_server_identifier(
         project=bf.project,
         slug="planner",
         name="Planner",
+    )
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=bf.org,
+        membership=OrganizationMembership.objects.get(organization=bf.org, user=bf.author),
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=bf.author,
     )
     FakeAuthoringProvider.calls.clear()
     FakeAuthoringProvider.response = AuthoringResponse(
@@ -937,13 +992,15 @@ def test_studio_ai_uses_scoped_context_and_server_identifier(
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "name": "AI flow",
             "logical_id": "ai_flow",
             "candidate": generated.json()["candidate"],
         },
     )
-    assert accepted.status_code == 201
-    assert WorkflowDraft.objects.filter(logical_id="ai_flow", project=bf.project).exists()
+    assert accepted.status_code == 400
+    assert accepted.json()["error"]["code"] == "authoring_context_required"
+    assert not WorkflowDraft.objects.filter(logical_id="ai_flow", project=bf.project).exists()
     assert not ArtifactVersion.objects.exists()
 
 
@@ -955,7 +1012,12 @@ def test_ai_candidate_disabled_and_role_denials(client: Client, bf: BuilderFixtu
         _post(
             client,
             url,
-            {"organization": bf.org.slug, "project_id": bf.project.pk, "description": "x"},
+            {
+                "organization": bf.org.slug,
+                "project_id": bf.project.pk,
+                "scenario_id": bf.scenario.pk,
+                "description": "x",
+            },
         ).json()["error"]["code"]
         == "ai_authoring_disabled"
     )
@@ -964,7 +1026,12 @@ def test_ai_candidate_disabled_and_role_denials(client: Client, bf: BuilderFixtu
         _post(
             client,
             url,
-            {"organization": bf.org.slug, "project_id": bf.project.pk, "description": "x"},
+            {
+                "organization": bf.org.slug,
+                "project_id": bf.project.pk,
+                "scenario_id": bf.scenario.pk,
+                "description": "x",
+            },
         ).status_code
         == 403
     )
@@ -973,7 +1040,12 @@ def test_ai_candidate_disabled_and_role_denials(client: Client, bf: BuilderFixtu
         _post(
             client,
             url,
-            {"organization": bf.org.slug, "project_id": bf.project.pk, "description": "x"},
+            {
+                "organization": bf.org.slug,
+                "project_id": bf.project.pk,
+                "scenario_id": bf.scenario.pk,
+                "description": "x",
+            },
         ).status_code
         == 404
     )
@@ -986,6 +1058,11 @@ def test_ai_candidate_disabled_and_role_denials(client: Client, bf: BuilderFixtu
 )
 def test_ai_candidate_rate_limit_and_audit_redaction(client: Client, bf: BuilderFixture) -> None:
     cache.clear()
+    FakeAuthoringProvider.response = AuthoringResponse(
+        json.dumps({"status": "workflow_candidate", "candidate": simple_workflow()}),
+        12,
+        8,
+    )
     client.force_login(bf.author)
     secret_text = "özel-içerik-123"  # noqa: S105 -- redaction sentinel, not a credential
     url = reverse("builder_api:ai_candidates")
@@ -993,14 +1070,24 @@ def test_ai_candidate_rate_limit_and_audit_redaction(client: Client, bf: Builder
         _post(
             client,
             url,
-            {"organization": bf.org.slug, "project_id": bf.project.pk, "description": secret_text},
+            {
+                "organization": bf.org.slug,
+                "project_id": bf.project.pk,
+                "scenario_id": bf.scenario.pk,
+                "description": secret_text,
+            },
         ).status_code
         == 200
     )
     limited = _post(
         client,
         url,
-        {"organization": bf.org.slug, "project_id": bf.project.pk, "description": secret_text},
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "description": secret_text,
+        },
     )
     assert limited.status_code == 400
     assert limited.json()["error"]["code"] == "rate_limited"
@@ -1015,6 +1102,7 @@ def test_ai_accept_revalidates_and_never_publishes(client: Client, bf: BuilderFi
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "name": "bad",
             "logical_id": "bad",
             "candidate": {"kind": "Workflow"},
@@ -1071,6 +1159,7 @@ def test_ai_request_body_limits_apply_before_json_decoding(
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "name": "x",
             "logical_id": "large",
             "candidate": {"padding": "x" * 20_000},
@@ -1097,6 +1186,7 @@ def test_ai_candidate_rejects_caller_destination_and_profile_fields(
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "description": "workflow",
             "profile_id": "attacker",
             "endpoint": "https://attacker.invalid/",
@@ -1141,6 +1231,7 @@ def test_ai_contract_candidate_transfers_to_non_publishing_artifact_draft(
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "artifact_type": artifact_type,
             "description": "Metin sorgusu alan bir JSON sözleşmesi oluştur.",
         },
@@ -1150,14 +1241,12 @@ def test_ai_contract_candidate_transfers_to_non_publishing_artifact_draft(
     assert result["artifact_type"] == artifact_type
     assert result["diagnostics"]["ok"] is True
     assert len(result["prompt_contract"]["checksum"]) == 64
-    assert FakeAuthoringProvider.calls == [
-        {
-            "profile_id": "11111111-1111-1111-1111-111111111111",
-            "description": "Metin sorgusu alan bir JSON sözleşmesi oluştur.",
-            "artifact_type": artifact_type,
-            "contract_checksum": result["prompt_contract"]["checksum"],
-        }
-    ]
+    assert len(FakeAuthoringProvider.calls) == 1
+    provider_call = FakeAuthoringProvider.calls[0]
+    assert provider_call["profile_id"] == "11111111-1111-1111-1111-111111111111"
+    assert provider_call["artifact_type"] == artifact_type
+    assert provider_call["contract_checksum"] == result["prompt_contract"]["checksum"]
+    assert provider_call["server_context"]["scenario"]["slug"] == bf.scenario.slug
     assert not ArtifactDraft.objects.exists()
 
     accepted = _post(
@@ -1166,6 +1255,7 @@ def test_ai_contract_candidate_transfers_to_non_publishing_artifact_draft(
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "artifact_type": artifact_type,
             "prompt_contract": result["prompt_contract"],
             "name": "AI sözleşmesi",
@@ -1213,6 +1303,7 @@ def test_ai_candidate_rejects_high_risk_or_unknown_type_before_egress(
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "artifact_type": artifact_type,
             "description": "x",
         },
@@ -1230,6 +1321,7 @@ def test_ai_contract_accept_revalidates_schema_and_contract_metadata(
     base = {
         "organization": bf.org.slug,
         "project_id": bf.project.pk,
+        "scenario_id": bf.scenario.pk,
         "artifact_type": "input_contract",
         "name": "bad",
         "logical_id": "bad_contract",
@@ -1294,6 +1386,7 @@ def test_ai_candidate_rejects_unavailable_contract_revision_before_egress(
         {
             "organization": bf.org.slug,
             "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
             "artifact_type": "input_contract",
             "description": "x",
         },
@@ -1309,6 +1402,7 @@ def test_artifact_draft_is_tenant_scoped_mutable_and_has_no_publish_action(
     draft = ArtifactDraft.objects.create(
         organization=bf.org,
         project=bf.project,
+        scenario=bf.scenario,
         artifact_type="input_contract",
         name="Girdi",
         logical_id="input_v1",
@@ -1360,6 +1454,7 @@ def test_artifact_draft_update_revalidates_and_rejects_unknown_fields(
     draft = ArtifactDraft.objects.create(
         organization=bf.org,
         project=bf.project,
+        scenario=bf.scenario,
         artifact_type="output_contract",
         name="Çıktı",
         logical_id="output_v1",
@@ -1385,6 +1480,7 @@ def test_stale_artifact_draft_update_is_conflict_without_mutation(
     draft = ArtifactDraft.objects.create(
         organization=bf.org,
         project=bf.project,
+        scenario=bf.scenario,
         artifact_type="input_contract",
         name="Original",
         logical_id="concurrent_input",

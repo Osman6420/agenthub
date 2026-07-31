@@ -9,7 +9,12 @@ from django.urls import reverse
 
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario, ScenarioAlias
-from apps.identity.roles import Role
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+)
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
@@ -52,7 +57,14 @@ def test_projects_list_is_tenant_scoped(client: Client) -> None:
     AIProject.objects.create(organization=org_b, slug="beta", name="Beta")
 
     member = User.objects.create_user("alice", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org_a, user=member, role=Role.PROJECT_OWNER)
+    membership = OrganizationMembership.objects.create(organization=org_a, user=member)
+    ProjectResponsibilityAssignment.objects.create(
+        organization=org_a,
+        membership=membership,
+        project=AIProject.objects.get(organization=org_a, slug="alpha"),
+        responsibility=ProjectResponsibility.VIEWER,
+        assigned_by=member,
+    )
     client.force_login(member)
 
     body = client.get(reverse("console:projects")).content.decode()
@@ -109,8 +121,12 @@ def test_org_admin_cannot_create_project_in_another_org(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
     user = User.objects.create_user("admin-a", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
-        organization=org_a, user=user, role=Role.ORGANIZATION_ADMIN
+    membership = OrganizationMembership.objects.create(organization=org_a, user=user)
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=org_a,
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=user,
     )
     owner_membership = OrganizationMembership.objects.get(organization=org_a, user=user)
     client.force_login(user)
@@ -134,29 +150,29 @@ def test_org_admin_cannot_create_project_in_another_org(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_project_owner_is_selected_from_members_in_admin_scope(client: Client) -> None:
+def test_project_create_does_not_couple_membership_to_an_owner_role(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
     admin = User.objects.create_user("admin", password="x")  # noqa: S106
     owner_a = User.objects.create_user("owner-a", password="x")  # noqa: S106
     outsider = User.objects.create_user("outsider", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
-        organization=org_a, user=admin, role=Role.ORGANIZATION_ADMIN
+    admin_membership = OrganizationMembership.objects.create(organization=org_a, user=admin)
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=org_a,
+        membership=admin_membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=admin,
     )
-    owner_membership = OrganizationMembership.objects.create(
-        organization=org_a, user=owner_a, role=Role.PROJECT_OWNER
-    )
-    OrganizationMembership.objects.create(
-        organization=org_b, user=outsider, role=Role.PROJECT_OWNER
-    )
+    owner_membership = OrganizationMembership.objects.create(organization=org_a, user=owner_a)
+    OrganizationMembership.objects.create(organization=org_b, user=outsider)
     client.force_login(admin)
 
     response = client.get(reverse("console:project_create"))
     body = response.content.decode()
 
     assert response.status_code == 200
-    assert 'name="owner_membership"' in body
-    assert "owner-a" in body
+    assert 'name="owner_membership"' not in body
+    assert "owner-a" not in body
     assert "outsider" not in body
 
     response = client.post(
@@ -173,23 +189,24 @@ def test_project_owner_is_selected_from_members_in_admin_scope(client: Client) -
     assert response.status_code == 302
     project = AIProject.objects.get(organization=org_a)
     assert project.slug.startswith("alpha-")
-    assert project.owner == "owner-a"
-    assert project.owner_membership == owner_membership
+    assert project.owner == ""
 
 
 @pytest.mark.django_db
-def test_project_owner_must_belong_to_selected_organization(client: Client) -> None:
+def test_project_create_ignores_forged_legacy_owner_membership(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
     admin = User.objects.create_user("admin", password="x")  # noqa: S106
     owner_b = User.objects.create_user("owner-b", password="x")  # noqa: S106
     for organization in (org_a, org_b):
-        OrganizationMembership.objects.create(
-            organization=organization, user=admin, role=Role.ORGANIZATION_ADMIN
+        membership = OrganizationMembership.objects.create(organization=organization, user=admin)
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=admin,
         )
-    owner_membership = OrganizationMembership.objects.create(
-        organization=org_b, user=owner_b, role=Role.PROJECT_OWNER
-    )
+    owner_membership = OrganizationMembership.objects.create(organization=org_b, user=owner_b)
     client.force_login(admin)
 
     response = client.post(
@@ -204,9 +221,10 @@ def test_project_owner_must_belong_to_selected_organization(client: Client) -> N
         },
     )
 
-    assert response.status_code == 200
-    assert "Select a valid choice" in response.content.decode()
-    assert not AIProject.objects.filter(slug="forbidden-owner").exists()
+    assert response.status_code == 302
+    project = AIProject.objects.get(organization=org_a)
+    assert project.slug.startswith("forbidden-owner-")
+    assert project.owner == ""
 
 
 @pytest.mark.django_db
@@ -214,7 +232,14 @@ def test_scenario_author_create_is_atomic_and_audited(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
     project = AIProject.objects.create(organization=org, slug="alpha", name="Alpha")
     user = User.objects.create_user("editor", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=Role.SCENARIO_EDITOR)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    ProjectResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=membership,
+        project=project,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=user,
+    )
     client.force_login(user)
 
     response = client.post(

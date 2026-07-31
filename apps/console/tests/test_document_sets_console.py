@@ -26,6 +26,12 @@ from apps.documents.services import (
     create_document_set_version,
     upload_document,
 )
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.ingestion.job_lifecycle import create_build_job
 from apps.ingestion.tests.test_staged_build import _granted_profile, _published_set_version
@@ -44,14 +50,37 @@ def _memory_store(settings: Any) -> Iterator[None]:
 
 def _member(username: str, org: Organization, role: str) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.ORGANIZATION_ADMIN:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
+    elif role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    elif role == Role.PROJECT_OWNER:
+        for document_set in org.document_sets.all():
+            DocumentSetResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                document_set=document_set,
+                responsibility=DocumentSetResponsibility.MANAGER,
+                assigned_by=user,
+            )
     return user
 
 
 @pytest.mark.django_db
-def test_author_can_create_document_set(client: Client) -> None:
+def test_organization_admin_can_create_document_set(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
-    client.force_login(_member("owner", org, Role.PROJECT_OWNER))
+    client.force_login(_member("owner", org, Role.ORGANIZATION_ADMIN))
 
     response = client.post(
         reverse("console:document_set_create"),

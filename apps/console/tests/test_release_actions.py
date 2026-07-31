@@ -10,6 +10,12 @@ from django.urls import reverse
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus, ScenarioRelease
@@ -50,18 +56,39 @@ def _candidate(org: Organization) -> ScenarioRelease:
 
 def _login(client: Client, org: Organization, role: str, username: str = "u") -> None:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    elif role == Role.RELEASE_MANAGER:
+        for scenario in Scenario.objects.filter(project__organization=org):
+            ScenarioResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                scenario=scenario,
+                responsibility=ScenarioResponsibility.RELEASE_MANAGER,
+                assigned_by=user,
+            )
     client.force_login(user)
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("role", [Role.AUDITOR, Role.RELEASE_MANAGER])
-def test_non_release_authority_cannot_promote(client: Client, role: str) -> None:
+@pytest.mark.parametrize(
+    ("role", "expected_status"),
+    [(Role.AUDITOR, 403), (Role.ORGANIZATION_ADMIN, 404)],
+)
+def test_non_release_authority_cannot_promote(
+    client: Client, role: str, expected_status: int
+) -> None:
     org = Organization.objects.create(slug="mcm", name="MCM")
     release = _candidate(org)
     _login(client, org, role)
     response = client.post(reverse("console:release_promote", args=[release.pk]))
-    assert response.status_code == 403
+    assert response.status_code == expected_status
     release.refresh_from_db()
     assert release.status == ReleaseStatus.CANDIDATE
 
@@ -70,7 +97,7 @@ def test_non_release_authority_cannot_promote(client: Client, role: str) -> None
 def test_manager_promote_without_eval_is_denied_gracefully(client: Client) -> None:
     org = Organization.objects.create(slug="mcm", name="MCM")
     release = _candidate(org)
-    _login(client, org, Role.ORGANIZATION_ADMIN)
+    _login(client, org, Role.RELEASE_MANAGER)
     response = client.post(reverse("console:release_promote", args=[release.pk]))
     assert response.status_code == 302  # denial is surfaced as a message, not a crash
     release.refresh_from_db()
@@ -81,6 +108,6 @@ def test_manager_promote_without_eval_is_denied_gracefully(client: Client) -> No
 def test_promote_action_is_post_only(client: Client) -> None:
     org = Organization.objects.create(slug="mcm", name="MCM")
     release = _candidate(org)
-    _login(client, org, Role.ORGANIZATION_ADMIN)
+    _login(client, org, Role.RELEASE_MANAGER)
     response = client.get(reverse("console:release_promote", args=[release.pk]))
     assert response.status_code == 405

@@ -12,7 +12,10 @@ from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.evaluations.models import EvalRun
 from apps.evaluations.services import run_eval
-from apps.identity.roles import Role
+from apps.identity.models import (
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -67,11 +70,15 @@ def _evaluated_release() -> tuple[Organization, ScenarioRelease]:
 
 def _manager(org: Organization, username: str = "rm") -> None:
     user = get_user_model().objects.create_user(username=username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
-        organization=org,
-        user=user,
-        role=Role.ORGANIZATION_ADMIN,
-    )
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    for scenario in Scenario.objects.filter(project__organization=org):
+        ScenarioResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            scenario=scenario,
+            responsibility=ScenarioResponsibility.RELEASE_MANAGER,
+            assigned_by=user,
+        )
 
 
 @pytest.mark.django_db

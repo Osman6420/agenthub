@@ -10,7 +10,10 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.catalog.models import AIProject
-from apps.identity.roles import Role
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
@@ -19,10 +22,15 @@ User = get_user_model()
 def _operator() -> Any:
     organization = Organization.objects.create(slug="org-a", name="A")
     user = User.objects.create_user("operator", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
+    membership = OrganizationMembership.objects.create(
         organization=organization,
         user=user,
-        role=Role.ORGANIZATION_ADMIN,
+    )
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=user,
     )
     return user
 

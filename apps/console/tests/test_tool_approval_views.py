@@ -11,7 +11,12 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.identity.capabilities import Capability
-from apps.identity.models import Consumer, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -125,7 +130,16 @@ def _pending_approval(org_slug: str = "tool-org") -> tuple[Organization, Approva
 
 def _login(client: Client, org: Organization, role: str, username: str = "op") -> None:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.APPROVER:
+        for scenario in Scenario.objects.filter(project__organization=org):
+            ScenarioResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                scenario=scenario,
+                responsibility=ScenarioResponsibility.APPROVER,
+                assigned_by=user,
+            )
     client.force_login(user)
 
 
@@ -148,7 +162,7 @@ def test_non_approver_is_denied_gracefully(client: Client) -> None:
     response = client.post(
         reverse("console:tool_approval_decide", args=[approval.pk]), {"decision": "approve"}
     )
-    assert response.status_code == 302  # denial surfaced as a message
+    assert response.status_code == 403
     approval.refresh_from_db()
     assert approval.status == ApprovalStatus.PENDING
 

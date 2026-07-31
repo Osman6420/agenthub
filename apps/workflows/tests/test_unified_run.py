@@ -30,6 +30,7 @@ from apps.workflows.background_claims import (
     renew_background_claim,
     resolve_expired_background_claim,
 )
+from apps.workflows.compiler import WorkflowCompileError
 from apps.workflows.models import (
     Run,
     RunBranch,
@@ -2103,29 +2104,24 @@ def test_bounded_executor_suspends_at_event_and_timer_waits(workflow_fixture) ->
 
 
 @pytest.mark.django_db
-def test_bounded_executor_refuses_an_authored_escalation_it_cannot_honour(
+def test_compiler_refuses_an_authored_role_escalation_contract(
     workflow_fixture,
 ) -> None:
-    _install_graph(
-        workflow_fixture,
-        [
-            _START_NODE,
-            _human_node(escalation_role="manager", escalation_timeout_seconds=120),
-            _FORMAT_NODE,
-            _END_NODE,
-        ],
-        [
-            {"from": "start", "to": "review"},
-            {"from": "review", "to": "format"},
-            {"from": "format", "to": "done"},
-        ],
-    )
-    run = _queued_background_run(workflow_fixture, key="executor-escalation")
-    with pytest.raises(UnifiedExecutorError, match="RUN_EXECUTOR_NODE_UNSUPPORTED"):
-        _execute_queued(run)
-    run.refresh_from_db()
-    assert run.status == "queued"
-    assert RunWait.objects.filter(run_id=run.id).count() == 0
+    with pytest.raises(WorkflowCompileError, match="human_task config contains unknown fields"):
+        _install_graph(
+            workflow_fixture,
+            [
+                _START_NODE,
+                _human_node(escalation_role="manager", escalation_timeout_seconds=120),
+                _FORMAT_NODE,
+                _END_NODE,
+            ],
+            [
+                {"from": "start", "to": "review"},
+                {"from": "review", "to": "format"},
+                {"from": "format", "to": "done"},
+            ],
+        )
 
 
 _RETRIEVE_NODE = {"id": "recall", "type": "retrieve"}

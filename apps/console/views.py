@@ -3532,12 +3532,12 @@ def document_set_detail(
     )
     can_quarantine = (
         document_control_decision.allowed
-        and document_control_decision.source == AuthoritySource.DOCUMENT_SET_MANAGER
+        and document_control_decision.source == AuthoritySource.DOCUMENT_SET_RESPONSIBILITY
     ) or (
         platform_control_decision.allowed
         and platform_control_decision.source
         in {
-            AuthoritySource.GLOBAL_ADMINISTRATOR,
+            AuthoritySource.PLATFORM_RESPONSIBILITY,
             AuthoritySource.SUPERADMIN_RECOVERY,
         }
     )
@@ -4039,6 +4039,7 @@ def rest_contract_create(
             contract = create_rest_contract(
                 actor=request.user,
                 organization=document_set.organization,
+                document_set=document_set,
                 logical_id=form.cleaned_data["logical_id"],
                 revision=form.cleaned_data["revision"],
                 definition=form.cleaned_data["definition"],

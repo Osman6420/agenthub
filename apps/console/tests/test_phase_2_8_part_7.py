@@ -13,7 +13,14 @@ from apps.agents.models import AgentRuntimeControl, RuntimeControlScope
 from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import AIProject, Scenario
 from apps.console.operations import parse_operation_filters, project_operations
-from apps.identity.models import Consumer, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.ingestion.models import ConnectorType, IngestionRun, Source
 from apps.ingestion.models import RunStatus as IngestionStatus
@@ -32,11 +39,21 @@ pytestmark = pytest.mark.django_db
 
 def _member(username: str, organization: Organization, role: str = Role.AUDITOR) -> Any:
     user = User.objects.create_user(username=username, password=None)
-    OrganizationMembership.objects.create(
+    membership = OrganizationMembership.objects.create(
         organization=organization,
         user=user,
-        role=role,
     )
+    responsibility = {
+        Role.ORGANIZATION_ADMIN: OrganizationResponsibility.ADMINISTRATOR,
+        Role.AUDITOR: OrganizationResponsibility.AUDITOR,
+    }.get(role)
+    if responsibility is not None:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            responsibility=responsibility,
+            assigned_by=user,
+        )
     return user
 
 
@@ -204,20 +221,28 @@ def test_unified_operation_filters_fail_closed(
     assert "data-operation-id=" not in response.content.decode()
 
 
-def test_organization_admin_can_pause_project_via_csrf_post(client: Client) -> None:
+def test_runtime_operator_can_pause_exact_scenario_via_csrf_post(client: Client) -> None:
     organization = Organization.objects.create(slug="own", name="Own")
-    _run, project, _scenario = _execution(
+    _run, _project, _scenario = _execution(
         organization,
         slug="own",
         status=RunStatus.RUNNING,
     )
-    client.force_login(_member("org-admin", organization, Role.ORGANIZATION_ADMIN))
+    operator = _member("runtime-operator", organization)
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=OrganizationMembership.objects.get(organization=organization, user=operator),
+        scenario=_scenario,
+        responsibility=ScenarioResponsibility.RUNTIME_OPERATOR,
+        assigned_by=operator,
+    )
+    client.force_login(operator)
 
     response = client.post(
         reverse("console:runtime_control_change"),
         {
-            "scope_type": "project",
-            "target": str(project.public_id),
+            "scope_type": "scenario",
+            "target": str(_scenario.public_id),
             "action": "pause",
             "reason_code": "incident_response",
             "reason": "Incident isolation",
@@ -226,8 +251,8 @@ def test_organization_admin_can_pause_project_via_csrf_post(client: Client) -> N
 
     assert response.status_code == 302
     control = AgentRuntimeControl.objects.get(
-        scope_type=RuntimeControlScope.PROJECT,
-        project=project,
+        scope_type=RuntimeControlScope.SCENARIO,
+        scenario=_scenario,
     )
     assert control.suspended is True
     assert control.organization_id == organization.pk
@@ -268,8 +293,15 @@ def test_native_run_cancel_reauthorizes_exact_action(client: Client) -> None:
     run.refresh_from_db()
     assert run.cancellation_state == RunCancellationState.NONE
 
-    administrator = _member("org-admin", organization, Role.ORGANIZATION_ADMIN)
-    client.force_login(administrator)
+    operator = _member("runtime-operator", organization)
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=OrganizationMembership.objects.get(organization=organization, user=operator),
+        scenario=run.scenario,
+        responsibility=ScenarioResponsibility.RUNTIME_OPERATOR,
+        assigned_by=operator,
+    )
+    client.force_login(operator)
     allowed = client.post(reverse("console:workflow_run_cancel", args=[run.pk]))
     assert allowed.status_code == 302
     run.refresh_from_db()

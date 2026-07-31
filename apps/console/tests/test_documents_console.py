@@ -19,6 +19,12 @@ from django.utils import timezone
 from apps.audit.models import AuditEvent
 from apps.documents import services, storage
 from apps.documents.models import Document, DocumentLifecycle, DocumentSet
+from apps.identity.models import (
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
 
@@ -37,7 +43,30 @@ def _memory_store(settings: Any) -> Iterator[None]:
 
 def _member(username: str, org: Organization, role: str) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.ORGANIZATION_ADMIN:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
+    elif role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    elif role == Role.PROJECT_OWNER:
+        for document_set in org.document_sets.all():
+            DocumentSetResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                document_set=document_set,
+                responsibility=DocumentSetResponsibility.MANAGER,
+                assigned_by=user,
+            )
     return user
 
 
@@ -166,7 +195,7 @@ def test_cross_tenant_soft_delete_is_not_found(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_org_admin_can_confirm_and_purge_tombstoned_document(client: Client) -> None:
+def test_document_set_manager_can_confirm_and_purge_tombstoned_document(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
     version = services.upload_document(
         organization=org,
@@ -181,7 +210,18 @@ def test_org_admin_can_confirm_and_purge_tombstoned_document(client: Client) -> 
     document.lifecycle_state = DocumentLifecycle.TOMBSTONED
     document.deleted_at = timezone.now()
     document.save(update_fields=["lifecycle_state", "deleted_at"])
-    client.force_login(_member("admin", org, Role.ORGANIZATION_ADMIN))
+    manager = _member("manager", org, Role.ORGANIZATION_ADMIN)
+    membership = OrganizationMembership.objects.get(organization=org, user=manager)
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=membership,
+        document_set=DocumentSet.objects.get(
+            versions__memberships__document_version=version
+        ),
+        responsibility=DocumentSetResponsibility.MANAGER,
+        assigned_by=manager,
+    )
+    client.force_login(manager)
 
     response = client.post(
         reverse("console:document_purge", args=[document.id]),
@@ -210,7 +250,7 @@ def test_purge_requires_admin_tombstone_and_exact_confirmation(client: Client) -
         reverse("console:document_purge", args=[document.id]),
         {"confirm_logical_id": "keep"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
     client.force_login(_member("admin", org, Role.ORGANIZATION_ADMIN))
     client.post(

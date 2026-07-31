@@ -9,7 +9,6 @@ from django.http import HttpResponse
 from django.test import RequestFactory
 
 from apps.catalog.models import AIProject
-from apps.identity.roles import Role
 from apps.tenancy.context import (
     MAX_TENANT_SCOPE_IDS,
     TenantContextError,
@@ -99,7 +98,7 @@ def test_operator_middleware_derives_membership_scope_under_non_owner_role() -> 
     AIProject.objects.create(organization=organization_a, slug="a", name="A")
     AIProject.objects.create(organization=organization_b, slug="b", name="B")
     user = get_user_model().objects.create_user("scope-user", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=organization_a, user=user, role=Role.AUDITOR)
+    OrganizationMembership.objects.create(organization=organization_a, user=user)
     role = f"web_scope_{uuid.uuid4().hex[:12]}"
     with connection.cursor() as cursor:
         cursor.execute(f'CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN')  # noqa: S608

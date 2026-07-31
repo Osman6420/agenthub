@@ -12,7 +12,14 @@ from django.urls import reverse
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet, DocumentSetGrant, ScenarioDocumentSetBinding
-from apps.identity.models import Consumer, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
 
@@ -22,7 +29,23 @@ pytestmark = pytest.mark.django_db
 
 def _member(username: str, org: Organization, role: str) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.AUDITOR:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.AUDITOR,
+            assigned_by=user,
+        )
+    elif role in {Role.SCENARIO_EDITOR, Role.PROJECT_OWNER}:
+        for document_set in org.document_sets.all():
+            DocumentSetResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                document_set=document_set,
+                responsibility=DocumentSetResponsibility.MANAGER,
+                assigned_by=user,
+            )
     return user
 
 

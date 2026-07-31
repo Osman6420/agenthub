@@ -13,6 +13,14 @@ from apps.audit.models import AuditEvent
 from apps.builder.models import WorkflowDraft
 from apps.catalog.models import AIProject, Scenario
 from apps.catalog.services import create_console_scenario
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus, ScenarioRelease
@@ -26,7 +34,31 @@ pytestmark = pytest.mark.django_db
 
 def _member(org: Organization, username: str, role: str = Role.ORGANIZATION_ADMIN) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    if role == Role.ORGANIZATION_ADMIN:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
+        for scenario in Scenario.objects.filter(project__organization=org):
+            ScenarioResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                scenario=scenario,
+                responsibility=ScenarioResponsibility.RELEASE_MANAGER,
+                assigned_by=user,
+            )
+    elif role == Role.SCENARIO_EDITOR:
+        for project in org.projects.all():
+            ProjectResponsibilityAssignment.objects.create(
+                organization=org,
+                membership=membership,
+                project=project,
+                responsibility=ProjectResponsibility.ADMINISTRATOR,
+                assigned_by=user,
+            )
     return user
 
 

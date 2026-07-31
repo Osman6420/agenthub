@@ -11,25 +11,40 @@ from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.services import create_document_set
 from apps.identity.models import (
-    DelegatedAssignmentStatus,
-    DocumentSetManagerAssignment,
-    ProjectAdministratorAssignment,
-    ScenarioEditorAssignment,
+    DocumentSetResponsibility,
+    DocumentSetResponsibilityAssignment,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+    ResponsibilityStatus,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
 )
-from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
 
 
-def _member(organization: Organization, username: str, role: str):
+def _member(
+    organization: Organization,
+    username: str,
+    *,
+    organization_admin: bool = False,
+):
     user = User.objects.create_user(username=username, password=None)
-    OrganizationMembership.objects.create(
+    membership = OrganizationMembership.objects.create(
         organization=organization,
         user=user,
-        role=role,
     )
+    if organization_admin:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            responsibility=OrganizationResponsibility.ADMINISTRATOR,
+            assigned_by=user,
+        )
     return user
 
 
@@ -38,8 +53,8 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
 ) -> None:
     organization = Organization.objects.create(slug="access", name="Access")
     foreign = Organization.objects.create(slug="foreign-access", name="Foreign")
-    admin = _member(organization, "admin", Role.ORGANIZATION_ADMIN)
-    target = _member(organization, "target", Role.AUDITOR)
+    admin = _member(organization, "admin", organization_admin=True)
+    target = _member(organization, "target")
     project = AIProject.objects.create(organization=organization, slug="project", name="Project")
     scenario = Scenario.objects.create(project=project, slug="scenario", name="Scenario")
     document_set = create_document_set(
@@ -65,22 +80,23 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
     project_response = client.post(
         reverse("console:delegated_assignment_add"),
         {
-            "responsibility": "project_administrator",
+            "responsibility": ProjectResponsibility.ADMINISTRATOR,
             "member": OrganizationMembership.objects.get(organization=organization, user=target).pk,
             "project": project.pk,
         },
     )
-    project_assignment = ProjectAdministratorAssignment.objects.get(
+    project_assignment = ProjectResponsibilityAssignment.objects.get(
         organization=organization,
-        user=target,
+        membership__user=target,
         project=project,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
     )
     assert project_response.status_code == 302
 
     scenario_response = client.post(
         reverse("console:delegated_assignment_add"),
         {
-            "responsibility": "scenario_editor",
+            "responsibility": ScenarioResponsibility.EDITOR,
             "member": OrganizationMembership.objects.get(organization=organization, user=target).pk,
             "scenario": scenario.pk,
         },
@@ -88,30 +104,36 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
     document_set_response = client.post(
         reverse("console:delegated_assignment_add"),
         {
-            "responsibility": "document_set_manager",
+            "responsibility": DocumentSetResponsibility.MANAGER,
             "member": OrganizationMembership.objects.get(organization=organization, user=target).pk,
             "document_set": document_set.pk,
         },
     )
     assert scenario_response.status_code == 302
     assert document_set_response.status_code == 302
-    assert ScenarioEditorAssignment.objects.filter(
-        organization=organization, user=target, scenario=scenario
+    assert ScenarioResponsibilityAssignment.objects.filter(
+        organization=organization,
+        membership__user=target,
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
     ).exists()
-    assert DocumentSetManagerAssignment.objects.filter(
-        organization=organization, user=target, document_set=document_set
+    assert DocumentSetResponsibilityAssignment.objects.filter(
+        organization=organization,
+        membership__user=target,
+        document_set=document_set,
+        responsibility=DocumentSetResponsibility.MANAGER,
     ).exists()
 
     forged = client.post(
         reverse("console:delegated_assignment_add"),
         {
-            "responsibility": "project_administrator",
+            "responsibility": ProjectResponsibility.ADMINISTRATOR,
             "member": OrganizationMembership.objects.get(organization=organization, user=target).pk,
             "project": foreign_project.pk,
         },
     )
     assert forged.status_code == 302
-    assert not ProjectAdministratorAssignment.objects.filter(project=foreign_project).exists()
+    assert not ProjectResponsibilityAssignment.objects.filter(project=foreign_project).exists()
 
     refreshed_response = client.get(reverse("console:organization_members"))
     refreshed = refreshed_response.content.decode()
@@ -121,25 +143,25 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
         if membership.user_id == target.pk
     )
     assert target_row.delegated_counts == {
+        "organization": 0,
         "projects": 1,
         "scenarios": 1,
         "document_sets": 1,
     }
     assert "Knowledge" in refreshed
-    assert "ham içerik yetkisi vermez" in refreshed
 
     removed = client.post(
         reverse(
             "console:delegated_assignment_remove",
-            args=["project_administrator", project_assignment.pk],
+            args=["project", project_assignment.pk],
         )
     )
     assert removed.status_code == 302
     project_assignment.refresh_from_db()
-    assert project_assignment.status == DelegatedAssignmentStatus.REVOKED
+    assert project_assignment.status == ResponsibilityStatus.REVOKED
     assert project_assignment.revoked_by_id == admin.pk
     assert AuditEvent.objects.filter(
-        action="delegated_assignment.project_administrator.delete",
+        action="responsibility.projectresponsibilityassignment.revoke",
         outcome="success",
     ).exists()
 
@@ -147,18 +169,22 @@ def test_access_page_assigns_and_removes_exact_delegated_responsibilities(
 def test_access_assignment_remove_is_tenant_scoped(client: Client) -> None:
     organization = Organization.objects.create(slug="own-access", name="Own")
     foreign = Organization.objects.create(slug="other-access", name="Other")
-    admin = _member(organization, "admin", Role.ORGANIZATION_ADMIN)
-    foreign_admin = _member(foreign, "foreign-admin", Role.ORGANIZATION_ADMIN)
-    foreign_target = _member(foreign, "foreign-target", Role.AUDITOR)
+    admin = _member(organization, "admin", organization_admin=True)
+    foreign_admin = _member(foreign, "foreign-admin", organization_admin=True)
+    foreign_target = _member(foreign, "foreign-target")
     foreign_project = AIProject.objects.create(
         organization=foreign,
         slug="foreign-project",
         name="Foreign Project",
     )
-    assignment = ProjectAdministratorAssignment.objects.create(
+    foreign_membership = OrganizationMembership.objects.get(
+        organization=foreign, user=foreign_target
+    )
+    assignment = ProjectResponsibilityAssignment.objects.create(
         organization=foreign,
         project=foreign_project,
-        user=foreign_target,
+        membership=foreign_membership,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
         assigned_by=foreign_admin,
     )
     client.force_login(admin)
@@ -166,28 +192,33 @@ def test_access_assignment_remove_is_tenant_scoped(client: Client) -> None:
     response = client.post(
         reverse(
             "console:delegated_assignment_remove",
-            args=["project_administrator", assignment.pk],
+            args=["project", assignment.pk],
         )
     )
 
     assert response.status_code == 404
-    assert ProjectAdministratorAssignment.objects.filter(pk=assignment.pk).exists()
+    assert ProjectResponsibilityAssignment.objects.filter(pk=assignment.pk).exists()
 
 
 def test_access_page_hides_a_revoked_assignment_and_refuses_to_remove_it_twice(
     client: Client,
 ) -> None:
     organization = Organization.objects.create(slug="revoked-access", name="Revoked")
-    admin = _member(organization, "revoked-admin", Role.ORGANIZATION_ADMIN)
-    target = _member(organization, "revoked-target", Role.AUDITOR)
+    admin = _member(organization, "revoked-admin", organization_admin=True)
+    target = _member(organization, "revoked-target")
     project = AIProject.objects.create(organization=organization, slug="project", name="Project")
-    assignment = ProjectAdministratorAssignment.objects.create(
-        organization=organization, project=project, user=target, assigned_by=admin
+    target_membership = OrganizationMembership.objects.get(organization=organization, user=target)
+    assignment = ProjectResponsibilityAssignment.objects.create(
+        organization=organization,
+        project=project,
+        membership=target_membership,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=admin,
     )
     client.force_login(admin)
     remove_url = reverse(
         "console:delegated_assignment_remove",
-        args=["project_administrator", assignment.pk],
+        args=["project", assignment.pk],
     )
 
     assert client.post(remove_url).status_code == 302
@@ -197,15 +228,20 @@ def test_access_page_hides_a_revoked_assignment_and_refuses_to_remove_it_twice(
     target_row = next(
         membership for membership in page.context["memberships"] if membership.user_id == target.pk
     )
-    assert target_row.delegated_counts == {"projects": 0, "scenarios": 0, "document_sets": 0}
+    assert target_row.delegated_counts == {
+        "organization": 0,
+        "projects": 0,
+        "scenarios": 0,
+        "document_sets": 0,
+    }
 
 
 def test_object_details_show_exact_assignments_without_foreign_members(client: Client) -> None:
     organization = Organization.objects.create(slug="detail-access", name="Detail")
     foreign = Organization.objects.create(slug="detail-foreign", name="Foreign")
-    admin = _member(organization, "detail-admin", Role.ORGANIZATION_ADMIN)
-    target = _member(organization, "detail-target", Role.AUDITOR)
-    _member(foreign, "foreign-target-detail", Role.AUDITOR)
+    admin = _member(organization, "detail-admin", organization_admin=True)
+    target = _member(organization, "detail-target")
+    _member(foreign, "foreign-target-detail")
     project = AIProject.objects.create(organization=organization, slug="project", name="Project")
     scenario = Scenario.objects.create(project=project, slug="scenario", name="Scenario")
     document_set = create_document_set(
@@ -214,14 +250,27 @@ def test_object_details_show_exact_assignments_without_foreign_members(client: C
         name="Detail Set",
         actor="seed",
     )
-    ProjectAdministratorAssignment.objects.create(
-        organization=organization, project=project, user=target, assigned_by=admin
+    target_membership = OrganizationMembership.objects.get(organization=organization, user=target)
+    ProjectResponsibilityAssignment.objects.create(
+        organization=organization,
+        project=project,
+        membership=target_membership,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=admin,
     )
-    ScenarioEditorAssignment.objects.create(
-        organization=organization, scenario=scenario, user=target, assigned_by=admin
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=organization,
+        scenario=scenario,
+        membership=target_membership,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=admin,
     )
-    DocumentSetManagerAssignment.objects.create(
-        organization=organization, document_set=document_set, user=target, assigned_by=admin
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=organization,
+        document_set=document_set,
+        membership=target_membership,
+        responsibility=DocumentSetResponsibility.MANAGER,
+        assigned_by=admin,
     )
     client.force_login(admin)
 

@@ -16,7 +16,12 @@ from apps.documents.models import (
     DocumentSetVersion,
     DocumentSetVersionStatus,
 )
-from apps.identity.roles import Role
+from apps.identity.models import (
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+)
 from apps.ingestion.models import IndexStatus, IndexVersion
 from apps.releases.models import ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -27,10 +32,15 @@ pytestmark = pytest.mark.django_db
 
 def _member(org: Organization, *, username: str = "operator") -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
+    membership = OrganizationMembership.objects.create(
         organization=org,
         user=user,
-        role=Role.ORGANIZATION_ADMIN,
+    )
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=user,
     )
     return user
 
@@ -85,7 +95,7 @@ def test_organization_menu_uses_direct_post_buttons_without_javascript(client: C
     first = Organization.objects.create(slug="first", name="First")
     second = Organization.objects.create(slug="second", name="Second")
     user = _member(first)
-    OrganizationMembership.objects.create(organization=second, user=user, role=Role.AUDITOR)
+    OrganizationMembership.objects.create(organization=second, user=user)
     client.force_login(user)
 
     body = client.get(reverse("console:dashboard")).content.decode()
@@ -271,7 +281,15 @@ def test_project_is_scenario_entry_point_with_accessible_tabs(client: Client) ->
         slug="answer",
         name="Yanıt Senaryosu",
     )
-    client.force_login(_member(org))
+    operator = _member(org)
+    ProjectResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(organization=org, user=operator),
+        project=project,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=operator,
+    )
+    client.force_login(operator)
 
     response = client.get(reverse("console:project_detail_public", args=[project.public_id]))
     body = response.content.decode()

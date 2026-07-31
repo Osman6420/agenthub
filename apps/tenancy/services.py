@@ -51,7 +51,10 @@ def create_console_organization(
         try:
             with transaction.atomic():
                 organization = Organization.objects.create(slug=slug, name=name, status=status)
-                if initial_admin is not None:
+                # Emergency superusers retain platform recovery authority and must
+                # not become ordinary tenant principals. Responsibility models
+                # deliberately reject superuser memberships.
+                if initial_admin is not None and not getattr(initial_admin, "is_superuser", False):
                     membership = OrganizationMembership.objects.create(
                         organization=organization,
                         user=initial_admin,
@@ -137,6 +140,7 @@ def can_admin_org(user: UserLike, organization_id: int) -> bool:
     organization = _organization(organization_id)
     return bool(
         organization is not None
+        and organization.status == OrganizationStatus.ACTIVE
         and authorize(
             user=user,
             capability=Capability.ORGANIZATION_MANAGE,

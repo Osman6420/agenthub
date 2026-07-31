@@ -18,6 +18,7 @@ from apps.identity.models import (
     Consumer,
     ConsumerBinding,
     ConsumerProtocol,
+    DocumentSetResponsibilityAssignment,
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
     ProjectResponsibility,
@@ -162,6 +163,10 @@ class Command(BaseCommand):
         ToolDefinition.objects.filter(organization=organization).delete()
         ArtifactVersion.objects.filter(organization=organization).delete()
         Consumer.objects.filter(organization=organization).delete()
+        DocumentSetResponsibilityAssignment.objects.filter(organization=organization).delete()
+        ScenarioResponsibilityAssignment.objects.filter(organization=organization).delete()
+        ProjectResponsibilityAssignment.objects.filter(organization=organization).delete()
+        OrganizationResponsibilityAssignment.objects.filter(organization=organization).delete()
         OrganizationMembership.objects.filter(organization=organization).delete()
         AIProject.objects.filter(organization=organization).delete()
         organization.delete()

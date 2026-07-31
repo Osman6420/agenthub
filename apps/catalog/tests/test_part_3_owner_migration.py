@@ -7,8 +7,14 @@ from django.db.migrations.executor import MigrationExecutor
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
-BEFORE = [("catalog", "0005_public_ids_constrain")]
-AFTER = [("catalog", "0006_aiproject_owner_membership")]
+BEFORE = [
+    ("catalog", "0005_public_ids_constrain"),
+    ("tenancy", "0003_document_manager_role"),
+]
+AFTER = [
+    ("catalog", "0006_aiproject_owner_membership"),
+    ("tenancy", "0003_document_manager_role"),
+]
 
 
 def _state_apps(targets: list[tuple[str, str]]) -> Apps:

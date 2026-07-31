@@ -6,7 +6,6 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 
-from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
 from apps.tenancy.services import (
     allowed_organization_ids,
@@ -22,9 +21,7 @@ def test_member_sees_only_their_org() -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
     user = User.objects.create_user("alice", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
-        organization=org_a, user=user, role=Role.ORGANIZATION_ADMIN
-    )
+    OrganizationMembership.objects.create(organization=org_a, user=user)
 
     assert allowed_organization_ids(user) == {org_a.id}
     assert list(scope_organizations(user)) == [org_a]

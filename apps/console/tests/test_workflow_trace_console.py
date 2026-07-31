@@ -19,7 +19,12 @@ from django.utils import timezone
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, LifecycleStatus, Scenario
-from apps.identity.models import Consumer, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.compiler import ArtifactRef, compile_release, promote_release
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -214,7 +219,15 @@ def _build_run(org: Organization) -> Run:
 
 def _member(username: str, org: Organization, role: str = Role.PROJECT_OWNER) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    for scenario in Scenario.objects.filter(project__organization=org):
+        ScenarioResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            scenario=scenario,
+            responsibility=ScenarioResponsibility.VIEWER,
+            assigned_by=user,
+        )
     return user
 
 

@@ -13,7 +13,7 @@ from django.urls import reverse
 
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject
-from apps.catalog.services import ProjectOwnerError, create_console_project
+from apps.catalog.services import create_console_project
 from apps.identity import credentials
 from apps.identity import tokens as token_module
 from apps.identity.credentials import ConsumerSubjectAllocationError, create_console_consumer
@@ -22,6 +22,10 @@ from apps.identity.models import (
     ConsumerProtocol,
     ConsumerStatus,
     ConsumerToken,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
     TokenStatus,
 )
 from apps.identity.roles import Role
@@ -35,9 +39,18 @@ def _member(
     username: str, organization: Organization, role: str = Role.ORGANIZATION_ADMIN
 ) -> tuple[Any, OrganizationMembership]:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    membership = OrganizationMembership.objects.create(
-        organization=organization, user=user, role=role
-    )
+    membership = OrganizationMembership.objects.create(organization=organization, user=user)
+    responsibility = {
+        Role.ORGANIZATION_ADMIN: OrganizationResponsibility.ADMINISTRATOR,
+        Role.AUDITOR: OrganizationResponsibility.AUDITOR,
+    }.get(role)
+    if responsibility is not None:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            responsibility=responsibility,
+            assigned_by=user,
+        )
     return user, membership
 
 
@@ -52,30 +65,33 @@ def _consumer(organization: Organization, *, subject: str = "legacy-subject") ->
 
 
 @pytest.mark.django_db
-def test_project_ownership_is_durable_same_org_and_protected() -> None:
+def test_project_administration_is_an_explicit_protected_assignment() -> None:
     organization = Organization.objects.create(slug="org", name="Org")
     _admin, membership = _member("owner", organization, Role.PROJECT_OWNER)
 
-    project = create_console_project(
-        organization=organization, name="Proje", owner_membership=membership
+    project = create_console_project(organization=organization, name="Proje")
+    ProjectResponsibilityAssignment.objects.create(
+        organization=organization,
+        project=project,
+        membership=membership,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=membership.user,
     )
-
-    assert project.owner_membership == membership
-    assert project.owner == "owner"
+    assert project.responsibility_assignments.get().membership == membership
     with pytest.raises(ProtectedError):
         membership.delete()
 
 
 @pytest.mark.django_db
-def test_project_service_rejects_cross_org_or_ineligible_owner() -> None:
+def test_project_service_rejects_removed_owner_field() -> None:
     organization = Organization.objects.create(slug="org", name="Org")
     other = Organization.objects.create(slug="other", name="Other")
     _foreign_user, foreign = _member("foreign", other, Role.PROJECT_OWNER)
     _auditor_user, auditor = _member("auditor", organization, Role.AUDITOR)
 
-    with pytest.raises(ProjectOwnerError):
+    with pytest.raises(TypeError):
         create_console_project(organization=organization, name="Yabancı", owner_membership=foreign)
-    with pytest.raises(ProjectOwnerError):
+    with pytest.raises(TypeError):
         create_console_project(organization=organization, name="Denetçi", owner_membership=auditor)
     assert not AIProject.objects.exists()
 

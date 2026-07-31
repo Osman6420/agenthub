@@ -13,12 +13,18 @@ from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
 from apps.console.context import SESSION_KEY
 from apps.documents.models import DocumentSet
-from apps.identity.models import Consumer
+from apps.identity.assignment_services import remove_responsibility_assignment
+from apps.identity.models import (
+    Consumer,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
+    ProjectResponsibilityAssignment,
+)
 from apps.identity.roles import Role
-from apps.tenancy.models import Organization, OrganizationMembership
+from apps.tenancy.models import MembershipStatus, Organization, OrganizationMembership
 from apps.tenancy.services import (
     MembershipManagementError,
-    change_organization_membership,
     remove_organization_membership,
 )
 
@@ -32,10 +38,8 @@ def test_workspace_defaults_deterministically_and_never_offers_cross_org_scope(
     later = Organization.objects.create(slug="zulu", name="Zulu")
     first = Organization.objects.create(slug="alpha", name="Alpha")
     user = User.objects.create_user("operator", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=later, user=user, role=Role.AUDITOR)
-    OrganizationMembership.objects.create(
-        organization=first, user=user, role=Role.ORGANIZATION_ADMIN
-    )
+    OrganizationMembership.objects.create(organization=later, user=user)
+    OrganizationMembership.objects.create(organization=first, user=user)
     client.force_login(user)
 
     response = client.get(reverse("console:dashboard"))
@@ -49,10 +53,8 @@ def test_stale_or_revoked_workspace_falls_back_without_widening_scope(client: Cl
     retained = Organization.objects.create(slug="retained", name="Retained")
     revoked = Organization.objects.create(slug="revoked", name="Revoked")
     user = User.objects.create_user("operator", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=retained, user=user, role=Role.AUDITOR)
-    revoked_membership = OrganizationMembership.objects.create(
-        organization=revoked, user=user, role=Role.AUDITOR
-    )
+    OrganizationMembership.objects.create(organization=retained, user=user)
+    revoked_membership = OrganizationMembership.objects.create(organization=revoked, user=user)
     client.force_login(user)
     session = client.session
     session[SESSION_KEY] = revoked.pk
@@ -69,9 +71,7 @@ def test_stale_or_revoked_workspace_falls_back_without_widening_scope(client: Cl
 def test_blank_workspace_switch_is_denied_and_keeps_current_selection(client: Client) -> None:
     organization = Organization.objects.create(slug="acme", name="Acme")
     user = User.objects.create_user("operator", password="x")  # noqa: S106
-    OrganizationMembership.objects.create(
-        organization=organization, user=user, role=Role.ORGANIZATION_ADMIN
-    )
+    OrganizationMembership.objects.create(organization=organization, user=user)
     client.force_login(user)
     client.get(reverse("console:dashboard"))
 
@@ -100,11 +100,22 @@ def test_platform_admin_also_gets_one_deterministic_workspace(client: Client) ->
 
 def _member(org: Organization, username: str, role: str) -> tuple[Any, OrganizationMembership]:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    membership = OrganizationMembership.objects.create(organization=org, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    responsibility = {
+        Role.ORGANIZATION_ADMIN: OrganizationResponsibility.ADMINISTRATOR,
+        Role.AUDITOR: OrganizationResponsibility.AUDITOR,
+    }.get(role)
+    if responsibility is not None:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=org,
+            membership=membership,
+            responsibility=responsibility,
+            assigned_by=user,
+        )
     return user, membership
 
 
-def test_platform_organization_create_is_atomic_and_selects_initial_admin(client: Client) -> None:
+def test_platform_organization_create_is_atomic_without_tenant_identity(client: Client) -> None:
     admin = User.objects.create_superuser("platform", password=None)
     client.force_login(admin)
 
@@ -114,9 +125,7 @@ def test_platform_organization_create_is_atomic_and_selects_initial_admin(client
 
     organization = Organization.objects.get(name="New Tenant")
     assert response.status_code == 302
-    assert OrganizationMembership.objects.filter(
-        organization=organization, user=admin, role=Role.ORGANIZATION_ADMIN
-    ).exists()
+    assert not OrganizationMembership.objects.filter(organization=organization, user=admin).exists()
     assert AuditEvent.objects.filter(
         organization_id=organization.pk, action="console.organization.create"
     ).exists()
@@ -158,19 +167,13 @@ def test_membership_page_and_lifecycle_are_active_org_scoped(client: Client) -> 
 
     added = client.post(
         reverse("console:organization_member_add"),
-        {"user": target.get_username(), "role": Role.AUDITOR},
+        {"user": target.pk},
     )
     membership = OrganizationMembership.objects.get(organization=org, user=target)
     assert added.status_code == 302
-    assert membership.role == Role.AUDITOR
-
-    changed = client.post(
-        reverse("console:organization_member_role", args=[membership.pk]),
-        {"role": Role.AUDITOR},
-    )
-    membership.refresh_from_db()
-    assert changed.status_code == 302
-    assert membership.role == Role.AUDITOR
+    assert not OrganizationResponsibilityAssignment.objects.filter(
+        membership=membership
+    ).exists()
 
     assert (
         client.post(
@@ -180,52 +183,63 @@ def test_membership_page_and_lifecycle_are_active_org_scoped(client: Client) -> 
     )
     removed = client.post(reverse("console:organization_member_remove", args=[membership.pk]))
     assert removed.status_code == 302
-    assert not OrganizationMembership.objects.filter(pk=membership.pk).exists()
+    membership.refresh_from_db()
+    assert membership.status == MembershipStatus.REVOKED
     assert AuditEvent.objects.filter(
         organization_id=org.pk, action="organization_membership.create"
     ).exists()
 
 
-def test_last_admin_cannot_be_changed_or_removed() -> None:
+def test_last_admin_responsibility_and_membership_cannot_be_removed() -> None:
     org = Organization.objects.create(slug="protected", name="Protected")
     admin, membership = _member(org, "admin", Role.ORGANIZATION_ADMIN)
+    assignment = OrganizationResponsibilityAssignment.objects.get(
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+    )
 
-    with pytest.raises(MembershipManagementError, match="LAST_ORGANIZATION_ADMIN"):
-        change_organization_membership(membership=membership, role=Role.AUDITOR, actor=admin)
+    with pytest.raises(PermissionError, match="LAST_ORGANIZATION_ADMIN"):
+        remove_responsibility_assignment(assignment=assignment, actor=admin)
     with pytest.raises(MembershipManagementError, match="LAST_ORGANIZATION_ADMIN"):
         remove_organization_membership(membership=membership, actor=admin)
 
-    membership.refresh_from_db()
-    assert membership.role == Role.ORGANIZATION_ADMIN
+    assignment.refresh_from_db()
+    assert assignment.status == "active"
 
 
-def test_membership_audit_failure_rolls_back_role_change(
+def test_responsibility_audit_failure_rolls_back_revocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     org = Organization.objects.create(slug="audit", name="Audit")
     admin, _ = _member(org, "admin", Role.ORGANIZATION_ADMIN)
     _second_admin, membership = _member(org, "second", Role.ORGANIZATION_ADMIN)
+    assignment = OrganizationResponsibilityAssignment.objects.get(
+        membership=membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+    )
 
     def fail_audit(**_kwargs: object) -> None:
         raise RuntimeError("audit unavailable")
 
-    monkeypatch.setattr("apps.audit.services.record_event", fail_audit)
+    monkeypatch.setattr("apps.identity.assignment_services.record_event", fail_audit)
     with pytest.raises(RuntimeError, match="audit unavailable"):
-        change_organization_membership(membership=membership, role=Role.AUDITOR, actor=admin)
+        remove_responsibility_assignment(assignment=assignment, actor=admin)
 
-    membership.refresh_from_db()
-    assert membership.role == Role.ORGANIZATION_ADMIN
+    assignment.refresh_from_db()
+    assert assignment.status == "active"
 
 
-def test_document_manager_can_create_set_but_not_non_document_objects(client: Client) -> None:
+def test_unscoped_document_manager_cannot_create_set_or_non_document_objects(
+    client: Client,
+) -> None:
     org = Organization.objects.create(slug="docs", name="Docs")
     manager, _ = _member(org, "docs-manager", Role.DOCUMENT_MANAGER)
     project = AIProject.objects.create(organization=org, slug="project", name="Project")
     client.force_login(manager)
 
     created = client.post(reverse("console:document_set_create"), {"name": "Knowledge"})
-    assert created.status_code == 302
-    assert DocumentSet.objects.filter(organization=org, name="Knowledge").exists()
+    assert created.status_code == 403
+    assert not DocumentSet.objects.filter(organization=org, name="Knowledge").exists()
     assert client.post(reverse("console:project_create"), {"name": "Denied"}).status_code == 403
     assert client.post(reverse("console:consumer_create"), {"name": "Denied"}).status_code == 403
     assert (
@@ -233,7 +247,7 @@ def test_document_manager_can_create_set_but_not_non_document_objects(client: Cl
             reverse("console:project_scenario_create", args=[project.public_id]),
             {"name": "Denied"},
         ).status_code
-        == 403
+        == 404
     )
     assert not Scenario.objects.filter(project=project, name="Denied").exists()
     assert not Consumer.objects.filter(organization=org, name="Denied").exists()
@@ -245,6 +259,13 @@ def test_contextual_creates_ignore_forged_parent_fields(client: Client) -> None:
     admin, owner_membership = _member(org, "admin", Role.ORGANIZATION_ADMIN)
     _foreign_admin, foreign_owner = _member(foreign, "foreign-admin", Role.ORGANIZATION_ADMIN)
     project = AIProject.objects.create(organization=org, slug="existing", name="Existing")
+    ProjectResponsibilityAssignment.objects.create(
+        organization=org,
+        project=project,
+        membership=owner_membership,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=admin,
+    )
     foreign_project = AIProject.objects.create(
         organization=foreign, slug="foreign-project", name="Foreign Project"
     )
@@ -272,8 +293,8 @@ def test_contextual_creates_ignore_forged_parent_fields(client: Client) -> None:
             "status": "active",
         },
     )
-    assert rejected_owner.status_code == 200
-    assert not AIProject.objects.filter(name="Foreign Owner").exists()
+    assert rejected_owner.status_code == 302
+    assert AIProject.objects.get(name="Foreign Owner").organization == org
 
     scenario_response = client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
@@ -307,9 +328,16 @@ def test_authorized_deep_link_aligns_workspace_only_after_object_authorization(
     second = Organization.objects.create(slug="second-link", name="Second")
     foreign = Organization.objects.create(slug="foreign-link", name="Foreign")
     user, _ = _member(first, "link-user", Role.AUDITOR)
-    OrganizationMembership.objects.create(organization=second, user=user, role=Role.AUDITOR)
+    second_membership = OrganizationMembership.objects.create(organization=second, user=user)
     second_project = AIProject.objects.create(
         organization=second, slug="second-project", name="Second Project"
+    )
+    ProjectResponsibilityAssignment.objects.create(
+        organization=second,
+        project=second_project,
+        membership=second_membership,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=user,
     )
     foreign_project = AIProject.objects.create(
         organization=foreign, slug="foreign-project", name="Foreign Project"

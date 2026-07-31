@@ -12,7 +12,13 @@ from django.urls import reverse
 from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet, DocumentSetGrant, ScenarioDocumentSetBinding
-from apps.identity.models import Consumer, ConsumerBinding, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerBinding,
+    ConsumerProtocol,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
 from apps.identity.roles import Role
 from apps.releases.models import ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
@@ -24,7 +30,18 @@ pytestmark = pytest.mark.django_db
 
 def _member(username: str, organization: Organization, role: str = Role.AUDITOR) -> Any:
     user = User.objects.create_user(username, password="x")  # noqa: S106
-    OrganizationMembership.objects.create(organization=organization, user=user, role=role)
+    membership = OrganizationMembership.objects.create(organization=organization, user=user)
+    responsibility = {
+        Role.ORGANIZATION_ADMIN: OrganizationResponsibility.ADMINISTRATOR,
+        Role.AUDITOR: OrganizationResponsibility.AUDITOR,
+    }.get(role)
+    if responsibility is not None:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            responsibility=responsibility,
+            assigned_by=user,
+        )
     return user
 
 
@@ -47,7 +64,7 @@ def test_dashboard_lists_authorized_active_and_disabled_organizations(client: Cl
     )
     foreign = Organization.objects.create(slug="yabanci", name="Yabancı Kurum")
     user = _member("member", active)
-    OrganizationMembership.objects.create(organization=disabled, user=user, role=Role.AUDITOR)
+    OrganizationMembership.objects.create(organization=disabled, user=user)
     client.force_login(user)
 
     response = client.get(reverse("console:dashboard"))
