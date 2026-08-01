@@ -137,14 +137,15 @@ def grant_rest_profile(
         raise RestAuthorizationError("PLATFORM_ADMIN_REQUIRED")
     if document_set.organization_id != organization.id:
         raise RestServiceError("REST_DOCUMENT_SET_TENANT_MISMATCH")
-    if rest_profile.status != RestPullProfileStatus.ACTIVE:
-        raise RestServiceError("REST_PROFILE_DISABLED")
     with transaction.atomic():
+        locked_profile = RestPullProfile.objects.select_for_update().get(pk=rest_profile.pk)
+        if locked_profile.status != RestPullProfileStatus.ACTIVE:
+            raise RestServiceError("REST_PROFILE_DISABLED")
         set_tenant_context(organization.id)
         grant, _ = TenantRestPullProfileGrant.objects.get_or_create(
             organization=organization,
             document_set=document_set,
-            rest_profile=rest_profile,
+            rest_profile=locked_profile,
             defaults={"created_by": actor_id},
         )
         _audit(
@@ -152,7 +153,7 @@ def grant_rest_profile(
             actor_id,
             Outcome.SUCCESS,
             organization_id=organization.id,
-            resource_id=str(rest_profile.public_id),
+            resource_id=str(locked_profile.public_id),
             after={"document_set_id": document_set.pk},
         )
     return grant
@@ -168,11 +169,8 @@ def create_rest_contract(
     definition: dict[str, Any],
 ) -> RestPullContract:
     actor_id = _actor_id(actor)
-    if (
-        document_set.organization_id != organization.id
-        or not can_manage_documents(
-            actor, organization.id, document_set=document_set
-        )
+    if document_set.organization_id != organization.id or not can_manage_documents(
+        actor, organization.id, document_set=document_set
     ):
         _audit(
             "rest_contract.create",

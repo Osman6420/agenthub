@@ -15,8 +15,10 @@ verification record owned by the main implementation agent.
 
 ## Status
 
-In progress. Parts 1–3 are implemented and verified; Part 4 is the next active milestone. Part 3
+In progress. Parts 1–4 are implemented and verified; Part 5 is the next active milestone. Part 4
 evidence is archived in
+[the governed setup and immutable inputs task](../archive/phase-2-9-part-4-governed-setup-immutable-inputs-2026-08-01/plan.md).
+Part 3 evidence is archived in
 [the exact-role release/runtime controls task](../archive/phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/plan.md).
 Part 2 evidence is archived in
 [the callable-scenario and atomic served-index task](../archive/phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/plan.md).
@@ -210,6 +212,10 @@ administrator can safely provision platform profiles/grants without database/ser
 **Acceptance:** a fresh authorized synthetic tenant can reach release/profile/source readiness
 without shell/database mutation; unauthorized, foreign-tenant, forged-parent, and secret-redaction
 tests pass.
+
+Implemented and verified 2026-08-01. Guided scenario contract/eval versioning, the platform-only
+profile workspace, status-only disable, explicit embedding/connector grants, connector readiness,
+and the no-egress browser journey are recorded in the [Part 4 verification](../archive/phase-2-9-part-4-governed-setup-immutable-inputs-2026-08-01/verification.md).
 
 ### Part 5 — P1: exact-permission AI authoring and provider response reliability
 

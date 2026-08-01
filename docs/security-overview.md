@@ -319,6 +319,21 @@ non-authoritative:
 
 Nothing above is a silent gap — each is tracked in the planning and threat-model records.
 
+## Governed setup console
+
+Phase 2.9 Part 4 adds no tenant-controlled egress destination. Profile registration, disable, and
+grant routes are platform-admin-only, POST/CSRF protected where mutating, and delegate to canonical
+audited services. Secret fields accept opaque references only, use non-reflecting password widgets,
+and are absent from inventories, tenant pages, messages, and audit payloads. Tenant connector pages
+receive logical profile/revision labels and readiness only. Embedding, Confluence, and REST grants
+lock and re-read the current profile revision before granting, so a stale in-memory `active` object
+cannot race a disable. Disable preserves immutable profile and grant lineage; it does not delete.
+
+Exact scenario artifact authoring accepts only input contract, output contract, and eval suite,
+uses a server-derived scenario UUID namespace, canonical validation, inline-secret rejection,
+bounded JSON, checksums, immutable next versions, and fail-closed audit within the write transaction.
+The resulting artifact is not automatically pinned, released, promoted, or executed.
+
 ---
 
 ## 15. Where to verify this in the code

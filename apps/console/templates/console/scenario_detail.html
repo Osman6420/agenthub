@@ -60,6 +60,12 @@
   <p class="muted">Platform/organizasyon acil kontrolleri ayrı olarak Çalıştırmalar sayfasında yönetilir ve daha geniş kapsam her zaman baskındır.</p>
 </section>
 
+<section class="card" aria-labelledby="release-inputs-title">
+  <div class="section-heading"><div><p class="eyebrow">Governed release girdileri</p><h2 id="release-inputs-title">Contract ve eval suite</h2><p class="muted">Her kayıt canonical validator'dan geçen, checksum'lı yeni bir immutable sürümdür; release'e otomatik pinlenmez.</p></div></div>
+  {% if can_write %}<div class="actions"><a class="button secondary" href="{% url 'console:scenario_artifact_create' scenario.public_id %}?type=input_contract">Input contract</a><a class="button secondary" href="{% url 'console:scenario_artifact_create' scenario.public_id %}?type=output_contract">Output contract</a><a class="button secondary" href="{% url 'console:scenario_artifact_create' scenario.public_id %}?type=eval_suite">Eval suite</a></div>{% else %}<p class="muted">Yeni sürüm oluşturmak exact Scenario editor sorumluluğu gerektirir. Release manager oluşturulmuş immutable sürümleri ayrıca pinler.</p>{% endif %}
+  {% for artifact in governed_artifacts %}<div class="access-row"><div><strong>{{ artifact.get_type_display }} · v{{ artifact.version }}</strong><p class="muted">{{ artifact.logical_description }} · {{ artifact.version_description }}</p></div><span class="mono">{{ artifact.checksum|slice:':12' }}</span></div>{% empty %}<p class="muted">Bu exact senaryo için guided contract/eval sürümü yok.</p>{% endfor %}
+</section>
+
 {% if can_evaluate and active_release %}
 <section class="card form-card">
   <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>Senaryoya sor</h2><p class="muted">Exact aktif release üzerinden çalışır; soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>

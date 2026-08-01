@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [Phase 2.9 Part 4 — governed setup and immutable release inputs (completed 2026-08-01)](phase-2-9-part-4-governed-setup-immutable-inputs-2026-08-01/plan.md);
+  [verification](phase-2-9-part-4-governed-setup-immutable-inputs-2026-08-01/verification.md).
+
 - [Phase 2.9 Part 3 — exact-role release and runtime controls (completed 2026-08-01)](phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/plan.md);
   [verification](phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/verification.md).
 

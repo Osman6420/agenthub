@@ -36,6 +36,11 @@ urlpatterns = [
     path("scenarios/<int:pk>/", views.scenario_detail, name="scenario_detail"),
     path("scenarios/id/<uuid:public_id>/", views.scenario_detail, name="scenario_detail_public"),
     path(
+        "scenarios/id/<uuid:public_id>/artifacts/new/",
+        views.scenario_artifact_create,
+        name="scenario_artifact_create",
+    ),
+    path(
         "scenarios/id/<uuid:public_id>/lifecycle/",
         views.scenario_lifecycle_change,
         name="scenario_lifecycle_change",
@@ -117,6 +122,22 @@ urlpatterns = [
     path("bindings/new/", views.binding_create, name="binding_create"),
     path("artifacts/", views.artifacts, name="artifacts"),
     path("artifacts/<int:pk>/", views.artifact_detail, name="artifact_detail"),
+    path("platform/setup/", views.platform_setup, name="platform_setup"),
+    path(
+        "platform/setup/profiles/<slug:profile_kind>/new/",
+        views.platform_profile_create,
+        name="platform_profile_create",
+    ),
+    path(
+        "platform/setup/profiles/<slug:profile_kind>/<uuid:public_id>/disable/",
+        views.platform_profile_disable,
+        name="platform_profile_disable",
+    ),
+    path(
+        "platform/setup/profiles/<slug:profile_kind>/<uuid:public_id>/grant/",
+        views.platform_profile_grant,
+        name="platform_profile_grant",
+    ),
     path("releases/", views.releases, name="releases"),
     path("releases/<int:release_id>/", views.release_detail, name="release_detail"),
     path("releases/<int:release_id>/eval/", views.release_run_eval, name="release_run_eval"),

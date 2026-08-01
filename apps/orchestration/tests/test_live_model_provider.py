@@ -10,7 +10,11 @@ from apps.audit.models import AuditEvent
 from apps.orchestration.egress import JsonModelEgressClient, ModelEgressError
 from apps.orchestration.models import ModelProfile
 from apps.orchestration.providers import ModelProviderError, OpenAICompatibleModelProvider
-from apps.orchestration.services import ModelProfileAuthorizationError, register_model_profile
+from apps.orchestration.services import (
+    ModelProfileAuthorizationError,
+    disable_model_profile,
+    register_model_profile,
+)
 from apps.retrieval.types import RetrievedChunk
 from apps.tools.secrets_resolver import SecretResolver
 
@@ -104,6 +108,22 @@ def test_profile_body_is_immutable() -> None:
         profile.save()
     with pytest.raises(ValueError, match="cannot be deleted"):
         profile.delete()
+
+
+@pytest.mark.django_db
+def test_profile_disable_is_platform_only_audited_and_idempotent() -> None:
+    admin = get_user_model().objects.create_superuser(username="platform", password=None)
+    member = get_user_model().objects.create_user(username="member")
+    profile = _profile(admin)
+
+    with pytest.raises(ModelProfileAuthorizationError, match="PLATFORM_ADMIN_REQUIRED"):
+        disable_model_profile(actor=member, model_profile=profile)
+
+    disable_model_profile(actor=admin, model_profile=profile)
+    disable_model_profile(actor=admin, model_profile=profile)
+    profile.refresh_from_db()
+    assert profile.status == "disabled"
+    assert AuditEvent.objects.filter(action="model_profile.disable", outcome="success").count() == 1
 
 
 @pytest.mark.django_db

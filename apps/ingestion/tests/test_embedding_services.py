@@ -11,6 +11,7 @@ from django.contrib.auth import get_user_model
 from apps.audit.models import AuditEvent
 from apps.ingestion.embedding_services import (
     EmbeddingProfileAuthorizationError,
+    disable_embedding_profile,
     grant_embedding_profile,
     register_embedding_profile,
 )
@@ -80,3 +81,27 @@ def test_grant_is_platform_admin_only_and_idempotent() -> None:
     grant_embedding_profile(actor=admin, organization=org, embedding_profile=profile)  # idempotent
     assert TenantEmbeddingProfileGrant.objects.filter(organization=org).count() == 1
     assert AuditEvent.objects.filter(action="embedding_profile.grant", outcome="success").exists()
+
+
+def test_disable_is_platform_only_and_blocks_new_grants() -> None:
+    admin = get_user_model().objects.create_superuser(username="platform", password=None)
+    member = get_user_model().objects.create_user(username="member")
+    profile = _register(admin)
+    organization = Organization.objects.create(slug="disabled-grant", name="Disabled grant")
+
+    with pytest.raises(EmbeddingProfileAuthorizationError, match="PLATFORM_ADMIN_REQUIRED"):
+        disable_embedding_profile(actor=member, embedding_profile=profile)
+    disable_embedding_profile(actor=admin, embedding_profile=profile)
+    disable_embedding_profile(actor=admin, embedding_profile=profile)
+
+    with pytest.raises(EmbeddingProfileAuthorizationError, match="EMBEDDING_PROFILE_DISABLED"):
+        grant_embedding_profile(
+            actor=admin,
+            organization=organization,
+            embedding_profile=profile,
+        )
+    assert not TenantEmbeddingProfileGrant.objects.filter(organization=organization).exists()
+    assert (
+        AuditEvent.objects.filter(action="embedding_profile.disable", outcome="success").count()
+        == 1
+    )

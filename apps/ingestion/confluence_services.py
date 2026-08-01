@@ -139,21 +139,22 @@ def grant_confluence_profile(
             resource_id=str(confluence_profile.public_id),
         )
         raise ConfluenceServiceError("CONFLUENCE_DOCUMENT_SET_TENANT_MISMATCH")
-    if confluence_profile.status != ConfluenceProfileStatus.ACTIVE:
-        _audit_profile_denial(
-            actor_id,
-            "confluence_profile.grant",
-            "CONFLUENCE_PROFILE_DISABLED",
-            organization_id=organization.id,
-            resource_id=str(confluence_profile.public_id),
-        )
-        raise ConfluenceServiceError("CONFLUENCE_PROFILE_DISABLED")
     with transaction.atomic():
+        locked_profile = ConfluenceProfile.objects.select_for_update().get(pk=confluence_profile.pk)
+        if locked_profile.status != ConfluenceProfileStatus.ACTIVE:
+            _audit_profile_denial(
+                actor_id,
+                "confluence_profile.grant",
+                "CONFLUENCE_PROFILE_DISABLED",
+                organization_id=organization.id,
+                resource_id=str(locked_profile.public_id),
+            )
+            raise ConfluenceServiceError("CONFLUENCE_PROFILE_DISABLED")
         set_tenant_context(organization.id)
         grant = TenantConfluenceProfileGrant(
             organization=organization,
             document_set=document_set,
-            confluence_profile=confluence_profile,
+            confluence_profile=locked_profile,
             created_by=actor_id,
         )
         grant.full_clean(validate_unique=False, validate_constraints=False)
@@ -161,7 +162,7 @@ def grant_confluence_profile(
             grant, _created = TenantConfluenceProfileGrant.objects.get_or_create(
                 organization=organization,
                 document_set=document_set,
-                confluence_profile=confluence_profile,
+                confluence_profile=locked_profile,
                 defaults={"created_by": actor_id},
             )
         except IntegrityError as exc:
@@ -173,7 +174,7 @@ def grant_confluence_profile(
             outcome=Outcome.SUCCESS,
             organization_id=organization.id,
             resource_type="confluence_profile",
-            resource_id=str(confluence_profile.public_id),
+            resource_id=str(locked_profile.public_id),
             after={"document_set_id": document_set.pk},
         )
     return grant

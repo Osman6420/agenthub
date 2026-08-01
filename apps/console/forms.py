@@ -11,6 +11,7 @@ import json
 from typing import Any, cast
 
 from django import forms
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import QuerySet
 
@@ -34,14 +35,17 @@ from apps.ingestion.models import (
     EmbeddingProfileStatus,
     OcrProfile,
     OcrProfileStatus,
+    RestPullAuthMode,
     RestPullContract,
     RestPullContractStatus,
+    RestPullMethod,
     RestPullProfile,
     RestPullProfileStatus,
     ScheduleAutomationMode,
     TenantConfluenceProfileGrant,
     TenantRestPullProfileGrant,
 )
+from apps.orchestration.models import ModelProfile
 from apps.tenancy.models import (
     MembershipStatus,
     Organization,
@@ -135,6 +139,16 @@ class ConsumerForm(forms.ModelForm):
 class DirectoryUserChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, user: Any) -> str:
         return user.get_username()
+
+
+class PlatformDocumentSetChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, document_set: DocumentSet) -> str:
+        return f"{document_set.organization.name} · {document_set.name} · {document_set.logical_id}"
+
+
+class RestContractChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, contract: RestPullContract) -> str:
+        return f"{contract.logical_id} · r{contract.revision}"
 
 
 class MembershipCreateForm(forms.Form):
@@ -443,6 +457,168 @@ class BoundedJsonField(forms.CharField):
             raise forms.ValidationError("Geçerli bir JSON değeri girin.") from exc
 
 
+class GovernedReleaseArtifactForm(forms.Form):
+    artifact_type = forms.ChoiceField(
+        choices=(
+            (ArtifactType.INPUT_CONTRACT, "Input contract"),
+            (ArtifactType.OUTPUT_CONTRACT, "Output contract"),
+            (ArtifactType.EVAL_SUITE, "Eval suite"),
+        ),
+        label="Artifact türü",
+    )
+    logical_description = forms.CharField(
+        max_length=1000,
+        label="Kalıcı amaç",
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+    version_description = forms.CharField(
+        max_length=1000,
+        label="Bu sürümdeki değişiklik",
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+    body = BoundedJsonField(max_length=500_000, label="Canonical JSON body")
+
+    def clean_body(self) -> dict[str, Any]:
+        value = self.cleaned_data["body"]
+        if not isinstance(value, dict):
+            raise forms.ValidationError("Artifact body bir JSON object olmalıdır.")
+        return value
+
+
+class ModelProfileRegistrationForm(forms.ModelForm):
+    class Meta:
+        model = ModelProfile
+        fields = (
+            "logical_id",
+            "revision",
+            "provider",
+            "scheme",
+            "host",
+            "port",
+            "path",
+            "model",
+            "secret_ref",
+            "timeout_seconds",
+            "max_response_bytes",
+            "max_output_tokens",
+        )
+        widgets = {"secret_ref": forms.PasswordInput(render_value=False)}
+
+
+class EmbeddingProfileRegistrationForm(forms.ModelForm):
+    class Meta:
+        model = EmbeddingProfile
+        fields = (
+            "logical_id",
+            "revision",
+            "provider",
+            "scheme",
+            "host",
+            "port",
+            "path",
+            "model",
+            "secret_ref",
+            "dimensions",
+            "index_type",
+            "normalize",
+            "distance_metric",
+            "timeout_seconds",
+            "max_response_bytes",
+            "max_batch_size",
+        )
+        widgets = {"secret_ref": forms.PasswordInput(render_value=False)}
+
+
+class ConfluenceProfileRegistrationForm(forms.Form):
+    logical_id = forms.SlugField(max_length=128)
+    revision = forms.IntegerField(min_value=1, max_value=1_000_000, initial=1)
+    base_url = forms.URLField(
+        max_length=800,
+        initial="https://confluence.internal",
+        assume_scheme="https",
+    )
+    secret_ref = forms.CharField(max_length=160, widget=forms.PasswordInput(render_value=False))
+    network_policy_id = forms.ChoiceField(choices=())
+    timeout_seconds = forms.IntegerField(min_value=1, max_value=120, initial=30)
+    page_size = forms.IntegerField(min_value=1, max_value=100, initial=50)
+    max_pages = forms.IntegerField(min_value=1, max_value=10_000, initial=5_000)
+    max_depth = forms.IntegerField(min_value=0, max_value=100, initial=50)
+    max_requests = forms.IntegerField(min_value=1, max_value=50_000, initial=20_000)
+    max_retries = forms.IntegerField(min_value=0, max_value=3, initial=2)
+    max_response_bytes = forms.IntegerField(
+        min_value=1_024, max_value=10_000_000, initial=5_000_000
+    )
+    max_page_body_bytes = forms.IntegerField(
+        min_value=1_024, max_value=10_000_000, initial=4_000_000
+    )
+    max_total_bytes = forms.IntegerField(
+        min_value=1_024, max_value=250_000_000, initial=100_000_000
+    )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        policies = getattr(settings, "CONFLUENCE_NETWORK_POLICIES", {})
+        cast(forms.ChoiceField, self.fields["network_policy_id"]).choices = [
+            (key, key) for key in sorted(policies)
+        ]
+
+
+class RestProfileRegistrationForm(forms.Form):
+    logical_id = forms.SlugField(max_length=128)
+    revision = forms.IntegerField(min_value=1, max_value=1_000_000, initial=1)
+    base_url = forms.URLField(
+        max_length=800,
+        initial="https://api.example.com",
+        assume_scheme="https",
+    )
+    path_prefix = forms.CharField(max_length=512, initial="/")
+    method = forms.ChoiceField(choices=RestPullMethod.choices, initial=RestPullMethod.GET)
+    auth_mode = forms.ChoiceField(choices=RestPullAuthMode.choices, initial=RestPullAuthMode.NONE)
+    secret_ref = forms.CharField(
+        max_length=160, required=False, widget=forms.PasswordInput(render_value=False)
+    )
+    api_key_header_name = forms.CharField(max_length=64, required=False)
+    timeout_seconds = forms.IntegerField(min_value=1, max_value=120, initial=30)
+    max_response_bytes = forms.IntegerField(min_value=1, max_value=25_000_000, initial=5_000_000)
+    max_total_bytes = forms.IntegerField(min_value=1, max_value=1_000_000_000, initial=100_000_000)
+    max_requests = forms.IntegerField(min_value=1, max_value=10_000, initial=1_000)
+    max_items = forms.IntegerField(min_value=1, max_value=100_000, initial=50_000)
+    max_pages = forms.IntegerField(min_value=1, max_value=10_000, initial=1_000)
+    max_retries = forms.IntegerField(min_value=0, max_value=5, initial=2)
+    max_decoded_item_bytes = forms.IntegerField(
+        min_value=1, max_value=25_000_000, initial=25_000_000
+    )
+
+
+class PlatformProfileGrantForm(forms.Form):
+    organization = forms.ModelChoiceField(
+        queryset=Organization.objects.none(), required=False, label="Organizasyon"
+    )
+    document_set = PlatformDocumentSetChoiceField(
+        queryset=DocumentSet.objects.none(), required=False, label="Exact doküman seti"
+    )
+
+    def __init__(self, *args: Any, profile_kind: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.profile_kind = profile_kind
+        cast(
+            forms.ModelChoiceField, self.fields["organization"]
+        ).queryset = Organization.objects.filter(status=OrganizationStatus.ACTIVE).order_by(
+            "name", "slug"
+        )
+        cast(forms.ModelChoiceField, self.fields["document_set"]).queryset = (
+            DocumentSet.objects.filter(status="active")
+            .select_related("organization")
+            .order_by("organization__name", "name")
+        )
+        if profile_kind == "embedding":
+            self.fields["organization"].required = True
+            del self.fields["document_set"]
+        else:
+            self.fields["document_set"].required = True
+            del self.fields["organization"]
+
+
 def _page_ids(value: str) -> list[str]:
     return [item.strip() for item in value.replace(",", "\n").splitlines() if item.strip()]
 
@@ -506,7 +682,7 @@ class RestSourceForm(forms.Form):
     rest_profile = forms.ModelChoiceField(
         queryset=RestPullProfile.objects.none(), label="REST hedef profili"
     )
-    rest_contract = forms.ModelChoiceField(
+    rest_contract = RestContractChoiceField(
         queryset=RestPullContract.objects.none(), label="Mapping sözleşmesi"
     )
     slug = forms.SlugField(max_length=64, label="Kaynak ID")

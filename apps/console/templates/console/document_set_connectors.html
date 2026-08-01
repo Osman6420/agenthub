@@ -29,6 +29,7 @@
 
 {% if can_write %}
 <div class="card"><h2>Kaynak sihirbazı</h2><ol><li>Kaynak türünü seçin.</li><li>Organizasyon için grant edilmiş platform profilini seçin; endpoint ve secret gizli kalır.</li><li>REST için immutable mapping revizyonunu seçin veya aşağıda oluşturun.</li><li>Sentetik örnekle bounded preview çalıştırın; bu adım ağ isteği açmaz.</li><li>Kaynağı bu sete bağlayıp güvenli yenileme politikasını seçin.</li><li>Senkronu çalıştırın; sonuç yalnız taslak aday üretir, aktif indeksi doğrudan değiştirmez.</li></ol></div>
+{% if not confluence_ready or not rest_ready %}<div class="warning-box"><strong>Connector readiness eksik.</strong> {% if not confluence_ready %}Bu exact set için etkin Confluence profil grant'i yok. {% endif %}{% if not rest_ready %}Bu exact set için etkin REST profil grant'i yok. {% endif %}Profil hedefi ve secret referansı tenant rolüne gösterilmez; platform yöneticisi immutable profili kaydedip bu sete explicit grant vermelidir. {% if platform_setup_available %}<a href="{% url 'console:platform_setup' %}">Platform kurulumuna git</a>{% endif %}</div>{% endif %}
 <div class="relationship-grid">
   <div class="card form-card">
     <h2>Confluence kaynağı ekle</h2><p class="muted">Yalnız platform yöneticisinin bu sete grant ettiği profil seçilebilir. Kök sayfa alt ağacı periyodik olarak değişiklik kontrolünden geçer.</p>

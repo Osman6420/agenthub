@@ -159,6 +159,17 @@ no-egress static workload; all other paths remain on Uvicorn/Django. Application
 are independently digest-pinned but promoted and rolled back as one matching release pair. These
 assets are repository/container verified; no live OpenShift deployment is claimed.
 
+Phase 2.9 Part 4 exposes existing governed setup seams without changing the modular-monolith or
+egress architecture. Exact scenario editors create only namespaced, canonical-validated immutable
+input/output contract and eval-suite versions; those versions remain unpinned until a separate
+release action. Platform administrators alone can register immutable model, embedding, Confluence,
+and REST profile revisions, disable a revision without deleting lineage, and create the existing
+organization/document-set grants. Model profiles remain platform/deployment selected; embedding
+profiles use organization grants and connector profiles use exact document-set grants. Tenant
+connector pages consume only granted profile labels/readiness and never receive destinations or
+secret references. Registration or grant never performs a network call or bypasses deployment,
+source, policy, runtime, or release gates.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full

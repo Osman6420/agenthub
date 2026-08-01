@@ -366,6 +366,30 @@ synchronous RAG work without it.
 
 See [`docs/security-overview.md`](security-overview.md) for how and why the platform is
 safe and secure.
+
+# Governed release inputs and platform setup (Phase 2.9 Part 4)
+
+An exact Scenario editor opens the scenario page and uses **Input contract**, **Output contract**,
+or **Eval suite** under **Governed release girdileri**. The form starts with a safe example, validates
+canonical JSON/JSON Schema/eval rules, rejects inline secrets, and creates the next immutable version
+in that exact scenario's namespace. Success returns to the scenario and shows type, version,
+description, and a short checksum. It does not create or promote a release; the release manager pins
+an exact version in the separate candidate-release flow.
+
+Only a platform administrator sees **Platform kurulumu**. That workspace can register immutable
+model, embedding, Confluence, and REST profile revisions, disable an active revision, grant an
+embedding profile to an organization, or grant a connector profile to an exact document set.
+Destinations and secret references are deliberately absent from the inventory. A profile row alone
+does not authorize egress: deployment allowlists/network policy, secret resolution, explicit grants,
+tenant source configuration, and runtime gates must still pass. Model selection remains the existing
+platform/deployment-governed flow rather than tenant self-service.
+
+On a document set's **Kaynaklar** page, a manager sees an actionable readiness warning for each
+missing connector grant. After a platform grant, only the logical profile/revision label becomes
+selectable. The manager may validate/create a closed REST mapping and bind a source without exposing
+the endpoint, credential reference, or bound input values. **Şimdi çalıştır** is the separate action
+that can initiate egress; profile registration, grant, preview, mapping creation, and source creation
+do not call the external system.
 # Live chat provider (Phase 2 P1)
 
 The default runtime remains deterministic. An operator may opt into the real

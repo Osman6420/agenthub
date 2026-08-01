@@ -1,0 +1,10 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:platform_setup' %}">Platform kurulumu</a><span>›</span><span>{{ profile_kind }}</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Platform-only immutable katalog</p><h1>{{ profile_kind }} profili kaydet</h1><p class="muted">Kayıt tek başına egress açmaz. Deployment allowlist/policy, secret resolver, explicit grant ve runtime kapıları ayrı ayrı geçilmelidir.</p></div></div>
+<section class="card form-card">
+  <div class="warning-box">Secret değeri değil yalnız <span class="mono">secret:NAME</span> referansı girin. Referans kayıttan sonra bu konsolda tekrar gösterilmez.</div>
+  <form method="post" autocomplete="off">{% csrf_token %}{{ form.as_p }}<button type="submit">Canonical doğrula ve profili kaydet</button></form>
+</section>
+{% endblock %}

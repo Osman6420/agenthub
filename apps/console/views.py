@@ -20,7 +20,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, Q, QuerySet
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
@@ -30,8 +30,8 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.module_loading import import_string
 from django.utils.text import slugify
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.views.decorators.debug import sensitive_variables
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.agents.models import AgentRuntimeControl, RuntimeControlScope
 from apps.agents.services import (
@@ -41,7 +41,9 @@ from apps.agents.services import (
     change_runtime_control,
 )
 from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
+from apps.artifacts.validation import ArtifactValidationError
 from apps.audit.services import record_event
 from apps.builder import services as builder_services
 from apps.builder.models import WorkflowDraft
@@ -54,6 +56,7 @@ from apps.console import operations, scoping
 from apps.console.forms import (
     BindingForm,
     CanaryForm,
+    ConfluenceProfileRegistrationForm,
     ConfluenceSourceForm,
     ConnectorScheduleForm,
     ConsumerForm,
@@ -64,10 +67,15 @@ from apps.console.forms import (
     DocumentSetBulkUploadForm,
     DocumentSetForm,
     DocumentUploadForm,
+    EmbeddingProfileRegistrationForm,
+    GovernedReleaseArtifactForm,
     MembershipCreateForm,
+    ModelProfileRegistrationForm,
     OrganizationForm,
+    PlatformProfileGrantForm,
     ProjectForm,
     RestContractForm,
+    RestProfileRegistrationForm,
     RestSourceForm,
     ScenarioForm,
 )
@@ -155,7 +163,16 @@ from apps.ingestion.confluence_services import (
     ConfluenceServiceError,
     create_confluence_source,
     create_confluence_sync_run,
+    disable_confluence_profile,
+    grant_confluence_profile,
     mark_confluence_dispatch_failed,
+    register_confluence_profile,
+)
+from apps.ingestion.embedding_services import (
+    EmbeddingProfileAuthorizationError,
+    disable_embedding_profile,
+    grant_embedding_profile,
+    register_embedding_profile,
 )
 from apps.ingestion.job_lifecycle import (
     BuildJobError,
@@ -165,10 +182,13 @@ from apps.ingestion.job_lifecycle import (
     retry_build_job,
 )
 from apps.ingestion.models import (
+    ConfluenceProfile,
     ConfluenceSyncRun,
     ConnectorType,
+    EmbeddingProfile,
     IndexStatus,
     IndexVersion,
+    RestPullProfile,
     RestSyncRun,
     ScheduleAutomationMode,
     Source,
@@ -184,7 +204,10 @@ from apps.ingestion.rest_services import (
     create_rest_contract,
     create_rest_source,
     create_rest_sync_run,
+    disable_rest_profile,
+    grant_rest_profile,
     mark_rest_dispatch_failed,
+    register_rest_profile,
 )
 from apps.ingestion.staged_build import StagedBuildError, promote_staged_index
 from apps.ingestion.tasks import sync_confluence_source, sync_rest_source
@@ -198,6 +221,11 @@ from apps.ingestion.vector_store import (
 from apps.observability.retention import RETENTION_DAYS, run_retention
 from apps.orchestration.authoring_guide import workflow_authoring_guide
 from apps.orchestration.models import ModelProfile, ModelProfileStatus
+from apps.orchestration.services import (
+    ModelProfileAuthorizationError,
+    disable_model_profile,
+    register_model_profile,
+)
 from apps.releases.compiler import (
     ArtifactRef,
     CompileError,
@@ -1462,6 +1490,13 @@ def scenario_detail(
             "-created_at", "-pk"
         )[:20]
     ]
+    governed_artifacts = list(
+        ArtifactVersion.objects.filter(
+            organization_id=organization_id,
+            type__in=_GOVERNED_RELEASE_ARTIFACT_TYPES,
+            logical_id__startswith=f"scenario-{scenario.public_id.hex}-",
+        ).order_by("type", "-version")[:60]
+    )
     runtime_controls = applicable_runtime_controls(
         organization_id,
         project_id=scenario.project_id,
@@ -1485,6 +1520,7 @@ def scenario_detail(
                 row["role"] == "output_contract" for row in active_artifacts
             ),
             "release_rows": release_rows,
+            "governed_artifacts": governed_artifacts,
             "artifact_type_descriptions": ARTIFACT_TYPE_DESCRIPTIONS,
             "invocation_guidance": _invocation_guidance(
                 active_release, aliases[0].alias if aliases else None
@@ -2133,6 +2169,139 @@ def artifacts(request: HttpRequest) -> HttpResponse:
     return redirect("console:projects")
 
 
+_GOVERNED_RELEASE_ARTIFACT_TYPES = frozenset(
+    {
+        ArtifactType.INPUT_CONTRACT,
+        ArtifactType.OUTPUT_CONTRACT,
+        ArtifactType.EVAL_SUITE,
+    }
+)
+
+
+def _release_artifact_example(artifact_type: str) -> dict[str, object]:
+    if artifact_type == ArtifactType.EVAL_SUITE:
+        return {
+            "cases": [
+                {
+                    "id": "smoke-1",
+                    "input": {"question": "Kontrollü bir test sorusu"},
+                    "assertions": [{"type": "workflow_completed"}],
+                }
+            ]
+        }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+
+
+@login_required
+@transaction.atomic
+@require_http_methods(["GET", "POST"])
+def scenario_artifact_create(request: HttpRequest, public_id: object) -> HttpResponse:
+    """Create the next immutable governed release-input version for one exact scenario."""
+
+    scenario = _scoped_scenario(request.user, public_id=public_id)
+    if not can_author_scenarios(
+        request.user,
+        scenario.organization_id,
+        project=scenario.project,
+        scenario=scenario,
+    ):
+        raise PermissionDenied
+    requested_type = request.POST.get("artifact_type") or request.GET.get("type", "")
+    if requested_type not in _GOVERNED_RELEASE_ARTIFACT_TYPES:
+        requested_type = ArtifactType.INPUT_CONTRACT
+    logical_id = f"scenario-{scenario.public_id.hex}-{requested_type}"
+    latest = (
+        ArtifactVersion.objects.filter(
+            organization_id=scenario.organization_id,
+            type=requested_type,
+            logical_id=logical_id,
+        )
+        .order_by("-version")
+        .first()
+    )
+    initial = {
+        "artifact_type": requested_type,
+        "logical_description": (
+            latest.logical_description
+            if latest is not None
+            else f"{scenario.name} {requested_type}"
+        ),
+        "version_description": "Guided console version",
+        "body": json.dumps(_release_artifact_example(requested_type), ensure_ascii=False, indent=2),
+    }
+    form = GovernedReleaseArtifactForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        artifact_type = form.cleaned_data["artifact_type"]
+        logical_id = f"scenario-{scenario.public_id.hex}-{artifact_type}"
+        try:
+            artifact = create_artifact_version(
+                organization=scenario.organization,
+                artifact_type=artifact_type,
+                logical_id=logical_id,
+                logical_description=form.cleaned_data["logical_description"],
+                version_description=form.cleaned_data["version_description"],
+                body=form.cleaned_data["body"],
+                created_by=request.user.get_username(),
+            )
+        except (ArtifactValidationError, ValueError) as exc:
+            record_event(
+                actor_type="user",
+                actor_id=request.user.get_username(),
+                action="artifact_version.create",
+                outcome="failure",
+                organization_id=scenario.organization_id,
+                resource_type="scenario",
+                resource_id=str(scenario.public_id),
+                reason="ARTIFACT_VALIDATION_FAILED",
+                request_id=_request_id(request),
+                trace_id=_trace_id(request),
+            )
+            form.add_error("body", f"Artifact doğrulanamadı: {exc}")
+        else:
+            record_event(
+                actor_type="user",
+                actor_id=request.user.get_username(),
+                action="artifact_version.create",
+                outcome="success",
+                organization_id=scenario.organization_id,
+                resource_type="artifact_version",
+                resource_id=str(artifact.pk),
+                request_id=_request_id(request),
+                trace_id=_trace_id(request),
+                after={
+                    "scenario_id": str(scenario.public_id),
+                    "artifact_type": artifact.type,
+                    "logical_id": artifact.logical_id,
+                    "version": artifact.version,
+                    "checksum": artifact.checksum,
+                },
+            )
+            messages.success(
+                request,
+                f"{artifact.get_type_display()} v{artifact.version} immutable olarak oluşturuldu.",
+            )
+            return redirect(
+                "console:scenario_detail_public",
+                public_id=scenario.public_id,
+            )
+    return render(
+        request,
+        "console/scenario_artifact_form.html",
+        {
+            "title": "Governed release artifact",
+            "scenario": scenario,
+            "form": form,
+            "latest": latest,
+            "logical_id": logical_id,
+        },
+    )
+
+
 def _scoped_artifact(user: UserLike, pk: int) -> ArtifactVersion:
     try:
         artifact = scoping.scoped_artifacts(user).get(pk=pk)
@@ -2188,6 +2357,196 @@ def artifact_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "matching_drafts": matching_drafts,
             "matching_drafts_limited": matching_drafts_limited,
             "dsl_guide": _workflow_dsl_guide(),
+        },
+    )
+
+
+_PROFILE_KINDS = frozenset({"model", "embedding", "confluence", "rest"})
+
+
+def _require_platform_admin(request: HttpRequest) -> None:
+    if not is_platform_admin(request.user):
+        raise PermissionDenied
+
+
+@login_required
+@require_GET
+def platform_setup(request: HttpRequest) -> HttpResponse:
+    _require_platform_admin(request)
+    return render(
+        request,
+        "console/platform_setup.html",
+        {
+            "title": "Platform kurulumu",
+            "model_profiles": ModelProfile.objects.order_by("logical_id", "-revision")[:100],
+            "embedding_profiles": EmbeddingProfile.objects.annotate(
+                grant_count=Count("tenant_grants")
+            ).order_by("logical_id", "-revision")[:100],
+            "confluence_profiles": ConfluenceProfile.objects.annotate(
+                grant_count=Count("tenant_document_set_grants")
+            ).order_by("logical_id", "-revision")[:100],
+            "rest_profiles": RestPullProfile.objects.annotate(
+                grant_count=Count("tenant_document_set_grants")
+            ).order_by("logical_id", "-revision")[:100],
+            "confluence_policy_ready": bool(getattr(settings, "CONFLUENCE_NETWORK_POLICIES", {})),
+        },
+    )
+
+
+def _profile_registration_form(kind: str, data: object = None) -> Any:
+    forms_by_kind = {
+        "model": ModelProfileRegistrationForm,
+        "embedding": EmbeddingProfileRegistrationForm,
+        "confluence": ConfluenceProfileRegistrationForm,
+        "rest": RestProfileRegistrationForm,
+    }
+    form_class = forms_by_kind[kind]
+    return form_class(data)
+
+
+@login_required
+@sensitive_post_parameters("secret_ref")
+@require_http_methods(["GET", "POST"])
+def platform_profile_create(request: HttpRequest, profile_kind: str) -> HttpResponse:
+    _require_platform_admin(request)
+    if profile_kind not in _PROFILE_KINDS:
+        raise Http404
+    form = _profile_registration_form(profile_kind, request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        fields = dict(form.cleaned_data)
+        profile: Any
+        try:
+            if profile_kind == "model":
+                profile = register_model_profile(actor=request.user, **fields)
+            elif profile_kind == "embedding":
+                profile = register_embedding_profile(actor=request.user, **fields)
+            elif profile_kind == "confluence":
+                profile = register_confluence_profile(actor=request.user, **fields)
+            else:
+                profile = register_rest_profile(actor=request.user, **fields)
+        except (
+            ConfluenceAuthorizationError,
+            ConfluenceServiceError,
+            EmbeddingProfileAuthorizationError,
+            IntegrityError,
+            ModelProfileAuthorizationError,
+            RestAuthorizationError,
+            RestServiceError,
+            ValueError,
+        ) as exc:
+            form.add_error(None, f"Profil oluşturulamadı: {exc}")
+        else:
+            messages.success(
+                request,
+                f"{profile_kind} profili {profile.logical_id} r{profile.revision} kaydedildi.",
+            )
+            return redirect("console:platform_setup")
+    return render(
+        request,
+        "console/platform_profile_form.html",
+        {"title": f"{profile_kind} profili", "profile_kind": profile_kind, "form": form},
+    )
+
+
+def _platform_profile(profile_kind: str, public_id: object) -> Any:
+    models_by_kind: dict[str, Any] = {
+        "model": ModelProfile,
+        "embedding": EmbeddingProfile,
+        "confluence": ConfluenceProfile,
+        "rest": RestPullProfile,
+    }
+    if profile_kind not in models_by_kind:
+        raise Http404
+    profile = models_by_kind[profile_kind].objects.filter(public_id=public_id).first()
+    if profile is None:
+        raise Http404
+    return profile
+
+
+@login_required
+@require_POST
+def platform_profile_disable(
+    request: HttpRequest, profile_kind: str, public_id: object
+) -> HttpResponse:
+    _require_platform_admin(request)
+    profile = _platform_profile(profile_kind, public_id)
+    try:
+        if profile_kind == "model":
+            disable_model_profile(actor=request.user, model_profile=profile)
+        elif profile_kind == "embedding":
+            disable_embedding_profile(actor=request.user, embedding_profile=profile)
+        elif profile_kind == "confluence":
+            disable_confluence_profile(actor=request.user, confluence_profile=profile)
+        else:
+            disable_rest_profile(actor=request.user, rest_profile=profile)
+    except (
+        ConfluenceAuthorizationError,
+        EmbeddingProfileAuthorizationError,
+        ModelProfileAuthorizationError,
+        RestAuthorizationError,
+    ) as exc:
+        raise PermissionDenied from exc
+    messages.success(request, f"{profile_kind} profil revizyonu devre dışı bırakıldı.")
+    return redirect("console:platform_setup")
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def platform_profile_grant(
+    request: HttpRequest, profile_kind: str, public_id: object
+) -> HttpResponse:
+    _require_platform_admin(request)
+    if profile_kind not in {"embedding", "confluence", "rest"}:
+        raise Http404
+    profile = _platform_profile(profile_kind, public_id)
+    form = PlatformProfileGrantForm(
+        request.POST or None,
+        profile_kind=profile_kind,
+    )
+    if request.method == "POST" and form.is_valid():
+        try:
+            if profile_kind == "embedding":
+                organization = form.cleaned_data["organization"]
+                grant_embedding_profile(
+                    actor=request.user,
+                    organization=organization,
+                    embedding_profile=profile,
+                )
+            else:
+                document_set = form.cleaned_data["document_set"]
+                if profile_kind == "confluence":
+                    grant_confluence_profile(
+                        actor=request.user,
+                        organization=document_set.organization,
+                        document_set=document_set,
+                        confluence_profile=profile,
+                    )
+                else:
+                    grant_rest_profile(
+                        actor=request.user,
+                        organization=document_set.organization,
+                        document_set=document_set,
+                        rest_profile=profile,
+                    )
+        except (
+            ConfluenceAuthorizationError,
+            ConfluenceServiceError,
+            EmbeddingProfileAuthorizationError,
+            RestAuthorizationError,
+            RestServiceError,
+        ) as exc:
+            form.add_error(None, f"Grant oluşturulamadı: {exc}")
+        else:
+            messages.success(request, "Explicit profil grant'i kaydedildi.")
+            return redirect("console:platform_setup")
+    return render(
+        request,
+        "console/platform_profile_grant.html",
+        {
+            "title": "Profil grant'i",
+            "profile": profile,
+            "profile_kind": profile_kind,
+            "form": form,
         },
     )
 
@@ -2451,6 +2810,12 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
             "can_promote": can_manage and pre_active,
             "can_start_canary": can_manage and pre_active,
             "can_rollback": can_manage and release.status == ReleaseStatus.SUPERSEDED,
+            "can_author_artifacts": can_author_scenarios(
+                request.user,
+                release.organization_id,
+                project=release.scenario.project,
+                scenario=release.scenario,
+            ),
             "latest_eval": EvalRun.objects.filter(release=release).order_by("-created_at").first(),
             "is_disabled": release.organization.status == OrganizationStatus.DISABLED,
         },
@@ -4014,12 +4379,21 @@ def _connector_context(
                 "can_configure": can_write or can_promote,
             }
         )
+    confluence_form = ConfluenceSourceForm(document_set=document_set, prefix="confluence")
+    rest_source_form = RestSourceForm(
+        document_set=document_set,
+        prefix="rest-source",
+        initial={"inputs": "{}"},
+    )
+    confluence_ready = cast(Any, confluence_form.fields["confluence_profile"]).queryset.exists()
+    rest_ready = cast(Any, rest_source_form.fields["rest_profile"]).queryset.exists()
     return {
         "set": document_set,
         "sources": sources,
         "can_write": can_write,
         "can_promote": can_promote,
-        "confluence_form": ConfluenceSourceForm(document_set=document_set, prefix="confluence"),
+        "confluence_form": confluence_form,
+        "confluence_ready": confluence_ready,
         "contract_form": contract_form
         or RestContractForm(
             prefix="contract",
@@ -4028,11 +4402,9 @@ def _connector_context(
                 "definition": json.dumps(_REST_CONTRACT_EXAMPLE, ensure_ascii=False, indent=2),
             },
         ),
-        "rest_source_form": RestSourceForm(
-            document_set=document_set,
-            prefix="rest-source",
-            initial={"inputs": "{}"},
-        ),
+        "rest_source_form": rest_source_form,
+        "rest_ready": rest_ready,
+        "platform_setup_available": is_platform_admin(request.user),
         "preview_items": preview_items,
         "preview_valid": preview_valid,
     }

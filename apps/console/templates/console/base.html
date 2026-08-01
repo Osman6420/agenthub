@@ -184,6 +184,7 @@
         <a href="{% url 'console:consumers' %}">İstemciler</a>
         <a href="{% url 'console:runs' %}">Çalıştırmalar</a>
         {% if can_manage_organization_members %}<a href="{% url 'console:organization_members' %}">Kullanıcılar ve yetkiler</a>{% endif %}
+        {% if is_platform_admin %}<a href="{% url 'console:platform_setup' %}">Platform kurulumu</a>{% endif %}
       </nav>
     </aside>
     <div class="workspace">

@@ -14,7 +14,7 @@ from django.http import HttpRequest
 
 from apps.console import scoping
 from apps.tenancy.models import Organization
-from apps.tenancy.services import can_admin_org
+from apps.tenancy.services import can_admin_org, is_platform_admin
 
 # Session key holding the operator's chosen active organization (an integer pk).
 SESSION_KEY = "active_organization_id"
@@ -83,4 +83,5 @@ def active_workspace(request: HttpRequest) -> dict[str, object]:
         # Multiple organizations use a dropdown; single-org users get a static label.
         "workspace_multi_org": len(available) > 1,
         "can_manage_organization_members": (active is not None and can_admin_org(user, active.pk)),
+        "is_platform_admin": is_platform_admin(user),
     }
