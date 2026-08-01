@@ -15,8 +15,9 @@ verification record owned by the main implementation agent.
 
 ## Status
 
-Planned. No product behavior is changed by this plan. Parts 1 and 2 are release-blocking; later
-parts cannot be reported complete while either has an unresolved high-severity finding.
+In progress. Parts 1 and 2 are implemented and verified; Part 3 is the next active milestone.
+Part 2 evidence is archived in
+[the callable-scenario and atomic served-index task](../archive/phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/plan.md).
 
 ## Scope
 
@@ -139,9 +140,15 @@ lists disclose only exact authorized runs; no broad database grant or client-tru
 **Evidence:** complete. The unified and compatibility run surfaces now start from the canonical
 authorized run queryset; hidden identifiers resolve to 404; persisted human-wait authority and the
 non-owner PostgreSQL fixture are current. Full SQLite, full PostgreSQL and current-build browser
-gates passed. Part 2 is the next release-blocking milestone.
+gates passed. Part 2 subsequently closed the remaining release-blocking lifecycle milestone; Part 3
+is next.
 
 ### Part 2 — P0: callable-scenario and atomic served-index lifecycle
+
+**Implemented and verified 2026-08-01.** Detailed task plan, security analysis, and evidence:
+[Phase 2.9 Part 2 — callable scenario and atomic served index](../archive/phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/plan.md),
+[threat model](../archive/phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/threat-model.md),
+[verification](../archive/phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/verification.md).
 
 **Outcome:** a user can deliberately make a ready scenario callable, and an activated index is
 immediately the exact index served by retrieval; partial success is impossible.
@@ -158,6 +165,11 @@ immediately the exact index served by retrieval; partial success is impossible.
 
 **Acceptance:** no audited bootstrap state edit is needed; consumer and retrieval paths work directly
 after the documented UI transitions; injected failures leave no split lifecycle state.
+
+**Evidence:** complete. Exact release managers can explicitly activate/disable a ready scenario;
+gateway admission follows that state. Promotion/rollback now atomically owns the active set version,
+exact built-index pointer and active index, with deterministic reconciliation, additive uniqueness,
+idempotent replay, failure rollback, live PostgreSQL migration, and current-build browser evidence.
 
 ### Part 3 — P1: exact-role release and runtime control surfaces
 
@@ -265,8 +277,8 @@ from each applicable task verification record.
 
 ## Open decisions
 
-- Whether scenario activation is a separate action or an explicit optional step within release
-  promotion; implicit activation is excluded.
+- Resolved by Part 2 / ADR-0016: scenario activation is a separate explicit action; release
+  promotion never activates a scenario.
 - Which profile fields are safe for organization administrators to see versus platform-only.
 - Whether content preview is transformed safe text, forced download, or both by approved MIME.
 - Which browser runner and staging-equivalent environment will be the CI authority for Part 7.

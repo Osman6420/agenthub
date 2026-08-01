@@ -97,6 +97,14 @@ after publish, but only the separately authorized promotion action can change th
 Historical set, document and index versions remain deep-linkable. Existing unbound rows are exposed
 only by a non-mutating inventory command; destructive cleanup remains separately gated.
 
+Phase 2.9 Part 2 closes the two remaining serving-pointer gaps. Release promotion never implicitly
+activates a scenario: an exact release manager uses a separate governed activation after the active
+release, alias, and any pinned served indexes are ready. Scenario disable stops new admission while
+preserving release lineage. Index promotion and rollback own the active document-set version, its
+exact `built_index_version` FK, and index statuses in one locked transaction with fail-closed audit.
+Conditional uniqueness prevents duplicate active metadata; immutable stores remain untouched. See
+[ADR-0016](../adr/0016-explicit-scenario-and-atomic-served-index-lifecycle.md).
+
 Retrieval profiles may additionally enable bounded hierarchical summary routing. The first stage
 searches only derived `summary` chunks and selects exact live `DocumentVersion` IDs; the second
 stage searches only original `content` chunks inside that authorized document scope and applies a

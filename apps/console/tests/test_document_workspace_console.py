@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -320,7 +320,7 @@ def test_index_promotion_requires_document_set_manager(client: Client) -> None:
     client.force_login(manager)
     with patch("apps.console.views.promote_staged_index") as promote:
         assert client.post(url).status_code == 302
-        promote.assert_called_once_with(index, actor="set-manager")
+        promote.assert_called_once_with(index, actor="set-manager", request_id=ANY)
 
 
 @pytest.mark.django_db

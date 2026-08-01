@@ -36,6 +36,11 @@ urlpatterns = [
     path("scenarios/<int:pk>/", views.scenario_detail, name="scenario_detail"),
     path("scenarios/id/<uuid:public_id>/", views.scenario_detail, name="scenario_detail_public"),
     path(
+        "scenarios/id/<uuid:public_id>/lifecycle/",
+        views.scenario_lifecycle_change,
+        name="scenario_lifecycle_change",
+    ),
+    path(
         "scenarios/id/<uuid:public_id>/ask/",
         views.scenario_ask,
         name="scenario_ask",

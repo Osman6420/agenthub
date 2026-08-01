@@ -35,6 +35,20 @@
   <div class="summary-card"><span>Aktif release</span><strong>{% if active_release %}#{{ active_release.id }}{% else %}Yok{% endif %}</strong></div>
 </div>
 
+<section class="card">
+  <div class="section-heading">
+    <div><p class="eyebrow">Çağrılabilirlik</p><h2>Senaryo yaşam döngüsü</h2><p class="muted">Release promotion senaryoyu otomatik etkinleştirmez. Aktif release ve alias hazır olduğunda release manager bu ayrı kararı verir.</p></div>
+    {% if can_compile_release %}
+      <form method="post" action="{% url 'console:scenario_lifecycle_change' scenario.public_id %}">{% csrf_token %}
+        {% if scenario.status == 'active' %}<button class="button danger" type="submit" name="action" value="disable">Çağrıları devre dışı bırak</button>{% else %}<button type="submit" name="action" value="activate">Senaryoyu etkinleştir</button>{% endif %}
+      </form>
+    {% else %}
+      <button type="button" disabled aria-disabled="true" title="{{ release_reason }}">Yaşam döngüsünü değiştir</button>
+    {% endif %}
+  </div>
+  {% if scenario.status != 'active' %}<div class="warning-box">Senaryo şu anda çağrılabilir değil. Etkinleştirme için aktif release ve aktif alias gerekir.</div>{% else %}<p class="access-ok">Aktif istemci bağları ve capability kontrolleri geçerse senaryo çağrılabilir.</p>{% endif %}
+</section>
+
 {% if can_evaluate and active_release %}
 <section class="card form-card">
   <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>Senaryoya sor</h2><p class="muted">Exact aktif release üzerinden çalışır; soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>

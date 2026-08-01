@@ -129,6 +129,10 @@ Nothing a consumer touches is mutable at runtime:
 - **Fail-closed promotion**: a release is promoted only with a **passing eval bound to the
   pinned suite checksum** and ready, tenant-owned pinned indexes. Rollback atomically
   restores the superseded release.
+- **Explicit callability**: release promotion never activates a draft scenario. Exact release
+  authority performs a separate audited activation after release, alias, and served-index readiness.
+- **Atomic retrieval pointer**: set-version status, `built_index_version`, and index statuses change
+  in one locked transaction with uniqueness constraints and fail-closed success audit.
 - A running scenario is pinned to its release, versions, execution context, limits, and
   checkpoint **across retries and approval resume** — there is no silent upgrade mid-run.
 

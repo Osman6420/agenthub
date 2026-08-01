@@ -23,3 +23,4 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 | [0013](0013-scoped-operator-capabilities-and-superadmin-recovery.md) | Superseded | Staged closed operator capabilities and delegated object scopes; superseded by ADR-0015. |
 | [0014](0014-unified-workflow-engine-cutover.md) | Accepted | One executable workflow artifact/runtime, compiler-owned execution modes, breaking cutover and empty-database rollback. |
 | [0015](0015-responsibility-based-operator-authorization.md) | Accepted | Roleless membership, typed scope responsibilities, exact scenario approval and typed human/consumer identity. |
+| [0016](0016-explicit-scenario-and-atomic-served-index-lifecycle.md) | Accepted | Separate governed scenario callability plus one atomic document-set/index serving pointer. |

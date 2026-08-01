@@ -46,6 +46,7 @@ from apps.audit.services import record_event
 from apps.builder import services as builder_services
 from apps.builder.models import WorkflowDraft
 from apps.builder.services import BuilderError
+from apps.catalog.lifecycle import ScenarioLifecycleError, activate_scenario, disable_scenario
 from apps.catalog.models import AIProject, Scenario
 from apps.catalog.services import ProjectOwnerError, create_console_project, create_console_scenario
 from apps.console import context as console_context
@@ -1516,6 +1517,27 @@ def scenario_detail(
             "release_reason": _RELEASE_AUTHORITY_REASON,
         },
     )
+
+
+@login_required
+@require_POST
+def scenario_lifecycle_change(request: HttpRequest, public_id: object) -> HttpResponse:
+    scenario = _scoped_scenario(request.user, public_id=public_id)
+    action = request.POST.get("action", "")
+    try:
+        if action == "activate":
+            activate_scenario(scenario, actor=request.user, request_id=_request_id(request))
+            messages.success(request, "Senaryo çağrılabilir duruma getirildi.")
+        elif action == "disable":
+            disable_scenario(scenario, actor=request.user, request_id=_request_id(request))
+            messages.success(request, "Senaryo çağrıları devre dışı bırakıldı.")
+        else:
+            messages.error(request, "Geçersiz senaryo yaşam döngüsü işlemi.")
+    except ScenarioLifecycleError as exc:
+        if exc.code == "SCENARIO_LIFECYCLE_FORBIDDEN":
+            raise PermissionDenied from exc
+        messages.error(request, f"Senaryo işlemi reddedildi: {exc.code}")
+    return redirect("console:scenario_detail_public", public_id=scenario.public_id)
 
 
 @login_required
@@ -4565,8 +4587,12 @@ def document_set_promote_index(request: HttpRequest, index_pk: int) -> HttpRespo
     ):
         raise PermissionDenied
     try:
-        promote_staged_index(index, actor=request.user.get_username())
-        messages.success(request, "Staged indeks aktif hale getirildi.")
+        promote_staged_index(
+            index,
+            actor=request.user.get_username(),
+            request_id=_request_id(request),
+        )
+        messages.success(request, "Set sürümü ve exact indeks atomik olarak serve edildi.")
     except StagedBuildError as exc:
         messages.error(request, f"Promotion başarısız: {exc.code}")
     return redirect(

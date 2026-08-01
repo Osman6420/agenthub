@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import pytest
+from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
 from apps.audit.models import AuditEvent
+from apps.catalog.lifecycle import activate_scenario, disable_scenario
+from apps.catalog.models import LifecycleStatus
 from apps.gateway.errors import ErrorCode
 from apps.gateway.tests.conftest import Fixture
-from apps.identity.models import Consumer, ConsumerProtocol
+from apps.identity.models import (
+    Consumer,
+    ConsumerProtocol,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
+)
 from apps.identity.tokens import create_token
 from apps.observability.models import UsageEvent
+from apps.tenancy.models import OrganizationMembership
 from apps.workflows.models import Run, RunStatus
 
 
@@ -18,6 +27,53 @@ def _client(token: str) -> APIClient:
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     return client
+
+
+@pytest.mark.django_db(transaction=True)
+def test_gateway_callability_follows_explicit_scenario_lifecycle(
+    scenario_fixture: Fixture,
+) -> None:
+    user_model = get_user_model()
+    manager = user_model.objects.create_user("lifecycle-manager", password="unused")  # noqa: S106
+    membership = OrganizationMembership.objects.create(
+        organization=scenario_fixture.organization, user=manager
+    )
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=scenario_fixture.organization,
+        membership=membership,
+        scenario=scenario_fixture.scenario,
+        responsibility=ScenarioResponsibility.RELEASE_MANAGER,
+        assigned_by=manager,
+    )
+    scenario_fixture.scenario.status = LifecycleStatus.DRAFT
+    scenario_fixture.scenario.save(update_fields=["status", "updated_at"])
+    client = _client(scenario_fixture.raw_token)
+
+    denied = client.post(
+        "/v1/responses",
+        {"model": scenario_fixture.alias, "input": "hello"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="lifecycle-denied",
+    )
+    assert denied.status_code == 403
+
+    activate_scenario(scenario_fixture.scenario, actor=manager)
+    allowed = client.post(
+        "/v1/responses",
+        {"model": scenario_fixture.alias, "input": "hello"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="lifecycle-allowed",
+    )
+    assert allowed.status_code == 200
+
+    disable_scenario(scenario_fixture.scenario, actor=manager)
+    denied_again = client.post(
+        "/v1/responses",
+        {"model": scenario_fixture.alias, "input": "hello"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="lifecycle-disabled",
+    )
+    assert denied_again.status_code == 403
 
 
 @pytest.mark.django_db(transaction=True)

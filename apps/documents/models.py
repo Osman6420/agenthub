@@ -257,7 +257,12 @@ class DocumentSetVersion(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["document_set", "version"], name="uniq_document_set_version"
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["document_set"],
+                condition=models.Q(status=DocumentSetVersionStatus.ACTIVE),
+                name="uniq_active_document_set_version",
+            ),
         ]
         ordering = ["document_set_id", "version"]
 

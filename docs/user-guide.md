@@ -194,11 +194,14 @@ unchanged.
 6. **Promote** (`promote_release`) — fail-closed: requires a passing eval bound to the
    pinned suite and ready, tenant-owned indexes. Or run a **consumer-scoped, time-bounded
    canary**.
-7. **Serve**: an authorized consumer calls `POST /v1/responses`,
+7. **Activate the scenario explicitly** from its scenario page after the active release, alias,
+   and release-pinned served indexes are ready. Promotion never activates a draft as a side effect.
+8. **Serve**: an authorized consumer calls `POST /v1/responses`,
    `POST /v1/chat/completions`, or `GET /v1/runs/{uuid}`. The gateway issues a signed
    short-lived execution context and the
    runtime answers with the active (or canary) release.
-8. **Rollback** (`rollback_release`) atomically restores the superseded release if needed.
+9. **Disable or rollback**: disabling the scenario stops new calls without deleting the release;
+   `rollback_release` atomically restores the superseded release if needed.
 
 ---
 

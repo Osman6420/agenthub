@@ -532,76 +532,166 @@ def _fail(index_version: IndexVersion, *, reason: str) -> None:
         )
 
 
-@transaction.atomic
 def promote_staged_index(
     index_version: IndexVersion, *, actor: str, request_id: str = ""
 ) -> IndexVersion:
-    """Pointer-flip a promotable staged index to ``active`` for its document-set version (ADR-0003).
-
-    Metadata-only and atomic: it moves the previously-active index version for the same document-set
-    version to ``superseded`` and this one to ``active`` in one transaction — **no rename, copy, or
-    index rebuild**. At most one active index version per document-set version (the retrieval
-    pointer). The superseded store is left intact for instant rollback.
-    """
-    locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
-    if not locked.store_ready or locked.status != IndexStatus.PROMOTABLE:
-        raise StagedBuildError("INDEX_NOT_PROMOTABLE")
-    if locked.document_set_version_id is None:
-        raise StagedBuildError("INDEX_NOT_DOCSET_SCOPED")
-    superseded = list(
-        IndexVersion.objects.select_for_update()
-        .filter(document_set_version_id=locked.document_set_version_id, status=IndexStatus.ACTIVE)
-        .exclude(pk=locked.pk)
-        .values_list("id", flat=True)
-    )
-    IndexVersion.objects.filter(id__in=superseded).update(status=IndexStatus.SUPERSEDED)
-    locked.status = IndexStatus.ACTIVE
-    locked.save(update_fields=["status", "updated_at"])
-    record_event(
-        actor_type="user",
-        actor_id=actor,
-        action="ingestion.staged_index.promoted",
-        outcome="success",
-        organization_id=locked.organization_id,
-        resource_type="index_version",
-        resource_id=str(locked.pk),
+    """Atomically make this exact set-version/index pair the retrieval serving pointer."""
+    return _serve_index(
+        index_version,
+        actor=actor,
         request_id=request_id,
-        after={"document_set_version_id": locked.document_set_version_id, "superseded": superseded},
+        action="ingestion.staged_index.promoted",
+        allowed_index_statuses={IndexStatus.PROMOTABLE, IndexStatus.ACTIVE},
+        allowed_set_statuses={
+            DocumentSetVersionStatus.PROMOTABLE,
+            DocumentSetVersionStatus.ACTIVE,
+        },
+        invalid_code="INDEX_NOT_PROMOTABLE",
     )
-    return locked
 
 
-@transaction.atomic
 def rollback_staged_index(
     index_version: IndexVersion, *, actor: str, request_id: str = ""
 ) -> IndexVersion:
-    """Restore a superseded index version as the active one (the inverse pointer flip)."""
-    locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
-    if locked.status != IndexStatus.SUPERSEDED:
-        raise StagedBuildError("INDEX_NOT_ROLLBACKABLE")
-    if locked.document_set_version_id is None:
-        raise StagedBuildError("INDEX_NOT_DOCSET_SCOPED")
-    demoted = list(
-        IndexVersion.objects.select_for_update()
-        .filter(document_set_version_id=locked.document_set_version_id, status=IndexStatus.ACTIVE)
-        .exclude(pk=locked.pk)
-        .values_list("id", flat=True)
-    )
-    IndexVersion.objects.filter(id__in=demoted).update(status=IndexStatus.SUPERSEDED)
-    locked.status = IndexStatus.ACTIVE
-    locked.save(update_fields=["status", "updated_at"])
-    record_event(
-        actor_type="user",
-        actor_id=actor,
-        action="ingestion.staged_index.rolled_back",
-        outcome="success",
-        organization_id=locked.organization_id,
-        resource_type="index_version",
-        resource_id=str(locked.pk),
+    """Atomically restore a superseded set-version/index pair as the serving pointer."""
+    return _serve_index(
+        index_version,
+        actor=actor,
         request_id=request_id,
-        after={"document_set_version_id": locked.document_set_version_id, "demoted": demoted},
+        action="ingestion.staged_index.rolled_back",
+        allowed_index_statuses={IndexStatus.SUPERSEDED, IndexStatus.ACTIVE},
+        allowed_set_statuses={
+            DocumentSetVersionStatus.SUPERSEDED,
+            DocumentSetVersionStatus.ACTIVE,
+        },
+        invalid_code="INDEX_NOT_ROLLBACKABLE",
     )
-    return locked
+
+
+def _serve_index(
+    index_version: IndexVersion,
+    *,
+    actor: str,
+    request_id: str,
+    action: str,
+    allowed_index_statuses: set[str],
+    allowed_set_statuses: set[str],
+    invalid_code: str,
+) -> IndexVersion:
+    """Own every metadata field consulted by retrieval in one locked transaction."""
+    try:
+        with transaction.atomic():
+            # Resolve immutable lineage first, then take the document-set mutex before any
+            # candidate row. Competing promotions for different versions of the same set thereby
+            # acquire locks in one order instead of deadlocking candidate-index -> set.
+            locked = IndexVersion.objects.get(pk=index_version.pk)
+            if locked.document_set_version_id is None:
+                raise StagedBuildError("INDEX_NOT_DOCSET_SCOPED")
+            set_version = DocumentSetVersion.objects.select_related("document_set").get(
+                pk=locked.document_set_version_id
+            )
+            document_set = set_version.document_set
+            if (
+                locked.organization_id != set_version.organization_id
+                or set_version.organization_id != document_set.organization_id
+            ):
+                raise StagedBuildError("INDEX_SET_LINEAGE_INVALID")
+
+            # Serialize all served-pointer changes for one set and hold every affected row.
+            type(document_set).objects.select_for_update().get(pk=document_set.pk)
+            versions = list(
+                DocumentSetVersion.objects.select_for_update()
+                .filter(document_set_id=document_set.pk)
+                .order_by("pk")
+            )
+            version_ids = [version.pk for version in versions]
+            indexes = list(
+                IndexVersion.objects.select_for_update()
+                .filter(document_set_version_id__in=version_ids)
+                .order_by("pk")
+            )
+            locked = next(item for item in indexes if item.pk == locked.pk)
+            set_version = next(item for item in versions if item.pk == set_version.pk)
+
+            other_active_versions = [
+                item.pk
+                for item in versions
+                if item.pk != set_version.pk and item.status == DocumentSetVersionStatus.ACTIVE
+            ]
+            other_active_indexes = [
+                item.pk
+                for item in indexes
+                if item.pk != locked.pk and item.status == IndexStatus.ACTIVE
+            ]
+            coherent_replay = (
+                set_version.status == DocumentSetVersionStatus.ACTIVE
+                and set_version.built_index_version_id == locked.pk
+                and locked.status == IndexStatus.ACTIVE
+                and not other_active_versions
+                and not other_active_indexes
+            )
+            if coherent_replay:
+                record_event(
+                    actor_type="user",
+                    actor_id=actor,
+                    action=action,
+                    outcome="success",
+                    organization_id=locked.organization_id,
+                    resource_type="index_version",
+                    resource_id=str(locked.pk),
+                    reason="ALREADY_SERVED",
+                    request_id=request_id,
+                    after={"document_set_version_id": set_version.pk},
+                )
+                return locked
+
+            if not locked.store_ready or locked.status not in allowed_index_statuses:
+                raise StagedBuildError(invalid_code)
+            if set_version.status not in allowed_set_statuses:
+                raise StagedBuildError("SET_VERSION_NOT_PROMOTABLE")
+            if other_active_indexes:
+                IndexVersion.objects.filter(pk__in=other_active_indexes).update(
+                    status=IndexStatus.SUPERSEDED
+                )
+            if other_active_versions:
+                DocumentSetVersion.objects.filter(pk__in=other_active_versions).update(
+                    status=DocumentSetVersionStatus.SUPERSEDED
+                )
+            locked.status = IndexStatus.ACTIVE
+            locked.save(update_fields=["status", "updated_at"])
+            set_version.status = DocumentSetVersionStatus.ACTIVE
+            set_version.built_index_version_id = locked.pk
+            set_version.save(update_fields=["status", "built_index_version", "updated_at"])
+            record_event(
+                actor_type="user",
+                actor_id=actor,
+                action=action,
+                outcome="success",
+                organization_id=locked.organization_id,
+                resource_type="index_version",
+                resource_id=str(locked.pk),
+                reason="SERVED_POINTER_CHANGED",
+                request_id=request_id,
+                before={
+                    "active_document_set_version_ids": other_active_versions,
+                    "active_index_version_ids": other_active_indexes,
+                },
+                after={"document_set_version_id": set_version.pk},
+            )
+            return locked
+    except StagedBuildError as exc:
+        record_event(
+            actor_type="user",
+            actor_id=actor,
+            action=action,
+            outcome="failure",
+            organization_id=index_version.organization_id,
+            resource_type="index_version",
+            resource_id=str(index_version.pk),
+            reason=exc.code,
+            request_id=request_id,
+        )
+        raise
 
 
 def retire_staged_index(index_version: IndexVersion, *, actor: str, request_id: str = "") -> None:

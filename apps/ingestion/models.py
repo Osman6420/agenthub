@@ -500,6 +500,14 @@ class IndexVersion(TimeStampedModel):
                 name="uniq_index_docsetver_profile_version",
                 condition=models.Q(document_set_version__isnull=False),
             ),
+            models.UniqueConstraint(
+                fields=["document_set_version"],
+                name="uniq_active_index_per_set_version",
+                condition=models.Q(
+                    document_set_version__isnull=False,
+                    status=IndexStatus.ACTIVE,
+                ),
+            ),
         ]
 
     def clean(self) -> None:

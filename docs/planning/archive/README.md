@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [Phase 2.9 Part 2 — callable scenario and atomic served index (completed 2026-08-01)](phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/plan.md);
+  [verification](phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/verification.md).
+
 - [Phase 2.9 Part 1 — exact run authorization and PostgreSQL containment (completed 2026-08-01)](phase-2-9-part-1-exact-run-authorization-postgresql-containment-2026-08-01/plan.md);
   [verification](phase-2-9-part-1-exact-run-authorization-postgresql-containment-2026-08-01/verification.md).
 
