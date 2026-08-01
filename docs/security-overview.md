@@ -133,6 +133,9 @@ Nothing a consumer touches is mutable at runtime:
   authority performs a separate audited activation after release, alias, and served-index readiness.
 - **Atomic retrieval pointer**: set-version status, `built_index_version`, and index statuses change
   in one locked transaction with uniqueness constraints and fail-closed success audit.
+- **Exact operator controls**: release and runtime actions are reachable only in contextual pages,
+  then reauthorize the exact release/scenario/run server-side; broader emergency stops are distinct
+  and dominate narrower controls.
 - A running scenario is pinned to its release, versions, execution context, limits, and
   checkpoint **across retries and approval resume** — there is no silent upgrade mid-run.
 

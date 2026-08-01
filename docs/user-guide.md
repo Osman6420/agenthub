@@ -193,7 +193,8 @@ unchanged.
    redacted and audited.
 6. **Promote** (`promote_release`) — fail-closed: requires a passing eval bound to the
    pinned suite and ready, tenant-owned indexes. Or run a **consumer-scoped, time-bounded
-   canary**.
+   canary**. The release detail page is the contextual surface for eval, canary, promotion, stop,
+   and rollback; every action is reauthorized against the exact scenario.
 7. **Activate the scenario explicitly** from its scenario page after the active release, alias,
    and release-pinned served indexes are ready. Promotion never activates a draft as a side effect.
 8. **Serve**: an authorized consumer calls `POST /v1/responses`,
@@ -202,6 +203,10 @@ unchanged.
    runtime answers with the active (or canary) release.
 9. **Disable or rollback**: disabling the scenario stops new calls without deleting the release;
    `rollback_release` atomically restores the superseded release if needed.
+
+Scenario runtime operators use the scenario page to pause/resume that exact scenario and run detail
+to request cooperative cancellation of one exact run. Platform/organization emergency controls stay
+on the Runs page and always dominate narrower controls.
 
 ---
 

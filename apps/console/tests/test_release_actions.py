@@ -100,6 +100,7 @@ def test_manager_promote_without_eval_is_denied_gracefully(client: Client) -> No
     _login(client, org, Role.RELEASE_MANAGER)
     response = client.post(reverse("console:release_promote", args=[release.pk]))
     assert response.status_code == 302  # denial is surfaced as a message, not a crash
+    assert response.url == reverse("console:release_detail", args=[release.pk])
     release.refresh_from_db()
     assert release.status == ReleaseStatus.CANDIDATE
 

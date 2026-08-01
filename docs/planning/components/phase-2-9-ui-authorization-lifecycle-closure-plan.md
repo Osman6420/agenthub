@@ -15,7 +15,9 @@ verification record owned by the main implementation agent.
 
 ## Status
 
-In progress. Parts 1 and 2 are implemented and verified; Part 3 is the next active milestone.
+In progress. Parts 1–3 are implemented and verified; Part 4 is the next active milestone. Part 3
+evidence is archived in
+[the exact-role release/runtime controls task](../archive/phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/plan.md).
 Part 2 evidence is archived in
 [the callable-scenario and atomic served-index task](../archive/phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/plan.md).
 
@@ -172,6 +174,10 @@ exact built-index pointer and active index, with deterministic reconciliation, a
 idempotent replay, failure rollback, live PostgreSQL migration, and current-build browser evidence.
 
 ### Part 3 — P1: exact-role release and runtime control surfaces
+
+**Implemented and verified 2026-08-01.** [Plan](../archive/phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/plan.md),
+[threat model](../archive/phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/threat-model.md),
+[verification](../archive/phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/verification.md).
 
 **Outcome:** release managers and scenario runtime operators can perform their declared actions from
 reachable contextual pages, while every neighboring role is denied server-side.

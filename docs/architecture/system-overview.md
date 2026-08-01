@@ -105,6 +105,12 @@ exact `built_index_version` FK, and index statuses in one locked transaction wit
 Conditional uniqueness prevents duplicate active metadata; immutable stores remain untouched. See
 [ADR-0016](../adr/0016-explicit-scenario-and-atomic-served-index-lifecycle.md).
 
+Phase 2.9 Part 3 makes existing governed controls reachable without changing authority. Exact
+release inventory links to a contextual release lifecycle page for eval, canary, promotion and
+rollback. Exact scenario runtime operators pause/resume from scenario detail and cooperatively cancel
+individual runs from run detail. Organization/platform emergency stops remain separate and dominate
+narrower controls.
+
 Retrieval profiles may additionally enable bounded hierarchical summary routing. The first stage
 searches only derived `summary` chunks and selects exact live `DocumentVersion` IDs; the second
 stage searches only original `content` chunks inside that authorized document scope and applies a

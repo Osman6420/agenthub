@@ -49,6 +49,17 @@
   {% if scenario.status != 'active' %}<div class="warning-box">Senaryo şu anda çağrılabilir değil. Etkinleştirme için aktif release ve aktif alias gerekir.</div>{% else %}<p class="access-ok">Aktif istemci bağları ve capability kontrolleri geçerse senaryo çağrılabilir.</p>{% endif %}
 </section>
 
+<section class="card" aria-labelledby="scenario-runtime-title">
+  <div class="section-heading"><div><p class="eyebrow">Exact senaryo kontrolü</p><h2 id="scenario-runtime-title">Çalışma zamanı</h2><p class="muted">Pause yeni kabul ve güvenli geçişleri durdurur; mevcut run'ları topluca iptal etmez. Tek bir run için çalışma detayındaki güvenli iptal kullanılır.</p></div></div>
+  {% if effective_runtime_controls %}<div class="warning-box">Çalışma zamanı askıda. Etkin kapsamlar: {% for control in effective_runtime_controls %}{{ control.get_scope_type_display }}{% if not forloop.last %}, {% endif %}{% endfor %}.</div>{% else %}<p class="access-ok">Bu senaryo için etkin bir runtime durdurması yok.</p>{% endif %}
+  {% if exact_runtime_control and exact_runtime_control.suspended %}
+    {% if can_resume_runtime %}<form method="post" action="{% url 'console:runtime_control_change' %}" data-confirm="Bu exact senaryo kontrolü açılsın mı? Daha geniş kapsamlı durdurmalar baskın kalır.">{% csrf_token %}<input type="hidden" name="scope_type" value="scenario"><input type="hidden" name="target" value="{{ scenario.public_id }}"><input type="hidden" name="action" value="resume"><input type="hidden" name="reason_code" value="manual_safety_stop"><input type="hidden" name="reason" value="Exact scenario runtime operator resume"><input type="hidden" name="next" value="{% url 'console:scenario_detail_public' scenario.public_id %}"><button type="submit">Exact senaryoyu devam ettir</button></form>{% endif %}
+  {% elif can_pause_runtime %}
+    <form class="filter-bar" method="post" action="{% url 'console:runtime_control_change' %}" data-confirm="Bu exact senaryoda yeni kabul ve güvenli geçişler durdurulsun mu?">{% csrf_token %}<input type="hidden" name="scope_type" value="scenario"><input type="hidden" name="target" value="{{ scenario.public_id }}"><input type="hidden" name="action" value="pause"><input type="hidden" name="next" value="{% url 'console:scenario_detail_public' scenario.public_id %}"><label>Neden kodu <select name="reason_code" required>{% for code in runtime_reason_codes %}<option value="{{ code }}">{{ code }}</option>{% endfor %}</select></label><label>Açıklama <input name="reason" maxlength="200" required autocomplete="off" value="Exact scenario runtime operator pause"></label><button class="button danger" type="submit">Exact senaryoyu durdur</button></form>
+  {% else %}<p class="muted">Bu exact kontrol yalnız Scenario runtime operator sorumluluğuna ve daha geniş yönetici acil-durdurma yetkilerine açıktır.</p>{% endif %}
+  <p class="muted">Platform/organizasyon acil kontrolleri ayrı olarak Çalıştırmalar sayfasında yönetilir ve daha geniş kapsam her zaman baskındır.</p>
+</section>
+
 {% if can_evaluate and active_release %}
 <section class="card form-card">
   <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>Senaryoya sor</h2><p class="muted">Exact aktif release üzerinden çalışır; soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>

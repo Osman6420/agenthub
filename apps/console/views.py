@@ -93,6 +93,7 @@ from apps.evaluations.forms import (
     QuestionSetDraftForm,
 )
 from apps.evaluations.models import (
+    EvalRun,
     QuestionEvaluationEvidenceStatus,
     QuestionEvaluationKind,
     QuestionEvaluationRun,
@@ -1461,6 +1462,16 @@ def scenario_detail(
             "-created_at", "-pk"
         )[:20]
     ]
+    runtime_controls = applicable_runtime_controls(
+        organization_id,
+        project_id=scenario.project_id,
+        scenario_id=scenario.pk,
+    )
+    exact_runtime_control = AgentRuntimeControl.objects.filter(
+        scope_type=RuntimeControlScope.SCENARIO,
+        organization_id=organization_id,
+        scenario=scenario,
+    ).first()
     return render(
         request,
         "console/scenario_detail.html",
@@ -1515,6 +1526,23 @@ def scenario_detail(
             # Role-honest affordances (Scope D): reasons shown on disabled authoring controls.
             "author_reason": _AUTHOR_REASON,
             "release_reason": _RELEASE_AUTHORITY_REASON,
+            "can_pause_runtime": authorize_operator(
+                user=request.user,
+                capability=OperatorCapability.RUNTIME_PAUSE,
+                organization=scenario.organization,
+                project=scenario.project,
+                scenario=scenario,
+            ).allowed,
+            "can_resume_runtime": authorize_operator(
+                user=request.user,
+                capability=OperatorCapability.RUNTIME_RESUME,
+                organization=scenario.organization,
+                project=scenario.project,
+                scenario=scenario,
+            ).allowed,
+            "exact_runtime_control": exact_runtime_control,
+            "effective_runtime_controls": runtime_controls,
+            "runtime_reason_codes": sorted(RUNTIME_CONTROL_REASON_CODES),
         },
     )
 
@@ -2167,8 +2195,26 @@ def artifact_detail(request: HttpRequest, pk: int) -> HttpResponse:
 @login_required
 @require_GET
 def releases(request: HttpRequest) -> HttpResponse:
-    console_context.resolve_active_organization(request)
-    return redirect("console:projects")
+    active_org = console_context.resolve_active_organization(request)
+    releases_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_releases(request.user).select_related("scenario__project__organization"),
+        active_org,
+        field="organization_id",
+    ).order_by("scenario__name", "-created_at", "-pk")
+    release_items = list(releases_qs[:200])
+    manage_by_scenario: dict[int, bool] = {}
+    for release in release_items:
+        if release.scenario_id not in manage_by_scenario:
+            manage_by_scenario[release.scenario_id] = can_manage_scenario_releases(
+                request.user,
+                release.organization_id,
+                scenario=release.scenario,
+            )
+    rows = [
+        {"release": release, "can_manage": manage_by_scenario[release.scenario_id]}
+        for release in release_items
+    ]
+    return render(request, "console/releases.html", {"title": "Release'ler", "rows": rows})
 
 
 @login_required
@@ -2297,10 +2343,14 @@ def runtime_control_change(request: HttpRequest) -> HttpResponse:
             target_id = uuid.UUID(target)
         except (TypeError, ValueError):
             raise Http404 from None
-        project = AIProject.objects.filter(
-            organization=organization,
-            public_id=target_id,
-        ).first()
+        project = (
+            scoping.scoped_projects(request.user)
+            .filter(
+                organization=organization,
+                public_id=target_id,
+            )
+            .first()
+        )
         if project is None:
             raise Http404
     elif scope_type == RuntimeControlScope.SCENARIO:
@@ -2309,7 +2359,8 @@ def runtime_control_change(request: HttpRequest) -> HttpResponse:
         except (TypeError, ValueError):
             raise Http404 from None
         scenario = (
-            Scenario.objects.select_related("project")
+            scoping.scoped_scenarios(request.user)
+            .select_related("project")
             .filter(
                 organization=organization,
                 public_id=target_id,
@@ -2340,11 +2391,27 @@ def runtime_control_change(request: HttpRequest) -> HttpResponse:
             raise PermissionDenied from exc
         messages.error(request, f"Çalışma zamanı kontrolü reddedildi: {exc}")
     else:
-        messages.success(
-            request,
-            "Çalışma zamanı durduruldu." if action == "pause" else "Çalışma zamanı açıldı.",
-        )
-    return redirect("console:runs")
+        if action == "pause":
+            messages.success(request, "Çalışma zamanı güvenli sınırda durduruldu.")
+        else:
+            remaining = (
+                applicable_runtime_controls(
+                    organization.pk,
+                    project_id=scenario.project_id if scenario is not None else None,
+                    scenario_id=scenario.pk if scenario is not None else None,
+                )
+                if scenario is not None
+                else []
+            )
+            if remaining:
+                messages.warning(
+                    request,
+                    "Exact kontrol açıldı; daha geniş kapsamlı etkin durdurma nedeniyle "
+                    "çalışma zamanı hâlâ kapalı.",
+                )
+            else:
+                messages.success(request, "Çalışma zamanı açıldı.")
+    return redirect(_safe_redirect_target(request, default=reverse("console:runs")))
 
 
 def _scoped_release(user: UserLike, release_id: int) -> ScenarioRelease:
@@ -2363,6 +2430,13 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
     manifest_json = json.dumps(release.manifest, ensure_ascii=False, indent=2, sort_keys=True)
     display_limit = int(getattr(settings, "CONSOLE_MAX_ARTIFACT_DISPLAY_CHARS", 500_000))
     manifest_too_large = len(manifest_json) > display_limit
+    can_manage = can_manage_scenario_releases(
+        request.user,
+        release.organization_id,
+        scenario=release.scenario,
+    )
+    canaries = list(release.canaries.select_related("consumer").order_by("-created_at")[:100])
+    pre_active = release.status in {ReleaseStatus.CANDIDATE, ReleaseStatus.CANARY}
     return render(
         request,
         "console/release_detail.html",
@@ -2371,12 +2445,13 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
             "artifact_rows": _release_artifact_rows(release),
             "manifest_json": "" if manifest_too_large else manifest_json,
             "manifest_too_large": manifest_too_large,
-            "canaries": release.canaries.select_related("consumer").order_by("-created_at")[:100],
-            "can_manage": can_manage_scenario_releases(
-                request.user,
-                release.organization_id,
-                scenario=release.scenario,
-            ),
+            "canaries": canaries,
+            "can_manage": can_manage,
+            "can_eval": can_manage and pre_active,
+            "can_promote": can_manage and pre_active,
+            "can_start_canary": can_manage and pre_active,
+            "can_rollback": can_manage and release.status == ReleaseStatus.SUPERSEDED,
+            "latest_eval": EvalRun.objects.filter(release=release).order_by("-created_at").first(),
             "is_disabled": release.organization.status == OrganizationStatus.DISABLED,
         },
     )
@@ -2404,7 +2479,7 @@ def release_run_eval(request: HttpRequest, release_id: int) -> HttpResponse:
         )
     except EvalError as exc:
         messages.error(request, f"Eval başlatılamadı: {exc.code}")
-    return redirect("console:releases")
+    return redirect("console:release_detail", release_id=release.pk)
 
 
 @login_required
@@ -2416,7 +2491,7 @@ def release_promote(request: HttpRequest, release_id: int) -> HttpResponse:
         messages.success(request, f"Release {release.pk} aktif edildi.")
     except LifecycleError as exc:
         messages.error(request, f"Aktivasyon reddedildi: {exc.code}")
-    return redirect("console:releases")
+    return redirect("console:release_detail", release_id=release.pk)
 
 
 @login_required
@@ -2428,7 +2503,7 @@ def release_rollback(request: HttpRequest, release_id: int) -> HttpResponse:
         messages.success(request, f"Release {release.pk} sürümüne geri dönüldü.")
     except LifecycleError as exc:
         messages.error(request, f"Geri alma reddedildi: {exc.code}")
-    return redirect("console:releases")
+    return redirect("console:release_detail", release_id=release.pk)
 
 
 @login_required
@@ -2444,7 +2519,7 @@ def canary_start(request: HttpRequest, release_id: int) -> HttpResponse:
                 actor=request.user.get_username(),
             )
             messages.success(request, "Canary başlatıldı.")
-            return redirect("console:releases")
+            return redirect("console:release_detail", release_id=release.pk)
         except LifecycleError as exc:
             messages.error(request, f"Canary reddedildi: {exc.code}")
     return render(
@@ -2459,7 +2534,7 @@ def canary_start(request: HttpRequest, release_id: int) -> HttpResponse:
 def canary_stop(request: HttpRequest, canary_id: int) -> HttpResponse:
     canary = (
         ReleaseCanary.objects.select_related("scenario__project__organization")
-        .filter(pk=canary_id)
+        .filter(pk=canary_id, release__in=scoping.scoped_releases(request.user))
         .first()
     )
     if canary is None:
@@ -2476,7 +2551,7 @@ def canary_stop(request: HttpRequest, canary_id: int) -> HttpResponse:
         messages.success(request, "Canary durduruldu.")
     except LifecycleError as exc:
         messages.error(request, f"Durdurma reddedildi: {exc.code}")
-    return redirect("console:releases")
+    return redirect("console:release_detail", release_id=canary.release_id)
 
 
 @login_required

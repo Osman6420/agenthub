@@ -1,80 +1,18 @@
 {% extends "console/base.html" %}
-{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block title %}{{ title }} · AgentHub{% endblock %}
 {% block content %}
-<div class="card">
-  <h1>{{ title }}</h1>
-  {% if rows %}
-  <div class="table-scroll"><table>
-    <caption class="sr-only">Yetki kapsamındaki release'ler</caption>
-    <thead>
-      <tr>
-        <th>ID</th><th>Organizasyon</th><th>Senaryo</th><th>Durum</th>
-        <th>Runtime</th><th>Manifest</th><th>İşlemler</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in rows %}
-      <tr data-href="{% url 'console:release_detail' r.id %}">
-        <td><a href="{% url 'console:release_detail' r.id %}">{{ r.id }}</a></td>
-        <td><a href="{% url 'console:organization_detail' r.org_slug %}">{{ r.org }}</a></td>
-        <td><a href="{% url 'console:scenario_detail_public' r.scenario_public_id %}">{{ r.scenario }}</a></td>
-        <td><span class="badge">{{ r.status }}</span></td>
-        <td>{{ r.runtime }}</td>
-        <td>{{ r.manifest }}</td>
-        <td>
-          {% if r.can_eval %}
-          <form class="inline" method="post" action="{% url 'console:release_run_eval' r.id %}">
-            {% csrf_token %}<button class="link" type="submit">Eval çalıştır</button>
-          </form>
-          {% endif %}
-          {% if r.can_promote %}
-          <form class="inline" method="post" action="{% url 'console:release_promote' r.id %}">
-            {% csrf_token %}<button class="link" type="submit">Aktif et</button>
-          </form>
-          {% endif %}
-          {% if r.can_canary %}<a href="{% url 'console:canary_start' r.id %}">Canary başlat</a>{% endif %}
-          {% if r.can_rollback %}
-          <form class="inline" method="post" action="{% url 'console:release_rollback' r.id %}">
-            {% csrf_token %}<button class="link" type="submit">Geri al</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table></div>
-  {% else %}
-  <p class="muted">Yetki kapsamınızda release yok.</p>
-  {% endif %}
-</div>
-
-{% if canaries %}
-<div class="card">
-  <h2>Aktif canary yönlendirmeleri</h2>
-  <div class="table-scroll"><table>
-    <caption class="sr-only">Aktif canary yönlendirmeleri</caption>
-    <thead>
-      <tr><th>ID</th><th>Senaryo</th><th>İstemci</th><th>Release</th><th>Sona erme</th><th>İşlem</th></tr>
-    </thead>
-    <tbody>
-      {% for c in canaries %}
-      <tr>
-        <td>{{ c.id }}</td>
-        <td>{{ c.scenario }}</td>
-        <td>{{ c.consumer }}</td>
-        <td>{{ c.release }}</td>
-        <td>{{ c.expires }}</td>
-        <td>
-          {% if c.can_stop %}
-          <form class="inline" method="post" action="{% url 'console:canary_stop' c.id %}">
-            {% csrf_token %}<button class="link" type="submit">Durdur</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table></div>
-</div>
-{% endif %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:projects' %}">Projeler</a><span>›</span><span>Release'ler</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Yayın yönetimi</p><h1>Release'ler</h1><p class="muted">Yalnız exact erişiminizdeki immutable release'ler. Lifecycle işlemleri release detayında yeniden yetkilendirilir.</p></div></div>
+<section class="card">
+  {% if rows %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki release'ler</caption>
+    <thead><tr><th>Release</th><th>Senaryo</th><th>Durum</th><th>Runtime</th><th>Manifest</th><th>Yetki</th></tr></thead>
+    <tbody>{% for row in rows %}<tr data-href="{% url 'console:release_detail' row.release.id %}">
+      <td><a href="{% url 'console:release_detail' row.release.id %}">#{{ row.release.id }}</a></td>
+      <td><a href="{% url 'console:scenario_detail_public' row.release.scenario.public_id %}">{{ row.release.scenario.name }}</a></td>
+      <td><span class="badge {{ row.release.status }}">{{ row.release.get_status_display }}</span></td>
+      <td>{{ row.release.runtime_version }}</td><td class="mono">{{ row.release.artifact_manifest_sha256|slice:':12' }}</td>
+      <td>{% if row.can_manage %}<span class="access-ok">Release manager</span>{% else %}<span class="muted">Salt okunur</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% else %}<div class="empty">Etkin organizasyonda erişebildiğiniz release yok. Senaryo sayfasından release hazırlama akışına gidin.</div>{% endif %}
+</section>
 {% endblock %}

@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [Phase 2.9 Part 3 — exact-role release and runtime controls (completed 2026-08-01)](phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/plan.md);
+  [verification](phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/verification.md).
+
 - [Phase 2.9 Part 2 — callable scenario and atomic served index (completed 2026-08-01)](phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/plan.md);
   [verification](phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/verification.md).
 

@@ -207,7 +207,6 @@ def test_health_results_list_exact_scenarios_and_document_sets(client: Client) -
         ("console:organizations", "console:dashboard"),
         ("console:scenarios", "console:projects"),
         ("console:artifacts", "console:projects"),
-        ("console:releases", "console:projects"),
     ],
 )
 def test_legacy_catalog_gets_redirect_to_authorized_context(
