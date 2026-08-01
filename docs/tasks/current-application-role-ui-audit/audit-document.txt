@@ -1,0 +1,3 @@
+AgentHub UI audit document.
+
+This synthetic content exists only to verify local document upload, versioning, retrieval preparation, and authorization behavior. It contains no secrets or personal data.

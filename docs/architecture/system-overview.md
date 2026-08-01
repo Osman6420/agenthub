@@ -63,6 +63,18 @@ Project, document-set and consumer creation
 derive organization from the active workspace; scenario creation derives project from its
 authorized contextual route.
 
+Phase 2.9 Part 1 makes the exact-responsibility run queryset the authority for human console run
+lists, compatibility lists, detail, nested trace data and control target resolution. Organization
+selection and request filters only narrow that authorized set. Organization administrators and
+auditors retain organization-wide run reads; an active exact scenario runtime operator sees only
+that scenario's runs; neighboring scenario/project roles and membership alone see none. Invisible
+same-tenant and cross-tenant identifiers resolve to 404 before related data or mutation. Human wait
+decisions derive authority from the persisted actor and exact scenario approval responsibility,
+never client-supplied role names or bearer-token possession. The canonical non-owner PostgreSQL
+provisioning contract is unchanged; its temporary-role regression fixture now includes the same
+least-privilege platform-assignment and user reads. See the
+[Part 1 verification record](../planning/archive/phase-2-9-part-1-exact-run-authorization-postgresql-containment-2026-08-01/verification.md).
+
 Phase 2.8 Part 4 makes scenario authoring preset-led and scenario-local. Empty Workflow, Document
 Answer and Agent Loop create one compiler-validated mutable draft and no release. Workflow drafts
 carry a stable logical-artifact description; every published immutable version carries a separate

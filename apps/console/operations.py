@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
+from django.db.models import QuerySet
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
@@ -315,8 +316,13 @@ def project_operations(
     *,
     organization: Organization,
     filters: OperationFilters,
+    execution_queryset: QuerySet[Run],
 ) -> OperationPage:
-    """Merge bounded tenant-first native prefixes and return one stable page."""
+    """Merge bounded native prefixes and return one stable page.
+
+    The caller must supply the already-authorized execution queryset. Organization and request
+    filters only narrow that scope; they never establish run visibility.
+    """
 
     prefix = filters.page * PAGE_SIZE + 1
     since = timezone.now() - timedelta(days=filters.days)
@@ -325,7 +331,7 @@ def project_operations(
 
     if OperationKind.EXECUTION in selected and filters.document_set_id is None:
         queryset = _with_status(
-            Run.objects.filter(
+            execution_queryset.filter(
                 organization=organization,
                 created_at__gte=since,
             ),

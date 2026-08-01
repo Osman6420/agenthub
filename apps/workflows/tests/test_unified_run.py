@@ -1455,7 +1455,7 @@ def test_run_wait_suspends_and_resumes_once_without_legacy_wait_rows(workflow_fi
         claim_token=claim_token,
         expected_checkpoint_version=started.checkpoint_version,
         node_id="approval",
-        kind="human",
+        kind="event",
         checkpoint={"cursor": "approval", "decisions": {}},
         deadline_at=timezone.now() + timedelta(minutes=1),
         payload_schema={
@@ -1465,13 +1465,12 @@ def test_run_wait_suspends_and_resumes_once_without_legacy_wait_rows(workflow_fi
             "additionalProperties": False,
         },
         output_mapping=[{"from": "/payload/approved", "to": "/decisions/approved"}],
-        allowed_roles=["approver"],
     )
 
     run.refresh_from_db()
     wait_id, resume_token = _suspended(created)
     wait = RunWait.objects.get(pk=wait_id)
-    assert run.status == "waiting_human"
+    assert run.status == "waiting_event"
     assert run.awaiting_reference == str(wait.id)
     assert run.background_claim_token is None
     assert wait.checkpoint_version_snapshot == run.checkpoint_version
@@ -1480,14 +1479,12 @@ def test_run_wait_suspends_and_resumes_once_without_legacy_wait_rows(workflow_fi
         organization_id=run.organization_id,
         resume_token=resume_token,
         actor_id="operator:approver",
-        actor_roles={"approver"},
         payload={"approved": True},
     )
     replayed = resume_run_wait(
         organization_id=run.organization_id,
         resume_token=resume_token,
         actor_id="operator:approver",
-        actor_roles={"approver"},
         payload={"approved": True},
     )
 
@@ -1522,7 +1519,7 @@ def test_run_wait_suspends_and_resumes_once_without_legacy_wait_rows(workflow_fi
 
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="row locking requires PostgreSQL")
 @pytest.mark.django_db
-def test_run_wait_denies_forgery_roles_payload_conflict_and_cross_tenant(
+def test_run_wait_denies_forgery_unauthorized_actor_payload_conflict_and_cross_tenant(
     workflow_fixture,
 ) -> None:
     run, claim_token, started = _claimed_background_run(
@@ -1536,7 +1533,7 @@ def test_run_wait_denies_forgery_roles_payload_conflict_and_cross_tenant(
         claim_token=claim_token,
         expected_checkpoint_version=started.checkpoint_version,
         node_id="approval",
-        kind="approval",
+        kind="human",
         checkpoint={"cursor": "approval"},
         deadline_at=timezone.now() + timedelta(minutes=1),
         payload_schema={
@@ -1545,57 +1542,61 @@ def test_run_wait_denies_forgery_roles_payload_conflict_and_cross_tenant(
             "required": ["approved"],
             "additionalProperties": False,
         },
-        allowed_roles=["approver"],
     )
     wait_id, resume_token = _suspended(created)
-    # Every denial reports the same code: a token holder learns nothing about why it failed.
-    denials: tuple[tuple[str, UUID, int, str, set[str]], ...] = (
-        ("RUN_WAIT_NOT_FOUND", uuid4(), run.organization_id, "operator:approver", {"approver"}),
-        (
-            "RUN_WAIT_NOT_FOUND",
-            resume_token,
-            other_organization.id,
-            "operator:approver",
-            {"approver"},
-        ),
-        (
-            "RUN_WAIT_NOT_FOUND",
-            resume_token,
-            run.organization_id,
-            "operator:viewer",
-            {"viewer"},
-        ),
-        (
-            "RUN_WAIT_NOT_FOUND",
-            resume_token,
-            run.organization_id,
-            "operator:approver",
-            set(),
-        ),
-        # Separation of duties: the run's own actor cannot decide its approval.
-        (
-            "RUN_WAIT_NOT_FOUND",
-            resume_token,
-            run.organization_id,
-            "test-actor",
-            {"approver"},
-        ),
+    approver = _scenario_approver(workflow_fixture, username="exact-approver")
+    viewer = get_user_model().objects.create_user(username="wait-viewer")
+    viewer_membership = OrganizationMembership.objects.create(
+        organization=run.organization,
+        user=viewer,
     )
-    for code, token, organization_id, actor_id, roles in denials:
-        with pytest.raises(RunWaitError, match=code):
-            resume_run_wait(
-                organization_id=organization_id,
-                resume_token=token,
-                actor_id=actor_id,
-                actor_roles=roles,
-                payload={"approved": True},
-            )
-    with pytest.raises(RunWaitError, match="RUN_WAIT_PAYLOAD_INVALID"):
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=run.organization,
+        scenario=run.scenario,
+        membership=viewer_membership,
+        responsibility=ScenarioResponsibility.VIEWER,
+        assigned_by=viewer,
+    )
+    unassigned = get_user_model().objects.create_user(username="wait-unassigned")
+    OrganizationMembership.objects.create(organization=run.organization, user=unassigned)
+
+    # Invalid/cross-tenant identifiers are indistinguishable and resolve no persisted target.
+    with pytest.raises(RunWaitError, match="RUN_WAIT_NOT_FOUND"):
+        decide_run_human_task(
+            organization_id=run.organization_id,
+            wait_id=uuid4(),
+            actor=approver,
+            payload={"approved": True},
+        )
+    with pytest.raises(RunWaitError, match="RUN_WAIT_NOT_FOUND"):
+        decide_run_human_task(
+            organization_id=other_organization.id,
+            wait_id=wait_id,
+            actor=approver,
+            payload={"approved": True},
+        )
+
+    # A human wait is never bearer-token authority, and neighboring/unassigned actors are denied.
+    with pytest.raises(RunWaitError, match="RUN_WAIT_NOT_FOUND"):
         resume_run_wait(
             organization_id=run.organization_id,
             resume_token=resume_token,
             actor_id="operator:approver",
-            actor_roles={"approver"},
+            payload={"approved": True},
+        )
+    for actor in (viewer, unassigned):
+        with pytest.raises(RunWaitError, match="RUN_WAIT_NOT_FOUND"):
+            decide_run_human_task(
+                organization_id=run.organization_id,
+                wait_id=wait_id,
+                actor=actor,
+                payload={"approved": True},
+            )
+    with pytest.raises(RunWaitError, match="RUN_WAIT_PAYLOAD_INVALID"):
+        decide_run_human_task(
+            organization_id=run.organization_id,
+            wait_id=wait_id,
+            actor=approver,
             payload={"approved": "yes"},
         )
 
@@ -1603,22 +1604,20 @@ def test_run_wait_denies_forgery_roles_payload_conflict_and_cross_tenant(
     wait = RunWait.objects.get(pk=wait_id)
     # Every denial is audited and none of them consumed the one-shot authority.
     assert wait.status == RunWaitStatus.PENDING
-    assert run.status == "waiting_approval"
-    assert AuditEvent.objects.filter(action="workflow.run_wait_resume", outcome="deny").count() == 6
+    assert run.status == "waiting_human"
+    assert AuditEvent.objects.filter(action="workflow.run_wait_resume", outcome="deny").count() == 4
 
-    resume_run_wait(
+    decide_run_human_task(
         organization_id=run.organization_id,
-        resume_token=resume_token,
-        actor_id="operator:approver",
-        actor_roles={"approver"},
+        wait_id=wait_id,
+        actor=approver,
         payload={"approved": True},
     )
     with pytest.raises(RunWaitError, match="RUN_WAIT_REPLAY_CONFLICT"):
-        resume_run_wait(
+        decide_run_human_task(
             organization_id=run.organization_id,
-            resume_token=resume_token,
-            actor_id="operator:approver",
-            actor_roles={"approver"},
+            wait_id=wait_id,
+            actor=approver,
             payload={"approved": False},
         )
 
@@ -1685,7 +1684,6 @@ def test_run_wait_rejects_protected_output_mapping_and_reports_cancelled_run(
             checkpoint={"cursor": "approval"},
             deadline_at=timezone.now() + timedelta(minutes=1),
             output_mapping=[{"from": "/payload/role", "to": "/authorization/role"}],
-            allowed_roles=["approver"],
         )
 
     request_run_cancellation(
@@ -1702,7 +1700,6 @@ def test_run_wait_rejects_protected_output_mapping_and_reports_cancelled_run(
         kind="human",
         checkpoint={"cursor": "approval"},
         deadline_at=timezone.now() + timedelta(minutes=1),
-        allowed_roles=["approver"],
     )
 
     run.refresh_from_db()

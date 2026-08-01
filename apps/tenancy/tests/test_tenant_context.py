@@ -104,7 +104,8 @@ def test_operator_middleware_derives_membership_scope_under_non_owner_role() -> 
         cursor.execute(f'CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN')  # noqa: S608
         cursor.execute(  # noqa: S608
             f"GRANT SELECT ON tenancy_organizationmembership, tenancy_organization, "
-            f'catalog_aiproject TO "{role}"'
+            f"catalog_aiproject, identity_platformresponsibilityassignment, auth_user "
+            f'TO "{role}"'
         )
         cursor.execute(  # noqa: S608
             f'GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) TO "{role}"'
@@ -126,7 +127,8 @@ def test_operator_middleware_derives_membership_scope_under_non_owner_role() -> 
             cursor.execute("RESET ROLE")
             cursor.execute(  # noqa: S608
                 f"REVOKE ALL PRIVILEGES ON tenancy_organizationmembership, "
-                f'tenancy_organization, catalog_aiproject FROM "{role}"'
+                f"tenancy_organization, catalog_aiproject, "
+                f'identity_platformresponsibilityassignment, auth_user FROM "{role}"'
             )
             cursor.execute(  # noqa: S608
                 f'REVOKE EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) FROM "{role}"'

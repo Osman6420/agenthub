@@ -2173,6 +2173,7 @@ def runs(request: HttpRequest) -> HttpResponse:
         page = operations.project_operations(
             organization=organization,
             filters=filters,
+            execution_queryset=scoping.scoped_runs(request.user),
         )
     except operations.OperationFilterError as exc:
         filter_error = str(exc)
@@ -2940,15 +2941,10 @@ def retention_operations(request: HttpRequest) -> HttpResponse:
 
 
 def _scoped_run(user: UserLike, run_id: uuid.UUID) -> Run:
-    run = (
-        Run.objects.select_related("organization", "scenario", "scenario__project")
-        .filter(pk=run_id)
-        .first()
-    )
-    if run is None:
-        raise Http404
-    if not _operator_can_access_org(user, run.organization_id):
-        raise PermissionDenied
+    try:
+        run = scoping.scoped_runs(user).get(pk=run_id)
+    except Run.DoesNotExist as exc:
+        raise Http404 from exc
     set_tenant_context(run.organization_id)
     return run
 

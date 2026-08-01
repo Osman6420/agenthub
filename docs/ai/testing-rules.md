@@ -20,6 +20,28 @@ For applicable behavior test happy path, invalid/unexpected input, boundary valu
 
 Quarantine a flaky test only with ownership, evidence, risk, and a removal deadline; never silently rerun indefinitely. Never delete a failing test, weaken its assertion, or bypass a control to make a check green.
 
+## Mandatory post-development browser gate
+
+Every completed product-development increment must run the post-development UI, UX, and
+authorization regression gate in
+[`manual-testing-guide.md` section 10](../manual-testing-guide.md#10-mandatory-post-development-ui-ux-and-authorization-gate)
+before it can be marked `Verified` or `Completed`. This includes backend behavior that is operated
+through the console, even when no template or frontend file changed. Documentation-only or
+non-shipping developer-tool changes may mark individual rows `N/A`, but the task verification record
+must give a concrete reason; omission is not a pass.
+
+The gate requires the current build and healthy runtime, browser execution of affected and adjacent
+journeys, matched permitted/forbidden identities, same-tenant cross-scope and cross-tenant probes,
+direct URL/POST checks, visible affordance parity, browser console/network error review, and a human
+UX assessment covering discoverability, click count, feedback, error recovery, keyboard use, and
+responsive layout. Authorization remains server-side and must not be mocked for this evidence.
+
+When a journey depends on a model, embedding, connector, worker, or other governed profile, first
+prove that prerequisite through its supported profile/grant/provider seam. Do not continue to and
+report downstream lifecycle tests as verified when the prerequisite is absent or failing. Record the
+path as blocked/unverified without exposing credentials, prompts, provider responses, or document
+content.
+
 ## Repository commands
 
 The repository-verified host commands are:

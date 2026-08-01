@@ -469,7 +469,93 @@ draft, and confirm that generation/repair created no artifact or release. Then u
 `AI_AUTHORING_MODEL_PROFILE_ID`, restart web, and confirm the Studio shows the actionable disabled
 message while existing drafts and artifacts remain intact.
 
-## 10. Re-seed / reset
+## 10. Mandatory post-development UI, UX and authorization gate
+
+Run this gate after **every completed product-development increment** and before its task may be
+marked `Verified` or `Completed`. Backend, authorization, lifecycle, data-model, provider,
+configuration, template, static, and frontend changes are all in scope when an operator or consumer
+journey can observe them. For documentation-only or non-shipping developer-tool work, record each
+truly unaffected row as `N/A` with a reason; never silently omit the gate.
+
+Use the current application build and follow section 0 before testing. Preserve data unless a reset
+is separately authorized. Use synthetic records and dedicated test identities. The browser is
+non-authoritative: every hidden/visible control check must be paired with a direct server request
+where a forged URL or POST could bypass the UI.
+
+### 10.1 Hard prerequisites and stop conditions
+
+1. Record the commit/worktree state, Compose services, liveness/readiness, migrations, frontend
+   build, and worker readiness needed by the changed journey.
+2. Run the repository-applicable automated checks first. A known baseline failure must be identified
+   by exact test/check and linked evidence; it cannot be relabeled as a pass.
+3. Inventory the responsibilities and exact objects touched by the change. Prepare a permitted
+   actor, a same-tenant actor without that exact responsibility, a forbidden neighboring role, and a
+   second-tenant actor where tenant data is involved.
+4. If the journey uses model, embedding, OCR, or connector behavior, first register/select the
+   governed profile, grant it only to the synthetic tenant when required, and prove one bounded call
+   through AgentHub's provider seam. Never print or persist the secret or raw provider content.
+5. **Do not proceed to dependent lifecycle claims** when a required profile, grant, worker, index,
+   release, or binding is missing or failing. Mark the downstream rows `Blocked/Unverified`, record
+   the actionable prerequisite, fix/provision it within approved scope, then resume from that point.
+
+### 10.2 Required regression matrix
+
+Every row is evaluated after each development increment. Run the full journey when it is affected
+or adjacent to the change; otherwise record `N/A` and why it cannot be influenced. Authorization,
+navigation, shared layout, middleware, responsibility, lifecycle, and tenant-query changes require
+the complete matrix with no affected-row shortcut.
+
+| # | Control | Required evidence |
+| --- | --- | --- |
+| 10.2.1 | Logged-out, active member, and platform/organization administrator shell | Login redirect/session/logout work; selected tenant is deterministic; navigation exposes no foreign counts or dead links |
+| 10.2.2 | Create/manage organization membership and exact responsibility | Authorized create/change/revoke succeeds; last-admin and forged parent/scope changes fail; UI and direct POST agree |
+| 10.2.3 | Project and scenario lifecycle | Authorized project/scenario/starter-draft creation works; viewer/unassigned/foreign access denies; scenario readiness/activation state is truthful |
+| 10.2.4 | Studio authoring | Exact editor can open/edit/validate/publish and, when configured, use AI authoring; viewer/releaser/unassigned actors cannot mutate; stale/invalid input fails safely |
+| 10.2.5 | Immutable artifacts and release lifecycle | Required contracts/eval suite can be prepared; manifest pins are exact; compile/eval/promote/rollback/canary are reachable for the release manager and denied to neighbors |
+| 10.2.6 | Consumer/client, credential, capability, alias, and binding | Authorized creation/binding works; secret is shown once; disabled, unbound, wrong-capability, wrong-consumer, and foreign-tenant calls deny without leakage |
+| 10.2.7 | Document set and index lifecycle | Upload → draft → publish → build → promote → retrieval succeeds without shell/database bootstrap; manager/content-reader/viewer boundaries, another set, and another tenant deny correctly |
+| 10.2.8 | Runtime runs and controls | Sync/background execution, exact run list/detail, pause/resume/cancel and idempotency work for the declared actor; same-tenant other-scenario, other consumer, and other tenant remain hidden |
+| 10.2.9 | Approval and destructive operations | Approve/reject and any touched tombstone/purge path use a disposable target, confirmation, separation of duties, exact denial, and audit; do not run destructive rows without explicit task scope |
+| 10.2.10 | Provider/profile/connector readiness | Platform profile/grant actions are role-safe and secret-safe; missing/disabled/ungranted states explain the next action and do not open egress |
+| 10.2.11 | Direct-route and browser error behavior | Forge relevant GET/POST/object IDs; expected 401/403/404 is non-disclosing; no HTTP 500, unhandled console error, failed network request, traceback, route list, secret, or content leak appears |
+| 10.2.12 | Audit and observability | Successful and denied state/security actions include actor, tenant, exact target, decision/outcome, and request/trace correlation without token, prompt, provider output, or document bytes |
+
+Use the detailed feature checks in sections 1–9 for each selected journey. The
+[current role/UI audit](tasks/current-application-role-ui-audit/report.md) is the initial baseline,
+not a permanent waiver for an untested row.
+
+### 10.3 Mandatory UX review
+
+For every exercised journey, record:
+
+- starting page and number of primary clicks/taps to completion;
+- whether the next action, required role, prerequisite, and current state are understandable without
+  source-code knowledge;
+- loading, success, validation, denial, empty-state, unsaved-change, retry, and rollback feedback;
+- misleading/duplicate controls, role-insensitive navigation, dead ends, terminology/language, and
+  timestamp consistency;
+- keyboard-only completion, visible focus, table/form readability, and responsive behavior at 390,
+  900, and 1440 px for changed shared surfaces.
+
+Do not reduce clicks by removing confirmation, immutable-pin review, separation of duties, or other
+safety controls. Log each UX defect with severity, affected role/journey, reproduction steps,
+expected behavior, screenshot when useful, and recommended simplification.
+
+### 10.4 Evidence and pass rule
+
+Attach the following to the task's `verification.md`: current build/runtime identity; actor and
+synthetic object references; rows run/failed/blocked/`N/A`; expected and actual outcomes; HTTP status
+or visible result; request ID for failures; browser console/network result; screenshots where useful;
+click counts and UX findings; automated commands and pass/fail counts; cleanup or retained synthetic
+state. Redact credentials, cookies, tokens, prompts, provider output, document content, and personal
+data.
+
+The gate passes only when all applicable rows pass. A functional error, authorization mismatch,
+cross-scope disclosure, unexplained console/network failure, or unmet prerequisite blocks
+`Verified`/`Completed`. A UX issue may remain only with recorded severity, owner acceptance, and a
+prioritized follow-up plan; security and correctness findings are never accepted as UX debt.
+
+## 11. Re-seed / reset
 
 ```powershell
 # Wipe and rebuild the demo tenant (prints a fresh token)
@@ -481,9 +567,11 @@ PROTECT foreign keys) and rebuilds it. Publishing a new token each run is expect
 
 ---
 
-## Not exercised by this guide
+## Environment-dependent coverage
 
-Real LLM/embedding answers (deterministic stubs today), document ingestion into a live
-pgvector index (needs MinIO + the `ingestion` worker), live tool egress
-(`TOOL_ADAPTER=deterministic` opens no socket), and a live LDAP directory (local uses Django
-accounts). These are tracked in the planning/verified-state records.
+The default local profile may still use deterministic model/tool adapters and local Django
+accounts. Real LLM/embedding/OCR/connector behavior, a live pgvector index, external tool egress,
+and live LDAP therefore require their explicitly approved profiles, grants, credentials, workers,
+network policy, and synthetic data. Section 9 governs live-environment acceptance; section 10 makes
+their prerequisite status explicit for every post-development gate. An unavailable dependency is
+`Blocked/Unverified`, never an implicit pass.

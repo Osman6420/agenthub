@@ -168,7 +168,11 @@ def test_unified_projection_has_a_fixed_native_query_bound(
     filters = parse_operation_filters({}, organization=organization)
 
     with django_assert_num_queries(7):
-        page = project_operations(organization=organization, filters=filters)
+        page = project_operations(
+            organization=organization,
+            filters=filters,
+            execution_queryset=Run.objects.all(),
+        )
 
     assert page.rows == ()
 

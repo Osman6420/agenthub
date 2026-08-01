@@ -19,6 +19,7 @@
 - [ ] Security review and applicable authorization negative/cross-tenant tests passed.
 - [ ] Sensitive data is absent from logs; required audit events were verified.
 - [ ] Repository-applicable formatter, linter, type-check, unit, integration, contract, security, secret, and dependency checks passed.
+- [ ] The mandatory post-development browser UI/UX/authorization gate ran against the current build; matched role allow/deny and applicable same-tenant cross-scope/cross-tenant evidence, console/network review, click-count/usability findings, and any justified `N/A` rows are recorded.
 - [ ] Migrations and compatibility/rollback behavior were verified when applicable.
 - [ ] Operational behavior, monitoring, failure handling, and rollback are documented.
 - [ ] README/current architecture docs reflect actual behavior.

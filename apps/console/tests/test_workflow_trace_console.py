@@ -225,7 +225,7 @@ def _member(username: str, org: Organization, role: str = Role.PROJECT_OWNER) ->
             organization=org,
             membership=membership,
             scenario=scenario,
-            responsibility=ScenarioResponsibility.VIEWER,
+            responsibility=ScenarioResponsibility.RUNTIME_OPERATOR,
             assigned_by=user,
         )
     return user
@@ -254,7 +254,7 @@ def test_cross_tenant_trace_is_denied(client: Client) -> None:
     client.force_login(_member("mallory", org_b))
 
     response = client.get(reverse("console:workflow_run_detail", args=[run.pk]))
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_workflow_runs_list_is_tenant_scoped(client: Client) -> None:
