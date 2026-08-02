@@ -39,7 +39,7 @@ def _audit(
     resource_type: str,
     resource_id: str,
     reason: str,
-    membership_id: int,
+    membership_id: int | None,
     request_id: str,
     trace_id: str,
 ) -> None:

@@ -296,6 +296,9 @@ _CREATE_SCENARIO_REASON = (
 _CREATE_CONSUMER_REASON = (
     "İstemci yönetimi için organizasyon yöneticisi (organization_admin) rolü gerekir."
 )
+_CREATE_DOCUMENT_SET_REASON = (
+    "Yeni doküman seti oluşturmak için organizasyon yöneticisi (organization_admin) rolü gerekir."
+)
 _AUTHOR_REASON = (
     "Bu işlem için senaryo düzenleyici (scenario_editor) veya üzeri bir yazma rolü gerekir."
 )
@@ -556,10 +559,17 @@ def _dashboard_metrics(
         "workflow_active": run_agg["active"],
     }
 
-    # Pending human decisions (only surfaces are counted; each list view re-authorizes).
-    approvals = _org_scope(ApprovalRequest.objects.filter(status=ApprovalStatus.PENDING)).count()
-    human_tasks = _org_scope(
-        RunWait.objects.filter(kind=RunWaitKind.HUMAN, status=RunWaitStatus.PENDING)
+    # Pending decisions are exact-scenario scoped. Tenant membership alone must not disclose a
+    # queue count. Generic human waits have no complete list/edit UX yet and stay off-dashboard.
+    decision_scenarios = scoping.narrow_to_active_organization(
+        scoping.exact_scenarios_for_responsibilities(user, (ScenarioResponsibility.APPROVER,)),
+        active_organization,
+        field="project__organization_id",
+    )
+    approval_surface = decision_scenarios.exists()
+    approvals = ApprovalRequest.objects.filter(
+        status=ApprovalStatus.PENDING,
+        invocation__scenario__in=decision_scenarios,
     ).count()
     recoveries = unified_runs.filter(status=RunStatus.RECOVERY_REQUIRED).count()
 
@@ -592,9 +602,9 @@ def _dashboard_metrics(
         "runs": runs,
         "decisions": {
             "approvals": approvals,
-            "human_tasks": human_tasks,
             "recoveries": recoveries,
-            "total": approvals + human_tasks + recoveries,
+            "total": approvals + recoveries,
+            "approval_surface": approval_surface,
         },
         "health": {
             "no_active_release": no_active_release,
@@ -612,11 +622,15 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     user = request.user
     active_org = console_context.resolve_active_organization(request)
     organizations_qs = scoping.scoped_organizations(user).order_by("name", "slug")
+    metrics = _dashboard_metrics(user, active_org)
+    show_runs = console_context.can_view_runs_surface(user, active_org)
     context = {
         "is_platform_admin": is_platform_admin(user),
         "active_organization": active_org,
         "organizations": organizations_qs[:50],
-        "metrics": _dashboard_metrics(user, active_org),
+        "metrics": metrics,
+        "show_decisions_navigation": show_runs
+        or bool(cast(dict[str, object], metrics["decisions"])["approval_surface"]),
         "kill_switch": _kill_switch_state(active_org),
         "counts": {
             "organizations": organizations_qs.count(),
@@ -1634,9 +1648,7 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
             ArtifactType.OUTPUT_CONTRACT,
             ArtifactType.EVAL_SUITE,
         ):
-            candidates.append(
-                (preset_type, f"scenario-{scenario.public_id.hex}-{preset_type}")
-            )
+            candidates.append((preset_type, f"scenario-{scenario.public_id.hex}-{preset_type}"))
         items: list[dict[str, object]] = []
         missing_roles: list[str] = []
         for role, logical_id in candidates:
@@ -2977,13 +2989,19 @@ def canary_stop(request: HttpRequest, canary_id: int) -> HttpResponse:
 @login_required
 def tool_approvals(request: HttpRequest) -> HttpResponse:
     user = request.user
+    exact_scenarios = scoping.exact_scenarios_for_responsibilities(
+        user, (ScenarioResponsibility.APPROVER,)
+    )
     queryset = (
-        ApprovalRequest.objects.filter(status=ApprovalStatus.PENDING)
+        ApprovalRequest.objects.filter(
+            status=ApprovalStatus.PENDING,
+            invocation__scenario__in=exact_scenarios,
+        )
         .select_related(
             "invocation__scenario__project",
             "organization",
         )
-        .order_by("expires_at")
+        .order_by("expires_at")[:200]
     )
     rows = []
     for approval in queryset:
@@ -3604,7 +3622,7 @@ def documents(request: HttpRequest) -> HttpResponse:
             "set_form": DocumentSetForm(user=user, organization=active_org),
             "can_upload": can_upload,
             # Role-honest affordance (Scope D): explain the disabled create form.
-            "create_reason": "" if can_upload else _AUTHOR_REASON,
+            "create_reason": "" if can_upload else _CREATE_DOCUMENT_SET_REASON,
         },
     )
 
@@ -4201,9 +4219,7 @@ def document_set_document_detail(
         organization=document_set.organization,
         document_set=document_set,
     ).allowed
-    readable_version_ids = {
-        membership.document_version_id for membership in memberships
-    }
+    readable_version_ids = {membership.document_version_id for membership in memberships}
     chunk_view = _document_chunk_view(document_set, versions) if can_write else None
     return render(
         request,

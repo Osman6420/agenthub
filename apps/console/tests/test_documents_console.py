@@ -215,9 +215,7 @@ def test_document_set_manager_can_confirm_and_purge_tombstoned_document(client: 
     DocumentSetResponsibilityAssignment.objects.create(
         organization=org,
         membership=membership,
-        document_set=DocumentSet.objects.get(
-            versions__memberships__document_version=version
-        ),
+        document_set=DocumentSet.objects.get(versions__memberships__document_version=version),
         responsibility=DocumentSetResponsibility.MANAGER,
         assigned_by=manager,
     )

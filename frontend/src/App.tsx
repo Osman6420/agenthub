@@ -55,8 +55,8 @@ export function App({
   }, []);
 
   const org = orgs.find((o) => o.slug === orgSlug);
-  const canWrite = !!org?.can_write;
   const canAuthorScenario = !!initial?.scenario_id && initial.can_author_scenario === true;
+  const canWrite = canAuthorScenario || !!org?.can_write;
 
   const reload = useCallback(async () => {
     if (!orgSlug) return;

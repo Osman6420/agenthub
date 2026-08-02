@@ -498,6 +498,22 @@ where a forged URL or POST could bypass the UI.
    release, or binding is missing or failing. Mark the downstream rows `Blocked/Unverified`, record
    the actionable prerequisite, fix/provision it within approved scope, then resume from that point.
 
+For the deterministic Phase 2.9 browser subset, run the locked real-browser gate from
+`frontend/`:
+
+```powershell
+npm ci
+npm run test:browser
+```
+
+The command builds the current Studio bundle, creates a unique ignored SQLite database under
+`.tmp/`, seeds synthetic exact-role fixtures, and runs Chromium-compatible browser assertions. It
+refuses a non-`.tmp` SQLite path. CI instead supplies a disposable PostgreSQL database whose name
+must start with `agenthub_browser_gate`. The gate never flushes or seeds the canonical local
+database. Only redacted JSON and screenshots are retained on failure; traces, video, HAR, DOM dumps,
+headers, cookies, passwords, tokens and request/response bodies are not collected. This automated
+subset supplements rather than replaces the human review in section 10.3.
+
 ### 10.2 Required regression matrix
 
 Every row is evaluated after each development increment. Run the full journey when it is affected

@@ -45,11 +45,12 @@ def _member(username: str, org: Organization, role: str) -> Any:
             responsibility=OrganizationResponsibility.AUDITOR,
             assigned_by=user,
         )
-    scenario_responsibility = {
+    scenario_responsibilities: dict[str, str] = {
         Role.SCENARIO_EDITOR: ScenarioResponsibility.EDITOR,
         Role.AUDITOR: ScenarioResponsibility.VIEWER,
         Role.ORGANIZATION_ADMIN: ScenarioResponsibility.RELEASE_MANAGER,
-    }.get(role)
+    }
+    scenario_responsibility = scenario_responsibilities.get(role)
     if scenario_responsibility is not None:
         for scenario in Scenario.objects.filter(project__organization=org):
             ScenarioResponsibilityAssignment.objects.create(

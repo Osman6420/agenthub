@@ -13,6 +13,7 @@ from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
+from apps.documents.models import DocumentSet
 from apps.documents.services import create_document_set
 from apps.identity.models import (
     DocumentSetResponsibility,
@@ -66,7 +67,7 @@ def _scenario_actor(username: str, scenario: Scenario, responsibility: str):
     return user
 
 
-def _document_manager(username: str, document_set: object):
+def _document_manager(username: str, document_set: DocumentSet):
     user = User.objects.create_user(username, password="unused")  # noqa: S106
     membership = OrganizationMembership.objects.create(
         organization=document_set.organization,
@@ -104,8 +105,10 @@ def test_exact_editor_creates_validated_immutable_contract_versions(client: Clie
 
     assert first.status_code == 302
     assert second.status_code == 302
-    assert first.url == reverse("console:scenario_detail_public", args=[scenario.public_id])
-    assert second.url == first.url
+    assert first.headers["Location"] == reverse(
+        "console:scenario_detail_public", args=[scenario.public_id]
+    )
+    assert second.headers["Location"] == first.headers["Location"]
     versions = ArtifactVersion.objects.filter(
         organization=organization,
         type=ArtifactType.INPUT_CONTRACT,
@@ -117,9 +120,10 @@ def test_exact_editor_creates_validated_immutable_contract_versions(client: Clie
         action="artifact_version.create",
         outcome="success",
     ).latest("occurred_at")
+    assert event.after is not None
     assert event.after["artifact_type"] == ArtifactType.INPUT_CONTRACT
     assert "properties" not in json.dumps(event.after)
-    assert "Guided revision" in client.get(first.url).content.decode()
+    assert "Guided revision" in client.get(first.headers["Location"]).content.decode()
 
 
 def test_artifact_authoring_rejects_secret_and_other_exact_scope(client: Client) -> None:

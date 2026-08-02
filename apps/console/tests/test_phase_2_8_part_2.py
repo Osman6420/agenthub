@@ -101,10 +101,11 @@ def test_platform_admin_also_gets_one_deterministic_workspace(client: Client) ->
 def _member(org: Organization, username: str, role: str) -> tuple[Any, OrganizationMembership]:
     user = User.objects.create_user(username, password="x")  # noqa: S106
     membership = OrganizationMembership.objects.create(organization=org, user=user)
-    responsibility = {
+    responsibilities: dict[str, str] = {
         Role.ORGANIZATION_ADMIN: OrganizationResponsibility.ADMINISTRATOR,
         Role.AUDITOR: OrganizationResponsibility.AUDITOR,
-    }.get(role)
+    }
+    responsibility = responsibilities.get(role)
     if responsibility is not None:
         OrganizationResponsibilityAssignment.objects.create(
             organization=org,
@@ -171,9 +172,7 @@ def test_membership_page_and_lifecycle_are_active_org_scoped(client: Client) -> 
     )
     membership = OrganizationMembership.objects.get(organization=org, user=target)
     assert added.status_code == 302
-    assert not OrganizationResponsibilityAssignment.objects.filter(
-        membership=membership
-    ).exists()
+    assert not OrganizationResponsibilityAssignment.objects.filter(membership=membership).exists()
 
     assert (
         client.post(

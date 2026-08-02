@@ -143,6 +143,9 @@ def test_navigation_follows_exact_responsibilities_even_when_runs_are_empty(
     assert f'href="{reverse("console:documents")}"' in reader_body
     assert f'href="{reverse("console:projects")}"' not in reader_body
     assert f'href="{reverse("console:runs")}"' not in reader_body
+    documents_body = client.get(reverse("console:documents")).content.decode()
+    assert "organization_admin" in documents_body
+    assert "scenario_editor" not in documents_body
 
     unassigned, _ = _member("unassigned-nav", organization)
     client.force_login(unassigned)
@@ -277,9 +280,7 @@ def test_content_routes_hide_same_tenant_other_set_and_cross_tenant_parents(
         logical_id="foreign-set",
         name="Foreign set",
     )
-    foreign_draft = services.get_or_create_manual_draft(
-        document_set=foreign_set, actor="seed"
-    )
+    foreign_draft = services.get_or_create_manual_draft(document_set=foreign_set, actor="seed")
     foreign_version = services.upload_document(
         organization=foreign_org,
         logical_id="foreign-document",

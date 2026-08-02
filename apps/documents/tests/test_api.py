@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -28,8 +29,8 @@ def _client(user: object | None) -> Client:
     return client
 
 
-def _grant_set_manager(*, user: object, document_set: DocumentSet) -> None:
-    membership = user.org_memberships.get(organization=document_set.organization)  # type: ignore[attr-defined]
+def _grant_set_manager(*, user: Any, document_set: DocumentSet) -> None:
+    membership = user.org_memberships.get(organization=document_set.organization)
     DocumentSetResponsibilityAssignment.objects.get_or_create(
         organization=document_set.organization,
         membership=membership,
@@ -146,9 +147,7 @@ def test_purge_requires_admin(df: DocFixture) -> None:
     doc = Document.objects.get(organization=df.org, logical_id="doc-a")
     _grant_set_manager(
         user=df.admin,
-        document_set=DocumentSet.objects.get(
-            versions__memberships__document_version__document=doc
-        ),
+        document_set=DocumentSet.objects.get(versions__memberships__document_version__document=doc),
     )
     url = reverse("documents_api:document_purge", args=[doc.pk])
     # Author may not purge; org admin still cannot bypass the set-membership protection.

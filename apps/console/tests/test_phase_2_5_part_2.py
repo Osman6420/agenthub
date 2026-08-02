@@ -112,9 +112,7 @@ def test_uuid_routes_are_canonical_and_legacy_routes_remain_scoped() -> None:
     document_set = DocumentSet.objects.create(
         organization=organization, logical_id="set", name="Set"
     )
-    draft = document_services.get_or_create_manual_draft(
-        document_set=document_set, actor="test"
-    )
+    draft = document_services.get_or_create_manual_draft(document_set=document_set, actor="test")
     document = document_services.upload_document(
         organization=organization,
         logical_id="d",

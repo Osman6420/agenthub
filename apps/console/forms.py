@@ -165,7 +165,8 @@ class MembershipCreateForm(forms.Form):
             organization=organization,
             status=MembershipStatus.ACTIVE,
         ).values_list("user_id", flat=True)
-        self.fields["user"].queryset = (
+        user_field = cast(DirectoryUserChoiceField, self.fields["user"])
+        user_field.queryset = (
             get_user_model()
             .objects.filter(is_active=True, is_superuser=False)
             .exclude(id__in=existing_user_ids)
@@ -250,7 +251,7 @@ class DelegatedAssignmentForm(forms.Form):
             and cleaned_data.get("expires_at") is not None
         ):
             self.add_error("expires_at", "Organizasyon yöneticisi süreli atanamaz.")
-        target_field = {
+        target_fields: dict[str, str] = {
             ProjectResponsibility.VIEWER: "project",
             ProjectResponsibility.ADMINISTRATOR: "project",
             ScenarioResponsibility.VIEWER: "scenario",
@@ -261,7 +262,8 @@ class DelegatedAssignmentForm(forms.Form):
             DocumentSetResponsibility.METADATA_VIEWER: "document_set",
             DocumentSetResponsibility.CONTENT_READER: "document_set",
             DocumentSetResponsibility.MANAGER: "document_set",
-        }.get(responsibility)
+        }
+        target_field = target_fields.get(responsibility)
         if target_field is None:
             return cleaned_data
         target = cleaned_data.get(target_field)

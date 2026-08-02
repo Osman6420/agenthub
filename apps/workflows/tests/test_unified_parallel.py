@@ -702,10 +702,10 @@ def test_unified_graph_validation_denies_unsupported_branch_bodies(mutation, cod
     nodes = deepcopy(_PARALLEL_NODES)
     if mutation == "node":
         nodes[2] = {
-                "id": "a",
-                "type": "human_task",
-                "config": {
-                    "decision_schema": {
+            "id": "a",
+            "type": "human_task",
+            "config": {
+                "decision_schema": {
                     "type": "object",
                     "properties": {"approved": {"type": "boolean"}},
                     "additionalProperties": False,

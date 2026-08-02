@@ -74,6 +74,12 @@ def test_release_manager_reaches_contextual_lifecycle_and_inventory_is_exact(
     assert reverse("console:release_detail", args=[release.pk]) in body
     assert reverse("console:release_detail", args=[hidden_release.pk]) not in body
 
+    scenario_body = client.get(
+        reverse("console:scenario_detail_public", args=[assigned.public_id])
+    ).content.decode()
+    expected_created_at = timezone.localtime(release.created_at).strftime("%d.%m.%Y %H:%M")
+    assert expected_created_at in scenario_body
+
     detail = client.get(reverse("console:release_detail", args=[release.pk]))
     detail_body = detail.content.decode()
     assert detail.status_code == 200
@@ -153,7 +159,7 @@ def test_runtime_operator_pauses_and_resumes_exact_scenario_from_context(client:
         },
     )
     assert pause.status_code == 302
-    assert pause.url == detail_url
+    assert pause.headers["Location"] == detail_url
     control = AgentRuntimeControl.objects.get(
         scope_type=RuntimeControlScope.SCENARIO,
         scenario=scenario,

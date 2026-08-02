@@ -408,7 +408,7 @@ def remove_organization_membership(
                     action="responsibility.revoke_with_membership",
                     outcome="success",
                     organization_id=locked.organization_id,
-                    resource_type=model._meta.model_name,
+                    resource_type=model._meta.model_name or model.__name__.lower(),
                     resource_id=str(assignment.pk),
                     reason="MEMBERSHIP_REVOKED",
                     request_id=request_id,

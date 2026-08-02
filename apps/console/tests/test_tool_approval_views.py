@@ -168,6 +168,32 @@ def test_non_approver_is_denied_gracefully(client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_non_approver_dashboard_and_queue_do_not_disclose_pending_count(client: Client) -> None:
+    org, approval = _pending_approval("hidden-pending")
+    _login(client, org, Role.AUDITOR)
+
+    dashboard = client.get(reverse("console:dashboard")).content.decode()
+    queue = client.get(reverse("console:tool_approvals")).content.decode()
+
+    assert "Sizi bekleyen işlemler" not in dashboard
+    assert approval.invocation.tool_ref not in queue
+    assert "Yetki kapsamınızda bekleyen tool onayı yok." in queue
+
+
+@pytest.mark.django_db
+def test_exact_approver_dashboard_and_queue_show_own_pending_count(client: Client) -> None:
+    org, approval = _pending_approval("visible-pending")
+    _login(client, org, Role.APPROVER)
+
+    dashboard = client.get(reverse("console:dashboard")).content.decode()
+    queue = client.get(reverse("console:tool_approvals")).content.decode()
+
+    assert "1 bekliyor" in dashboard
+    assert "Tool onayları" in dashboard
+    assert approval.invocation.tool_ref in queue
+
+
+@pytest.mark.django_db
 def test_cross_tenant_operator_forbidden(client: Client) -> None:
     org, approval = _pending_approval()
     other = Organization.objects.create(slug="other", name="Other")

@@ -15,9 +15,10 @@ verification record owned by the main implementation agent.
 
 ## Status
 
-In progress. Parts 1–4 are implemented and verified. Part 5 is implemented and automated-verified;
-its configured live-provider/browser acceptance remains open. Part 6 is implemented and automated-
-verified; Part 7 owns the deterministic browser/manual quality gate. Part 4
+In progress. Parts 1–4, 6 and 7 are implemented and verified. Part 5 is implemented and automated-
+verified; its configured live-provider/browser acceptance remains open. Part 7 evidence is archived
+in [the browser and quality closure task](../archive/phase-2-9-part-7-browser-quality-closure-2026-08-02/plan.md).
+Part 4
 evidence is archived in
 [the governed setup and immutable inputs task](../archive/phase-2-9-part-4-governed-setup-immutable-inputs-2026-08-01/plan.md).
 Part 3 evidence is archived in
@@ -292,6 +293,14 @@ remains a mandatory completion gate.
 critical journeys pass in CI or the documented staging-equivalent runner; manual evidence is linked
 from each applicable task verification record.
 
+**Completed and verified (2026-08-02):** the guarded disposable fixture, six-journey real-browser
+role/retrieval/callability/focus gate, failure-only redacted evidence, and isolated PostgreSQL CI job
+are locally verified. Full mypy and Ruff are clean and the frontend dependency audit reports zero
+vulnerabilities. Manual Turkish UX, keyboard and responsive review at 390, 900 and 1440 px found and
+closed exact-role dashboard disclosure/affordance mismatches, a role-reason mismatch and timestamp
+presentation. See the archived [Part 7 task](../archive/phase-2-9-part-7-browser-quality-closure-2026-08-02/plan.md)
+and [verification](../archive/phase-2-9-part-7-browser-quality-closure-2026-08-02/verification.md).
+
 ## Risks
 
 - Broadening run queries or database grants could hide rather than fix exact-scope authorization.
@@ -312,7 +321,8 @@ from each applicable task verification record.
   promotion never activates a scenario.
 - Which profile fields are safe for organization administrators to see versus platform-only.
 - Whether content preview is transformed safe text, forced download, or both by approved MIME.
-- Which browser runner and staging-equivalent environment will be the CI authority for Part 7.
+- Resolved by Part 7: Playwright Chromium is the CI authority against a guarded disposable
+  PostgreSQL service; local Windows uses installed Edge against a unique guarded SQLite fixture.
 
 ## Testing strategy
 

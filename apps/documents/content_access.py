@@ -97,9 +97,7 @@ def read_document_version_content(
             operation=operation,
             outcome="deny",
             reason=(
-                "DOCUMENT_CONTENT_FORBIDDEN"
-                if not decision.allowed
-                else "DOCUMENT_SCOPE_MISMATCH"
+                "DOCUMENT_CONTENT_FORBIDDEN" if not decision.allowed else "DOCUMENT_SCOPE_MISMATCH"
             ),
             request_id=request_id,
             trace_id=trace_id,

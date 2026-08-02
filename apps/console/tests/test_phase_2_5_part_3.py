@@ -40,10 +40,11 @@ def _member(
 ) -> tuple[Any, OrganizationMembership]:
     user = User.objects.create_user(username, password="x")  # noqa: S106
     membership = OrganizationMembership.objects.create(organization=organization, user=user)
-    responsibility = {
+    responsibilities: dict[str, str] = {
         Role.ORGANIZATION_ADMIN: OrganizationResponsibility.ADMINISTRATOR,
         Role.AUDITOR: OrganizationResponsibility.AUDITOR,
-    }.get(role)
+    }
+    responsibility = responsibilities.get(role)
     if responsibility is not None:
         OrganizationResponsibilityAssignment.objects.create(
             organization=organization,

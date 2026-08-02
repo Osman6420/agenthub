@@ -111,7 +111,7 @@
 
 <section class="card" id="releases">
   <div class="section-heading"><div><p class="eyebrow">Sürüm geçmişi</p><h2>Release'ler</h2><p class="muted">Bu senaryonun immutable sürümleri ve exact artifact pinleri.</p></div></div>
-  {% if release_rows %}<div class="table-scroll"><table><caption class="sr-only">Senaryonun release geçmişi</caption><thead><tr><th>Release</th><th>Durum</th><th>Runtime</th><th>Artifact rolleri</th><th>Oluşturulma</th></tr></thead><tbody>{% for item in release_rows %}<tr><td><a href="{% url 'console:release_detail' item.release.id %}">#{{ item.release.id }}</a></td><td><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></td><td>{{ item.release.runtime_version }}</td><td>{{ item.artifacts|length }}</td><td>{{ item.release.created_at }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">Bu senaryo için release yok.</p>{% endif %}
+  {% if release_rows %}<div class="table-scroll"><table><caption class="sr-only">Senaryonun release geçmişi</caption><thead><tr><th>Release</th><th>Durum</th><th>Runtime</th><th>Artifact rolleri</th><th>Oluşturulma</th></tr></thead><tbody>{% for item in release_rows %}<tr><td><a href="{% url 'console:release_detail' item.release.id %}">#{{ item.release.id }}</a></td><td><span class="badge {{ item.release.status }}">{{ item.release.status }}</span></td><td>{{ item.release.runtime_version }}</td><td>{{ item.artifacts|length }}</td><td>{{ item.release.created_at|date:"d.m.Y H:i" }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">Bu senaryo için release yok.</p>{% endif %}
 </section>
 
 <section class="card" id="configuration">

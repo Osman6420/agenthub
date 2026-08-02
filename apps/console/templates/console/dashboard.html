@@ -18,7 +18,7 @@
   {% if is_platform_admin %}<a class="button primary" href="{% url 'console:organization_create' %}">Yeni organizasyon</a>{% endif %}
 </div>
 
-<section class="card">
+{% if show_runs_navigation %}<section class="card">
   <div class="section-heading"><div><p class="eyebrow">Çalıştırmalar</p><h2>Şu an ne çalışıyor?</h2><p class="muted">Aktif ve dikkat gerektiren işler son {{ metrics.operations_days }} gün; tamamlananlar son {{ metrics.recent_hours }} saat penceresindedir.</p></div></div>
   <div class="tiles">
     <div class="tile"><div class="n">{{ metrics.runs.active }}</div><div class="l">Aktif / çalışıyor</div></div>
@@ -30,14 +30,13 @@
     <a class="button secondary" href="{% url 'console:runs' %}?kind=execution&amp;bucket=done&amp;days=1">Son tamamlananlar →</a>
     {% if metrics.runs.attention %}<a class="button" href="{% url 'console:runs' %}?kind=execution&amp;bucket=attention&amp;days={{ metrics.operations_days }}">Dikkat gerektirenleri gör →</a>{% endif %}
   </div>
-</section>
+</section>{% endif %}
 
-<section class="card">
+{% if show_decisions_navigation %}<section class="card">
   <div class="section-heading"><div><p class="eyebrow">Bekleyen kararlar</p><h2>Sizi bekleyen işlemler</h2><p class="muted">Yalnız yetkili olduğunuz karar yüzeyleri sayılır; hedef ekran işlemi yeniden yetkilendirir.</p></div>{% if metrics.decisions.total %}<span class="badge warning">{{ metrics.decisions.total }} bekliyor</span>{% else %}<span class="badge active">Kuyruk boş</span>{% endif %}</div>
-  <div class="access-row"><div><strong>Tool onayları</strong><p class="muted">Yüksek riskli, yan etkili tool çağrıları için onay.</p></div><span class="badge {% if metrics.decisions.approvals %}warning{% endif %}">{{ metrics.decisions.approvals }}</span><a class="button secondary" href="{% url 'console:tool_approvals' %}">Aç →</a></div>
-  <div class="access-row"><div><strong>İnsan görevleri</strong><p class="muted">Workflow içinde insan kararı bekleyen adımlar.</p></div><span class="badge {% if metrics.decisions.human_tasks %}warning{% endif %}">{{ metrics.decisions.human_tasks }}</span><a class="button secondary" href="{% url 'console:workflow_runs' %}?status=waiting_human">Aç →</a></div>
-  <div class="access-row"><div><strong>Kurtarma gereken çalıştırmalar</strong><p class="muted">Belirsiz sonuç sonrası açık operatör incelemesi gereken birleşik çalıştırmalar.</p></div><span class="badge {% if metrics.decisions.recoveries %}warning{% endif %}">{{ metrics.decisions.recoveries }}</span><a class="button secondary" href="{% url 'console:workflow_runs' %}?status=recovery_required">Aç →</a></div>
-</section>
+  {% if metrics.decisions.approval_surface %}<div class="access-row"><div><strong>Tool onayları</strong><p class="muted">Yüksek riskli, yan etkili tool çağrıları için exact senaryo onayı.</p></div><span class="badge {% if metrics.decisions.approvals %}warning{% endif %}">{{ metrics.decisions.approvals }}</span><a class="button secondary" href="{% url 'console:tool_approvals' %}">Aç →</a></div>{% endif %}
+  {% if show_runs_navigation %}<div class="access-row"><div><strong>Kurtarma gereken çalıştırmalar</strong><p class="muted">Belirsiz sonuç sonrası açık operatör incelemesi gereken birleşik çalıştırmalar.</p></div><span class="badge {% if metrics.decisions.recoveries %}warning{% endif %}">{{ metrics.decisions.recoveries }}</span><a class="button secondary" href="{% url 'console:workflow_runs' %}?status=recovery_required">Aç →</a></div>{% endif %}
+</section>{% endif %}
 
 <section class="card">
   <div class="section-heading"><div><p class="eyebrow">Sunum & indeks sağlığı</p><h2>Yayın durumu</h2></div></div>

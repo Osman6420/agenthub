@@ -67,12 +67,25 @@ def _scenario_responsibility_ids(
     return set(queryset.values_list("scenario_id", flat=True))
 
 
-def has_scenario_responsibility(
-    user: UserLike, responsibilities: tuple[str, ...]
-) -> bool:
+def has_scenario_responsibility(user: UserLike, responsibilities: tuple[str, ...]) -> bool:
     """Return whether the operator has one active, unexpired exact scenario duty."""
 
     return bool(_scenario_responsibility_ids(user, responsibilities))
+
+
+def exact_scenarios_for_responsibilities(
+    user: UserLike, responsibilities: tuple[str, ...]
+) -> QuerySet[Scenario]:
+    """Return only scenarios carrying one of the user's exact active duties.
+
+    Superusers retain the exceptional recovery scope. Platform/organization/project roles are not
+    broadened into an exact scenario duty; callers still re-authorize actions at the service edge.
+    """
+
+    queryset = Scenario.objects.select_related("project", "project__organization")
+    if getattr(user, "is_superuser", False):
+        return queryset
+    return queryset.filter(id__in=_scenario_responsibility_ids(user, responsibilities))
 
 
 def _document_set_responsibility_ids(

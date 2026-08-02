@@ -13,6 +13,7 @@ from __future__ import annotations
 from django.http import HttpRequest
 
 from apps.console import scoping
+from apps.identity.authorization import Capability, authorize
 from apps.identity.models import ScenarioResponsibility
 from apps.tenancy.models import Organization
 from apps.tenancy.services import can_admin_org, is_platform_admin
@@ -24,6 +25,24 @@ SESSION_KEY = "active_organization_id"
 # member of many. Beyond this the selector is capped and flagged; operators can still
 # reach authorized objects by deep link without changing the explicit workspace selection.
 _MAX_SELECTOR_ORGS = 200
+
+
+def can_view_runs_surface(user: object, active: Organization | None) -> bool:
+    """Keep empty-state run navigation aligned with exact runtime authority."""
+
+    organization_runtime = bool(
+        active
+        and authorize(
+            user=user,
+            capability=Capability.RUNTIME_VIEW,
+            organization=active,
+        ).allowed
+    )
+    return (
+        organization_runtime
+        or scoping.scoped_runs(user).exists()
+        or scoping.has_scenario_responsibility(user, (ScenarioResponsibility.RUNTIME_OPERATOR,))
+    )
 
 
 def resolve_active_organization(request: HttpRequest) -> Organization | None:
@@ -90,9 +109,5 @@ def active_workspace(request: HttpRequest) -> dict[str, object]:
         "show_documents_navigation": can_admin_active
         or scoping.scoped_document_sets(user).exists(),
         "show_consumers_navigation": can_admin_active or scoping.scoped_consumers(user).exists(),
-        "show_runs_navigation": can_admin_active
-        or scoping.scoped_runs(user).exists()
-        or scoping.has_scenario_responsibility(
-            user, (ScenarioResponsibility.RUNTIME_OPERATOR,)
-        ),
+        "show_runs_navigation": can_view_runs_surface(user, active),
     }
