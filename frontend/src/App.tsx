@@ -56,6 +56,7 @@ export function App({
 
   const org = orgs.find((o) => o.slug === orgSlug);
   const canWrite = !!org?.can_write;
+  const canAuthorScenario = !!initial?.scenario_id && initial.can_author_scenario === true;
 
   const reload = useCallback(async () => {
     if (!orgSlug) return;
@@ -330,7 +331,7 @@ export function App({
         </li>)}
       </ul>
 
-      {canWrite && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
+      {canAuthorScenario && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
         lockedProjectId={initial?.project_id} scenarioId={initial?.scenario_id}
         availability={initial?.ai_authoring}
         onCapabilityMissing={openCapabilityScaffold}

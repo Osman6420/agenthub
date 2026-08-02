@@ -32,6 +32,19 @@ export function AiAuthoringPanel({ api, organization, projects, lockedProjectId,
         setStatus("AI authoring kapalı: deployment yöneticisi onaylı immutable model profile ID ve provider yapılandırmalıdır.");
       } else if (error instanceof ApiError && error.code === "model_profile_unavailable") {
         setStatus("Yapılandırılan AI authoring model profili aktif veya erişilebilir değil; deployment ayarını doğrulayın.");
+      } else if (error instanceof ApiError && error.code === "outcome_unknown") {
+        setStatus("Provider sonucu belirsiz. Kör tekrar yapmayın; request ID ile operasyon kaydını kontrol edin.");
+      } else if (error instanceof ApiError && error.code === "candidate_invalid_json") {
+        setStatus("Provider tek bir geçerli JSON nesnesi döndürmedi. Aday kaydedilmedi; açıklamayı netleştirip yeni bir istek başlatın.");
+      } else if (error instanceof ApiError && ["candidate_too_large", "candidate_too_deep", "candidate_not_object"].includes(error.code)) {
+        setStatus("Provider çıktısı güvenli aday sınırlarını aştı. Aday kaydedilmedi; daha dar bir iş akışı isteyin.");
+      } else if (error instanceof ApiError && error.code === "model_response_invalid") {
+        setStatus("Provider yanıtı beklenen yapıda değil. Aday kaydedilmedi; provider durumunu doğrulayın.");
+      } else if (error instanceof ApiError && [
+        "connection_failed", "destination_unresolved", "upstream_status",
+        "redirect_not_allowed", "response_too_large", "response_not_json", "response_not_object",
+      ].includes(error.code)) {
+        setStatus(`Provider çağrısı tamamlanamadı (${error.code}). Aday kaydedilmedi; deployment ve provider durumunu doğrulayın.`);
       } else {
         setStatus(error instanceof ApiError ? error.code : String(error));
       }

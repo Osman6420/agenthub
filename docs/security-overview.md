@@ -334,6 +334,12 @@ uses a server-derived scenario UUID namespace, canonical validation, inline-secr
 bounded JSON, checksums, immutable next versions, and fail-closed audit within the write transaction.
 The resulting artifact is not automatically pinned, released, promoted, or executed.
 
+Studio AI panel visibility is based on the exact persisted scenario editor decision, never an
+organization-wide write flag. Provider output remains untrusted and transient: response bytes are
+bounded before strict single-object/fence parsing and canonical validation, accept is separately
+authorized, and no generation path publishes. JSON response mode reduces formatting ambiguity;
+transport and outcome-unknown errors expose stable guidance without raw details or blind retry.
+
 ---
 
 ## 15. Where to verify this in the code

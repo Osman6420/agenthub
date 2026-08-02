@@ -3450,6 +3450,12 @@ def builder(request: HttpRequest) -> HttpResponse:
             "scenario_public_id": str(scenario.public_id),
             "scenario_name": scenario.name,
             "project_name": scenario.project.name,
+            "can_author_scenario": can_author_scenarios(
+                request.user,
+                scenario.organization_id,
+                project=scenario.project,
+                scenario=scenario,
+            ),
         }
         release_decision = authorize_operator(
             user=request.user,

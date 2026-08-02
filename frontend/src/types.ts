@@ -15,6 +15,7 @@ export interface BuilderInitial {
   scenario_public_id?: string;
   scenario_name?: string;
   project_name?: string;
+  can_author_scenario?: boolean;
   can_compile_release?: boolean;
   artifact_options_url?: string;
   ai_authoring?: {

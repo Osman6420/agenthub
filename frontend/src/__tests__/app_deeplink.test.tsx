@@ -35,6 +35,34 @@ afterEach(() => {
 });
 
 describe("builder deep link", () => {
+  it("shows AI authoring for an exact scenario editor without organization-wide write", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const value = String(url);
+      let payload: unknown = {};
+      if (value.includes("node-schema")) payload = {
+        organization: "org-b", can_write: false,
+        dsl: { api_version: "agenthub/v1", kind: "Workflow" },
+        limits: { max_nodes: 50, max_edges: 100 }, node_types: [],
+        tool_binding_roles: [], custom_nodes: [],
+        projects: [{ id: 4, slug: "project", name: "Project" }],
+      };
+      else if (value.endsWith("/drafts/")) payload = { drafts: [] };
+      else if (value.endsWith("/artifact-drafts/")) payload = { drafts: [] };
+      return new Response(JSON.stringify(payload), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    render(<App apiBase="/console/api/builder/"
+      orgs={[{ slug: "org-b", name: "B", can_write: false }]}
+      initial={{ organization: "org-b", project_id: 4, project_name: "Project",
+        scenario_id: 17, scenario_name: "Support", can_author_scenario: true,
+        ai_authoring: { available: true, message: "AI authoring hazır" } }} />);
+
+    expect(await screen.findByText("Scenario Studio AI planner")).toBeInTheDocument();
+    expect(screen.getByText("AI authoring hazır")).toBeInTheDocument();
+  });
+
   it("locks scenario context and creates a scenario draft from whole workflow JSON", async () => {
     const requests: { url: string; body?: Record<string, unknown> }[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {

@@ -82,6 +82,36 @@ def test_builder_authoring_requires_exact_scenario_editor_not_organization_admin
     assert _post_draft(client, organization, project, sibling).status_code == 403
 
 
+def test_studio_bootstrap_exposes_only_exact_scenario_author_decision() -> None:
+    organization = Organization.objects.create(slug="studio-bootstrap", name="Studio Bootstrap")
+    project = AIProject.objects.create(organization=organization, slug="project", name="Project")
+    scenario = Scenario.objects.create(project=project, slug="scenario", name="Scenario")
+    admin, admin_membership = _member(organization, "studio-bootstrap-admin")
+    editor, editor_membership = _member(organization, "studio-bootstrap-editor")
+    OrganizationResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=admin_membership,
+        responsibility=OrganizationResponsibility.ADMINISTRATOR,
+        assigned_by=admin,
+    )
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=organization,
+        scenario=scenario,
+        membership=editor_membership,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=admin,
+    )
+    url = reverse("console:builder")
+    query = {"organization": organization.slug, "scenario": str(scenario.public_id)}
+    client = Client()
+
+    client.force_login(editor)
+    assert '"can_author_scenario": true' in client.get(url, query).content.decode()
+
+    client.force_login(admin)
+    assert '"can_author_scenario": false' in client.get(url, query).content.decode()
+
+
 def test_builder_hides_protected_draft_body_without_exact_scenario_visibility() -> None:
     organization = Organization.objects.create(slug="builder-read", name="Builder Read")
     project = AIProject.objects.create(

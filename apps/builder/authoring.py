@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from django.conf import settings
@@ -67,18 +68,21 @@ def _depth(value: Any, current: int = 0) -> int:
     return current
 
 
+_JSON_FENCE = re.compile(
+    r"\A```json[ \t]*\r?\n(?P<body>.*?)\r?\n```[ \t]*\Z",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
 def parse_candidate(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, str):
         raise services.BuilderError("candidate_invalid")
     if len(raw.encode("utf-8")) > _limit("AI_AUTHORING_MAX_CANDIDATE_BYTES", 262144):
         raise services.BuilderError("candidate_too_large")
     text = raw.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if len(lines) >= 3 and lines[-1].strip() == "```":
-            text = "\n".join(lines[1:-1])
-            if text.lstrip().lower().startswith("json\n"):
-                text = text.lstrip()[5:]
+    fenced = _JSON_FENCE.fullmatch(text)
+    if fenced is not None:
+        text = fenced.group("body").strip()
     try:
         value = json.loads(text)
     except (ValueError, UnicodeDecodeError) as exc:

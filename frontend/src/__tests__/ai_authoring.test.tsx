@@ -107,4 +107,31 @@ describe("Studio AI authoring panel", () => {
     fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "akış" } });
     expect(screen.getByText("Geçici aday üret")).toBeDisabled();
   });
+
+  it("warns against blind replay when the provider outcome is unknown", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      error: { code: "outcome_unknown", message: "provider outcome unknown" },
+    }), { status: 503, headers: { "Content-Type": "application/json" } }))));
+    render(<AiAuthoringPanel api={new BuilderApi("/console/api/builder/")}
+      organization="org" projects={[{ id: 3, name: "Project" }]}
+      scenarioId={7} onGenerated={vi.fn()} onCapabilityMissing={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "akış" } });
+    fireEvent.click(screen.getByText("Geçici aday üret"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Kör tekrar yapmayın");
+  });
+
+  it("shows safe operational guidance for a provider transport failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      error: { code: "connection_failed", message: "raw provider detail" },
+    }), { status: 503, headers: { "Content-Type": "application/json" } }))));
+    render(<AiAuthoringPanel api={new BuilderApi("/console/api/builder/")}
+      organization="org" projects={[{ id: 3, name: "Project" }]}
+      scenarioId={7} onGenerated={vi.fn()} onCapabilityMissing={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("taslak açıklaması"), { target: { value: "akış" } });
+    fireEvent.click(screen.getByText("Geçici aday üret"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("deployment ve provider durumunu");
+    expect(screen.queryByText("raw provider detail")).not.toBeInTheDocument();
+  });
 });

@@ -187,6 +187,7 @@ class OpenAICompatibleAuthoringProvider:
                 {"role": "user", "content": description},
             ],
             "max_tokens": profile.max_output_tokens,
+            "response_format": {"type": "json_object"},
         }
         try:
             response = self._egress.call_json(

@@ -10,8 +10,16 @@ from apps.builder.services import BuilderError
 
 
 def test_candidate_parser_accepts_json_fence_and_rejects_malformed_or_non_object() -> None:
+    assert parse_candidate('{"kind":"Workflow"}')["kind"] == "Workflow"
     assert parse_candidate('```json\n{"kind":"Workflow"}\n```')["kind"] == "Workflow"
-    for value, code in [("not-json", "candidate_invalid_json"), ("[]", "candidate_not_object")]:
+    assert parse_candidate('```JSON\r\n{"kind":"Workflow"}\r\n```')["kind"] == "Workflow"
+    for value, code in [
+        ("not-json", "candidate_invalid_json"),
+        ("Here is JSON:\n```json\n{}\n```", "candidate_invalid_json"),
+        ("```python\n{}\n```", "candidate_invalid_json"),
+        ("```json\n{}\n```\n```json\n{}\n```", "candidate_invalid_json"),
+        ("[]", "candidate_not_object"),
+    ]:
         with pytest.raises(BuilderError, match=code):
             parse_candidate(value)
 

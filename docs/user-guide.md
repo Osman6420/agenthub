@@ -410,6 +410,12 @@ transfer action. Workflow candidates enter `WorkflowDraft` and open in the graph
 input/output candidates enter a tenant/project-scoped `ArtifactDraft` and open in the Turkish JSON
 editor, where they can be revalidated, updated or deleted.
 
+An exact Scenario editor sees the Studio AI planner even without organization-wide write authority.
+Generation and repair produce only an in-memory candidate; explicit accept is required before a
+mutable draft exists, and publish remains a separate action. A malformed, ambiguous, deep, or
+oversized provider response creates nothing. If the UI says the provider result is unknown, do not
+retry blindly; use the request ID to ask an operator to check the audit/transport outcome first.
+
 Each type uses a server-owned immutable prompt contract with a stable ID, revision and SHA-256
 checksum. `AI_AUTHORING_CONTRACT_REVISION` can select only a reviewed revision present in the code
 registry; callers cannot submit prompt text or select a revision. Tool, binding, model, source,

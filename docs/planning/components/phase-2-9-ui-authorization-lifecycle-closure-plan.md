@@ -15,7 +15,8 @@ verification record owned by the main implementation agent.
 
 ## Status
 
-In progress. Parts 1–4 are implemented and verified; Part 5 is the next active milestone. Part 4
+In progress. Parts 1–4 are implemented and verified. Part 5 is implemented and automated-verified;
+its configured live-provider/browser acceptance remains open, while Part 6 is the next implementation milestone. Part 4
 evidence is archived in
 [the governed setup and immutable inputs task](../archive/phase-2-9-part-4-governed-setup-immutable-inputs-2026-08-01/plan.md).
 Part 3 evidence is archived in
@@ -233,6 +234,12 @@ are converted to a validated non-publishing candidate reliably.
 **Acceptance:** exact editor allow and viewer/unassigned/foreign denial pass; raw, fenced, malformed,
 oversized, timeout, and provider-error fixtures pass; one approved live synthetic Gemini smoke is
 recorded without content or secret exposure.
+
+Implemented and automated-verified 2026-08-02. Exact Studio permission, JSON-object mode, strict
+whole-fence normalization, safe error guidance, full SQLite, and targeted PostgreSQL evidence are in
+the [active Part 5 verification](../../tasks/phase-2-9-part-5-exact-ai-authoring-provider-reliability/verification.md).
+The configured live Gemini/browser smoke remains open because the local deployment has no AI
+authoring profile/provider configured; the task is intentionally not archived.
 
 ### Part 6 — P2: navigation, comprehension, accessibility, and interaction cost
 

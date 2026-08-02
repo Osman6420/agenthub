@@ -170,6 +170,12 @@ connector pages consume only granted profile labels/readiness and never receive 
 secret references. Registration or grant never performs a network call or bypasses deployment,
 source, policy, runtime, or release gates.
 
+Phase 2.9 Part 5 keeps Studio AI authorization scenario-exact end to end. The Django bootstrap emits
+the persisted exact author decision only for a scoped scenario; the SPA uses it solely as an
+affordance, while generate/repair/accept APIs re-resolve and re-authorize the hierarchy. The
+OpenAI-compatible provider requests a JSON object, and the builder accepts only bounded raw JSON or
+one whole-response `json` fence before the existing object/depth/schema/workflow/reference checks.
+
 ## Target architecture
 
 [`agenthub-v3-django-plan.md`](../../agenthub-v3-django-plan.md) defines the full
