@@ -16,7 +16,8 @@ verification record owned by the main implementation agent.
 ## Status
 
 In progress. Parts 1–4 are implemented and verified. Part 5 is implemented and automated-verified;
-its configured live-provider/browser acceptance remains open, while Part 6 is the next implementation milestone. Part 4
+its configured live-provider/browser acceptance remains open. Part 6 is implemented and automated-
+verified; Part 7 owns the deterministic browser/manual quality gate. Part 4
 evidence is archived in
 [the governed setup and immutable inputs task](../archive/phase-2-9-part-4-governed-setup-immutable-inputs-2026-08-01/plan.md).
 Part 3 evidence is archived in
@@ -260,6 +261,17 @@ authoring profile/provider configured; the task is intentionally not archived.
 
 **Acceptance:** the role matrix has no false affordance or unexplained dead end; critical journeys
 meet the click targets or record an owner-approved exception with rationale.
+
+**Implemented / verified 2026-08-02:** responsibility-aware navigation, safe local 403/404 guidance,
+exact set-version content preview/download, release and capability recommendations, explicit dirty
+manifest choices, and Turkish-first touched labels/timestamps are complete. Existing Part 3 release
+controls close the release dead end; current Studio deep-link tests cover Scenario Viewer state; the
+document publish template contains one publish action. Focused/backend blast-radius/full SQLite,
+targeted PostgreSQL/RLS, frontend/type/build and schema-drift evidence is recorded in the
+[Part 6 verification](../archive/phase-2-9-part-6-navigation-content-access-ux-closure-2026-08-02/verification.md).
+The preset release journey remains below the ten-action target. Target-browser visual/keyboard/
+responsive acceptance is intentionally part of Part 7's explicit browser/manual gate, not claimed
+here.
 
 ### Part 7 — P2 quality closure: automated browser gate and clean repository baseline
 

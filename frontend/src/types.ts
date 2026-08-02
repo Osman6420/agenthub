@@ -54,18 +54,29 @@ export interface ManifestVersionOption {
 }
 
 export interface ManifestOptionsResult {
-  level: "artifact_type" | "logical_artifact" | "exact_version";
+  level: "artifact_type" | "logical_artifact" | "exact_version" | "preset";
   artifact_type?: string;
   logical_id?: string;
   logical_description?: string;
   roles?: string[];
-  options: ManifestTypeOption[] | ManifestLogicalOption[] | ManifestVersionOption[];
+  options: ManifestTypeOption[] | ManifestLogicalOption[] | ManifestVersionOption[] |
+    ManifestPresetOption[];
   limited?: boolean;
+  missing_roles?: string[];
+  recommendation_only?: boolean;
 }
 
 export interface ManifestSelectionPayload {
   artifact_version_id: number;
   role: string;
+}
+
+export interface ManifestPresetOption extends ManifestSelectionPayload {
+  artifactType: string;
+  logicalId: string;
+  version: number;
+  checksum: string;
+  description: string;
 }
 
 export interface ReleaseDiagnostic {

@@ -179,10 +179,10 @@
       <div class="nav-label">Çalışma alanı</div>
       <nav aria-label="Ana menü">
         <a href="{% url 'console:dashboard' %}">Ana Sayfa</a>
-        <a href="{% url 'console:projects' %}">Projeler</a>
-        <a href="{% url 'console:documents' %}">Dokümanlar</a>
-        <a href="{% url 'console:consumers' %}">İstemciler</a>
-        <a href="{% url 'console:runs' %}">Çalıştırmalar</a>
+        {% if show_projects_navigation %}<a href="{% url 'console:projects' %}">Projeler</a>{% endif %}
+        {% if show_documents_navigation %}<a href="{% url 'console:documents' %}">Dokümanlar</a>{% endif %}
+        {% if show_consumers_navigation %}<a href="{% url 'console:consumers' %}">İstemciler</a>{% endif %}
+        {% if show_runs_navigation %}<a href="{% url 'console:runs' %}">Çalıştırmalar</a>{% endif %}
         {% if can_manage_organization_members %}<a href="{% url 'console:organization_members' %}">Kullanıcılar ve yetkiler</a>{% endif %}
         {% if is_platform_admin %}<a href="{% url 'console:platform_setup' %}">Platform kurulumu</a>{% endif %}
       </nav>
@@ -199,7 +199,7 @@
   {% if user.is_authenticated %}
     </div>
   </div>
-  <script src="{% static 'console/console.js' %}?v=phase-2-8-part-1-2" defer></script>
+  <script src="{% static 'console/console.js' %}?v=phase-2-9-part-6" defer></script>
   {% endif %}
 </body>
 </html>

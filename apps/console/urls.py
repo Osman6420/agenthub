@@ -245,6 +245,16 @@ urlpatterns = [
         name="document_set_document_detail",
     ),
     path(
+        "document-sets/id/<uuid:public_id>/documents/id/<uuid:document_public_id>/versions/<int:version_id>/preview/",
+        views.document_version_preview,
+        name="document_version_preview",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/documents/id/<uuid:document_public_id>/versions/<int:version_id>/download/",
+        views.document_version_download,
+        name="document_version_download",
+    ),
+    path(
         "document-sets/id/<uuid:public_id>/documents/id/<uuid:document_public_id>/replace/",
         views.document_set_document_replace,
         name="document_set_document_replace",

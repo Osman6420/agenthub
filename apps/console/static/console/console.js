@@ -45,4 +45,22 @@
       }
     });
   });
+
+  document.querySelectorAll("select[data-capability-presets]").forEach(function (select) {
+    var presets;
+    try {
+      presets = JSON.parse(select.getAttribute("data-capability-presets") || "{}");
+    } catch (_error) {
+      return;
+    }
+    select.addEventListener("change", function () {
+      var selected = presets[select.value];
+      if (!Array.isArray(selected)) return;
+      var form = select.closest("form");
+      if (!form) return;
+      form.querySelectorAll('input[name="capabilities"]').forEach(function (checkbox) {
+        checkbox.checked = selected.indexOf(checkbox.value) !== -1;
+      });
+    });
+  });
 })();

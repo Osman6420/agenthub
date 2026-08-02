@@ -280,9 +280,36 @@ class ConsumerTokenIssueForm(forms.Form):
     )
 
 
+CAPABILITY_PRESETS: dict[str, tuple[str, ...]] = {
+    "workflow_runner": (Capability.WORKFLOW_RUN,),
+    "rag_debug_reader": (Capability.WORKFLOW_RUN, Capability.RETRIEVE_DEBUG),
+    "ingestion_operator": (Capability.INGESTION_READ, Capability.INGESTION_TRIGGER),
+}
+
+
 class BindingForm(forms.ModelForm):
+    capability_preset = forms.ChoiceField(
+        required=False,
+        label="Capability başlangıç önerisi",
+        help_text=(
+            "Yalnız checkbox'ları doldurur; yetki vermez. Göndermeden önce exact seçimleri "
+            "inceleyin. Öneriyi değiştirirseniz Özel seçim'i kullanın."
+        ),
+        choices=(
+            ("custom", "Özel seçim"),
+            ("workflow_runner", "Workflow çalıştırıcı"),
+            ("rag_debug_reader", "RAG debug okuyucu"),
+            ("ingestion_operator", "Ingestion operatörü"),
+        ),
+        initial="custom",
+        widget=forms.Select(
+            attrs={"data-capability-presets": json.dumps(CAPABILITY_PRESETS, sort_keys=True)}
+        ),
+    )
     capabilities = forms.MultipleChoiceField(
-        choices=Capability.choices, widget=forms.CheckboxSelectMultiple
+        choices=Capability.choices,
+        widget=forms.CheckboxSelectMultiple,
+        help_text="Kaydedilecek exact capability allowlist'i.",
     )
 
     class Meta:
@@ -313,6 +340,19 @@ class BindingForm(forms.ModelForm):
         if commit:
             instance.save()  # full_clean() runs here: capability allowlist + cross-org
         return instance
+
+    def clean(self) -> dict[str, Any]:
+        cleaned_data = super().clean() or {}
+        preset = cleaned_data.get("capability_preset") or "custom"
+        selected = tuple(sorted(cleaned_data.get("capabilities") or ()))
+        expected = tuple(sorted(CAPABILITY_PRESETS.get(preset, ())))
+        if preset != "custom" and selected != expected:
+            self.add_error(
+                "capabilities",
+                "Başlangıç önerisi ile exact capability seçimleri uyuşmuyor; değişiklik için "
+                "Özel seçim'i seçin.",
+            )
+        return cleaned_data
 
 
 class DocumentUploadForm(forms.Form):

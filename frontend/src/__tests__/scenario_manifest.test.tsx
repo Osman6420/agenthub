@@ -105,15 +105,15 @@ describe("Scenario Studio exact candidate manifest", () => {
     />);
 
     await screen.findByRole("option", { name: "Workflow" });
-    fireEvent.change(screen.getByLabelText("Manifest artifact type"), {
+    fireEvent.change(screen.getByLabelText("Manifest artifact türü"), {
       target: { value: "workflow_definition" },
     });
     await screen.findByRole("option", { name: "support_flow" });
-    fireEvent.change(screen.getByLabelText("Manifest logical artifact"), {
+    fireEvent.change(screen.getByLabelText("Manifest mantıksal artifactı"), {
       target: { value: "support_flow" },
     });
     await screen.findByRole("option", { name: /v2/ });
-    fireEvent.change(screen.getByLabelText("Manifest exact version"), {
+    fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), {
       target: { value: "42" },
     });
     fireEvent.change(screen.getByLabelText("Manifest rolü"), {
@@ -127,11 +127,11 @@ describe("Scenario Studio exact candidate manifest", () => {
     expect(screen.getByText(/node search/)).toBeInTheDocument();
     fireEvent.click(screen.getByText("Bu rol için artifact seç"));
     await screen.findByRole("option", { name: "search_binding" });
-    fireEvent.change(screen.getByLabelText("Manifest logical artifact"), {
+    fireEvent.change(screen.getByLabelText("Manifest mantıksal artifactı"), {
       target: { value: "search_binding" },
     });
     await screen.findByRole("option", { name: /v1/ });
-    fireEvent.change(screen.getByLabelText("Manifest exact version"), {
+    fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), {
       target: { value: "43" },
     });
     expect(screen.getByLabelText("Manifest rolü")).toHaveValue("tool_binding.search");
@@ -139,8 +139,8 @@ describe("Scenario Studio exact candidate manifest", () => {
     fireEvent.click(screen.getByText("Manifest’e ekle"));
     expect(screen.getByText(/search_binding:v1/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Canonical preflight"));
-    await screen.findByText(/Canonical preflight düzeltme gerektiriyor/);
+    fireEvent.click(screen.getByText("Kanonik ön kontrol"));
+    await screen.findByText(/Kanonik ön kontrol düzeltme gerektiriyor/);
     expect(screen.getByText(/support_flow:v2/)).toBeInTheDocument();
     expect(screen.getByText(/workflow_missing/)).toBeInTheDocument();
 
@@ -203,15 +203,15 @@ describe("Scenario Studio exact candidate manifest", () => {
       scenarioPublicId="scenario" optionsUrl="/artifact-options/" />);
 
     await screen.findByRole("option", { name: "Workflow" });
-    fireEvent.change(screen.getByLabelText("Manifest artifact type"), {
+    fireEvent.change(screen.getByLabelText("Manifest artifact türü"), {
       target: { value: "workflow_definition" },
     });
     await screen.findByRole("option", { name: "flow" });
-    fireEvent.change(screen.getByLabelText("Manifest logical artifact"), {
+    fireEvent.change(screen.getByLabelText("Manifest mantıksal artifactı"), {
       target: { value: "flow" },
     });
     await screen.findByRole("option", { name: /v1/ });
-    fireEvent.change(screen.getByLabelText("Manifest exact version"), {
+    fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), {
       target: { value: "7" },
     });
     fireEvent.change(screen.getByLabelText("Manifest rolü"), {
@@ -224,5 +224,57 @@ describe("Scenario Studio exact candidate manifest", () => {
       "href", "/console/releases/17/",
     );
     expect(screen.getByText(/flow:v1/)).toBeInTheDocument();
+  });
+
+  it("loads a recommendation and exposes explicit dirty-state choices", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const value = String(url);
+      let payload: unknown;
+      if (value.includes("release-manifest/compile")) {
+        payload = {
+          ok: true,
+          diagnostics: [],
+          release: { id: 23, status: "candidate", artifact_manifest_sha256: "c".repeat(64) },
+        };
+      } else if (value.includes("preset=minimum")) {
+        payload = {
+          level: "preset",
+          recommendation_only: true,
+          missing_roles: ["eval_suite"],
+          options: [{
+            artifact_version_id: 11,
+            role: "workflow_definition",
+            artifactType: "workflow_definition",
+            logicalId: "recommended-flow",
+            version: 3,
+            checksum: "d".repeat(64),
+            description: "Recommended exact workflow",
+          }],
+        };
+      } else {
+        payload = { level: "artifact_type", options: [] };
+      }
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+    render(<ScenarioManifestPanel api={new BuilderApi("/console/api/builder/")}
+      scenarioPublicId="scenario" optionsUrl="/artifact-options/" />);
+
+    fireEvent.click(screen.getByText("Minimum release önerisini getir"));
+
+    expect(await screen.findByText(/recommended-flow:v3/)).toBeInTheDocument();
+    expect(screen.getByText(/eksik roller: eval_suite/)).toBeInTheDocument();
+    expect(screen.getByText("Candidate olarak kaydet")).toBeInTheDocument();
+    expect(screen.getByText("Seçimi sil")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Düzenlemeye devam et"));
+    expect(screen.queryByText("Candidate olarak kaydet")).not.toBeInTheDocument();
+    expect(screen.getByText(/recommended-flow:v3/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Minimum release önerisini getir"));
+    fireEvent.click(await screen.findByText("Candidate olarak kaydet"));
+    expect(await screen.findByText("Candidate #23 aç")).toBeInTheDocument();
+    expect(screen.queryByText("Seçimi sil")).not.toBeInTheDocument();
   });
 });

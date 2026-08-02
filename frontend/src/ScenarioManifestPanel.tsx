@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, BuilderApi } from "./api";
 import type {
   ManifestLogicalOption,
+  ManifestPresetOption,
   ManifestRequirement,
   ManifestSelectionPayload,
   ManifestTypeOption,
@@ -10,13 +11,7 @@ import type {
   ReleaseDiagnostic,
 } from "./types";
 
-interface SelectedManifestItem extends ManifestSelectionPayload {
-  artifactType: string;
-  logicalId: string;
-  version: number;
-  checksum: string;
-  description: string;
-}
+type SelectedManifestItem = ManifestPresetOption;
 
 export function ScenarioManifestPanel({
   api,
@@ -42,6 +37,8 @@ export function ScenarioManifestPanel({
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [releaseId, setReleaseId] = useState<number | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [dirtyNoticeVisible, setDirtyNoticeVisible] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -56,14 +53,36 @@ export function ScenarioManifestPanel({
   }, [api, optionsUrl]);
 
   useEffect(() => {
-    if (selected.length === 0) return;
+    if (!dirty) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [selected.length]);
+  }, [dirty]);
+
+  async function loadMinimumPreset() {
+    setBusy(true);
+    try {
+      const result = await api.manifestOptions(optionsUrl, { preset: "minimum" });
+      if (result.level !== "preset") return;
+      setSelected(result.options as SelectedManifestItem[]);
+      setDiagnostics([]);
+      setRequirements([]);
+      setReleaseId(null);
+      setDirty(true);
+      setDirtyNoticeVisible(true);
+      const missing = result.missing_roles ?? [];
+      setStatus(missing.length
+        ? `Başlangıç önerisi yüklendi; eksik roller: ${missing.join(", ")}. Kanonik ön kontrol zorunludur.`
+        : "Başlangıç önerisi yüklendi. Bu bir yetki veya yayın işlemi değildir; kanonik ön kontrol zorunludur.");
+    } catch (error) {
+      setStatus(formatError(error));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const selectedVersion = useMemo(
     () => versions.find((item) => String(item.id) === versionId),
@@ -132,8 +151,10 @@ export function ScenarioManifestPanel({
         description: selectedVersion.description,
       },
     ]);
+    setDirty(true);
+    setDirtyNoticeVisible(true);
     setDiagnostics([]);
-    setStatus("Manifest değişti; canonical preflight yeniden çalıştırılmalıdır.");
+    setStatus("Manifest değişti; kanonik ön kontrol yeniden çalıştırılmalıdır.");
     setReleaseId(null);
     setVersionId("");
     setRole("");
@@ -147,7 +168,7 @@ export function ScenarioManifestPanel({
         setDiagnostics(result.diagnostics);
         setRequirements(result.requirements ?? []);
         if (result.ok) {
-          setStatus("Workflow dependency rolleri canonical graph üzerinden çıkarıldı.");
+          setStatus("Workflow bağımlılık rolleri kanonik grafikten çıkarıldı.");
         }
       } catch (error) {
         setStatus(formatError(error));
@@ -169,8 +190,8 @@ export function ScenarioManifestPanel({
       const result = await api.preflightManifest(scenarioPublicId, payload());
       setDiagnostics(result.diagnostics);
       setStatus(result.ok
-        ? `Canonical preflight başarılı · checksum ${result.artifact_manifest_sha256?.slice(0, 12)}`
-        : "Canonical preflight düzeltme gerektiriyor; seçimler korundu.");
+        ? `Kanonik ön kontrol başarılı · sağlama ${result.artifact_manifest_sha256?.slice(0, 12)}`
+        : "Kanonik ön kontrol düzeltme gerektiriyor; seçimler korundu.");
     } catch (error) {
       setStatus(formatError(error));
     } finally {
@@ -187,6 +208,8 @@ export function ScenarioManifestPanel({
       if (result.ok && result.release) {
         setReleaseId(result.release.id);
         setStatus(`Candidate release #${result.release.id} oluşturuldu; runtime değişmedi.`);
+        setDirty(false);
+        setDirtyNoticeVisible(false);
       } else {
         setStatus("Candidate oluşturulmadı; seçimler korundu ve hata aşağıda gösteriliyor.");
       }
@@ -202,32 +225,55 @@ export function ScenarioManifestPanel({
       <div style={{ color: "#8b95a7", fontSize: 12, textTransform: "uppercase" }}>
         Release adayı
       </div>
-      <h2 id="manifest-heading">Exact candidate manifest</h2>
+      <h2 id="manifest-heading">Kesin sürümlü candidate manifest</h2>
       <p style={{ color: "#8b95a7" }}>
         Yalnız immutable exact version pinlenir. Başarısız preflight veya compile seçimleri silmez;
         publish, evaluation ve promotion ayrı işlemlerdir.
       </p>
+      <button type="button" disabled={busy} onClick={() => void loadMinimumPreset()}>
+        Minimum release önerisini getir
+      </button>
     </div>
 
+    {dirty && dirtyNoticeVisible && <div role="alert" style={warningBox}>
+      <strong>Kaydedilmemiş manifest seçimi var.</strong>
+      <p>Seçim yalnızca bu tarayıcı belleğinde tutulur; henüz candidate release değildir.</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" disabled={busy || selected.length === 0}
+          onClick={() => void compile()}>Candidate olarak kaydet</button>
+        <button type="button" onClick={() => {
+          setSelected([]);
+          setDiagnostics([]);
+          setReleaseId(null);
+          setDirty(false);
+          setDirtyNoticeVisible(false);
+          setStatus("Manifest seçimi silindi.");
+        }}>Seçimi sil</button>
+        <button type="button" onClick={() => setDirtyNoticeVisible(false)}>
+          Düzenlemeye devam et
+        </button>
+      </div>
+    </div>}
+
     <div style={selectorGrid}>
-      <label>Artifact type
-        <select aria-label="Manifest artifact type" value={artifactType}
+      <label>Artifact türü
+        <select aria-label="Manifest artifact türü" value={artifactType}
           onChange={(event) => void chooseType(event.target.value)}>
-          <option value="">Type seçin</option>
+          <option value="">Tür seçin</option>
           {types.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
       </label>
-      <label>Logical artifact
-        <select aria-label="Manifest logical artifact" value={logicalId}
+      <label>Mantıksal artifact
+        <select aria-label="Manifest mantıksal artifactı" value={logicalId}
           disabled={!artifactType} onChange={(event) => void chooseLogical(event.target.value)}>
-          <option value="">Logical artifact seçin</option>
+          <option value="">Mantıksal artifact seçin</option>
           {logicals.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
       </label>
-      <label>Exact version
-        <select aria-label="Manifest exact version" value={versionId}
+      <label>Kesin sürüm
+        <select aria-label="Manifest kesin sürümü" value={versionId}
           disabled={!logicalId} onChange={(event) => setVersionId(event.target.value)}>
-          <option value="">Version seçin</option>
+          <option value="">Sürüm seçin</option>
           {versions.map((item) => <option key={item.id} value={item.id}>
             v{item.version} · {item.checksum.slice(0, 12)}
           </option>)}
@@ -264,7 +310,7 @@ export function ScenarioManifestPanel({
               <strong>{item.role}</strong>
               <div>{item.artifactType} · {item.logicalId}:v{item.version}</div>
               <div style={{ color: "#8b95a7", fontSize: 12 }}>
-                checksum {item.checksum.slice(0, 12)} · {item.description}
+                sağlama {item.checksum.slice(0, 12)} · {item.description}
               </div>
               {itemDiagnostics.map((entry) => <div key={entry.code} role="alert"
                 style={{ color: "#fca5a5" }}>{entry.code}: {entry.message}</div>)}
@@ -275,16 +321,18 @@ export function ScenarioManifestPanel({
               ));
               setDiagnostics([]);
               setReleaseId(null);
+              setDirty(true);
+              setDirtyNoticeVisible(true);
             }}>Kaldır</button>
           </li>;
         })}
       </ul>}
 
-    {requirements.length > 0 && <div aria-label="Canonical workflow gereksinimleri"
+    {requirements.length > 0 && <div aria-label="Kanonik workflow gereksinimleri"
       style={{ margin: "12px 0" }}>
       <strong>Workflow dependency rolleri</strong>
       <p style={{ color: "#8b95a7", marginTop: 4 }}>
-        Roller exact workflow’un canonical compiled graph’ından çıkarıldı. Eksik roller için
+        Roller kesin workflow’un kanonik derlenmiş grafiğinden çıkarıldı. Eksik roller için
         immutable artifact/version seçimi sizde kalır.
       </p>
       {requirements.map((requirement) => {
@@ -319,7 +367,7 @@ export function ScenarioManifestPanel({
 
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <button type="button" disabled={busy || selected.length === 0}
-        onClick={() => void preflight()}>Canonical preflight</button>
+        onClick={() => void preflight()}>Kanonik ön kontrol</button>
       <button type="button" disabled={busy || selected.length === 0}
         onClick={() => void compile()}>Candidate release derle</button>
       <button type="button" disabled={busy || selected.length === 0} onClick={() => {
@@ -327,6 +375,8 @@ export function ScenarioManifestPanel({
         setDiagnostics([]);
         setStatus("Manifest seçimi temizlendi.");
         setReleaseId(null);
+        setDirty(false);
+        setDirtyNoticeVisible(false);
       }}>Seçimi temizle</button>
       {status && <span role="status">{status}</span>}
       {releaseId && <a href={`/console/releases/${releaseId}/`}>Candidate #{releaseId} aç</a>}
@@ -368,4 +418,13 @@ const errorBox: React.CSSProperties = {
   borderRadius: 7,
   background: "#3a2226",
   color: "#fca5a5",
+};
+
+const warningBox: React.CSSProperties = {
+  margin: "12px 0",
+  padding: "12px",
+  border: "1px solid #a16207",
+  borderRadius: 7,
+  background: "#33250f",
+  color: "#fde68a",
 };

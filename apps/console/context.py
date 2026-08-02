@@ -13,6 +13,7 @@ from __future__ import annotations
 from django.http import HttpRequest
 
 from apps.console import scoping
+from apps.identity.models import ScenarioResponsibility
 from apps.tenancy.models import Organization
 from apps.tenancy.services import can_admin_org, is_platform_admin
 
@@ -76,12 +77,22 @@ def active_workspace(request: HttpRequest) -> dict[str, object]:
     available_limited = len(available) > _MAX_SELECTOR_ORGS
     available = available[:_MAX_SELECTOR_ORGS]
     active = resolve_active_organization(request)
+    can_admin_active = active is not None and can_admin_org(user, active.pk)
     return {
         "active_organization": active,
         "available_organizations": available,
         "available_organizations_limited": available_limited,
         # Multiple organizations use a dropdown; single-org users get a static label.
         "workspace_multi_org": len(available) > 1,
-        "can_manage_organization_members": (active is not None and can_admin_org(user, active.pk)),
+        "can_manage_organization_members": can_admin_active,
         "is_platform_admin": is_platform_admin(user),
+        "show_projects_navigation": can_admin_active or scoping.scoped_projects(user).exists(),
+        "show_documents_navigation": can_admin_active
+        or scoping.scoped_document_sets(user).exists(),
+        "show_consumers_navigation": can_admin_active or scoping.scoped_consumers(user).exists(),
+        "show_runs_navigation": can_admin_active
+        or scoping.scoped_runs(user).exists()
+        or scoping.has_scenario_responsibility(
+            user, (ScenarioResponsibility.RUNTIME_OPERATOR,)
+        ),
     }

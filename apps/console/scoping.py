@@ -67,6 +67,14 @@ def _scenario_responsibility_ids(
     return set(queryset.values_list("scenario_id", flat=True))
 
 
+def has_scenario_responsibility(
+    user: UserLike, responsibilities: tuple[str, ...]
+) -> bool:
+    """Return whether the operator has one active, unexpired exact scenario duty."""
+
+    return bool(_scenario_responsibility_ids(user, responsibilities))
+
+
 def _document_set_responsibility_ids(
     user: UserLike, responsibilities: tuple[str, ...] | None = None
 ) -> set[int]:

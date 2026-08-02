@@ -46,9 +46,10 @@ visible. It grants no project, scenario, approval, release, runtime, or protecte
 
 ## 2. Console surfaces
 
-The authenticated sidebar exposes five task-oriented, tenant-scoped surfaces. The organization
-selector always selects exactly one workspace and changes presentation only; server-side membership
-and role checks remain authoritative. There is no cross-organization console view.
+The authenticated sidebar exposes only task-oriented surfaces supported by the operator's active,
+unexpired responsibilities. A hidden link is not an authorization decision: direct routes repeat
+the same server-side scope and capability checks. The organization selector always selects exactly
+one workspace and changes presentation only; there is no cross-organization console view.
 
 | Surface | Purpose |
 | --- | --- |
@@ -87,6 +88,13 @@ uyumlu kapalı seçeneklerden seçilir. Senaryo çağrı bölümündeki kopyalan
 release'in compiler-supported execution mode'larına göre Chat Completions veya background Responses
 biçiminde ve dahili ID yerine senaryo alias'ıyla üretilir.
 
+**Minimum release önerisini getir** yalnız senaryoya açıkça bağlı, tek anlamlı mantıksal artifact'ların
+en yeni immutable sürümlerini tarayıcıdaki geçici seçime koyar. Bu öneri yetki vermez, candidate
+oluşturmaz ve kanonik ön kontrolü atlamaz. Kaydedilmemiş seçim için **Candidate olarak kaydet**,
+**Seçimi sil** ve **Düzenlemeye devam et** seçenekleri görünür; candidate başarıyla oluşana kadar
+sayfadan ayrılma uyarısı da korunur. İstemci bağındaki capability başlangıç önerileri de yalnız
+checkbox'ları doldurur; sunucu gönderilen exact allowlist ile presetin birebir eşleşmesini doğrular.
+
 Klavye kullanıcıları sayfanın başındaki **Ana içeriğe geç** bağlantısıyla navigasyonu atlayabilir.
 Odak göstergesi tüm link/form kontrollerinde görünürdür; geniş tablolar dar ekranda yatay kaydırılır.
 Builder 760 px altında palette, canvas ve config panelini dikey sıraya alır. Bu davranışların son
@@ -112,6 +120,12 @@ bir istekte en fazla 20 dosya kabul eder; tekil ve toplam byte sınırları depl
 uygulanır. Dosya adı başlık olur; Türkçe karakterler ASCII karşılıklarına dönüştürülerek güvenli ve
 stabil bir logical ID üretilir. Aynı dosya adı yeniden yüklendiğinde yeni bir `DocumentVersion` oluşur ve taslaktaki eski
 sürümün yerini alır. Yeni taslak, son yayımlanmış set üyeliğini korur.
+
+Exact **Content Reader** veya **Manager**, sete gerçekten pinlenmiş belge sürümünü güvenli metin
+önizlemesiyle açabilir ya da ek olarak indirebilir. Önizleme yalnız sınırlı boyutta UTF-8
+`text/plain`, Markdown, CSV ve JSON kabul eder ve aktif içeriği çalıştırmaz. İndirme her zaman
+`application/octet-stream` ve `attachment` olarak döner. Her başarılı, reddedilen veya başarısız
+okuma içerik/object-key olmadan audit edilir; audit yazılamazsa baytlar döndürülmez.
 
 Yükleme doğrudan serve edilmez. Belge sürümü ve exact taslak üyeliği tek transaction içinde
 oluşturulur; set dışı yeni belge oluşturma reddedilir. Operatör taslağı açıkça yayımlar, tenant'a

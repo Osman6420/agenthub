@@ -116,11 +116,12 @@ export class BuilderApi {
 
   manifestOptions(
     optionsUrl: string,
-    params: { artifact_type?: string; logical_id?: string } = {},
+    params: { artifact_type?: string; logical_id?: string; preset?: string } = {},
   ): Promise<ManifestOptionsResult> {
     const url = new URL(optionsUrl, window.location.origin);
     if (params.artifact_type) url.searchParams.set("artifact_type", params.artifact_type);
     if (params.logical_id) url.searchParams.set("logical_id", params.logical_id);
+    if (params.preset) url.searchParams.set("preset", params.preset);
     return request<ManifestOptionsResult>(url.toString());
   }
 

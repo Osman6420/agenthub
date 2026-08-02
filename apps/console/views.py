@@ -80,6 +80,7 @@ from apps.console.forms import (
     ScenarioForm,
 )
 from apps.documents import services as document_services
+from apps.documents.content_access import DocumentContentError, read_document_version_content
 from apps.documents.models import (
     Document,
     DocumentLifecycle,
@@ -1618,6 +1619,60 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
         raise PermissionDenied
     if scenario.organization.status != OrganizationStatus.ACTIVE:
         raise PermissionDenied
+    if request.GET.get("preset", "").strip() == "minimum":
+        candidates: list[tuple[str, str]] = []
+        workflow_logical_ids = list(
+            WorkflowDraft.objects.filter(scenario=scenario)
+            .order_by("logical_id")
+            .values_list("logical_id", flat=True)
+            .distinct()[:2]
+        )
+        if len(workflow_logical_ids) == 1:
+            candidates.append((ArtifactType.WORKFLOW_DEFINITION, workflow_logical_ids[0]))
+        for preset_type in (
+            ArtifactType.INPUT_CONTRACT,
+            ArtifactType.OUTPUT_CONTRACT,
+            ArtifactType.EVAL_SUITE,
+        ):
+            candidates.append(
+                (preset_type, f"scenario-{scenario.public_id.hex}-{preset_type}")
+            )
+        items: list[dict[str, object]] = []
+        missing_roles: list[str] = []
+        for role, logical_id in candidates:
+            artifact = (
+                ArtifactVersion.objects.filter(
+                    organization_id=scenario.organization_id,
+                    type=role,
+                    logical_id=logical_id,
+                )
+                .order_by("-version")
+                .first()
+            )
+            if artifact is None:
+                missing_roles.append(role)
+                continue
+            items.append(
+                {
+                    "artifact_version_id": artifact.pk,
+                    "role": role,
+                    "artifactType": artifact.type,
+                    "logicalId": artifact.logical_id,
+                    "version": artifact.version,
+                    "checksum": artifact.checksum,
+                    "description": artifact.version_description,
+                }
+            )
+        if len(workflow_logical_ids) != 1:
+            missing_roles.insert(0, "workflow_definition")
+        return JsonResponse(
+            {
+                "level": "preset",
+                "options": items,
+                "missing_roles": list(dict.fromkeys(missing_roles)),
+                "recommendation_only": True,
+            }
+        )
     artifact_type = request.GET.get("artifact_type", "").strip()
     logical_id = request.GET.get("logical_id", "").strip()
     queryset = ArtifactVersion.objects.filter(organization_id=scenario.organization_id)
@@ -4140,6 +4195,15 @@ def document_set_document_detail(
         document.organization_id,
         document_set=document_set,
     )
+    can_read_content = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.DOCUMENT_SET_CONTENT_READ,
+        organization=document_set.organization,
+        document_set=document_set,
+    ).allowed
+    readable_version_ids = {
+        membership.document_version_id for membership in memberships
+    }
     chunk_view = _document_chunk_view(document_set, versions) if can_write else None
     return render(
         request,
@@ -4153,9 +4217,125 @@ def document_set_document_detail(
             "memberships": memberships,
             "replacement_form": DocumentReplacementForm(),
             "can_write": can_write,
+            "can_read_content": can_read_content,
+            "readable_version_ids": readable_version_ids,
             "chunk_view": chunk_view,
         },
     )
+
+
+_DOCUMENT_PREVIEW_MIME_TYPES = frozenset(
+    {"text/plain", "text/markdown", "text/csv", "application/json"}
+)
+
+
+def _scoped_document_version(document: Document, version_id: int) -> DocumentVersion:
+    version = DocumentVersion.objects.filter(
+        pk=version_id,
+        document=document,
+        organization_id=document.organization_id,
+    ).first()
+    if version is None:
+        raise Http404
+    return version
+
+
+def _document_content_failure(request: HttpRequest, code: str) -> HttpResponse:
+    response = render(
+        request,
+        "console/document_content_error.html",
+        {"error_code": code},
+        status=422,
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@login_required
+@require_GET
+def document_version_preview(
+    request: HttpRequest,
+    public_id: object,
+    document_public_id: object,
+    version_id: int,
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, public_id=public_id)
+    document = _scoped_set_document(request.user, document_set, document_public_id)
+    version = _scoped_document_version(document, version_id)
+    try:
+        content = read_document_version_content(
+            actor=request.user,
+            document_set=document_set,
+            document=document,
+            version=version,
+            operation="preview",
+            max_bytes=int(getattr(settings, "CONSOLE_DOCUMENT_PREVIEW_MAX_BYTES", 262_144)),
+            allowed_mime_types=_DOCUMENT_PREVIEW_MIME_TYPES,
+            require_utf8=True,
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+    except DocumentContentError as exc:
+        if exc.code == "DOCUMENT_CONTENT_FORBIDDEN":
+            raise PermissionDenied from exc
+        return _document_content_failure(request, exc.code)
+    response = render(
+        request,
+        "console/document_version_preview.html",
+        {
+            "document_set": document_set,
+            "document": document,
+            "version": version,
+            "content_text": content.text,
+        },
+    )
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'none'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@login_required
+@require_GET
+def document_version_download(
+    request: HttpRequest,
+    public_id: object,
+    document_public_id: object,
+    version_id: int,
+) -> HttpResponse:
+    document_set = _scoped_document_set(request.user, public_id=public_id)
+    document = _scoped_set_document(request.user, document_set, document_public_id)
+    version = _scoped_document_version(document, version_id)
+    try:
+        content = read_document_version_content(
+            actor=request.user,
+            document_set=document_set,
+            document=document,
+            version=version,
+            operation="download",
+            max_bytes=int(getattr(settings, "CONSOLE_DOCUMENT_DOWNLOAD_MAX_BYTES", 25_000_000)),
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+    except DocumentContentError as exc:
+        if exc.code == "DOCUMENT_CONTENT_FORBIDDEN":
+            raise PermissionDenied from exc
+        return _document_content_failure(request, exc.code)
+    safe_name = slugify(document.logical_id) or "document"
+    response = HttpResponse(content.data, content_type="application/octet-stream")
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="{safe_name}-v{version.version}.bin"'
+    )
+    response.headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 def _document_chunk_view(
