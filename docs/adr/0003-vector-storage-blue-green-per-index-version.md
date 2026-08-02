@@ -3,6 +3,10 @@
 - **Status:** Accepted
 - **Date:** 2026-07-12
 
+Provider-response handling for explicit `halfvec(4000)` profiles is refined by
+[ADR-0017](0017-bounded-halfvec-response-truncation.md); the storage topology and lifecycle decision
+in this ADR remain accepted.
+
 Records the output of **Phase 2 · WS1 M0 Spike 1** (pgvector multi-dimension storage). The decision
 is accepted; *implementation timing* is gated by Phase 2 approval.
 
@@ -45,7 +49,8 @@ provably pins one dimension.
 
 - **One physical store per `IndexVersion`.** Column type is `vector(D)` for `D ≤ 2000` and
   `halfvec(D)` for `2000 < D ≤ 4000`, with `D` taken from the pinned `EmbeddingProfile`; an
-  unsupported `D`/index-type is **rejected at ingestion start — never truncated**. Each store has
+  unsupported declared store `D`/index-type is **rejected at ingestion start — never truncated**.
+  ADR-0017 separately refines overlong provider-response handling. Each store has
   its own HNSW index with the cosine opclass.
 - **System-generated names.** The store relation name is derived from the `IndexVersion` identity
   via a fixed, sanitized template (e.g. `chunk_iv_<id>`), **never** from tenant/user/author input.

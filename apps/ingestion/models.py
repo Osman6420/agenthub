@@ -13,8 +13,8 @@ from apps.tenancy.models import Organization, TimeStampedModel
 
 EMBEDDING_DIMENSIONS = 64
 
-# pgvector HNSW dimension limits by column type (ADR-0003): an unsupported dimension for the
-# chosen index type is rejected at ingestion start — never silently truncated.
+# pgvector HNSW dimension limits by column type (ADR-0003): unsupported declared store geometry is
+# rejected at ingestion start and never truncated. ADR-0017 only adapts overlong provider output.
 VECTOR_MAX_DIMENSIONS = 2000
 HALFVEC_MAX_DIMENSIONS = 4000
 

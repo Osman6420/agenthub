@@ -1,8 +1,9 @@
 """Validation for platform ``EmbeddingProfile`` fields and profile-id references.
 
 Mirrors ``apps.orchestration.profile_schema`` (the P1 ``ModelProfile`` validator) and adds the
-embedding-specific dimension/index-type rule from ADR-0003: an unsupported dimension for the
-chosen index type is **rejected — never silently truncated** (`vector` ≤ 2000, `halfvec` ≤ 4000).
+embedding-specific dimension/index-type rule from ADR-0003: an unsupported declared store dimension
+is **rejected — never silently truncated** (`vector` ≤ 2000, `halfvec` ≤ 4000). ADR-0017 separately
+allows bounded provider-response truncation for an explicit `halfvec(4000)` profile.
 """
 
 from __future__ import annotations
@@ -84,7 +85,7 @@ def validate_embedding_profile_fields(
         raise EmbeddingProfileValidationError("EMBEDDING_PROFILE_INDEX_TYPE_INVALID")
     if isinstance(dimensions, bool) or not isinstance(dimensions, int) or dimensions < 1:
         raise EmbeddingProfileValidationError("EMBEDDING_PROFILE_DIMENSIONS_INVALID")
-    # No silent truncation: reject a dimension the chosen HNSW index type cannot cover.
+    # Never truncate declared store geometry: reject a dimension HNSW cannot cover.
     limit = (
         HALFVEC_MAX_DIMENSIONS
         if index_type == EmbeddingIndexType.HALFVEC

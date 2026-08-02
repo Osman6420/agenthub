@@ -22,7 +22,12 @@ from typing import Any, Protocol, runtime_checkable
 from django.conf import settings
 from django.utils.module_loading import import_string
 
-from apps.ingestion.models import EmbeddingProfile, EmbeddingProfileStatus
+from apps.ingestion.models import (
+    HALFVEC_MAX_DIMENSIONS,
+    EmbeddingIndexType,
+    EmbeddingProfile,
+    EmbeddingProfileStatus,
+)
 from apps.ingestion.pipeline import embed_deterministic
 from apps.tools.adapters import ToolAdapterError, ToolAdapterRequest, ToolAdapterUncertain
 from apps.tools.egress import DnsResolver, EgressDenied, validate_destination
@@ -173,13 +178,25 @@ class OpenAICompatibleEmbeddingClient:
             if not isinstance(item, dict):
                 raise EmbeddingError("EMBEDDING_RESPONSE_INVALID")
             embedding = item.get("embedding")
-            if not isinstance(embedding, list) or len(embedding) != profile.dimensions:
-                # Dimension mismatch is a hard failure — never truncate/pad (ADR-0003).
+            if not isinstance(embedding, list):
+                raise EmbeddingError("EMBEDDING_DIMENSION_MISMATCH")
+            truncate_to_halfvec_limit = (
+                profile.index_type == EmbeddingIndexType.HALFVEC
+                and profile.dimensions == HALFVEC_MAX_DIMENSIONS
+                and len(embedding) > HALFVEC_MAX_DIMENSIONS
+            )
+            if len(embedding) != profile.dimensions and not truncate_to_halfvec_limit:
+                # Only an explicit maximum-dimension halfvec profile opts into bounded prefix
+                # truncation. Short vectors and every other geometry still fail closed.
                 raise EmbeddingError("EMBEDDING_DIMENSION_MISMATCH")
             try:
+                # Validate the complete provider vector before discarding its suffix; malformed
+                # values must not hide outside the persisted prefix (ADR-0017).
                 vector = [float(value) for value in embedding]
             except (TypeError, ValueError) as exc:
                 raise EmbeddingError("EMBEDDING_RESPONSE_INVALID") from exc
+            if truncate_to_halfvec_limit:
+                vector = vector[:HALFVEC_MAX_DIMENSIONS]
             vectors.append(_normalize(vector) if profile.normalize else vector)
         return vectors
 

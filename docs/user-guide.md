@@ -398,6 +398,13 @@ does not authorize egress: deployment allowlists/network policy, secret resoluti
 tenant source configuration, and runtime gates must still pass. Model selection remains the existing
 platform/deployment-governed flow rather than tenant self-service.
 
+Embedding profiles continue to declare the exact stored vector geometry. A profile configured as
+`halfvec` with `dimensions=4000` explicitly accepts provider vectors longer than 4,000 by validating
+the full response, retaining the first 4,000 components, and then normalizing the retained vector.
+Short output and every other dimension mismatch fail closed. Operators must use a new immutable
+profile revision and staged evaluation before promoting a truncated index because prefix truncation
+can change retrieval quality.
+
 On a document set's **Kaynaklar** page, a manager sees an actionable readiness warning for each
 missing connector grant. After a platform grant, only the logical profile/revision label becomes
 selectable. The manager may validate/create a closed REST mapping and bind a source without exposing

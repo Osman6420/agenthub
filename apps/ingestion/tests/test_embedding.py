@@ -1,9 +1,9 @@
 """OpenAICompatibleEmbeddingClient over the shared SSRF-safe transport (offline-injected).
 
 No socket is opened: every test injects a fake DNS resolver and connection factory, mirroring
-the P1 chat-provider suite. Proves catalog-only destinations, dimension enforcement (no
-truncation), SSRF denial before transport, redirect/malformed fail-closed, and the
-post-send-unknown / no-blind-retry rule.
+the P1 chat-provider suite. Proves catalog-only destinations, exact dimension enforcement except
+for explicit maximum-halfvec truncation, SSRF denial before transport, redirect/malformed
+fail-closed, and the post-send-unknown / no-blind-retry rule.
 """
 
 from __future__ import annotations
@@ -75,7 +75,11 @@ def _public_dns(host: str, port: int) -> list[tuple[Any, ...]]:
 
 
 def _profile(
-    dimensions: int = 4, *, normalize: bool = True, max_batch_size: int = 64
+    dimensions: int = 4,
+    *,
+    index_type: str = "vector",
+    normalize: bool = True,
+    max_batch_size: int = 64,
 ) -> EmbeddingProfile:
     admin = get_user_model().objects.create_superuser(username="platform", password=None)
     return register_embedding_profile(
@@ -90,7 +94,7 @@ def _profile(
         model="text-embed-3",
         secret_ref="secret:embed-token",  # noqa: S106
         dimensions=dimensions,
-        index_type="vector",
+        index_type=index_type,
         normalize=normalize,
         distance_metric="cosine",
         timeout_seconds=10,
@@ -129,10 +133,59 @@ def test_happy_path_uses_catalog_endpoint_and_normalizes() -> None:
     assert connection.headers["Authorization"] == "Bearer test-credential"
 
 
-def test_dimension_mismatch_is_hard_failure_no_truncation() -> None:
+@pytest.mark.parametrize("embedding", [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0, 4.0, 5.0]])
+def test_non_opt_in_dimension_mismatch_is_hard_failure(embedding: list[float]) -> None:
     profile = _profile(dimensions=4)
-    connection = _Connection(_Response({"data": [{"embedding": [1.0, 2.0, 3.0]}]}))  # len 3 != 4
+    connection = _Connection(_Response({"data": [{"embedding": embedding}]}))
     with pytest.raises(EmbeddingError, match="EMBEDDING_DIMENSION_MISMATCH"):
+        _client(connection).embed(["a"], profile_id=str(profile.public_id))
+
+
+def test_max_halfvec_truncates_overlong_vector_before_normalizing() -> None:
+    profile = _profile(dimensions=4000, index_type="halfvec")
+    provider_vector = [3.0, 4.0, *([0.0] * 3998), 999.0]
+    connection = _Connection(_Response({"data": [{"embedding": provider_vector}]}))
+
+    result = _client(connection).embed(["a"], profile_id=str(profile.public_id))
+
+    assert result.dimensions == 4000
+    assert len(result.vectors[0]) == 4000
+    assert result.vectors[0][:2] == pytest.approx([0.6, 0.8])
+    assert result.vectors[0][-1] == 0.0
+
+
+def test_max_halfvec_accepts_exact_dimension() -> None:
+    profile = _profile(dimensions=4000, index_type="halfvec", normalize=False)
+    provider_vector = [1.0] * 4000
+    connection = _Connection(_Response({"data": [{"embedding": provider_vector}]}))
+
+    result = _client(connection).embed(["a"], profile_id=str(profile.public_id))
+
+    assert result.vectors == [provider_vector]
+
+
+def test_max_halfvec_rejects_short_vector() -> None:
+    profile = _profile(dimensions=4000, index_type="halfvec")
+    connection = _Connection(_Response({"data": [{"embedding": [1.0] * 3999}]}))
+
+    with pytest.raises(EmbeddingError, match="EMBEDDING_DIMENSION_MISMATCH"):
+        _client(connection).embed(["a"], profile_id=str(profile.public_id))
+
+
+def test_non_max_halfvec_rejects_overlong_vector() -> None:
+    profile = _profile(dimensions=3999, index_type="halfvec")
+    connection = _Connection(_Response({"data": [{"embedding": [1.0] * 4000}]}))
+
+    with pytest.raises(EmbeddingError, match="EMBEDDING_DIMENSION_MISMATCH"):
+        _client(connection).embed(["a"], profile_id=str(profile.public_id))
+
+
+def test_max_halfvec_validates_discarded_tail_before_truncating() -> None:
+    profile = _profile(dimensions=4000, index_type="halfvec")
+    provider_vector: list[float | str] = [*([1.0] * 4000), "not-a-number"]
+    connection = _Connection(_Response({"data": [{"embedding": provider_vector}]}))
+
+    with pytest.raises(EmbeddingError, match="EMBEDDING_RESPONSE_INVALID"):
         _client(connection).embed(["a"], profile_id=str(profile.public_id))
 
 
