@@ -1,5 +1,11 @@
 # Verification: current-application-role-ui-audit
 
+## Phase 2.9 closure update — 2026-08-02
+
+All Phase 2.9-actionable findings in this baseline were subsequently implemented and verified. See
+the [final closure evidence](../../planning/archive/phase-2-9-final-closure-2026-08-02/verification.md).
+The results below remain the historical pre-fix evidence.
+
 | Check | Result | Evidence / notes |
 | --- | --- | --- |
 | Live topology | Passed | Eight Compose services up; PostgreSQL/Redis/MinIO healthy; liveness and readiness HTTP 200 |

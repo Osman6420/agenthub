@@ -67,6 +67,6 @@ state, redacted audit, response-mode fixtures, and no blind replay.
 
 ## Status
 
-Implemented and automated-verified 2026-08-02. The approved live synthetic Gemini smoke and manual
-browser acceptance remain pending because the running deployment has no AI authoring profile or
-provider configured. See `verification.md`.
+Completed and verified 2026-08-02. The approved live synthetic Gemini generate, inspect, repair and
+accept browser journey passed, temporary configuration was removed, and the local service returned
+healthy. See `verification.md`.

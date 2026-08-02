@@ -15,7 +15,7 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.documents import services as document_services
-from apps.documents.models import DocumentSet, DocumentSetVersionStatus
+from apps.documents.models import DocumentSet, DocumentSetVersionStatus, ParseStatus
 from apps.identity.models import (
     Consumer,
     ConsumerToken,
@@ -25,7 +25,7 @@ from apps.identity.models import (
     ScenarioResponsibilityAssignment,
 )
 from apps.identity.tokens import hash_token
-from apps.ingestion.models import IndexStatus, IndexVersion
+from apps.ingestion.models import EmbeddingProfile, IndexStatus, IndexVersion
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
@@ -123,10 +123,33 @@ class Command(BaseCommand):
             },
             created_by="browser-seed",
         )
+        embedding_profile = EmbeddingProfile.objects.create(
+            logical_id="browser-embedding",
+            revision=1,
+            host="models.invalid",
+            model="deterministic-browser-only",
+            secret_ref="secret:browser-gate",  # noqa: S106 -- reference, not credential
+            dimensions=8,
+            created_by="browser-seed",
+        )
+        version.parser = "plain_text"
+        version.parse_status = ParseStatus.PARSED
+        version.element_count = 1
+        version.page_count = 1
+        version.save(
+            update_fields=[
+                "parser",
+                "parse_status",
+                "element_count",
+                "page_count",
+                "updated_at",
+            ]
+        )
         index = IndexVersion.objects.create(
             organization=organization,
             document_set_version=draft,
             retrieval_profile=retrieval_profile,
+            embedding_profile=embedding_profile,
             version=1,
             status=IndexStatus.ACTIVE,
             store_ready=True,

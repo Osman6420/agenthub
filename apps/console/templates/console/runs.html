@@ -168,7 +168,8 @@
   </form>
   <p class="muted">Platform ve organizasyon kapsamlarında hedefi boş bırakın. Proje/senaryo kapsamı için aynı türden bir hedef seçin; sunucu hedef türünü ve organizasyon soyunu yeniden doğrular.</p>
   {% else %}
-  <p class="muted">Bu kontroller yalnız Global Admin ve etkin organizasyonun Organization Admin rolüne açıktır. Proje yöneticisi ve senaryo editörü çalışma zamanını durduramaz veya devam ettiremez.</p>
+  <p class="muted">Platform ve organizasyon geneli kontroller yalnız Global Admin ve etkin organizasyonun Organization Admin rolüne açıktır.</p>
+  {% if scenario_runtime_targets %}<p class="muted">Exact senaryo runtime operator kontrolleri senaryo sayfasındadır:</p><div class="actions">{% for scenario in scenario_runtime_targets %}<a class="button secondary" href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }} kontrolleri</a>{% endfor %}</div>{% endif %}
   {% endif %}
 </section>
 {% endif %}

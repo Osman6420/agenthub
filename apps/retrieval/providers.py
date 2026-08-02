@@ -82,6 +82,10 @@ class DemoRetrievalProvider:
         threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
         if 0.82 < threshold:
             return []
+        document_set_version_id = (
+            document_set_version_ids[0] if document_set_version_ids else None
+        )
+        index_version_id = index_versions[0] if index_versions else None
         return [
             RetrievedChunk(
                 text=passage,
@@ -89,6 +93,14 @@ class DemoRetrievalProvider:
                 source_uri="https://kurum.example/iade",
                 title="Iade Politikasi",
                 score=0.82,
+                vector_rank=1,
+                vector_score=0.82,
+                keyword_rank=1,
+                keyword_score=0.82,
+                fused_score=0.82,
+                document_set_version_id=document_set_version_id,
+                index_version_id=index_version_id,
+                ordinal=0,
             )
         ]
 

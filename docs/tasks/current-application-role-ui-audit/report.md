@@ -1,5 +1,13 @@
 # Current application role and UI audit
 
+## Phase 2.9 closure update — 2026-08-02
+
+The Phase 2.9 implementation and its final residue pass closed the actionable findings recorded by
+this original audit. Current completion evidence, including the configured Gemini Studio journey,
+role/tenant browser gate, full suites and cleanup, is in the
+[final closure verification](../../planning/archive/phase-2-9-final-closure-2026-08-02/verification.md).
+The findings below are preserved as the original point-in-time baseline.
+
 ## Outcome
 
 The current local build is live with eight Compose services; liveness and readiness return HTTP 200. Persistent Gemini chat and embedding profiles were created before the remaining tests, granted where required, and exercised through AgentHub's own provider seams. Chat returned a non-empty response; embedding returned a normalized 3072-dimensional vector. A real staged index built one chunk and, after two missing lifecycle links were supplied as audited test bootstrap state, browser retrieval returned the expected synthetic chunk.

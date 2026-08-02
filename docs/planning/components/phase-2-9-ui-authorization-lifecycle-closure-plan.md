@@ -15,8 +15,9 @@ verification record owned by the main implementation agent.
 
 ## Status
 
-In progress. Parts 1–4, 6 and 7 are implemented and verified. Part 5 is implemented and automated-
-verified; its configured live-provider/browser acceptance remains open. Part 7 evidence is archived
+Completed and verified 2026-08-02. All seven parts, the configured live Gemini Studio acceptance,
+the post-completion residue fixes, full repository gates, and the worker-ready local topology are
+recorded in the linked task evidence. Part 7 evidence is archived
 in [the browser and quality closure task](../archive/phase-2-9-part-7-browser-quality-closure-2026-08-02/plan.md).
 Part 4
 evidence is archived in
@@ -237,11 +238,10 @@ are converted to a validated non-publishing candidate reliably.
 oversized, timeout, and provider-error fixtures pass; one approved live synthetic Gemini smoke is
 recorded without content or secret exposure.
 
-Implemented and automated-verified 2026-08-02. Exact Studio permission, JSON-object mode, strict
-whole-fence normalization, safe error guidance, full SQLite, and targeted PostgreSQL evidence are in
-the [active Part 5 verification](../../tasks/phase-2-9-part-5-exact-ai-authoring-provider-reliability/verification.md).
-The configured live Gemini/browser smoke remains open because the local deployment has no AI
-authoring profile/provider configured; the task is intentionally not archived.
+Completed and verified 2026-08-02. Exact Studio permission, bounded normalization, Gemini-compatible
+schema transport, safe error guidance, full SQLite/PostgreSQL gates, and the approved live
+generate/inspect/repair/accept journey are recorded in the
+[Part 5 verification](../archive/phase-2-9-part-5-exact-ai-authoring-provider-reliability-2026-08-02/verification.md).
 
 ### Part 6 — P2: navigation, comprehension, accessibility, and interaction cost
 
@@ -319,8 +319,10 @@ and [verification](../archive/phase-2-9-part-7-browser-quality-closure-2026-08-0
 
 - Resolved by Part 2 / ADR-0016: scenario activation is a separate explicit action; release
   promotion never activates a scenario.
-- Which profile fields are safe for organization administrators to see versus platform-only.
-- Whether content preview is transformed safe text, forced download, or both by approved MIME.
+- Resolved by Part 4: tenant roles receive readiness/capability metadata only; sensitive profile
+  registration, status changes, endpoints and secret references remain platform-only.
+- Resolved by Part 6: approved safe text-like MIME types receive bounded transformed preview;
+  download uses attachment disposition and active content is never rendered inline.
 - Resolved by Part 7: Playwright Chromium is the CI authority against a guarded disposable
   PostgreSQL service; local Windows uses installed Edge against a unique guarded SQLite fixture.
 
@@ -376,6 +378,10 @@ existing endpoint, credential, privacy, cost, and rollback approvals are recorde
 - Current-behavior docs are updated only after implementation; durable authorization/lifecycle
   decisions receive ADRs where required.
 - Staff-engineering, application-security, SRE, accessibility, and owner UX reviews are recorded.
+
+All completion criteria were satisfied on 2026-08-02. Final residue, live-provider, cleanup,
+full-suite and operational-topology evidence is recorded in the
+[Phase 2.9 final closure verification](../archive/phase-2-9-final-closure-2026-08-02/verification.md).
 
 ## Links
 

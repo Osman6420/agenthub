@@ -82,6 +82,8 @@ def test_release_manager_reaches_contextual_lifecycle_and_inventory_is_exact(
 
     detail = client.get(reverse("console:release_detail", args=[release.pk]))
     detail_body = detail.content.decode()
+    assert "Yetkili release'ler" in detail_body
+    assert "Eksik: Input contract, Output contract, Eval suite" in detail_body
     assert detail.status_code == 200
     assert reverse("console:release_run_eval", args=[release.pk]) in detail_body
     assert reverse("console:release_promote", args=[release.pk]) in detail_body
@@ -147,6 +149,9 @@ def test_runtime_operator_pauses_and_resumes_exact_scenario_from_context(client:
     detail = client.get(detail_url)
     assert detail.status_code == 200
     assert "Exact senaryoyu durdur" in detail.content.decode()
+    runs_body = client.get(reverse("console:runs")).content.decode()
+    assert "Exact senaryo runtime operator kontrolleri" in runs_body
+    assert detail_url in runs_body
     pause = client.post(
         reverse("console:runtime_control_change"),
         {

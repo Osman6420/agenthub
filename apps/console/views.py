@@ -1357,7 +1357,8 @@ def _invocation_guidance(
 
 
 def _ai_authoring_preflight() -> dict[str, object]:
-    profile_id = str(getattr(settings, "AI_AUTHORING_MODEL_PROFILE_ID", "")).strip()
+    configured_profile_id = getattr(settings, "AI_AUTHORING_MODEL_PROFILE_ID", "")
+    profile_id = "" if configured_profile_id is None else str(configured_profile_id).strip()
     if not profile_id:
         return {
             "available": False,
@@ -2714,6 +2715,17 @@ def runs(request: HttpRequest) -> HttpResponse:
         capability=OperatorCapability.RUNTIME_PAUSE,
         organization=organization,
     ).allowed
+    scenario_runtime_targets = [
+        scenario
+        for scenario in scenarios
+        if authorize_operator(
+            user=request.user,
+            capability=OperatorCapability.RUNTIME_PAUSE,
+            organization=organization,
+            project=scenario.project,
+            scenario=scenario,
+        ).allowed
+    ]
     response = render(
         request,
         "console/runs.html",
@@ -2735,6 +2747,7 @@ def runs(request: HttpRequest) -> HttpResponse:
             "controls": controls,
             "can_manage_platform": can_manage_platform,
             "can_manage_organization": can_manage_organization,
+            "scenario_runtime_targets": scenario_runtime_targets,
             "reason_codes": sorted(RUNTIME_CONTROL_REASON_CODES),
             "base_query": _query_without_page(request),
         },
@@ -2863,12 +2876,27 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
     )
     canaries = list(release.canaries.select_related("consumer").order_by("-created_at")[:100])
     pre_active = release.status in {ReleaseStatus.CANDIDATE, ReleaseStatus.CANARY}
+    artifact_rows = _release_artifact_rows(release)
+    resolved_roles = {
+        str(row["role"])
+        for row in artifact_rows
+        if row["artifact"] is not None and row["checksum_matches"]
+    }
+    required_release_roles = {
+        "input_contract": "Input contract",
+        "output_contract": "Output contract",
+        "eval_suite": "Eval suite",
+    }
+    missing_release_inputs = [
+        label for role, label in required_release_roles.items() if role not in resolved_roles
+    ]
     return render(
         request,
         "console/release_detail.html",
         {
             "release": release,
-            "artifact_rows": _release_artifact_rows(release),
+            "artifact_rows": artifact_rows,
+            "missing_release_inputs": missing_release_inputs,
             "manifest_json": "" if manifest_too_large else manifest_json,
             "manifest_too_large": manifest_too_large,
             "canaries": canaries,

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.artifacts.models import ArtifactVersion
@@ -34,6 +34,17 @@ from apps.identity.models import (
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
+
+
+@override_settings(AI_AUTHORING_MODEL_PROFILE_ID=None, AI_AUTHORING_PROVIDER="")
+def test_missing_ai_authoring_profile_is_not_reported_as_invalid() -> None:
+    from apps.console.views import _ai_authoring_preflight
+
+    result = _ai_authoring_preflight()
+
+    assert result["available"] is False
+    assert "profile ID" in str(result["message"])
+    assert "profile ayar" not in str(result["message"])
 
 
 @pytest.fixture(autouse=True)

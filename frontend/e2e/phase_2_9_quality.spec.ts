@@ -142,11 +142,14 @@ test("exact active index can be exercised only by its document manager", async (
   await login(page, "document_manager");
   await page.goto(`/console/document-sets/id/${fixture.document_set}/`);
   await expect(page.getByText("Retrieval'a sor")).toBeVisible();
+  await expect(page.getByText("silinmiş profil")).toHaveCount(0);
+  await expect(page.getByText(/Pending/)).toHaveCount(0);
   await page.getByLabel("Soru").fill("İade politikası nedir?");
   await page.getByRole("button", { name: "Retrieval çalıştır" }).click();
   await expect(page.getByRole("heading", { name: "Belge retrieval sonucu" })).toBeVisible();
   await expect(page.getByText("Iade Politikasi")).toBeVisible();
   await expect(page.getByText(/14 gun icinde iade talebi/)).toBeVisible();
+  await expect(page.getByText(/None/)).toHaveCount(0);
 });
 
 test("keyboard focus and narrow viewport remain usable", async ({ page }) => {
@@ -195,7 +198,7 @@ test("release/editor affordances, provider-disabled state and callability are tr
   await page.goto(`/console/builder/?organization=demo&scenario=${fixture.primary_scenario}`);
   await expect(page.getByText("salt okunur", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Scenario Studio AI planner")).toBeVisible();
-  await expect(page.getByRole("alert")).toContainText("AI authoring");
+  await expect(page.getByRole("alert")).toContainText("profile ID");
   await expect(page.getByRole("button", { name: "Geçici aday üret" })).toBeDisabled();
 
   await page.context().clearCookies();

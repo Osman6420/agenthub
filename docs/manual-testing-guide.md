@@ -45,6 +45,13 @@ Choose one mode and avoid starting duplicate web or worker processes:
 docker compose -f deploy/compose/docker-compose.yml ps
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/v1/health/live
 
+# The full-stack UI gate requires every application role, not only a healthy web process.
+$requiredRoles = @('web', 'worker-runtime', 'worker-ingestion', 'worker-eval', 'beat')
+$runningRoles = @(docker compose -f deploy/compose/docker-compose.yml ps --services --filter status=running)
+$missingRoles = @($requiredRoles | Where-Object { $_ -notin $runningRoles })
+if ($missingRoles.Count) { throw "Eksik Compose rolleri: $($missingRoles -join ', ')" }
+docker compose -f deploy/compose/docker-compose.yml exec -T web python manage.py check_ingestion_preflight --require-worker
+
 # Mode A: run the complete stack in Docker (supported wrapper).
 .\scripts\local-stack.ps1
 

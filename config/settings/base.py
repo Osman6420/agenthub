@@ -379,14 +379,32 @@ LOGGING = {
             "format": ("level=%(levelname)s logger=%(name)s time=%(asctime)s message=%(message)s"),
         },
     },
+    "filters": {
+        "strip_expected_client_error_traceback": {
+            "()": "apps.observability.logging.StripExpectedClientErrorTraceback",
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "structured",
+            "filters": ["strip_expected_client_error_traceback"],
         },
     },
     "root": {
         "handlers": ["console"],
         "level": env("DJANGO_LOG_LEVEL", default="INFO"),
+    },
+    "loggers": {
+        "django.request": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "django.server": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
 }

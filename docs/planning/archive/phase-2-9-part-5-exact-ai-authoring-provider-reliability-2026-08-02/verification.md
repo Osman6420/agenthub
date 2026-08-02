@@ -2,15 +2,15 @@
 
 ## Result
 
-Implemented and automated-verified 2026-08-02. Exact scenario editor authority now drives the
+Completed and verified 2026-08-02. Exact scenario editor authority now drives the
 Studio AI affordance, while every API remains independently authorized. The OpenAI-compatible
 provider requests one JSON object and the bounded parser accepts only raw JSON or one complete
 `json` fence before canonical validation. No candidate is persisted or published without explicit
 accept.
 
-Operational acceptance is not complete: the running local deployment reports
-`profile_configured=False`, `active_profile=False`, and `provider_configured=False`. No secret,
-endpoint, profile ID, prompt, or response was inspected or emitted, and no live egress was attempted.
+The approved bounded live Gemini Studio journey passed. Generate and repair both returned valid
+schema-constrained candidates, and explicit accept created one existing mutable draft. No secret,
+endpoint, prompt, response, or candidate content was emitted into evidence.
 
 ## Automated evidence
 
@@ -46,12 +46,17 @@ the assertion passes and Part 5 adds no new warning category.
 
 ## Operational and manual evidence
 
-- Compose PostgreSQL, Redis, MinIO, and web were started without reset; health returned HTTP 200.
-- Safe boolean-only preflight inspection found no configured AI authoring profile/provider. A live
-  Gemini request would therefore be impossible and was not attempted.
-- Manual in-app browser acceptance was not available in the final verification session. Frontend
-  rendering and interaction are covered by Vitest, server bootstrap tests, and production build,
-  but visual/manual acceptance remains open.
+- The approved secret was read environment-only and injected temporarily into the local web
+  service. Generate returned a valid transient candidate (2,320 input tokens, 72 output tokens,
+  268 bytes); repair remained valid (2,539 input tokens, 74 output tokens, 268 bytes); accept created
+  one workflow draft at revision 1.
+- Safe request identifiers were `req_2b42150b81fe4beda94b04af27031af6` and
+  `req_424599b89f3e4697a62af9acb102e0e7`. Prompts, responses and candidate bodies were not recorded.
+- The exact scenario editor saw and used the panel in the in-app browser; server tests and the
+  deterministic browser gate retained viewer, unassigned, sibling-scenario and foreign-tenant
+  denial coverage.
+- The temporary identity was deactivated, its password made unusable, all temporary provider/profile
+  settings were cleared, and web was recreated. Health returned HTTP 200.
 
 ## Changes not made
 
@@ -61,8 +66,5 @@ data was accessed.
 
 ## Remaining acceptance
 
-Configure the already approved immutable model profile and provider in a controlled local/staging
-deployment, then perform exactly one bounded synthetic Gemini generate/inspect/repair/accept smoke.
-Record only status, stable error category, request ID, token/byte counts, and persistence outcome.
-Never record prompt/response/candidate content or secret/profile destination values. Verify the exact
-editor sees the panel and viewer/unassigned actors do not before archiving this task.
+None for Phase 2.9 Part 5. Production grants, provider-scale behavior, cost monitoring and hosted
+deployment topology remain normal rollout concerns rather than local product-completion blockers.

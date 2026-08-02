@@ -52,6 +52,148 @@ class AuthoringContract:
     checksum: str
 
 
+_WORKFLOW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "api_version": {"type": "string", "enum": ["agenthub/v1"]},
+        "kind": {"type": "string", "enum": ["Workflow"]},
+        "metadata": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+        "spec": {
+            "type": "object",
+            "properties": {
+                "input_node": {"type": "string"},
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "type": {"type": "string"},
+                            "config": {"type": "object", "additionalProperties": True},
+                            "input_mapping": {"type": "array", "items": {"type": "object"}},
+                            "output_mapping": {"type": "array", "items": {"type": "object"}},
+                            "retry_policy": {"type": "object", "additionalProperties": True},
+                            "compensation": {"type": "string"},
+                        },
+                        "required": ["id", "type"],
+                        "additionalProperties": False,
+                    },
+                },
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "from": {"type": "string"},
+                            "to": {"type": "string"},
+                            "when": {"type": "boolean"},
+                            "branch": {"type": "string"},
+                            "on_error": {"type": "string"},
+                        },
+                        "required": ["from", "to"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["input_node", "nodes", "edges"],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["api_version", "kind", "metadata", "spec"],
+    "additionalProperties": False,
+}
+
+_CUSTOM_NODE_SUGGESTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        field: {"type": "string"}
+        for field in (
+            "display_name",
+            "purpose",
+            "input_summary",
+            "config_summary",
+            "output_summary",
+        )
+    },
+    "required": [
+        "display_name",
+        "purpose",
+        "input_summary",
+        "config_summary",
+        "output_summary",
+    ],
+    "additionalProperties": False,
+}
+
+_ENVELOPE_SCHEMA: dict[str, Any] = {
+    "anyOf": [
+        {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["workflow_candidate"]},
+                "candidate": _WORKFLOW_SCHEMA,
+            },
+            "required": ["status", "candidate"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["capability_missing"]},
+                "required_capability": {"type": "string"},
+                "suggested_custom_node": _CUSTOM_NODE_SUGGESTION_SCHEMA,
+            },
+            "required": ["status", "required_capability", "suggested_custom_node"],
+            "additionalProperties": False,
+        },
+    ]
+}
+
+
+def _uses_gemini_compat(profile: ModelProfile) -> bool:
+    return profile.host.lower().rstrip(".") == "generativelanguage.googleapis.com"
+
+
+def _response_format(*, profile: ModelProfile, envelope: bool) -> dict[str, Any]:
+    if not _uses_gemini_compat(profile) or not envelope:
+        return {"type": "json_object"}
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "agenthub_authoring_response",
+            "strict": True,
+            "schema": _ENVELOPE_SCHEMA,
+        },
+    }
+
+
+def _transport_contract(*, envelope: bool) -> str:
+    if not envelope:
+        return (
+            "Transport rule: return exactly the artifact JSON object required by the reviewed "
+            "authoring guide. Do not wrap it, fence it, or add prose."
+        )
+    return (
+        "Transport rule: the reviewed guide describes the candidate object, but this API requires "
+        "one outer authoring-result envelope. Return exactly either "
+        '{"status":"workflow_candidate","candidate":<complete Workflow object>} or '
+        '{"status":"capability_missing","required_capability":"...",'
+        '"suggested_custom_node":{"display_name":"...","purpose":"...",'
+        '"input_summary":"...","config_summary":"...","output_summary":"..."}}. '
+        "Do not return a bare Workflow, Markdown, a fence, or explanatory prose."
+    )
+
+
+def _apply_provider_compatibility(payload: dict[str, Any], profile: ModelProfile) -> None:
+    if _uses_gemini_compat(profile):
+        payload["reasoning_effort"] = "low"
+
+
 def _contract(
     contract_id: str, revision: int, artifact_type: str, system_instructions: str
 ) -> AuthoringContract:
@@ -155,10 +297,15 @@ class OpenAICompatibleAuthoringProvider:
             )
         except (ModelProfile.DoesNotExist, ValueError, TypeError) as exc:
             raise AuthoringProviderError("MODEL_PROFILE_UNAVAILABLE") from exc
+        envelope = (
+            contract.artifact_type == ArtifactType.WORKFLOW_DEFINITION
+            and server_context is not None
+        )
         payload = {
             "model": profile.model,
             "messages": [
                 {"role": "system", "content": contract.system_instructions},
+                {"role": "system", "content": _transport_contract(envelope=envelope)},
                 {
                     "role": "system",
                     "content": json.dumps(
@@ -187,8 +334,9 @@ class OpenAICompatibleAuthoringProvider:
                 {"role": "user", "content": description},
             ],
             "max_tokens": profile.max_output_tokens,
-            "response_format": {"type": "json_object"},
+            "response_format": _response_format(profile=profile, envelope=envelope),
         }
+        _apply_provider_compatibility(payload, profile)
         try:
             response = self._egress.call_json(
                 profile_id=profile_id, operation="chat", payload=payload
@@ -230,6 +378,7 @@ class OpenAICompatibleAuthoringProvider:
             "model": profile.model,
             "messages": [
                 {"role": "system", "content": contract.system_instructions},
+                {"role": "system", "content": _transport_contract(envelope=True)},
                 {
                     "role": "system",
                     "content": json.dumps(
@@ -273,7 +422,9 @@ class OpenAICompatibleAuthoringProvider:
                 {"role": "user", "content": instruction or "Canonical hataları düzelt."},
             ],
             "max_tokens": profile.max_output_tokens,
+            "response_format": _response_format(profile=profile, envelope=True),
         }
+        _apply_provider_compatibility(payload, profile)
         try:
             response = self._egress.call_json(
                 profile_id=profile_id, operation="chat", payload=payload

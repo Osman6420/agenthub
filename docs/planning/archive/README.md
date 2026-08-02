@@ -4,6 +4,16 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [Phase 2.9 final closure (completed 2026-08-02)](phase-2-9-final-closure-2026-08-02/plan.md);
+  [verification](phase-2-9-final-closure-2026-08-02/verification.md).
+
+- [Phase 2.9 post-completion audit (completed 2026-08-02)](phase-2-9-post-completion-audit-2026-08-02/plan.md);
+  [verification](phase-2-9-post-completion-audit-2026-08-02/verification.md),
+  [closure evidence](phase-2-9-final-closure-2026-08-02/verification.md).
+
+- [Phase 2.9 Part 5 — exact AI authoring/provider reliability (completed 2026-08-02)](phase-2-9-part-5-exact-ai-authoring-provider-reliability-2026-08-02/plan.md);
+  [verification](phase-2-9-part-5-exact-ai-authoring-provider-reliability-2026-08-02/verification.md).
+
 - [Phase 2.9 Part 7 — browser and quality closure (completed 2026-08-02)](phase-2-9-part-7-browser-quality-closure-2026-08-02/plan.md);
   [verification](phase-2-9-part-7-browser-quality-closure-2026-08-02/verification.md).
 
