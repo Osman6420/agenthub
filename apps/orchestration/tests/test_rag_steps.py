@@ -93,3 +93,39 @@ def test_generate_for_release_defaults_to_bundle_prompt(monkeypatch: pytest.Monk
     monkeypatch.setattr(rag_steps, "get_model_provider", lambda: _Provider())
     rag_steps.generate_for_release(release=object(), context=[])  # no override -> bundle defaults
     assert captured == {"prompt": "P", "model_profile": {"m": 1}}
+
+
+def test_generate_for_release_forwards_user_query_as_untrusted_model_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Provider:
+        def generate(self, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return SimpleNamespace(text="ok", input_tokens=1, output_tokens=1)
+
+    monkeypatch.setattr(rag_steps, "resolve_bundle", lambda release: _fake_bundle())
+    monkeypatch.setattr(rag_steps, "get_model_provider", lambda: _Provider())
+
+    rag_steps.generate_for_release(release=object(), context=[], user_query="Untrusted question")
+
+    assert captured["user_query"] == "Untrusted question"
+
+
+def test_generate_for_release_keeps_legacy_provider_signature_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _LegacyProvider:
+        def generate(self, *, prompt: str, context: Any, model_profile: Any) -> Any:
+            captured.update(prompt=prompt, context=context, model_profile=model_profile)
+            return SimpleNamespace(text="ok", input_tokens=1, output_tokens=1)
+
+    monkeypatch.setattr(rag_steps, "resolve_bundle", lambda release: _fake_bundle())
+    monkeypatch.setattr(rag_steps, "get_model_provider", lambda: _LegacyProvider())
+
+    rag_steps.generate_for_release(release=object(), context=[], user_query="Untrusted question")
+
+    assert set(captured) == {"prompt", "context", "model_profile"}

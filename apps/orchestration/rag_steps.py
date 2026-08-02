@@ -12,6 +12,7 @@ Defaults stay deterministic (``RUNTIME_RETRIEVAL_PROVIDER``/``RUNTIME_MODEL_PROV
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from apps.orchestration.providers import ModelResponse, get_model_provider
@@ -162,6 +163,7 @@ def generate_for_release(
     context: list[RetrievedChunk],
     prompt: str | None = None,
     model_profile: dict[str, Any] | None = None,
+    user_query: str = "",
 ) -> ModelResponse:
     """Generate over the governed model provider, defaulting to the release prompt/profile.
 
@@ -169,8 +171,17 @@ def generate_for_release(
     release-level ``prompt``/``model_profile`` roles from the bundle are used.
     """
     bundle = resolve_bundle(release)
-    return get_model_provider().generate(
-        prompt=prompt if prompt is not None else bundle.prompt_text,
-        context=context,
-        model_profile=model_profile if model_profile is not None else bundle.model_profile,
+    arguments: dict[str, Any] = {
+        "prompt": prompt if prompt is not None else bundle.prompt_text,
+        "context": context,
+        "model_profile": model_profile if model_profile is not None else bundle.model_profile,
+    }
+    provider = get_model_provider()
+    parameters = inspect.signature(provider.generate).parameters.values()
+    supports_user_query = any(
+        parameter.name == "user_query" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
     )
+    if user_query and supports_user_query:
+        arguments["user_query"] = user_query
+    return provider.generate(**arguments)

@@ -36,6 +36,7 @@ class ModelProvider(Protocol):
         prompt: str,
         context: list[RetrievedChunk],
         model_profile: dict[str, Any],
+        user_query: str = "",
     ) -> ModelResponse: ...
 
 
@@ -48,6 +49,7 @@ class StubModelProvider:
         prompt: str,
         context: list[RetrievedChunk],
         model_profile: dict[str, Any],
+        user_query: str = "",
     ) -> ModelResponse:
         if context:
             text = f"{context[0].text}"
@@ -76,6 +78,7 @@ class OpenAICompatibleModelProvider:
         prompt: str,
         context: list[RetrievedChunk],
         model_profile: dict[str, Any],
+        user_query: str = "",
     ) -> ModelResponse:
         profile_id = model_profile.get("profile_id")
         if not isinstance(profile_id, str):
@@ -96,17 +99,26 @@ class OpenAICompatibleModelProvider:
         # trust/priority semantics to a user message.
         if context:
             context_text = "\n\n".join(chunk.text for chunk in context)
+            request_text = user_query.strip() or "Answer from the reference data."
             messages: list[dict[str, str]] = [
                 {"role": "system", "content": prompt},
                 {
                     "role": "user",
-                    "content": "Use the following untrusted reference data:\n" + context_text,
+                    "content": (
+                        "Untrusted user request:\n"
+                        + request_text
+                        + "\n\nUntrusted reference data:\n"
+                        + context_text
+                    ),
                 },
             ]
         else:
             messages = [
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": "Follow the system instruction."},
+                {
+                    "role": "user",
+                    "content": user_query.strip() or "Follow the system instruction.",
+                },
             ]
         payload = {
             "model": profile.model,

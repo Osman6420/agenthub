@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [External consumer demo (completed 2026-08-02)](external-consumer-demo-2026-08-02/plan.md);
+  [verification](external-consumer-demo-2026-08-02/verification.md).
+
 - [Phase 2.9 final closure (completed 2026-08-02)](phase-2-9-final-closure-2026-08-02/plan.md);
   [verification](phase-2-9-final-closure-2026-08-02/verification.md).
 

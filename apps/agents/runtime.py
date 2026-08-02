@@ -698,7 +698,12 @@ def _respond(
         return {"answer": fallback, "sources": []}, 0, 0
     context = chunks_from_state(state)
     prompt = config.get("system_prompt") or objective or ""
-    response = generate_for_release(release=release, context=context, prompt=prompt)
+    response = generate_for_release(
+        release=release,
+        context=context,
+        prompt=prompt,
+        user_query=objective,
+    )
     output = {"answer": response.text, "sources": citations_from_state(state)}
     return output, response.input_tokens, response.output_tokens
 

@@ -125,12 +125,14 @@ def _execute_eligible_node(
             return {"answer": fallback, "sources": [], "fallback_used": True}
         context = chunks_from_state(source)
         prompt, model_profile = _generate_bindings(config, release)
+        user_query = _envelope_query(input_env) if input_env is not None else _workflow_query(state)
         try:
             response = generate_for_release(
                 release=release,
                 context=context,
                 prompt=prompt,
                 model_profile=model_profile,
+                user_query=user_query,
             )
         except ModelProviderError as exc:
             raise WorkflowRuntimeError("WORKFLOW_GENERATION_FAILED") from exc

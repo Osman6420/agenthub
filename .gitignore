@@ -21,6 +21,7 @@ env/
 staticfiles/
 media/
 .runtime/
+examples/external-consumer-demo/credentials.local.json
 celerybeat-schedule*
 
 # Test / type / lint caches

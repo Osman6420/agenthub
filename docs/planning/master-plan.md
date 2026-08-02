@@ -49,6 +49,12 @@ reliability is implemented and automated-verified, with its configured live-prov
 acceptance still open. Part 7's deterministic browser/CI, repository quality and manual UX gates are
 implemented and verified.
 
+The local external-consumer showcase is implemented and verified: a standalone loopback page uses
+three least-privilege consumers to exercise Wikipedia-grounded RAG, an asynchronous agent, a
+deterministic workflow, and an explicit authorization-denial path through the public API. It does
+not add a production surface or public contract. See the
+[archived task record](archive/external-consumer-demo-2026-08-02/plan.md).
+
 Phase 2 closure P11 is implemented and offline/staging-equivalent verified: all nine formerly
 indirect tables now carry direct tenant lineage; 47 direct-tenant tables use canonical FORCE RLS;
 operator, gateway and worker paths install bounded transaction-local tenant scope; and reviewed

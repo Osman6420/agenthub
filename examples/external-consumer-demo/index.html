@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentHub · External Consumer Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="hero">
+    <div>
+      <p class="eyebrow">EXTERNAL CONSUMER LAB</p>
+      <h1>Tek ağ geçidi.<br><span>Farklı yetkiler, farklı işler.</span></h1>
+      <p class="lede">Bu sayfa AgentHub’ın parçası değildir. Ayrı bir localhost istemcisi olarak public consumer API’sini çağırır; token’lar tarayıcıya verilmez.</p>
+    </div>
+    <div class="status-card"><i></i><span id="gateway-status">Gateway kontrol ediliyor</span></div>
+  </header>
+
+  <main>
+    <section class="metrics" aria-label="Demo özeti">
+      <article><strong>4</strong><span>served scenario</span></article>
+      <article><strong>3</strong><span>least-privilege consumer</span></article>
+      <article><strong>1</strong><span>gerçek Wikipedia bilgi tabanı</span></article>
+      <article><strong>0</strong><span>tarayıcıya açılan bearer token</span></article>
+    </section>
+
+    <section class="section-head">
+      <div><p class="eyebrow">CANLI SENARYOLAR</p><h2>Hepsini aynı yerden dene</h2></div>
+      <button id="run-all" class="secondary">Tüm örnekleri çalıştır</button>
+    </section>
+
+    <section class="scenario-grid">
+      <article class="scenario featured" data-consumer="research" data-model="wikipedia-qa" data-background="false">
+        <div class="card-top"><span class="badge mint">RAG · SYNC</span><span class="consumer">research consumer</span></div>
+        <h3>Wikipedia Q&A</h3>
+        <p>Gerçek Türkçe Wikipedia İstanbul sayfasından hibrit arama yapar, Gemini ile kaynaklı yanıt üretir.</p>
+        <label>Sorunuz<textarea>İstanbul hangi imparatorluklara başkentlik yaptı?</textarea></label>
+        <div class="actions"><button class="run">Soruyu cevapla</button><span class="latency"></span></div>
+        <pre class="result" aria-live="polite">Henüz çalıştırılmadı.</pre>
+      </article>
+
+      <article class="scenario" data-consumer="research" data-model="wikipedia-brief" data-background="false">
+        <div class="card-top"><span class="badge blue">RAG · SYNC</span><span class="consumer">research consumer</span></div>
+        <h3>Executive Brief</h3>
+        <p>Aynı yönetilen bilgi tabanını farklı prompt ve release ile kısa bir yönetici özetine dönüştürür.</p>
+        <label>Odak<textarea>İstanbul'un tarihsel ve coğrafi önemini kısa maddelerle özetle.</textarea></label>
+        <div class="actions"><button class="run">Özet oluştur</button><span class="latency"></span></div>
+        <pre class="result" aria-live="polite">Henüz çalıştırılmadı.</pre>
+      </article>
+
+      <article class="scenario" data-consumer="analyst" data-model="analysis-agent" data-background="true">
+        <div class="card-top"><span class="badge violet">AGENT · ASYNC</span><span class="consumer">analyst consumer</span></div>
+        <h3>Analysis Agent</h3>
+        <p>İsteği background run olarak kabul eder; sayfa run kimliğini alıp terminal duruma kadar poll eder.</p>
+        <label>Görev<textarea>Bir şehir bilgi asistanı için güvenilirlik kontrol listesi hazırla.</textarea></label>
+        <div class="actions"><button class="run">Agent’ı başlat</button><span class="latency"></span></div>
+        <pre class="result" aria-live="polite">Henüz çalıştırılmadı.</pre>
+      </article>
+
+      <article class="scenario" data-consumer="operations" data-model="contract-smoke" data-background="false">
+        <div class="card-top"><span class="badge amber">WORKFLOW · SYNC</span><span class="consumer">operations consumer</span></div>
+        <h3>Contract Smoke</h3>
+        <p>Model çağrısı yapmadan canonical run, input/output contract, release pin ve redacted output akışını gösterir.</p>
+        <label>Kontrol mesajı<textarea>Public API sözleşmesini doğrula.</textarea></label>
+        <div class="actions"><button class="run">Akışı çalıştır</button><span class="latency"></span></div>
+        <pre class="result" aria-live="polite">Henüz çalıştırılmadı.</pre>
+      </article>
+    </section>
+
+    <section class="security-panel">
+      <div><p class="eyebrow">FAIL CLOSED</p><h2>Yetki sınırını da dene</h2><p>Operations consumer’ın Wikipedia senaryosunu çağırmasına izin verilmemeli.</p></div>
+      <button id="deny-test" class="danger">403 izolasyon testini çalıştır</button>
+      <pre id="deny-result">Bekleniyor.</pre>
+    </section>
+  </main>
+  <footer><span>AgentHub external integration demo</span><span>localhost only · no token in browser</span></footer>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -29,6 +29,14 @@ py -3.13 -m venv .venv
 # Sağlık kontrolü: GET http://localhost:8000/v1/health/live  (ve .../ready)
 ```
 
+## External consumer demo
+
+Uygulamanın parçası olmayan, üç farklı consumer ile dört senaryoyu birlikte deneyen yerel demo
+[`examples/external-consumer-demo`](examples/external-consumer-demo/README.md) altında bulunur.
+Wikipedia kaynaklı RAG soru-cevap/özet, asenkron ajan, deterministik sözleşme testi ve beklenen
+yetki reddini aynı sayfadan çalıştırır. Demo yalnızca `127.0.0.1:4173` üzerinde servis edilir;
+consumer token'ları tarayıcıya gönderilmez.
+
 ## Public API (gateway)
 
 Consumer'lar tek giriş noktası olan gateway'i kullanır. Organizasyon yöneticisi console'da

@@ -47,8 +47,16 @@ def test_invalid_system_prompt_is_rejected(value: Any) -> None:
 def test_respond_uses_authored_system_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_generate(*, release: Any, context: Any, prompt: Any = None, model_profile: Any = None):
+    def fake_generate(
+        *,
+        release: Any,
+        context: Any,
+        prompt: Any = None,
+        model_profile: Any = None,
+        user_query: str = "",
+    ):
         captured["prompt"] = prompt
+        captured["user_query"] = user_query
         return SimpleNamespace(text="ok", input_tokens=1, output_tokens=1)
 
     monkeypatch.setattr(rag_steps, "generate_for_release", fake_generate)
@@ -57,7 +65,10 @@ def test_respond_uses_authored_system_prompt(monkeypatch: pytest.MonkeyPatch) ->
     config = {"system_prompt": "You are a helpful returns agent."}
     runtime._respond("what is the return policy", {"retrieval": {"chunks": []}}, config, object())
     # The authored persona is the prompt; the objective drove retrieval, not the system message.
-    assert captured["prompt"] == "You are a helpful returns agent."
+    assert captured == {
+        "prompt": "You are a helpful returns agent.",
+        "user_query": "what is the return policy",
+    }
 
 
 def test_respond_falls_back_to_objective_without_system_prompt(
@@ -65,11 +76,19 @@ def test_respond_falls_back_to_objective_without_system_prompt(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_generate(*, release: Any, context: Any, prompt: Any = None, model_profile: Any = None):
+    def fake_generate(
+        *,
+        release: Any,
+        context: Any,
+        prompt: Any = None,
+        model_profile: Any = None,
+        user_query: str = "",
+    ):
         captured["prompt"] = prompt
+        captured["user_query"] = user_query
         return SimpleNamespace(text="ok", input_tokens=1, output_tokens=1)
 
     monkeypatch.setattr(rag_steps, "generate_for_release", fake_generate)
     monkeypatch.setattr(rag_steps, "resolve_bundle", lambda release: SimpleNamespace(policy={}))
     runtime._respond("the objective", {}, {"system_prompt": ""}, object())
-    assert captured["prompt"] == "the objective"
+    assert captured == {"prompt": "the objective", "user_query": "the objective"}
