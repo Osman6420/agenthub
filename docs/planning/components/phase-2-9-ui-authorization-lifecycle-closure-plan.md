@@ -15,7 +15,7 @@ verification record owned by the main implementation agent.
 
 ## Status
 
-Completed and verified 2026-08-02. All seven parts, the configured live Gemini Studio acceptance,
+Core closure completed and verified 2026-08-02. All seven original parts, the configured live Gemini Studio acceptance,
 the post-completion residue fixes, full repository gates, and the worker-ready local topology are
 recorded in the linked task evidence. Part 7 evidence is archived
 in [the browser and quality closure task](../archive/phase-2-9-part-7-browser-quality-closure-2026-08-02/plan.md).
@@ -26,6 +26,9 @@ Part 3 evidence is archived in
 [the exact-role release/runtime controls task](../archive/phase-2-9-part-3-exact-role-release-runtime-controls-2026-08-01/plan.md).
 Part 2 evidence is archived in
 [the callable-scenario and atomic served-index task](../archive/phase-2-9-part-2-callable-scenario-atomic-served-index-2026-08-01/plan.md).
+The post-closure artifact authoring work exposed an ownership/placement mismatch. A planned Part 8
+realigns Generate and Retrieve bindings, document-set preparation, default contracts and candidate
+authority; it does not reopen the verified disclosure/lifecycle fixes.
 
 ## Scope
 
@@ -300,6 +303,33 @@ vulnerabilities. Manual Turkish UX, keyboard and responsive review at 390, 900 a
 closed exact-role dashboard disclosure/affordance mismatches, a role-reason mismatch and timestamp
 presentation. See the archived [Part 7 task](../archive/phase-2-9-part-7-browser-quality-closure-2026-08-02/plan.md)
 and [verification](../archive/phase-2-9-part-7-browser-quality-closure-2026-08-02/verification.md).
+
+### Part 8 — P1: node-bound authoring and artifact ownership realignment
+
+**Planned 2026-08-03.** Detailed plan and threat model:
+[scenario node-bound authoring realignment](../../tasks/scenario-node-bound-authoring-realignment/plan.md),
+[threat model](../../tasks/scenario-node-bound-authoring-realignment/threat-model.md).
+
+**Outcome:** authors edit configuration at its point of use: prompt/model inside Generate,
+retrieval inside Retrieve, and chunking/summary preparation inside the document set. Input/output
+defaults are automatic, eval authoring moves to the evaluation step, and Scenario Editors can prepare
+an evaluated candidate while every live-traffic transition remains release-manager-only.
+
+- Materialize node-edited prompt/model/retrieval values as immutable exact artifacts with hidden,
+  stable manifest roles; never put raw artifact IDs, provider endpoints or secrets in workflow DSL.
+- Extend Retrieve DSL/compiler/runtime with `retrieval_profile_ref`; keep Generate
+  `prompt_ref`/`model_profile_ref` as system-managed bindings and support independent bindings for
+  multiple nodes.
+- Remove duplicate primary retrieval ownership from document preparation through an additive,
+  backward-compatible migration while preserving historical index provenance.
+- Replace scenario-main input/output/eval creation with preset defaults, explicit contract override
+  and point-of-use evaluation preparation.
+- Allow exact Scenario Editors to assemble/preflight/compile/evaluate candidates, but deny promote,
+  rollback, canary, activate, disable and every other live-traffic mutation.
+
+**Acceptance:** two Generate and two Retrieve nodes execute distinct exact bindings; document-set
+profiles are edited in place; a fresh scenario needs no manual contract selection; legacy workflows
+remain compatible; matched authorization tests prove editors stop before live traffic.
 
 ## Risks
 

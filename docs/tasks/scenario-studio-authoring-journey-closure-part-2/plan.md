@@ -125,11 +125,12 @@ handoff.
 
 ## Status
 
-In progress — Part 1 committed at `ef05d3b`; prompt inline correction committed at `7115d77`;
+Completed — Part 1 committed at `ef05d3b`; prompt inline correction committed at `7115d77`;
 Part 2A retrieval/chunking authoring was committed at `e8e9800`; Part 2B six-selector inspection,
 safe platform/model projections, persisted defaults and exact Studio handoff was committed at
-`4c65be8`. Part 2C closed model-profile reference authoring and registry-wide capability states are
-implemented and verified, pending their isolated commit.
+`4c65be8`. Part 2C closed model-profile reference authoring and registry-wide capability states and
+was committed at `e8b1b7e`. Ownership/placement corrections discovered after acceptance are tracked
+separately in the [node-bound authoring realignment plan](../scenario-node-bound-authoring-realignment/plan.md).
 
 ## Completion criteria
 
