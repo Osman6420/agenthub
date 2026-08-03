@@ -10,6 +10,8 @@ GitOps path does not.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import re
 from typing import Any
@@ -42,6 +44,8 @@ AUTHORABLE_ARTIFACT_TYPES = frozenset(
         ArtifactType.RETRIEVAL_PROFILE,
     }
 )
+
+_GENERATE_ROLE_PREFIX = "gen_"
 
 
 def ai_authoring_request_limit(*, accept: bool) -> int:
@@ -77,6 +81,221 @@ def _validated_body(body: Any) -> dict[str, Any]:
     if len(encoded.encode("utf-8")) > MAX_DRAFT_BODY_BYTES:
         raise BuilderError("body_too_large", "draft body exceeds the size limit")
     return body
+
+
+def generate_node_roles(draft: WorkflowDraft, node_id: str) -> dict[str, str]:
+    """Return stable, server-owned manifest roles for one Generate node."""
+
+    if not isinstance(node_id, str) or not node_id:
+        raise BuilderError("generate_node_invalid")
+    seed = f"{draft.organization_id}:{draft.logical_id}:{node_id}".encode()
+    identity = hashlib.sha256(seed).hexdigest()[:24]
+    return {
+        "prompt_ref": f"{_GENERATE_ROLE_PREFIX}{identity}_prompt",
+        "model_profile_ref": f"{_GENERATE_ROLE_PREFIX}{identity}_model",
+    }
+
+
+def _workflow_node(body: dict[str, Any], node_id: str, *, node_type: str) -> dict[str, Any]:
+    spec = body.get("spec")
+    nodes = spec.get("nodes") if isinstance(spec, dict) else None
+    if not isinstance(nodes, list):
+        raise BuilderError("generate_node_not_found")
+    matches = [node for node in nodes if isinstance(node, dict) and node.get("id") == node_id]
+    if len(matches) != 1 or matches[0].get("type") != node_type:
+        raise BuilderError("generate_node_not_found")
+    return matches[0]
+
+
+def _require_generate_role_unique(
+    draft: WorkflowDraft,
+    body: dict[str, Any],
+    *,
+    node_id: str,
+    roles: dict[str, str],
+) -> None:
+    spec = body.get("spec")
+    nodes = spec.get("nodes", []) if isinstance(spec, dict) else []
+    selected_roles = set(roles.values())
+    for candidate in nodes:
+        if not isinstance(candidate, dict) or candidate.get("type") != "generate":
+            continue
+        other_id = candidate.get("id")
+        if not isinstance(other_id, str) or other_id == node_id:
+            continue
+        if selected_roles.intersection(generate_node_roles(draft, other_id).values()):
+            raise BuilderError("generate_binding_collision")
+
+
+def _binding_artifact_body(
+    draft: WorkflowDraft, *, artifact_type: str, configured_role: Any, expected_role: str
+) -> dict[str, Any] | None:
+    role = (
+        configured_role if isinstance(configured_role, str) and configured_role else expected_role
+    )
+    author_draft = ArtifactDraft.objects.filter(
+        organization=draft.organization,
+        scenario=draft.scenario,
+        artifact_type=artifact_type,
+        logical_id=role,
+    ).first()
+    if author_draft is not None:
+        return author_draft.body
+    return (
+        ArtifactVersion.objects.filter(
+            organization=draft.organization,
+            type=artifact_type,
+            logical_id=role,
+        )
+        .order_by("-version")
+        .values_list("body", flat=True)
+        .first()
+    )
+
+
+def get_generate_node_binding(draft: WorkflowDraft, *, node_id: str) -> dict[str, Any]:
+    body = _validated_body(draft.body)
+    node = _workflow_node(body, node_id, node_type="generate")
+    raw_config = node.get("config")
+    config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+    roles = generate_node_roles(draft, node_id)
+    prompt_body = _binding_artifact_body(
+        draft,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        configured_role=config.get("prompt_ref"),
+        expected_role=roles["prompt_ref"],
+    )
+    model_body = _binding_artifact_body(
+        draft,
+        artifact_type=ArtifactType.MODEL_PROFILE,
+        configured_role=config.get("model_profile_ref"),
+        expected_role=roles["model_profile_ref"],
+    )
+    prompt_values: dict[str, Any] = prompt_body if isinstance(prompt_body, dict) else {}
+    model_values: dict[str, Any] = model_body if isinstance(model_body, dict) else {}
+    return {
+        "node_id": node_id,
+        "prompt_text": prompt_values.get("template", ""),
+        "model_profile_id": model_values.get("profile_id", ""),
+        "configured": config.get("prompt_ref") == roles["prompt_ref"]
+        and config.get("model_profile_ref") == roles["model_profile_ref"],
+    }
+
+
+def _upsert_generate_artifact_draft(
+    *,
+    workflow: WorkflowDraft,
+    artifact_type: str,
+    logical_id: str,
+    name: str,
+    body: dict[str, Any],
+    actor: str,
+    request_id: str,
+) -> ArtifactDraft:
+    existing = (
+        ArtifactDraft.objects.select_for_update()
+        .filter(
+            organization=workflow.organization,
+            artifact_type=artifact_type,
+            logical_id=logical_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        if (
+            existing.project_id != workflow.project_id
+            or existing.scenario_id != workflow.scenario_id
+        ):
+            raise BuilderError("generate_binding_collision")
+        return update_artifact_draft(
+            existing,
+            actor=actor,
+            expected_revision=existing.revision,
+            name=name,
+            body=body,
+            request_id=request_id,
+        )
+    if workflow.project is None or workflow.scenario is None:
+        raise BuilderError("scenario_required")
+    return create_artifact_draft(
+        organization=workflow.organization,
+        project=workflow.project,
+        scenario=workflow.scenario,
+        artifact_type=artifact_type,
+        name=name,
+        logical_id=logical_id,
+        logical_description=f"Generate node {workflow.logical_id}/{name}",
+        body=body,
+        actor=actor,
+        request_id=request_id,
+    )
+
+
+@transaction.atomic
+def save_generate_node_binding(
+    draft: WorkflowDraft,
+    *,
+    actor: str,
+    expected_revision: Any,
+    workflow_body: Any,
+    node_id: str,
+    prompt_text: Any,
+    model_profile_id: Any,
+    request_id: str = "",
+) -> WorkflowDraft:
+    """Save one Generate node and its governed prompt/model author state atomically."""
+
+    locked = (
+        WorkflowDraft.objects.select_for_update()
+        .select_related("organization", "project", "scenario")
+        .get(pk=draft.pk)
+    )
+    _require_revision(expected=expected_revision, actual=locked.revision)
+    if not isinstance(prompt_text, str) or not prompt_text.strip():
+        raise BuilderError("prompt_text_required")
+    if not isinstance(model_profile_id, str):
+        raise BuilderError("model_profile_invalid")
+    try:
+        from uuid import UUID
+
+        UUID(model_profile_id)
+    except (TypeError, ValueError) as exc:
+        raise BuilderError("model_profile_invalid") from exc
+
+    candidate = copy.deepcopy(_validated_body(workflow_body))
+    node = _workflow_node(candidate, node_id, node_type="generate")
+    roles = generate_node_roles(locked, node_id)
+    _require_generate_role_unique(locked, candidate, node_id=node_id, roles=roles)
+    raw_config = node.get("config")
+    config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+    node["config"] = {**config, **roles}
+
+    safe_node_name = node_id[:80]
+    _upsert_generate_artifact_draft(
+        workflow=locked,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        logical_id=roles["prompt_ref"],
+        name=f"{safe_node_name} prompt",
+        body={"template": prompt_text},
+        actor=actor,
+        request_id=request_id,
+    )
+    _upsert_generate_artifact_draft(
+        workflow=locked,
+        artifact_type=ArtifactType.MODEL_PROFILE,
+        logical_id=roles["model_profile_ref"],
+        name=f"{safe_node_name} model",
+        body={"profile_id": model_profile_id},
+        actor=actor,
+        request_id=request_id,
+    )
+    return update_draft(
+        locked,
+        actor=actor,
+        expected_revision=locked.revision,
+        body=candidate,
+        request_id=request_id,
+    )
 
 
 def _require_active_model_profile(artifact_type: str, body: dict[str, Any]) -> None:
@@ -457,6 +676,114 @@ def publish_artifact_draft(
     return artifact
 
 
+def _publish_generate_artifact_if_changed(
+    *,
+    workflow: WorkflowDraft,
+    node_id: str,
+    artifact_type: str,
+    logical_id: str,
+    actor: str,
+    version_description: str,
+    request_id: str,
+) -> ArtifactVersion:
+    author_draft = (
+        ArtifactDraft.objects.select_for_update()
+        .filter(
+            organization=workflow.organization,
+            project=workflow.project,
+            scenario=workflow.scenario,
+            artifact_type=artifact_type,
+            logical_id=logical_id,
+        )
+        .first()
+    )
+    if author_draft is None:
+        raise BuilderError(
+            "generate_binding_missing", f"Generate node {node_id} binding is missing"
+        )
+    body = _validated_body(author_draft.body)
+    try:
+        validate_body(artifact_type, body)
+    except ArtifactValidationError as exc:
+        raise BuilderError("publish_rejected", str(exc)) from exc
+    _require_active_model_profile(artifact_type, body)
+    checksum = compute_checksum(body)
+    latest = (
+        ArtifactVersion.objects.filter(
+            organization=workflow.organization,
+            type=artifact_type,
+            logical_id=logical_id,
+        )
+        .order_by("-version")
+        .first()
+    )
+    if latest is not None and latest.checksum == checksum:
+        return latest
+    artifact = create_artifact_version(
+        organization=workflow.organization,
+        artifact_type=artifact_type,
+        logical_id=logical_id,
+        logical_description=author_draft.logical_description,
+        version_description=version_description,
+        body=body,
+        created_by=actor,
+    )
+    author_draft.last_published_version = artifact.version
+    author_draft.last_published_at = timezone.now()
+    author_draft.revision += 1
+    author_draft.save(
+        update_fields=["last_published_version", "last_published_at", "revision", "updated_at"]
+    )
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="console.builder.generate_binding.publish",
+        outcome="success",
+        organization_id=workflow.organization_id,
+        resource_type=artifact_type,
+        resource_id=f"{logical_id}:v{artifact.version}",
+        reason=artifact.checksum,
+        request_id=request_id,
+    )
+    return artifact
+
+
+def _publish_generate_bindings(
+    workflow: WorkflowDraft,
+    *,
+    actor: str,
+    version_description: str,
+    request_id: str,
+) -> None:
+    body = _validated_body(workflow.body)
+    spec = body.get("spec")
+    nodes = spec.get("nodes", []) if isinstance(spec, dict) else []
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "generate":
+            continue
+        node_id = node.get("id")
+        if not isinstance(node_id, str):
+            continue
+        roles = generate_node_roles(workflow, node_id)
+        raw_config = node.get("config")
+        config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+        for field, artifact_type in (
+            ("prompt_ref", ArtifactType.PROMPT_TEMPLATE),
+            ("model_profile_ref", ArtifactType.MODEL_PROFILE),
+        ):
+            if config.get(field) != roles[field]:
+                continue  # Legacy/custom roles remain release-manager pinned and untouched.
+            _publish_generate_artifact_if_changed(
+                workflow=workflow,
+                node_id=node_id,
+                artifact_type=artifact_type,
+                logical_id=roles[field],
+                actor=actor,
+                version_description=version_description,
+                request_id=request_id,
+            )
+
+
 @transaction.atomic
 def publish_draft(
     draft: WorkflowDraft,
@@ -480,6 +807,12 @@ def publish_draft(
         raise BuilderError("version_description_required")
     if len(version_description) > 1000:
         raise BuilderError("version_description_too_large")
+    _publish_generate_bindings(
+        locked,
+        actor=actor,
+        version_description=version_description,
+        request_id=request_id,
+    )
     try:
         artifact = create_artifact_version(
             organization=locked.organization,

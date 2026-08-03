@@ -57,20 +57,9 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
         "label": "Generate",
         "category": "rag",
         "supports_mapping": True,
-        "fields": [
-            {
-                "name": "prompt_ref",
-                "kind": "identifier",
-                "required": False,
-                "help": ("İsteğe bağlı prompt release rolü; boşsa varsayılan prompt kullanılır."),
-            },
-            {
-                "name": "model_profile_ref",
-                "kind": "identifier",
-                "required": False,
-                "help": ("İsteğe bağlı model profili release rolü; boşsa varsayılan kullanılır."),
-            },
-        ],
+        # Raw release roles are server-owned implementation details. The frontend renders
+        # node-bound prompt/model controls for this type instead of schema-driven refs.
+        "fields": [],
     },
     {
         "type": "format_output",

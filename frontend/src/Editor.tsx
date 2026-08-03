@@ -251,8 +251,11 @@ export function Editor({
             schema={schema}
             node={selectedNode}
             disabled={builder.readOnly}
+            api={api}
+            draft={draft}
             onChange={builder.updateNodeConfig}
             onPatchData={builder.updateNodeData}
+            onSaveGenerateBinding={builder.saveGenerateBinding}
             onRemove={builder.removeSelected}
           />
         )}

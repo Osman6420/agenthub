@@ -2,8 +2,17 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { Node } from "@xyflow/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { BuilderApi } from "../api";
 import { NodeConfigPanel } from "../components/NodeConfigPanel";
-import type { BuilderNodeData, NodeSchema } from "../types";
+import type { BuilderNodeData, Draft, NodeSchema } from "../types";
+
+const api = new BuilderApi("/console/api/builder");
+const draft: Draft = {
+  id: 4, organization: "org", organization_id: 1, project_id: 2, scenario_id: 3,
+  name: "Flow", logical_id: "flow", body: {}, last_published_version: 0,
+  last_published_at: null, revision: 1, can_write: true,
+};
+const commonProps = { api, draft, onSaveGenerateBinding: vi.fn() };
 
 const schema: NodeSchema = {
   organization: "org",
@@ -70,6 +79,7 @@ describe("node config panel", () => {
         onChange={onChange}
         onPatchData={onPatchData}
         onRemove={vi.fn()}
+        {...commonProps}
       />,
     );
 
@@ -84,8 +94,13 @@ describe("node config panel", () => {
     expect(onPatchData).toHaveBeenLastCalledWith("review", { input_mapping: [{ from: "", to: "" }] });
   });
 
-  it("renders generate bindings and omits a cleared optional identifier", () => {
-    const onChange = vi.fn();
+  it("renders prompt/model authoring and hides raw manifest refs", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const body = String(url).includes("model-profile-options")
+        ? { options: [], limited: false }
+        : { node_id: "answer", prompt_text: "Yanıtla", model_profile_id: "", configured: false };
+      return new Response(JSON.stringify(body), { status: 200 });
+    }));
     const node = {
       id: "answer",
       type: "builderNode",
@@ -93,12 +108,12 @@ describe("node config panel", () => {
       data: { nodeType: "generate", config: { prompt_ref: "support_prompt" } },
     } as Node<BuilderNodeData>;
     render(<NodeConfigPanel schema={schema} node={node} disabled={false}
-      onChange={onChange} onPatchData={vi.fn()} onRemove={vi.fn()} />);
+      onChange={vi.fn()} onPatchData={vi.fn()} onRemove={vi.fn()} {...commonProps} />);
 
-    expect(screen.getByLabelText("prompt_ref")).toHaveValue("support_prompt");
-    expect(screen.getByLabelText("model_profile_ref")).toHaveValue("");
+    expect(await screen.findByLabelText("Generate prompt metni")).toHaveValue("Yanıtla");
+    expect(screen.queryByLabelText("prompt_ref")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("model_profile_ref")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("platform model profili")).toBeInTheDocument();
     expect(screen.queryByText("Bu node için yapılandırma yok.")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("prompt_ref"), { target: { value: "" } });
-    expect(onChange).toHaveBeenLastCalledWith("answer", {});
   });
 });

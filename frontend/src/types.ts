@@ -77,6 +77,14 @@ export interface ModelProfileOption {
   max_output_tokens: number;
 }
 
+export interface GenerateNodeBinding {
+  node_id: string;
+  prompt_text: string;
+  model_profile_id: string;
+  configured: boolean;
+  can_write?: boolean;
+}
+
 export interface ManifestOptionsResult {
   level: "artifact_type" | "logical_artifact" | "exact_version" | "preset";
   artifact_type?: string;

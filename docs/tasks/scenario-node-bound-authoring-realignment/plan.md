@@ -140,4 +140,26 @@ without gaining any live-traffic authority.
 ## Status
 
 Part 8A implemented and verified: document-set profile create/new-version now uses exact Document Set
-Manager authority, independent of every bound scenario. Later delivery parts remain planned.
+Manager authority, independent of every bound scenario.
+
+Part 3 (Generate-node binding) is implemented and automatically verified. This delivery slice:
+
+- replace the raw `prompt_ref` / `model_profile_ref` inputs with prompt text and a safe model-profile
+  selector inside each Generate node;
+- persist the workflow body and both node-owned artifact drafts in one transaction under exact
+  Scenario Editor authority and optimistic revision control;
+- derive hidden, deterministic, collision-checked roles from the immutable workflow logical identity
+  and node id;
+- publish only changed node-owned artifact bodies as immutable versions before publishing the
+  workflow definition, while reusing an identical latest version; and
+- cover two-Generate independence, stale revision, inactive/forged model, foreign-tenant and
+  viewer-denial paths plus release dependency extraction.
+
+The current local browser session reached the authenticated-console boundary but had no signed-in
+operator session, so visual live-page confirmation remains manual; the current bundle was built and
+the full frontend suite passed.
+
+Operational rule for this slice: legacy refs and absent bindings remain readable and retain the
+current runtime fallback. Only server-derived node roles participate in automatic artifact
+publication; an explicit legacy/custom role is never silently overwritten until the author saves
+that Generate node through the new editor.

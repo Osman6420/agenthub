@@ -1,7 +1,12 @@
 import type { Node } from "@xyflow/react";
+import { useEffect, useState } from "react";
+import { ApiError, type BuilderApi } from "../api";
+import { ModelProfileSelect } from "../ModelProfileSelect";
 import { fieldOptions, nodeTypeSchema } from "../schema";
 import type {
   BuilderNodeData,
+  Draft,
+  GenerateNodeBinding,
   MappingEntry,
   NodeConfig,
   NodeFieldSchema,
@@ -22,6 +27,9 @@ export function NodeConfigPanel({
   onChange,
   onPatchData,
   onRemove,
+  api,
+  draft,
+  onSaveGenerateBinding,
 }: {
   schema: NodeSchema;
   node: Node<BuilderNodeData> | null;
@@ -29,6 +37,11 @@ export function NodeConfigPanel({
   onChange: (id: string, config: NodeConfig) => void;
   onPatchData: (id: string, patch: Partial<BuilderNodeData>) => void;
   onRemove: () => void;
+  api: BuilderApi;
+  draft: Draft;
+  onSaveGenerateBinding: (
+    nodeId: string, promptText: string, modelProfileId: string,
+  ) => Promise<GenerateNodeBinding>;
 }) {
   if (!node) {
     return (
@@ -70,7 +83,20 @@ export function NodeConfigPanel({
         <div style={{ color: "#8b95a7", fontSize: 13 }}>Bu node için yapılandırma yok.</div>
       )}
 
-      {typeSchema?.fields.map((field) => (
+      {node.data.nodeType === "generate" && (
+        <GenerateBindingEditor
+          api={api}
+          draft={draft}
+          nodeId={node.id}
+          disabled={disabled}
+          onSave={onSaveGenerateBinding}
+        />
+      )}
+
+      {typeSchema?.fields.filter((field) =>
+        node.data.nodeType !== "generate" ||
+        (field.name !== "prompt_ref" && field.name !== "model_profile_ref")
+      ).map((field) => (
         <FieldInput
           key={field.name}
           schema={schema}
@@ -132,6 +158,89 @@ export function NodeConfigPanel({
       )}
     </aside>
   );
+}
+
+function GenerateBindingEditor({
+  api,
+  draft,
+  nodeId,
+  disabled,
+  onSave,
+}: {
+  api: BuilderApi;
+  draft: Draft;
+  nodeId: string;
+  disabled: boolean;
+  onSave: (
+    nodeId: string, promptText: string, modelProfileId: string,
+  ) => Promise<GenerateNodeBinding>;
+}) {
+  const [promptText, setPromptText] = useState("");
+  const [modelProfileId, setModelProfileId] = useState("");
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(draft.id > 0);
+
+  useEffect(() => {
+    if (draft.id === 0) return;
+    let active = true;
+    setLoading(true);
+    setStatus("");
+    void api.generateNodeBinding(draft.id, nodeId).then((binding) => {
+      if (!active) return;
+      setPromptText(binding.prompt_text);
+      setModelProfileId(binding.model_profile_id);
+      setStatus(binding.configured ? "Node binding yüklendi." : "Bu node henüz kendi binding'ini kullanmıyor.");
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setStatus(error instanceof ApiError && error.code === "generate_node_not_found"
+        ? "Yeni node: prompt ve modeli girip kaydedebilirsiniz."
+        : error instanceof ApiError ? `${error.code}: ${error.message}` : String(error));
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [api, draft.id, nodeId]);
+
+  if (draft.id === 0 || draft.project_id === null || draft.scenario_id === null) {
+    return <div role="note" style={gatedStyle}>
+      Prompt ve model seçimini bağlamak için önce workflow adayını scenario taslağı olarak kaydedin.
+    </div>;
+  }
+
+  const saveDisabled = disabled || loading || !promptText.trim() || !modelProfileId;
+  return <fieldset style={{ ...labelStyle, border: "1px solid #334155", borderRadius: 6, padding: 10 }}>
+    <legend>Üretim ayarları</legend>
+    <label style={labelStyle}>Prompt metni
+      <textarea
+        aria-label="Generate prompt metni"
+        disabled={disabled || loading}
+        value={promptText}
+        rows={8}
+        onChange={(event) => setPromptText(event.target.value)}
+        style={{ ...inputStyle, fontFamily: "monospace" }}
+      />
+    </label>
+    <ModelProfileSelect
+      api={api}
+      organization={draft.organization}
+      projectId={draft.project_id}
+      scenarioId={draft.scenario_id}
+      value={modelProfileId}
+      onChange={setModelProfileId}
+      readOnly={disabled}
+    />
+    {!disabled && <button type="button" disabled={saveDisabled} onClick={() => {
+      setLoading(true);
+      setStatus("");
+      void onSave(nodeId, promptText, modelProfileId).then((binding) => {
+        setPromptText(binding.prompt_text);
+        setModelProfileId(binding.model_profile_id);
+        setStatus("Prompt ve model bu Generate node'una kaydedildi.");
+      }).catch((error: unknown) => {
+        setStatus(error instanceof ApiError ? `${error.code}: ${error.message}` : String(error));
+      }).finally(() => setLoading(false));
+    }}>Prompt ve modeli kaydet</button>}
+    {status && <div role="status" style={helpStyle}>{status}</div>}
+    <span style={helpStyle}>Artifact rolleri sistem tarafından yönetilir; workflow JSON'unda gizli ref olarak tutulur.</span>
+  </fieldset>;
 }
 
 function FieldInput({

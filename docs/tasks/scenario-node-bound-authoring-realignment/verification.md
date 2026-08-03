@@ -38,3 +38,44 @@
   primary ownership into Retrieve-node DSL/runtime remains Part 8D.
 - The retained same-origin cross-tab notification is compatibility-only now that document-owned
   primary editing is inline; later cleanup may remove it after node-bound migration.
+
+## Part 3 — Generate-node binding
+
+### Automated evidence
+
+- `pytest apps/builder/tests apps/workflows/tests/test_generate_binding.py
+  apps/releases/tests/test_authoring.py -q`: 103 passed.
+- `npm test`: 11 files / 45 tests passed; `npm run typecheck` passed.
+- Ruff format/check passed for `apps/builder`; targeted mypy passed for the changed service and API.
+- Tests prove two Generate nodes receive distinct deterministic roles, release requirements preserve
+  each role/type pair, identical bodies reuse the latest immutable version, and a prompt-only change
+  creates only that prompt's N+1 version.
+- Matched API tests prove exact Scenario Viewer read/deny, Scenario Editor write, foreign-tenant 404,
+  stale revision 409 and inactive-model rollback with no partial artifact draft.
+
+### Runtime and UI evidence
+
+- The current frontend bundle was built into the Django static builder output.
+- Compose showed PostgreSQL, Redis, MinIO, web, runtime/ingestion/eval workers and beat running;
+  `/v1/health/live` returned HTTP 200.
+- Browser navigation reached the local operator login page, but the browser session was not signed
+  in. No credentials were read or entered, so the authenticated Generate panel remains a manual
+  visual check.
+
+### Security and operational review
+
+- GET requires exact scenario visibility; PUT requires exact Scenario Editor authority and a current
+  workflow revision. Server code re-resolves the node, active platform model and tenant/scenario
+  artifact lineage; the UI never submits or receives provider endpoint/secret fields.
+- Workflow body plus prompt/model drafts save in one transaction. Workflow publication validates and
+  publishes changed node artifacts in the workflow publication transaction, and audit failure remains
+  fail-closed.
+- Legacy/custom refs and absent bindings remain readable and are not auto-published. Saving through
+  the new node editor deliberately migrates that node to its server-owned stable roles.
+
+### Residual items
+
+- Candidate manifest assembly still asks the release journey to pin the exact artifacts required by
+  the generated roles; default/automatic candidate selection belongs to the later defaults and
+  candidate-authority delivery slices.
+- Retrieve-node binding, document-set inline authoring and live visual confirmation remain open.

@@ -338,6 +338,13 @@ versioning no longer depends on any bound scenario. Exact Document Set Managers 
 immutable versions inline; scenario-only editors are server-denied. Evidence is recorded in the
 [active task verification](../../tasks/scenario-node-bound-authoring-realignment/verification.md).
 
+**Part 8C implemented / automatically verified 2026-08-03:** Generate nodes now expose prompt text
+and a safe model selector instead of raw manifest refs. The server owns deterministic per-node roles,
+atomically saves node/artifact author state, publishes only changed immutable bindings and preserves
+legacy fallback. Automated evidence is recorded in the
+[active task verification](../../tasks/scenario-node-bound-authoring-realignment/verification.md);
+authenticated browser confirmation remains open.
+
 ## Risks
 
 - Broadening run queries or database grants could hide rather than fix exact-scope authorization.

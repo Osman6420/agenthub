@@ -54,5 +54,10 @@ urlpatterns = [
     path("drafts/", api.drafts, name="drafts"),
     path("drafts/<int:pk>/", api.draft_detail, name="draft_detail"),
     path("drafts/<int:pk>/diagnostics/", api.draft_diagnostics, name="draft_diagnostics"),
+    path(
+        "drafts/<int:pk>/generate-nodes/<str:node_id>/binding/",
+        api.generate_node_binding,
+        name="generate_node_binding",
+    ),
     path("drafts/<int:pk>/publish/", api.draft_publish, name="draft_publish"),
 ]

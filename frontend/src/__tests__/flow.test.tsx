@@ -240,4 +240,64 @@ describe("end-to-end builder flow", () => {
     expect((save?.body as { revision: number }).revision).toBe(1);
     expect((publish?.body as { revision: number }).revision).toBe(2);
   });
+
+  it("saves prompt/model authoring through the node-bound endpoint and adopts hidden refs", async () => {
+    const profileId = "11111111-1111-4111-8111-111111111111";
+    const sourceBody = {
+      api_version: "agenthub/v1", kind: "Workflow", metadata: { id: "flow_a" },
+      spec: {
+        input_node: "request",
+        nodes: [
+          { id: "request", type: "input" },
+          { id: "answer", type: "generate" },
+          { id: "done", type: "end" },
+        ],
+        edges: [{ from: "request", to: "answer" }, { from: "answer", to: "done" }],
+      },
+    };
+    const boundBody = structuredClone(sourceBody) as typeof sourceBody & {
+      spec: { nodes: Array<{ id: string; type: string; config?: Record<string, unknown> }> };
+    };
+    boundBody.spec.nodes[1].config = {
+      prompt_ref: "gen_abc_prompt", model_profile_ref: "gen_abc_model",
+    };
+    const calls: Call[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, opts: RequestInit = {}) => {
+      calls.push({
+        url: String(url), method: (opts.method ?? "GET").toUpperCase(),
+        body: opts.body ? JSON.parse(opts.body as string) : undefined,
+        csrf: undefined,
+      });
+      return new Response(JSON.stringify({
+        draft: { ...draftFixture({ body: boundBody }), revision: 2 },
+        binding: {
+          node_id: "answer", prompt_text: "Yanıtla", model_profile_id: profileId, configured: true,
+        },
+      }), { status: 200 });
+    }));
+    const generateSchema: NodeSchema = {
+      ...schema,
+      node_types: [
+        ...schema.node_types,
+        { type: "generate", label: "Generate", category: "rag", fields: [] },
+      ],
+    };
+    const api = new BuilderApi("/console/api/builder/");
+    const { result } = renderHook(() => useBuilder(
+      api, generateSchema, draftFixture({ body: sourceBody }),
+    ));
+
+    await act(async () => {
+      await result.current.saveGenerateBinding("answer", "Yanıtla", profileId);
+    });
+
+    expect(result.current.body.spec.nodes.find((node) => node.id === "answer")?.config).toEqual({
+      prompt_ref: "gen_abc_prompt", model_profile_ref: "gen_abc_model",
+    });
+    expect(result.current.isDirty).toBe(false);
+    const call = calls[0];
+    expect(call.url).toContain("/generate-nodes/answer/binding/");
+    expect((call.body as { revision: number }).revision).toBe(1);
+    expect((call.body as { prompt_text: string }).prompt_text).toBe("Yanıtla");
+  });
 });

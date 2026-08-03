@@ -1003,10 +1003,9 @@ def test_node_schema_exposes_roles_never_endpoints_or_secrets(
     node_types = {n["type"] for n in data["node_types"]}
     assert {"input", "tool", "condition", "custom", "end"} <= node_types
     schemas = {node["type"]: node["fields"] for node in data["node_types"]}
-    assert [field["name"] for field in schemas["generate"]] == [
-        "prompt_ref",
-        "model_profile_ref",
-    ]
+    # Generate bindings are edited through dedicated prompt/model controls. Raw release
+    # roles remain persisted DSL details and are not author-facing schema fields.
+    assert schemas["generate"] == []
     assert all(field["required"] is False for field in schemas["generate"])
     assert [field["name"] for field in schemas["format_output"]] == ["template_ref"]
     assert schemas["input"] == []
