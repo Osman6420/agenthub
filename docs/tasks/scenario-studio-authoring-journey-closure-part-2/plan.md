@@ -35,8 +35,9 @@ handoff.
 ## Authorization
 
 - Artifact/profile reads require the existing exact organization/document-set scope.
-- Retrieval/chunking/summary artifact creation from a document set requires
-  `DOCUMENT_SET_OPERATIONS_MANAGE` on that exact set.
+- Staged-index inspection requires `DOCUMENT_SET_OPERATIONS_MANAGE` on that exact set. Creating or
+  versioning retrieval/chunking/summary artifacts in Studio additionally requires exact scenario
+  author responsibility on the bound scenario selected for the handoff.
 - Platform profile create/disable/grant remains `PLATFORM_MANAGE`; links are hidden and server-denied
   otherwise.
 - Server re-resolves every artifact/profile ID; cross-tenant IDs are non-disclosing.
@@ -93,6 +94,19 @@ handoff.
 5. Verify tenant-grant rejection, safe-field redaction, exact deep-link selection, current-selection
    defaults, frontend build, live health and responsibility-gated visibility.
 
+### Active delivery slice — Part 2C
+
+1. Add closed `model_profile` draft creation/versioning. The browser selects only an active platform
+   profile and the persisted tenant artifact body is exactly `{profile_id: UUID}`.
+2. Project only profile UUID, logical ID, revision, provider, model and output-token limit. Endpoint,
+   host, path, secret reference, TLS, network and egress fields never enter the tenant response.
+3. Let exact scenario authors inspect/version supported artifact content without granting release
+   assembly authority; preset, preflight and compile remain exact release-manager operations.
+4. Publish an explicit capability state for every registry type: structured here, guided elsewhere,
+   or read-only/unsupported with a reason.
+5. Notify the staged-index tab when any supported Studio editor publishes a replacement exact
+   version; the server remains authoritative for every eventual build selection.
+
 ## Acceptance criteria
 
 1. Every staged-index selector has a visible inspect action and states whether it is editable here.
@@ -112,10 +126,10 @@ handoff.
 ## Status
 
 In progress — Part 1 committed at `ef05d3b`; prompt inline correction committed at `7115d77`;
-Part 2A retrieval/chunking authoring was committed at `e8e9800`. Part 2B six-selector inspection,
-safe platform/model projections, persisted defaults and exact Studio handoff are implemented and
-verified, pending their isolated commit. Closed new `model_profile` reference authoring and the
-remaining registry capability-matrix work are still required before Part 2 is complete.
+Part 2A retrieval/chunking authoring was committed at `e8e9800`; Part 2B six-selector inspection,
+safe platform/model projections, persisted defaults and exact Studio handoff was committed at
+`4c65be8`. Part 2C closed model-profile reference authoring and registry-wide capability states are
+implemented and verified, pending their isolated commit.
 
 ## Completion criteria
 

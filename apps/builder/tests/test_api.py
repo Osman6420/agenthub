@@ -27,6 +27,7 @@ from apps.orchestration.authoring import (
     AuthoringResponse,
     get_authoring_contract,
 )
+from apps.orchestration.models import ModelProfile, ModelProfileStatus
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import OrganizationMembership
 from apps.tools.models import ToolBinding, ToolDefinition, ToolRisk, ToolStatus
@@ -718,6 +719,125 @@ def test_governed_profile_draft_api_creates_new_logical_artifact(
     assert response.status_code == 201
     assert response.json()["artifact_type"] == artifact_type
     assert response.json()["body"] == body
+
+
+def test_model_profile_options_and_uuid_only_draft_are_author_scoped_and_redacted(
+    client: Client, bf: BuilderFixture
+) -> None:
+    active = ModelProfile.objects.create(
+        logical_id="summary",
+        revision=1,
+        host="model.internal.example",
+        model="summary-v1",
+        secret_ref="secret://model",  # noqa: S106 -- opaque test reference
+        created_by="platform-admin",
+    )
+    ModelProfile.objects.create(
+        logical_id="disabled",
+        revision=1,
+        host="disabled.internal.example",
+        model="disabled-v1",
+        secret_ref="secret://disabled",  # noqa: S106 -- opaque test reference
+        status=ModelProfileStatus.DISABLED,
+        created_by="platform-admin",
+    )
+    options_url = reverse("builder_api:model_profile_options")
+    query = {
+        "organization": bf.org.slug,
+        "project_id": bf.project.pk,
+        "scenario_id": bf.scenario.pk,
+    }
+    client.force_login(bf.viewer)
+    assert client.get(options_url, query).status_code == 403
+
+    client.force_login(bf.author)
+    options = client.get(options_url, query)
+    assert options.status_code == 200
+    assert options.json()["options"] == [
+        {
+            "profile_id": str(active.public_id),
+            "logical_id": "summary",
+            "revision": 1,
+            "provider": "openai_compatible",
+            "model": "summary-v1",
+            "max_output_tokens": 2048,
+        }
+    ]
+    serialized = json.dumps(options.json())
+    assert "model.internal.example" not in serialized
+    assert "secret://model" not in serialized
+    assert "disabled.internal.example" not in serialized
+    assert (
+        client.get(options_url, {**query, "selected_profile_id": "not-a-uuid"}).status_code == 400
+    )
+
+    created = _post(
+        client,
+        reverse("builder_api:artifact_drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "artifact_type": "model_profile",
+            "name": "Summary model",
+            "logical_id": "summary.model",
+            "logical_description": "Stable summary model selection",
+            "body": {"profile_id": str(active.public_id)},
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["body"] == {"profile_id": str(active.public_id)}
+    assert (
+        _post(
+            client,
+            reverse("builder_api:artifact_draft_publish", args=[created.json()["id"]]),
+            {"revision": 1, "version_description": "Initial safe model reference"},
+        ).status_code
+        == 201
+    )
+
+
+def test_model_profile_source_copy_rejects_inactive_reference(
+    client: Client, bf: BuilderFixture
+) -> None:
+    profile = ModelProfile.objects.create(
+        logical_id="summary",
+        revision=1,
+        host="model.internal.example",
+        model="summary-v1",
+        secret_ref="secret://model",  # noqa: S106 -- opaque test reference
+        created_by="platform-admin",
+    )
+    source = create_artifact_version(
+        organization=bf.org,
+        artifact_type=ArtifactType.MODEL_PROFILE,
+        logical_id="summary.model",
+        body={"profile_id": str(profile.public_id)},
+        created_by="author",
+    )
+    client.force_login(bf.author)
+    preview = client.get(
+        reverse(
+            "builder_api:scenario_artifact_version",
+            args=[bf.scenario.public_id, source.pk],
+        )
+    )
+    assert preview.status_code == 200
+    assert preview.json()["can_create_new_version"] is True
+    profile.status = ModelProfileStatus.DISABLED
+    profile.save(update_fields=["status"])
+    copied = _post(
+        client,
+        reverse("builder_api:artifact_drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "source_artifact_version_id": source.pk,
+        },
+    )
+    assert copied.status_code == 400
+    assert copied.json()["error"]["code"] == "model_profile_unavailable"
 
 
 def test_exact_artifact_preview_and_source_are_tenant_scoped(

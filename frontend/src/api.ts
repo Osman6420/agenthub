@@ -17,6 +17,7 @@ import type {
   ManifestPreflightResult,
   ManifestRequirementsResult,
   ManifestSelectionPayload,
+  ModelProfileOption,
   NodeSchema,
 } from "./types";
 
@@ -165,7 +166,8 @@ export class BuilderApi {
     organization: string;
     project_id: number;
     scenario_id: number;
-      artifact_type?: "prompt_template" | "chunking_profile" | "retrieval_profile";
+    artifact_type?: "prompt_template" | "model_profile" | "chunking_profile" |
+      "retrieval_profile";
     name?: string;
     logical_id?: string;
     logical_description?: string;
@@ -176,6 +178,21 @@ export class BuilderApi {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+
+  modelProfileOptions(params: {
+    organization: string;
+    projectId: number;
+    scenarioId: number;
+    selectedProfileId?: string;
+  }): Promise<{ options: ModelProfileOption[]; limited: boolean }> {
+    const query = new URLSearchParams({
+      organization: params.organization,
+      project_id: String(params.projectId),
+      scenario_id: String(params.scenarioId),
+    });
+    if (params.selectedProfileId) query.set("selected_profile_id", params.selectedProfileId);
+    return request(this.url(`/model-profile-options/?${query.toString()}`));
   }
 
   getArtifactDraft(id: number): Promise<ArtifactDraft> {

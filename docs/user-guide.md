@@ -86,6 +86,12 @@ hazırlanmış bir artifact ID gerektirmez. **Yeni parçalama / arama profili** 
 `chunking/v1` ve `retrieval/v1` alanlarını yapılandırılmış kontrollerle oluşturur. Taslak doğrulanıp
 değişiklik açıklamasıyla yayımlandığında yeni immutable exact sürüm oluşur.
 
+**Yeni özet model profil referansı** aktif platform model profillerini güvenli provider/model
+özetiyle seçtirir. Tenant artifact'ine yalnız `{profile_id: UUID}` yazılır; endpoint, host, path,
+secret, TLS, network veya egress ayarı gösterilmez ve girilemez. Artifact type seçicisi her tür için
+bu ekranda yapılandırılmış düzenleme, başka ekranda yönlendirilmiş authoring veya salt-okunur/
+desteklenmiyor durumunu nedenleriyle gösterir.
+
 Candidate manifest seçicisinde exact sürüm seçilince gövde ayrıca bir “aç” adımı olmadan otomatik
 gösterilir. Prompt metni textarea'da; parçalama ve arama profilleri alan bazlı editörde görünür.
 İçerik değişmediyse mevcut exact sürüm eklenir; değiştiyse açıklama zorunlu olur ve yeni immutable
@@ -153,7 +159,8 @@ OCR, özet model veya özet prompt sürümünün güvenli ayrıntısı açılır
 path, secret, TLS ve egress ayarları hiçbir zaman gösterilmez; yalnız platform yöneticisi ayrı
 platform yönetim bağlantısını görür. Parçalama, arama ve prompt artifact'lerinde **Yeni immutable
 sürüm düzenle** Scenario Studio'yu yeni sekmede exact sürümle açar. Yeni sürüm yayımlanırsa açık
-doküman-seti sekmesi diğer beş seçimi kaybetmeden o exact sürümü seçer. Bu istemci kolaylığı yetki
+doküman-seti sekmesi diğer beş seçimi kaybetmeden o exact sürümü seçer. Özet model artifact'i de
+aynı akışta aktif platform profil UUID'si seçilerek yeni immutable sürüme çıkarılabilir. Bu istemci kolaylığı yetki
 vermez; build isteği bütün profil ve artifact kimliklerini sunucuda tenant ve document-set kapsamıyla
 yeniden doğrular.
 

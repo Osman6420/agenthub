@@ -444,6 +444,23 @@ def test_scenario_studio_bootstrap_names_context_and_projects_exact_active_workf
     assert '"logical_id": "active_flow"' in body
     assert workflow.checksum in body
 
+    client.force_login(_member("studio-editor", org, Role.SCENARIO_EDITOR))
+    editor_response = client.get(
+        reverse("console:builder"),
+        {"organization": org.slug, "scenario": str(scenario.public_id)},
+    )
+    editor_body = editor_response.content.decode()
+    assert editor_response.status_code == 200
+    assert '"can_author_scenario": true' in editor_body
+    assert '"can_compile_release": false' in editor_body
+    assert (
+        reverse("console:scenario_artifact_options", args=[scenario.public_id]).replace(
+            "/", "\\u002F"
+        )
+        in editor_body
+        or reverse("console:scenario_artifact_options", args=[scenario.public_id]) in editor_body
+    )
+
     client.force_login(_member("studio-admin", org, Role.ORGANIZATION_ADMIN))
     manager_response = client.get(
         reverse("console:builder"),

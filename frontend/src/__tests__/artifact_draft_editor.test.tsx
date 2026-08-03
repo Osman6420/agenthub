@@ -113,4 +113,45 @@ describe("artifact draft editor", () => {
     ));
     expect(requests.map((item) => item.method)).toEqual(["PUT", "POST", "GET"]);
   });
+
+  it("edits model artifacts only through the safe platform profile selector", async () => {
+    const firstProfile = "00000000-0000-0000-0000-000000000001";
+    const secondProfile = "00000000-0000-0000-0000-000000000002";
+    const modelDraft: ArtifactDraft = {
+      ...draft,
+      artifact_type: "model_profile",
+      organization: "org",
+      project_id: 3,
+      scenario_id: 4,
+      body: { profile_id: firstProfile },
+    };
+    const requestBodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+      if (String(url).includes("model-profile-options")) {
+        return new Response(JSON.stringify({ options: [
+          { profile_id: firstProfile, logical_id: "first", revision: 1,
+            provider: "provider", model: "first-v1", max_output_tokens: 1024 },
+          { profile_id: secondProfile, logical_id: "second", revision: 1,
+            provider: "provider", model: "second-v1", max_output_tokens: 2048 },
+        ], limited: false }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }
+      requestBodies.push(JSON.parse(String(options?.body)) as unknown);
+      return new Response(JSON.stringify({
+        ok: true, errors: [], compiled_checksum: "a".repeat(64),
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+    render(<ArtifactDraftEditor api={new BuilderApi("/console/api/builder/")}
+      draft={modelDraft} onChange={vi.fn()} onClose={vi.fn()} />);
+
+    await screen.findByRole("option", { name: /second:r1/ });
+    expect(screen.queryByLabelText("sözleşme JSON içeriği")).not.toBeVisible();
+    fireEvent.change(screen.getByLabelText("platform model profili"), {
+      target: { value: secondProfile },
+    });
+    fireEvent.click(screen.getByText("Doğrula"));
+    await screen.findByText("Taslak doğrulandı.");
+    expect(requestBodies).toContainEqual({ body: { profile_id: secondProfile } });
+  });
 });

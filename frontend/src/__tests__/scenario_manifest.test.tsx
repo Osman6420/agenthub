@@ -340,6 +340,8 @@ describe("Scenario Studio exact candidate manifest", () => {
       } else {
         payload = { level: "artifact_type", options: [{
           value: "retrieval_profile", label: "Retrieval profile", description: "Retrieval",
+          authoring_capability: "structured",
+          authoring_message: "Arama alanları bu ekranda kapalı form ile düzenlenebilir.",
         }] };
       }
       return new Response(JSON.stringify(payload), {
@@ -349,7 +351,7 @@ describe("Scenario Studio exact candidate manifest", () => {
 
     render(<ScenarioManifestPanel api={new BuilderApi("/console/api/builder/")}
       scenarioPublicId="scenario" optionsUrl="/artifact-options/" organization="org"
-      projectId={2} scenarioId={3} />);
+      projectId={2} scenarioId={3} canCompileRelease={false} />);
 
     await waitFor(() => {
       expect(screen.getByLabelText("Manifest artifact türü")).toHaveValue("retrieval_profile");
@@ -358,6 +360,10 @@ describe("Scenario Studio exact candidate manifest", () => {
       );
       expect(screen.getByLabelText("Manifest kesin sürümü")).toHaveValue("20");
     });
+    expect(screen.getByText(/Bu ekranda düzenlenebilir/)).toBeInTheDocument();
+    expect(screen.getByText("Exact artifact içeriği ve sürümleme")).toBeInTheDocument();
+    expect(screen.queryByText("Minimum release önerisini getir")).not.toBeInTheDocument();
+    expect(screen.queryByText("Candidate release derle")).not.toBeInTheDocument();
     expect(await screen.findByLabelText("Arama sonuç sayısı")).toHaveValue(8);
   });
 

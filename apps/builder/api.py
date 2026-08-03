@@ -33,6 +33,7 @@ from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.node_schema import build_node_schema
 from apps.catalog.models import AIProject, Scenario
 from apps.identity.authorization import Capability, authorize
+from apps.orchestration.models import ModelProfile, ModelProfileStatus
 from apps.releases import authoring as release_authoring
 from apps.releases.compiler import CompileError, compile_release
 from apps.tenancy.models import Organization
@@ -242,6 +243,34 @@ def _release_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
         scenario=scenario,
     )
     if not decision.allowed:
+        raise PermissionDenied
+    return scenario
+
+
+def _artifact_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
+    scenario = (
+        Scenario.objects.select_related("organization", "project")
+        .filter(public_id=public_id)
+        .first()
+    )
+    if scenario is None:
+        raise Http404
+    allowed = allowed_organization_ids(request.user)
+    if allowed is not None and scenario.organization_id not in allowed:
+        raise Http404
+    can_release = authorize(
+        user=request.user,
+        capability=Capability.SCENARIO_RELEASE,
+        organization=scenario.organization,
+        project=scenario.project,
+        scenario=scenario,
+    ).allowed
+    if not can_release and not _can_author(
+        request,
+        organization_id=scenario.organization_id,
+        project=scenario.project,
+        scenario=scenario,
+    ):
         raise PermissionDenied
     return scenario
 
@@ -542,6 +571,87 @@ def node_schema(request: HttpRequest) -> HttpResponse:
 
 
 @operator_api
+@require_http_methods(["GET"])
+def model_profile_options(request: HttpRequest) -> HttpResponse:
+    """Project only safe active platform-model fields into an exact scenario authoring scope."""
+
+    org = _resolve_org_in_scope(request, request.GET.get("organization"))
+    project = _resolve_project(org, request.GET.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, request.GET.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
+    profiles = list(
+        ModelProfile.objects.filter(status=ModelProfileStatus.ACTIVE)
+        .only(
+            "public_id",
+            "logical_id",
+            "revision",
+            "provider",
+            "model",
+            "max_output_tokens",
+        )
+        .order_by("logical_id", "-revision")[:101]
+    )
+    limited = len(profiles) > 100
+    display_profiles = profiles[:100]
+    selected_profile_id = request.GET.get("selected_profile_id", "")
+    if selected_profile_id:
+        try:
+            UUID(selected_profile_id)
+        except ValueError as exc:
+            raise services.BuilderError("model_profile_invalid") from exc
+    if selected_profile_id and all(
+        str(profile.public_id) != selected_profile_id for profile in display_profiles
+    ):
+        selected = next(
+            (profile for profile in profiles if str(profile.public_id) == selected_profile_id),
+            None,
+        )
+        if selected is None:
+            selected = (
+                ModelProfile.objects.filter(
+                    public_id=selected_profile_id,
+                    status=ModelProfileStatus.ACTIVE,
+                )
+                .only(
+                    "public_id",
+                    "logical_id",
+                    "revision",
+                    "provider",
+                    "model",
+                    "max_output_tokens",
+                )
+                .first()
+            )
+        if selected is not None:
+            display_profiles.append(selected)
+    return JsonResponse(
+        {
+            "options": [
+                {
+                    "profile_id": str(profile.public_id),
+                    "logical_id": profile.logical_id,
+                    "revision": profile.revision,
+                    "provider": profile.provider,
+                    "model": profile.model,
+                    "max_output_tokens": profile.max_output_tokens,
+                }
+                for profile in display_profiles
+            ],
+            "limited": limited,
+        }
+    )
+
+
+@operator_api
 @require_http_methods(["GET", "POST"])
 def drafts(request: HttpRequest) -> HttpResponse:
     if request.method == "GET":
@@ -764,6 +874,7 @@ def artifact_drafts(request: HttpRequest) -> HttpResponse:
                 organization=org,
                 type__in={
                     ArtifactType.PROMPT_TEMPLATE,
+                    ArtifactType.MODEL_PROFILE,
                     ArtifactType.CHUNKING_PROFILE,
                     ArtifactType.RETRIEVAL_PROFILE,
                 },
@@ -934,7 +1045,7 @@ def artifact_draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
 def scenario_artifact_version(request: HttpRequest, public_id: UUID, pk: int) -> HttpResponse:
     """Return one bounded exact artifact body already eligible for this scenario picker."""
 
-    scenario = _release_scenario(request, public_id)
+    scenario = _artifact_scenario(request, public_id)
     artifact = ArtifactVersion.objects.filter(pk=pk, organization=scenario.organization).first()
     if artifact is None:
         raise Http404
@@ -972,6 +1083,7 @@ def scenario_artifact_version(request: HttpRequest, public_id: UUID, pk: int) ->
             and artifact.type
             in {
                 ArtifactType.PROMPT_TEMPLATE,
+                ArtifactType.MODEL_PROFILE,
                 ArtifactType.CHUNKING_PROFILE,
                 ArtifactType.RETRIEVAL_PROFILE,
             },

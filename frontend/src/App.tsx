@@ -263,7 +263,8 @@ export function App({
             await reload();
             setActive(saved);
           } : undefined} />
-        {initial?.can_compile_release && initial.scenario_public_id &&
+        {(initial?.can_author_scenario || initial?.can_compile_release) &&
+          initial.scenario_public_id &&
           initial.artifact_options_url && <ScenarioManifestPanel
             api={api}
             scenarioPublicId={initial.scenario_public_id}
@@ -271,6 +272,7 @@ export function App({
             organization={orgSlug}
             projectId={initial.project_id}
             scenarioId={initial.scenario_id}
+            canCompileRelease={initial.can_compile_release === true}
             refreshArtifact={publishedArtifact}
           />}
       </div>
@@ -353,7 +355,8 @@ export function App({
           style={{ ...openBtn, marginLeft: 8 }}>Yeni taslak olarak düzenle</button>}
       </section>}
 
-      {initial?.can_compile_release && initial.scenario_public_id &&
+      {(initial?.can_author_scenario || initial?.can_compile_release) &&
+        initial.scenario_public_id &&
         initial.artifact_options_url && <ScenarioManifestPanel
           api={api}
           scenarioPublicId={initial.scenario_public_id}
@@ -361,6 +364,7 @@ export function App({
           organization={orgSlug}
           projectId={initial.project_id}
           scenarioId={initial.scenario_id}
+          canCompileRelease={initial.can_compile_release === true}
           refreshArtifact={publishedArtifact}
         />}
 
@@ -375,7 +379,9 @@ export function App({
             ({draft.artifact_type === "input_contract" ? "girdi" :
               draft.artifact_type === "output_contract" ? "çıktı" :
                 draft.artifact_type === "chunking_profile" ? "parçalama" :
-                  draft.artifact_type === "retrieval_profile" ? "arama" : "prompt"}; {draft.logical_id})
+                  draft.artifact_type === "retrieval_profile" ? "arama" :
+                    draft.artifact_type === "model_profile" ? "model referansı" :
+                      "prompt"}; {draft.logical_id})
           </span></span>
           <button type="button" onClick={() => void openArtifact(draft.id)} style={openBtn}>Aç</button>
         </li>)}

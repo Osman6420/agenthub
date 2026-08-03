@@ -2,9 +2,10 @@ import { useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
 import { defaultGovernedProfileBody, GovernedProfileEditor } from "./GovernedProfileEditor";
+import { ModelProfileSelect } from "./ModelProfileSelect";
 import type { ArtifactDraft } from "./types";
 
-type ProfileType = "chunking_profile" | "retrieval_profile";
+type ProfileType = "chunking_profile" | "retrieval_profile" | "model_profile";
 
 export function NewGovernedProfilePanel({ api, organization, projectId, scenarioId, onCreated }: {
   api: BuilderApi;
@@ -44,15 +45,17 @@ export function NewGovernedProfilePanel({ api, organization, projectId, scenario
   }
 
   return <section style={panelStyle}>
-    <h3>Yeni parçalama / arama profili</h3>
+    <h3>Yeni profil artifact’i</h3>
     <label>Profil türü
       <select aria-label="yeni profil türü" value={type} onChange={(event) => {
         const nextType = event.target.value as ProfileType;
         setType(nextType);
-        setBody(defaultGovernedProfileBody(nextType));
+        setBody(nextType === "model_profile" ? { profile_id: "" } :
+          defaultGovernedProfileBody(nextType));
       }}>
         <option value="chunking_profile">Parçalama profili</option>
         <option value="retrieval_profile">Arama profili</option>
+        <option value="model_profile">Özet model profil referansı</option>
       </select>
     </label>
     <label>Ad<input aria-label="yeni profil adı" value={name}
@@ -61,9 +64,14 @@ export function NewGovernedProfilePanel({ api, organization, projectId, scenario
       onChange={(event) => setLogicalId(event.target.value)} /></label>
     <label>Kalıcı amaç<input aria-label="yeni profil açıklaması" value={description}
       maxLength={1000} onChange={(event) => setDescription(event.target.value)} /></label>
-    <GovernedProfileEditor type={type} body={body} onChange={setBody} />
+    {type === "model_profile"
+      ? <ModelProfileSelect api={api} organization={organization} projectId={projectId}
+          scenarioId={scenarioId} value={typeof body.profile_id === "string" ? body.profile_id : ""}
+          onChange={(profileId) => setBody({ profile_id: profileId })} />
+      : <GovernedProfileEditor type={type} body={body} onChange={setBody} />}
     <button type="button" disabled={busy || !name.trim() || !logicalId.trim() ||
-      !description.trim()} onClick={() => void create()}>
+      !description.trim() || (type === "model_profile" && !body.profile_id)}
+      onClick={() => void create()}>
       Profil taslağı oluştur
     </button>
     {status && <div role="alert">{status}</div>}

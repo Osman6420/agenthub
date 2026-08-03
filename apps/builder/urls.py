@@ -10,6 +10,7 @@ app_name = "builder_api"
 
 urlpatterns = [
     path("node-schema/", api.node_schema, name="node_schema"),
+    path("model-profile-options/", api.model_profile_options, name="model_profile_options"),
     path("ai-candidates/", api.ai_candidates, name="ai_candidates"),
     path("ai-candidates/repair/", api.ai_candidate_repair, name="ai_candidate_repair"),
     path("ai-candidates/accept/", api.ai_candidate_accept, name="ai_candidate_accept"),

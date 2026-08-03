@@ -164,6 +164,13 @@ def test_artifact_options_are_tenant_scoped_bounded_and_explain_each_level(
         created_by="author",
     )
     create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.POLICY_PROFILE,
+        logical_id="strict_policy",
+        body={"mode": "strict"},
+        created_by="author",
+    )
+    create_artifact_version(
         organization=foreign_org,
         artifact_type=ArtifactType.WORKFLOW_DEFINITION,
         logical_id="private_flow",
@@ -177,6 +184,12 @@ def test_artifact_options_are_tenant_scoped_bounded_and_explain_each_level(
 
     types = client.get(url).json()
     assert types["options"][0]["description"]
+    capabilities = {item["value"]: item for item in types["options"]}
+    assert capabilities[ArtifactType.WORKFLOW_DEFINITION]["authoring_capability"] == (
+        "guided_elsewhere"
+    )
+    assert capabilities[ArtifactType.POLICY_PROFILE]["authoring_capability"] == "read_only"
+    assert "salt okunur" in capabilities[ArtifactType.POLICY_PROFILE]["authoring_message"]
     logical = client.get(url, {"artifact_type": ArtifactType.WORKFLOW_DEFINITION}).json()
     assert logical["options"] == [
         {
@@ -204,15 +217,27 @@ def test_artifact_options_are_tenant_scoped_bounded_and_explain_each_level(
     assert '"body"' not in rendered
 
 
-def test_artifact_options_require_release_management_role(client: Client) -> None:
+def test_artifact_options_allow_author_read_but_keep_release_preset_manager_only(
+    client: Client,
+) -> None:
     org = Organization.objects.create(slug="selector-role-org", name="Selector Role")
     project = AIProject.objects.create(organization=org, slug="project", name="Project")
     scenario = create_console_scenario(project=project, name="Scenario")
-    client.force_login(_member(org, "selector-editor", Role.SCENARIO_EDITOR))
+    editor = _member(org, "selector-editor", Role.SCENARIO_EDITOR)
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(organization=org, user=editor),
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=editor,
+    )
+    client.force_login(editor)
 
-    response = client.get(reverse("console:scenario_artifact_options", args=[scenario.public_id]))
+    url = reverse("console:scenario_artifact_options", args=[scenario.public_id])
+    response = client.get(url)
 
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert client.get(url, {"preset": "minimum"}).status_code == 403
 
 
 def test_scenario_page_uses_dependent_selector_and_compiler_mode_curl(client: Client) -> None:

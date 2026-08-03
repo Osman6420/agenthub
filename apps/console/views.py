@@ -1626,17 +1626,26 @@ def scenario_lifecycle_change(request: HttpRequest, public_id: object) -> HttpRe
 @require_GET
 def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonResponse:
     scenario = _scoped_scenario(request.user, public_id=public_id)
-    if not authorize_operator(
+    release_allowed = authorize_operator(
         user=request.user,
         capability=OperatorCapability.SCENARIO_RELEASE,
         organization=scenario.organization,
         project=scenario.project,
         scenario=scenario,
-    ).allowed:
+    ).allowed
+    author_allowed = can_author_scenarios(
+        request.user,
+        scenario.organization_id,
+        project=scenario.project,
+        scenario=scenario,
+    )
+    if not (release_allowed or author_allowed):
         raise PermissionDenied
     if scenario.organization.status != OrganizationStatus.ACTIVE:
         raise PermissionDenied
     if request.GET.get("preset", "").strip() == "minimum":
+        if not release_allowed:
+            raise PermissionDenied
         candidates: list[tuple[str, str]] = []
         workflow_logical_ids = list(
             WorkflowDraft.objects.filter(scenario=scenario)
@@ -1699,6 +1708,8 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
                 "value": value,
                 "label": label,
                 "description": ARTIFACT_TYPE_DESCRIPTIONS.get(value, ""),
+                "authoring_capability": _artifact_authoring_capability(value)[0],
+                "authoring_message": _artifact_authoring_capability(value)[1],
             }
             for value, label in ArtifactType.choices
             if value in available_types
@@ -3196,6 +3207,51 @@ ARTIFACT_TYPE_DESCRIPTIONS: dict[str, str] = {
     ArtifactType.EVAL_SUITE: "Release değerlendirmesinde kullanılan immutable test setidir.",
 }
 
+ARTIFACT_AUTHORING_CAPABILITIES: dict[str, tuple[str, str]] = {
+    ArtifactType.PROMPT_TEMPLATE: (
+        "structured",
+        "Prompt metni bu ekranda yeni immutable sürüm olarak düzenlenebilir.",
+    ),
+    ArtifactType.CHUNKING_PROFILE: (
+        "structured",
+        "Parçalama alanları bu ekranda kapalı form ile düzenlenebilir.",
+    ),
+    ArtifactType.RETRIEVAL_PROFILE: (
+        "structured",
+        "Arama alanları bu ekranda kapalı form ile düzenlenebilir.",
+    ),
+    ArtifactType.MODEL_PROFILE: (
+        "structured",
+        "Yalnız aktif platform profil UUID referansı seçilebilir; endpoint ve secret düzenlenemez.",
+    ),
+    ArtifactType.WORKFLOW_DEFINITION: (
+        "guided_elsewhere",
+        "Yeni sürüm Workflow graph editor üzerinden oluşturulur.",
+    ),
+    ArtifactType.INPUT_CONTRACT: (
+        "guided_elsewhere",
+        "Yeni sürüm senaryo ayrıntısındaki governed release girdilerinden oluşturulur.",
+    ),
+    ArtifactType.OUTPUT_CONTRACT: (
+        "guided_elsewhere",
+        "Yeni sürüm senaryo ayrıntısındaki governed release girdilerinden oluşturulur.",
+    ),
+    ArtifactType.EVAL_SUITE: (
+        "guided_elsewhere",
+        "Yeni sürüm senaryo ayrıntısındaki Eval suite formundan oluşturulur.",
+    ),
+}
+
+
+def _artifact_authoring_capability(artifact_type: str) -> tuple[str, str]:
+    return ARTIFACT_AUTHORING_CAPABILITIES.get(
+        artifact_type,
+        (
+            "read_only",
+            "Bu artifact türü için tarayıcıdan authoring desteklenmiyor; exact içerik salt okunur.",
+        ),
+    )
+
 
 def _query_without_page(request: HttpRequest) -> str:
     """Current querystring minus ``page``, so pagination links keep the active filters."""
@@ -3546,6 +3602,12 @@ def builder(request: HttpRequest) -> HttpResponse:
         )
         if scenario is None or (requested_org and requested_org != scenario.organization.slug):
             raise Http404
+        can_author_scenario = can_author_scenarios(
+            request.user,
+            scenario.organization_id,
+            project=scenario.project,
+            scenario=scenario,
+        )
         initial = {
             "organization": scenario.organization.slug,
             "project_id": scenario.project_id,
@@ -3553,12 +3615,7 @@ def builder(request: HttpRequest) -> HttpResponse:
             "scenario_public_id": str(scenario.public_id),
             "scenario_name": scenario.name,
             "project_name": scenario.project.name,
-            "can_author_scenario": can_author_scenarios(
-                request.user,
-                scenario.organization_id,
-                project=scenario.project,
-                scenario=scenario,
-            ),
+            "can_author_scenario": can_author_scenario,
         }
         release_decision = authorize_operator(
             user=request.user,
@@ -3568,7 +3625,7 @@ def builder(request: HttpRequest) -> HttpResponse:
             scenario=scenario,
         )
         initial["can_compile_release"] = release_decision.allowed
-        if release_decision.allowed:
+        if release_decision.allowed or can_author_scenario:
             initial["artifact_options_url"] = reverse(
                 "console:scenario_artifact_options",
                 args=[scenario.public_id],
@@ -4139,6 +4196,7 @@ def document_set_detail(
             ArtifactType.CHUNKING_PROFILE,
             ArtifactType.RETRIEVAL_PROFILE,
             ArtifactType.PROMPT_TEMPLATE,
+            ArtifactType.MODEL_PROFILE,
         }:
             return ""
         query = urlencode(
@@ -4202,11 +4260,7 @@ def document_set_detail(
                     "edit_reason": (
                         "Yeni immutable sürüm Scenario Studio’da oluşturulur."
                         if edit_url
-                        else (
-                            "Model profili platform-managed referanstır; burada salt okunur."
-                            if artifact.type == ArtifactType.MODEL_PROFILE
-                            else "Düzenlemek için bağlı senaryoda author sorumluluğu gerekir."
-                        )
+                        else "Düzenlemek için bağlı senaryoda author sorumluluğu gerekir."
                     ),
                 }
             )

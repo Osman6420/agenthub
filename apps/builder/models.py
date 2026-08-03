@@ -101,6 +101,7 @@ class ArtifactDraft(TimeStampedModel):
             (ArtifactType.INPUT_CONTRACT, "Input contract"),
             (ArtifactType.OUTPUT_CONTRACT, "Output contract"),
             (ArtifactType.PROMPT_TEMPLATE, "Prompt template"),
+            (ArtifactType.MODEL_PROFILE, "Model profile"),
             (ArtifactType.CHUNKING_PROFILE, "Chunking profile"),
             (ArtifactType.RETRIEVAL_PROFILE, "Retrieval profile"),
         ],

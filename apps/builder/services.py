@@ -24,6 +24,7 @@ from apps.artifacts.validation import ArtifactValidationError, compute_checksum,
 from apps.audit.services import record_event
 from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.catalog.models import AIProject, Scenario
+from apps.orchestration.models import ModelProfile, ModelProfileStatus
 from apps.tenancy.models import Organization
 from apps.workflows.compiler import compile_workflow
 
@@ -36,6 +37,7 @@ AUTHORABLE_ARTIFACT_TYPES = frozenset(
         ArtifactType.INPUT_CONTRACT,
         ArtifactType.OUTPUT_CONTRACT,
         ArtifactType.PROMPT_TEMPLATE,
+        ArtifactType.MODEL_PROFILE,
         ArtifactType.CHUNKING_PROFILE,
         ArtifactType.RETRIEVAL_PROFILE,
     }
@@ -75,6 +77,19 @@ def _validated_body(body: Any) -> dict[str, Any]:
     if len(encoded.encode("utf-8")) > MAX_DRAFT_BODY_BYTES:
         raise BuilderError("body_too_large", "draft body exceeds the size limit")
     return body
+
+
+def _require_active_model_profile(artifact_type: str, body: dict[str, Any]) -> None:
+    if artifact_type != ArtifactType.MODEL_PROFILE:
+        return
+    profile_id = body.get("profile_id")
+    if not isinstance(profile_id, str):
+        raise BuilderError("candidate_invalid_artifact")
+    if not ModelProfile.objects.filter(
+        public_id=profile_id,
+        status=ModelProfileStatus.ACTIVE,
+    ).exists():
+        raise BuilderError("model_profile_unavailable")
 
 
 @transaction.atomic
@@ -277,6 +292,7 @@ def create_artifact_draft(
     diagnostics = diagnose_artifact(artifact_type, _validated_body(body))
     if not diagnostics["ok"]:
         raise BuilderError("candidate_invalid_artifact")
+    _require_active_model_profile(artifact_type, body)
     if ArtifactDraft.objects.filter(
         organization=organization, artifact_type=artifact_type, logical_id=logical_id
     ).exists():
@@ -353,6 +369,7 @@ def update_artifact_draft(
         diagnostics = diagnose_artifact(locked.artifact_type, candidate)
         if not diagnostics["ok"]:
             raise BuilderError("candidate_invalid_artifact")
+        _require_active_model_profile(locked.artifact_type, candidate)
         locked.body = candidate
     locked.updated_by = actor
     locked.revision += 1
@@ -402,6 +419,12 @@ def publish_artifact_draft(
         raise BuilderError("version_description_required")
     if len(version_description) > 1000:
         raise BuilderError("version_description_too_large")
+    body = _validated_body(locked.body)
+    try:
+        validate_body(locked.artifact_type, body)
+    except ArtifactValidationError as exc:
+        raise BuilderError("publish_rejected", str(exc)) from exc
+    _require_active_model_profile(locked.artifact_type, body)
     try:
         artifact = create_artifact_version(
             organization=locked.organization,
@@ -409,7 +432,7 @@ def publish_artifact_draft(
             logical_id=locked.logical_id,
             logical_description=locked.logical_description,
             version_description=version_description,
-            body=_validated_body(locked.body),
+            body=body,
             created_by=actor,
         )
     except (ArtifactValidationError, ValueError) as exc:

@@ -28,7 +28,7 @@ function receivePublishedArtifact(message) {
   if (!Number.isSafeInteger(message.artifactVersionId) || message.artifactVersionId < 1) return;
   if (!Number.isSafeInteger(message.version) || message.version < 1) return;
   if (typeof message.logicalId !== "string" || !message.logicalId || message.logicalId.length > 128) return;
-  if (!["chunking_profile", "retrieval_profile", "prompt_template"].includes(
+  if (!["chunking_profile", "retrieval_profile", "prompt_template", "model_profile"].includes(
     message.artifactType,
   )) return;
   if (!message.body || typeof message.body !== "object" || Array.isArray(message.body)) return;

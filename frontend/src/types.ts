@@ -35,6 +35,8 @@ export interface ManifestTypeOption {
   value: string;
   label: string;
   description: string;
+  authoring_capability?: "structured" | "guided_elsewhere" | "read_only";
+  authoring_message?: string;
 }
 
 export interface ManifestLogicalOption {
@@ -64,6 +66,15 @@ export interface ArtifactVersionPreview {
   body: Record<string, unknown> | null;
   body_too_large: boolean;
   can_create_new_version: boolean;
+}
+
+export interface ModelProfileOption {
+  profile_id: string;
+  logical_id: string;
+  revision: number;
+  provider: string;
+  model: string;
+  max_output_tokens: number;
 }
 
 export interface ManifestOptionsResult {
@@ -287,7 +298,7 @@ export interface ArtifactDraft {
   id: number;
   draft_kind: "artifact";
   artifact_type: "input_contract" | "output_contract" | "prompt_template" |
-    "chunking_profile" | "retrieval_profile";
+    "model_profile" | "chunking_profile" | "retrieval_profile";
   organization: string;
   organization_id: number;
   project_id: number | null;

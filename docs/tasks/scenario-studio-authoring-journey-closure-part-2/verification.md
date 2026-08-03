@@ -81,3 +81,48 @@
 - The broader registry capability matrix and retrieval `metadata_filter` builder remain unfinished.
 - Live browser interaction with the authorized manager-only form was not available in the existing
   session; automated PostgreSQL/Django and frontend evidence covers that path.
+
+## Part 2C automated evidence
+
+- `pytest apps/builder/tests/test_services.py apps/builder/tests/test_api.py -q`: 77 passed.
+- The model-profile option/draft and inactive-source-copy tests prove active-profile enforcement,
+  UUID-only bodies, exact scenario-author scope and safe-field redaction.
+- Console artifact capability, scenario-author read/reuse, release-preset denial and builder
+  bootstrap suites: 23 passed across the three affected test files.
+- Focused frontend profile/draft/manifest run: 12 passed across 3 files; TypeScript typecheck and
+  Vite production build passed with 187 modules transformed.
+- Python Ruff format/check, mypy for the changed builder/console modules,
+  `makemigrations --check --dry-run builder`, Django system check, selector-script syntax and final
+  whitespace/diff checks passed.
+- Additive migration `builder.0008_artifactdraft_model_profile` was applied to the local PostgreSQL
+  database and confirmed by `showmigrations`.
+
+## Part 2C live/runtime evidence
+
+- The authorized live Studio session displayed **Yeni profil artifact'i** and active model-profile
+  choices using only logical ID/revision, provider, model and output-token bounds.
+- Selecting a profile displayed the safe summary, stated that endpoint/secret values are absent and
+  kept creation disabled until the required logical metadata was supplied. No live draft or
+  immutable version was created during acceptance.
+- Existing model-profile artifact content opened in the inline exact-version editor. The controlled
+  Compose web restart completed and `/v1/health/live` returned HTTP 200.
+
+## Part 2C security/authorization evidence
+
+- Exact scenario authors may inspect and version supported artifacts, but minimum preset, preflight
+  and compile continue to use the exact release-manager authorization path. Tests cover the split.
+- Model-profile bodies are revalidated as exactly `{profile_id: UUID}` on create, update, source
+  copy and publish; the referenced platform profile must still be active at publication time.
+- The tenant projection never serializes endpoint, host, path, secret reference, TLS, network or
+  egress configuration. Foreign scenario/profile inputs fail through bounded, non-disclosing paths.
+- Every registry type now receives a structured, guided-elsewhere or explicit read-only capability
+  state; unsupported authoring is not presented as a working control.
+
+## Part 2C residual items
+
+- The platform model-profile catalog is intentionally platform-global because this repository has
+  no tenant model-profile grant model; tenant artifacts can only reference active profile UUIDs.
+- Existing retrieval `metadata_filter` values are preserved but remain read-only until a bounded,
+  typed filter builder is designed and approved.
+- Live acceptance used an administrator session; exact author-only separation is covered by backend
+  and frontend tests rather than a second live identity.

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
+import { announceArtifactPublished } from "./artifactPublication";
 import { GovernedProfileEditor } from "./GovernedProfileEditor";
+import { ModelProfileSelect } from "./ModelProfileSelect";
 import type {
   ArtifactVersionPreview,
   ManifestLogicalOption,
@@ -23,6 +25,7 @@ export function ScenarioManifestPanel({
   projectId,
   scenarioId,
   refreshArtifact,
+  canCompileRelease = true,
 }: {
   api: BuilderApi;
   scenarioPublicId: string;
@@ -31,6 +34,7 @@ export function ScenarioManifestPanel({
   projectId?: number;
   scenarioId?: number;
   refreshArtifact?: { id: number; artifactType: string; logicalId: string };
+  canCompileRelease?: boolean;
 }) {
   const [types, setTypes] = useState<ManifestTypeOption[]>([]);
   const [logicals, setLogicals] = useState<ManifestLogicalOption[]>([]);
@@ -104,13 +108,18 @@ export function ScenarioManifestPanel({
     () => versions.find((item) => String(item.id) === versionId),
     [versionId, versions],
   );
+  const selectedType = useMemo(
+    () => types.find((item) => item.value === artifactType),
+    [artifactType, types],
+  );
   const effectiveRole = requiredRole || roles[0] || artifactType;
   const originalPromptText = preview?.artifact_type === "prompt_template" &&
     typeof preview.body?.template === "string" ? preview.body.template : "";
   const promptChanged = preview?.artifact_type === "prompt_template" &&
     promptText !== originalPromptText;
   const profileChanged = (preview?.artifact_type === "chunking_profile" ||
-    preview?.artifact_type === "retrieval_profile") &&
+    preview?.artifact_type === "retrieval_profile" ||
+    preview?.artifact_type === "model_profile") &&
     JSON.stringify(artifactBody) !== JSON.stringify(preview.body ?? {});
   const artifactChanged = promptChanged || profileChanged;
 
@@ -339,31 +348,27 @@ export function ScenarioManifestPanel({
       const published = await api.publishArtifactDraft(
         draft.id, draft.revision, versionDescription.trim(),
       );
-      if ("BroadcastChannel" in window) {
-        const artifactChannel = new BroadcastChannel("agenthub-artifact-authoring");
-        artifactChannel.postMessage({
-          kind: "artifact_published",
+      announceArtifactPublished(
+        published,
+        preview.artifact_type === "prompt_template"
+          ? { ...draft.body, template: promptText }
+          : artifactBody,
+      );
+      if (canCompileRelease) {
+        await applySelection({
+          artifact_version_id: published.artifact_version_id,
+          role: effectiveRole,
           artifactType: published.artifact_type,
-          artifactVersionId: published.artifact_version_id,
           logicalId: published.logical_id,
           version: published.version,
-          body: preview.artifact_type === "prompt_template"
-            ? { ...draft.body, template: promptText }
-            : artifactBody,
+          checksum: published.checksum,
+          description: published.version_description,
         });
-        artifactChannel.close();
       }
-      await applySelection({
-        artifact_version_id: published.artifact_version_id,
-        role: effectiveRole,
-        artifactType: published.artifact_type,
-        logicalId: published.logical_id,
-        version: published.version,
-        checksum: published.checksum,
-        description: published.version_description,
-      });
       await chooseLogical(published.logical_id, String(published.artifact_version_id));
-      setStatus(`Yeni immutable ${published.artifact_type} v${published.version} yayımlandı ve manifest’e eklendi.`);
+      setStatus(canCompileRelease
+        ? `Yeni immutable ${published.artifact_type} v${published.version} yayımlandı ve manifest’e eklendi.`
+        : `Yeni immutable ${published.artifact_type} v${published.version} yayımlandı.`);
     } catch (error) {
       setStatus(formatError(error));
     } finally {
@@ -418,19 +423,24 @@ export function ScenarioManifestPanel({
   return <section aria-labelledby="manifest-heading" style={panel}>
     <div>
       <div style={{ color: "#8b95a7", fontSize: 12, textTransform: "uppercase" }}>
-        Release adayı
+        {canCompileRelease ? "Release adayı" : "Artifact workspace"}
       </div>
-      <h2 id="manifest-heading">Kesin sürümlü candidate manifest</h2>
+      <h2 id="manifest-heading">{canCompileRelease
+        ? "Kesin sürümlü candidate manifest" : "Exact artifact içeriği ve sürümleme"}</h2>
       <p style={{ color: "#8b95a7" }}>
-        Yalnız immutable exact version pinlenir. Başarısız preflight veya compile seçimleri silmez;
-        publish, evaluation ve promotion ayrı işlemlerdir.
+        {canCompileRelease
+          ? "Yalnız immutable exact version pinlenir. Başarısız preflight veya compile seçimleri " +
+            "silmez; publish, evaluation ve promotion ayrı işlemlerdir."
+          : "Exact immutable içeriği inceleyebilir ve desteklenen türlerde yeni sürüm " +
+            "yayımlayabilirsiniz. Bu alan candidate release oluşturmaz."}
       </p>
-      <button type="button" disabled={busy} onClick={() => void loadMinimumPreset()}>
+      {canCompileRelease && <button type="button" disabled={busy}
+        onClick={() => void loadMinimumPreset()}>
         Minimum release önerisini getir
-      </button>
+      </button>}
     </div>
 
-    {dirty && dirtyNoticeVisible && <div role="alert" style={warningBox}>
+    {canCompileRelease && dirty && dirtyNoticeVisible && <div role="alert" style={warningBox}>
       <strong>Kaydedilmemiş manifest seçimi var.</strong>
       <p>Seçim yalnızca bu tarayıcı belleğinde tutulur; henüz candidate release değildir.</p>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -478,6 +488,13 @@ export function ScenarioManifestPanel({
       </label>
     </div>
 
+    {selectedType?.authoring_message && <p role="status">
+      <strong>{selectedType.authoring_capability === "read_only"
+        ? "Salt okunur" : selectedType.authoring_capability === "guided_elsewhere"
+          ? "Ayrı authoring ekranı" : "Bu ekranda düzenlenebilir"}:</strong>{" "}
+      {selectedType.authoring_message ?? selectedType.description}
+    </p>}
+
     {previewLoading && <p role="status">Artifact içeriği yükleniyor…</p>}
 
     {preview && <section aria-label="Exact artifact önizleme" style={selectedRow}>
@@ -497,6 +514,14 @@ export function ScenarioManifestPanel({
             : preview.artifact_type === "chunking_profile" ||
                 preview.artifact_type === "retrieval_profile"
               ? null
+              : preview.artifact_type === "model_profile" && organization &&
+                  projectId !== undefined && scenarioId !== undefined
+                ? <ModelProfileSelect api={api} organization={organization}
+                    projectId={projectId} scenarioId={scenarioId}
+                    value={typeof artifactBody.profile_id === "string"
+                      ? artifactBody.profile_id : ""}
+                    onChange={(profileId) => setArtifactBody({ profile_id: profileId })}
+                    readOnly={!preview.can_create_new_version} />
               : <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                   {JSON.stringify(preview.body, null, 2)}
                 </pre>}
@@ -516,7 +541,7 @@ export function ScenarioManifestPanel({
             ? <button type="button" disabled={busy} onClick={() => void publishChangedArtifact()}>
                 Yeni sürümü yayımla ve ekle
               </button>
-            : <button type="button" disabled={busy || !effectiveRole}
+            : canCompileRelease && <button type="button" disabled={busy || !effectiveRole}
                 onClick={() => void useSelectedVersion()}>
                 Bu exact sürümü ekle
               </button>}
@@ -524,7 +549,7 @@ export function ScenarioManifestPanel({
       </div>
     </section>}
 
-    {selected.length === 0
+    {canCompileRelease && (selected.length === 0
       ? <p style={{ color: "#8b95a7" }}>Henüz exact artifact seçilmedi.</p>
       : <ul aria-label="Seçili manifest artifact’ları" style={{ listStyle: "none", padding: 0 }}>
         {selected.map((item) => {
@@ -553,9 +578,10 @@ export function ScenarioManifestPanel({
             }}>Kaldır</button>
           </li>;
         })}
-      </ul>}
+      </ul>)}
 
-    {requirements.length > 0 && <div aria-label="Kanonik workflow gereksinimleri"
+    {canCompileRelease && requirements.length > 0 &&
+      <div aria-label="Kanonik workflow gereksinimleri"
       style={{ margin: "12px 0" }}>
       <strong>Workflow dependency rolleri</strong>
       <p style={{ color: "#8b95a7", marginTop: 4 }}>
@@ -584,7 +610,7 @@ export function ScenarioManifestPanel({
       })}
     </div>}
 
-    {diagnostics.filter((entry) => !entry.role ||
+    {canCompileRelease && diagnostics.filter((entry) => !entry.role ||
       !selected.some((item) => item.role === entry.role)).map((entry) =>
       <div key={`${entry.code}-${entry.role ?? ""}`} role="alert" style={errorBox}>
         <code>{entry.code}</code>: {entry.message}
@@ -593,6 +619,7 @@ export function ScenarioManifestPanel({
       </div>)}
 
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      {canCompileRelease && <>
       <button type="button" disabled={busy || selected.length === 0}
         onClick={() => void preflight()}>Kanonik ön kontrol</button>
       <button type="button" disabled={busy || selected.length === 0}
@@ -605,6 +632,7 @@ export function ScenarioManifestPanel({
         setDirty(false);
         setDirtyNoticeVisible(false);
       }}>Seçimi temizle</button>
+      </>}
       {status && <span role="status">{status}</span>}
       {releaseId && <a href={`/console/releases/${releaseId}/`}>Candidate #{releaseId} aç</a>}
     </div>

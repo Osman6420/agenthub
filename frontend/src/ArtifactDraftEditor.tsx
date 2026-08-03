@@ -1,7 +1,9 @@
 import { useRef, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
+import { announceArtifactPublished } from "./artifactPublication";
 import { GovernedProfileEditor } from "./GovernedProfileEditor";
+import { ModelProfileSelect } from "./ModelProfileSelect";
 import type { ArtifactDraft, ArtifactPublishResult, DiagnosticsResult } from "./types";
 
 export function ArtifactDraftEditor({
@@ -23,6 +25,9 @@ export function ArtifactDraftEditor({
     typeof draft.body.template === "string" ? draft.body.template : "",
   );
   const [profileBody, setProfileBody] = useState(draft.body);
+  const [modelProfileId, setModelProfileId] = useState(() =>
+    typeof draft.body.profile_id === "string" ? draft.body.profile_id : "",
+  );
   const [versionDescription, setVersionDescription] = useState("");
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
   const [status, setStatus] = useState("");
@@ -31,6 +36,7 @@ export function ArtifactDraftEditor({
   function parsedBody(): Record<string, unknown> | null {
     if (draft.artifact_type === "chunking_profile" ||
       draft.artifact_type === "retrieval_profile") return profileBody;
+    if (draft.artifact_type === "model_profile") return { profile_id: modelProfileId };
     try {
       const value = JSON.parse(bodyText) as unknown;
       if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
@@ -64,6 +70,7 @@ export function ArtifactDraftEditor({
       onChange(updated);
       setBodyText(JSON.stringify(updated.body, null, 2));
       setProfileBody(updated.body);
+      setModelProfileId(typeof updated.body.profile_id === "string" ? updated.body.profile_id : "");
       setStatus("Taslak kaydedildi.");
       return updated;
     } catch (error) {
@@ -100,6 +107,7 @@ export function ArtifactDraftEditor({
       const result = await api.publishArtifactDraft(
         current.id, current.revision, versionDescription,
       );
+      announceArtifactPublished(result, current.body);
       const refreshed = await api.getArtifactDraft(current.id);
       onChange(refreshed);
       onPublished?.(result);
@@ -118,7 +126,9 @@ export function ArtifactDraftEditor({
         ? "Parçalama profili"
         : draft.artifact_type === "retrieval_profile"
           ? "Arama profili"
-          : "Prompt şablonu";
+          : draft.artifact_type === "model_profile"
+            ? "Özet model profil referansı"
+            : "Prompt şablonu";
 
   return <section>
     <button type="button" onClick={onClose}>← Taslaklar</button>
@@ -138,9 +148,14 @@ export function ArtifactDraftEditor({
       draft.artifact_type === "retrieval_profile") && <GovernedProfileEditor
         type={draft.artifact_type} body={profileBody} onChange={setProfileBody}
         readOnly={!draft.can_write} />}
+    {draft.artifact_type === "model_profile" && draft.project_id !== null &&
+      draft.scenario_id !== null && <ModelProfileSelect api={api}
+        organization={draft.organization} projectId={draft.project_id}
+        scenarioId={draft.scenario_id} value={modelProfileId}
+        onChange={setModelProfileId} readOnly={!draft.can_write} />}
     <details open={draft.artifact_type !== "prompt_template"}
       hidden={draft.artifact_type === "chunking_profile" ||
-        draft.artifact_type === "retrieval_profile"}>
+        draft.artifact_type === "retrieval_profile" || draft.artifact_type === "model_profile"}>
       <summary>Gelişmiş JSON</summary>
       <textarea aria-label="sözleşme JSON içeriği" rows={18} value={bodyText}
         disabled={!draft.can_write} onChange={(event) => setBodyText(event.target.value)} />
