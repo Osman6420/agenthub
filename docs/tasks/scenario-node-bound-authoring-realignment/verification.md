@@ -79,3 +79,20 @@
   the generated roles; default/automatic candidate selection belongs to the later defaults and
   candidate-authority delivery slices.
 - Retrieve-node binding, document-set inline authoring and live visual confirmation remain open.
+
+## Part 3 follow-up — live route and non-JSON response handling
+
+- Live logs identified the exact failing request as
+  `/console/api/builder/drafts/6/generate-nodes/generate/binding/`: the running process returned an
+  HTML 404 because its file watcher had stopped before loading the new URLconf.
+- The current frontend client now converts HTML/malformed responses into a stable
+  `unexpected_response` error carrying the HTTP status instead of leaking a `JSON.parse` exception.
+- The builder asset cache key was advanced. Targeted Vitest coverage proves HTML 404 and structured
+  JSON errors are both handled correctly; typecheck and production bundle build passed.
+- Only the Compose `web` role was restarted/recreated. Health returned HTTP 200 and an
+  unauthenticated request to the exact Generate-binding URL returned JSON HTTP 401
+  `authentication_required`, proving the route is active. No database, volume, worker or artifact
+  state was reset.
+- The root watcher error recurred after a plain restart, so the canonical Compose web command now
+  watches only `/app/apps` and `/app/config` rather than traversing unrelated worktrees/caches. The
+  recreated role reported those exact watch roots and no subsequent watcher error.

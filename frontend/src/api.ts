@@ -50,9 +50,25 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     headers: { ...headers, ...(options.headers as Record<string, string>) },
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let data: unknown = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new ApiError(
+        response.status,
+        "unexpected_response",
+        response.ok
+          ? "Sunucu JSON olmayan beklenmedik bir yanıt döndürdü."
+          : `Sunucu isteği JSON olmayan bir yanıtla reddetti (HTTP ${response.status}).`,
+      );
+    }
+  }
   if (!response.ok) {
-    const err = (data && data.error) || {};
+    const envelope = data && typeof data === "object" ? data as { error?: unknown } : {};
+    const err = envelope.error && typeof envelope.error === "object"
+      ? envelope.error as { code?: string; message?: string }
+      : {};
     throw new ApiError(response.status, err.code ?? "error", err.message ?? "");
   }
   return data as T;

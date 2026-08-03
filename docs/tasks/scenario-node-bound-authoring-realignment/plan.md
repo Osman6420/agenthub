@@ -159,6 +159,12 @@ The current local browser session reached the authenticated-console boundary but
 operator session, so visual live-page confirmation remains manual; the current bundle was built and
 the full frontend suite passed.
 
+Part 3 follow-up (2026-08-04) is implemented and verified: the live Compose web reloader stopped
+after a permission error under an unrelated worktree, leaving the old URLconf active while the new
+frontend called the Generate-binding route. The web role was recreated without resetting data, the
+frontend JSON client was hardened against HTML/empty error bodies, and the exact route plus client
+behavior were verified.
+
 Operational rule for this slice: legacy refs and absent bindings remain readable and retain the
 current runtime fallback. Only server-derived node roles participate in automatic artifact
 publication; an explicit legacy/custom role is never silently overwritten until the author saves

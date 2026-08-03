@@ -82,7 +82,11 @@ services:
 
   web:
     <<: *app
-    command: uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --reload
+    # Watch only application source. Watching the repository root also traverses local
+    # worktrees/caches that may be unreadable inside Docker and can silently kill reload.
+    command: >-
+      uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --reload
+      --reload-dir /app/apps --reload-dir /app/config
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.local
       DJANGO_DEBUG: "true"
