@@ -79,6 +79,20 @@ handoff.
 5. Commit Part 2A independently, then continue with staged-index selectors and safe platform/model
    profile projections in Part 2B.
 
+### Active delivery slice — Part 2B
+
+1. Preselect the exact persisted `DocumentSetPreparationProfile` values whenever the staged-index
+   form is reopened.
+2. Pair all six selectors with a single selected-option inspector. Artifact bodies are bounded and
+   escaped; embedding/OCR and referenced model projections omit endpoint and secret-bearing fields.
+3. Open chunking, retrieval and prompt artifacts in Scenario Studio with exact type, logical ID and
+   version deep links when the user also has author responsibility on a bound scenario.
+4. Keep the staged form in its original tab. When Studio publishes a replacement exact version,
+   select it in that tab through a same-origin, bounded notification without changing the other five
+   selections; the build endpoint still reauthorizes every submitted ID.
+5. Verify tenant-grant rejection, safe-field redaction, exact deep-link selection, current-selection
+   defaults, frontend build, live health and responsibility-gated visibility.
+
 ## Acceptance criteria
 
 1. Every staged-index selector has a visible inspect action and states whether it is editable here.
@@ -98,8 +112,10 @@ handoff.
 ## Status
 
 In progress — Part 1 committed at `ef05d3b`; prompt inline correction committed at `7115d77`;
-Part 2A retrieval/chunking authoring is implemented and verified, pending its isolated commit.
-Part 2B staged-index selectors and safe platform/model profile projections remains next.
+Part 2A retrieval/chunking authoring was committed at `e8e9800`. Part 2B six-selector inspection,
+safe platform/model projections, persisted defaults and exact Studio handoff are implemented and
+verified, pending their isolated commit. Closed new `model_profile` reference authoring and the
+remaining registry capability-matrix work are still required before Part 2 is complete.
 
 ## Completion criteria
 

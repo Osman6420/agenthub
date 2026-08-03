@@ -1,0 +1,32 @@
+<div class="profile-inspector" data-profile-inspector aria-label="{{ label }} ayrıntıları">
+  <p class="notice" data-profile-publish-status aria-live="polite" hidden></p>
+  <p class="muted" data-profile-empty>İçeriğini görmek için bir profil seçin.</p>
+  {% for item in items %}
+  <details class="relationship-card" data-profile-option="{{ item.id }}">
+    <summary><strong>{{ item.title }}</strong> · içeriği ve yeteneği gör</summary>
+    <p class="muted">{{ item.summary }}</p>
+    {% if item.bounds %}<p class="muted">{{ item.bounds }}</p>{% endif %}
+    {% if item.body_too_large %}
+      <p class="notice">İçerik güvenli doküman-seti önizleme sınırını aşıyor.</p>
+    {% elif item.body_json %}
+      <pre class="mono" style="white-space:pre-wrap;overflow-wrap:anywhere;">{{ item.body_json }}</pre>
+    {% endif %}
+    {% if item.edit_url %}
+      <a class="button secondary" target="_blank" rel="noopener" href="{{ item.edit_url }}">
+        Yeni immutable sürüm düzenle
+      </a>
+    {% elif item.edit_reason %}
+      <p class="muted">{{ item.edit_reason }}</p>
+    {% endif %}
+    {% if platform_managed %}
+      <p class="muted">Platform-managed immutable revizyon; bu formdan düzenlenmez.</p>
+      {% if platform_profile_manage_url %}
+        <a class="button secondary" target="_blank" rel="noopener"
+          href="{{ platform_profile_manage_url }}">Platform profillerini yönet</a>
+      {% endif %}
+    {% endif %}
+  </details>
+  {% empty %}
+  <p class="muted">Bu organizasyona açık seçenek yok.</p>
+  {% endfor %}
+</div>

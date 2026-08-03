@@ -6,6 +6,7 @@ import { ScenarioManifestPanel } from "../ScenarioManifestPanel";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  window.history.replaceState({}, "", "/");
 });
 
 describe("Scenario Studio exact candidate manifest", () => {
@@ -199,6 +200,13 @@ describe("Scenario Studio exact candidate manifest", () => {
 
   it("edits and versions a retrieval profile through structured fields", async () => {
     let published = false;
+    const publishedMessages: unknown[] = [];
+    class MockBroadcastChannel {
+      constructor(_name: string) {}
+      postMessage(message: unknown) { publishedMessages.push(message); }
+      close() {}
+    }
+    vi.stubGlobal("BroadcastChannel", MockBroadcastChannel);
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const value = String(url);
       let payload: unknown;
@@ -289,6 +297,68 @@ describe("Scenario Studio exact candidate manifest", () => {
     fireEvent.click(screen.getByText("Yeni sürümü yayımla ve ekle"));
     expect(await screen.findByText(/default.retrieval:v2/)).toBeInTheDocument();
     expect(screen.getByText(/retrieval_profile v2 yayımlandı/)).toBeInTheDocument();
+    expect(publishedMessages).toContainEqual(expect.objectContaining({
+      kind: "artifact_published",
+      artifactType: "retrieval_profile",
+      artifactVersionId: 21,
+      logicalId: "default.retrieval",
+      version: 2,
+      body: expect.objectContaining({ top_k: 12 }),
+    }));
+  });
+
+  it("opens an exact governed artifact from a staged-index deep link", async () => {
+    window.history.replaceState({}, "", [
+      "/console/builder/?organization=org&scenario=scenario",
+      "artifact_type=retrieval_profile",
+      "logical_id=default.retrieval",
+      "artifact_version_id=20",
+    ].join("&"));
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const value = String(url);
+      let payload: unknown;
+      if (value.includes("artifact-versions/20")) {
+        payload = {
+          id: 20, artifact_type: "retrieval_profile", logical_id: "default.retrieval",
+          logical_description: "Default retrieval", version: 1,
+          version_description: "Initial", checksum: "b".repeat(64),
+          body: { api_version: "agenthub/retrieval/v1", kind: "RetrievalProfile",
+            mode: "vector", top_k: 8 }, body_too_large: false,
+          can_create_new_version: true,
+        };
+      } else if (value.includes("artifact_type=retrieval_profile") &&
+        value.includes("logical_id=default.retrieval")) {
+        payload = { level: "exact_version", roles: ["retrieval_profile"], options: [{
+          id: 20, version: 1, description: "Initial", checksum: "b".repeat(64),
+          status: "published", pinned_release_count: 0,
+        }] };
+      } else if (value.includes("artifact_type=retrieval_profile")) {
+        payload = { level: "logical_artifact", options: [{
+          value: "default.retrieval", label: "default.retrieval",
+          description: "Default retrieval", latest_version: 1,
+        }] };
+      } else {
+        payload = { level: "artifact_type", options: [{
+          value: "retrieval_profile", label: "Retrieval profile", description: "Retrieval",
+        }] };
+      }
+      return new Response(JSON.stringify(payload), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    render(<ScenarioManifestPanel api={new BuilderApi("/console/api/builder/")}
+      scenarioPublicId="scenario" optionsUrl="/artifact-options/" organization="org"
+      projectId={2} scenarioId={3} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Manifest artifact türü")).toHaveValue("retrieval_profile");
+      expect(screen.getByLabelText("Manifest mantıksal artifactı")).toHaveValue(
+        "default.retrieval",
+      );
+      expect(screen.getByLabelText("Manifest kesin sürümü")).toHaveValue("20");
+    });
+    expect(await screen.findByLabelText("Arama sonuç sayısı")).toHaveValue(8);
   });
 
   it("preserves selected exact pins when canonical preflight and compile fail", async () => {

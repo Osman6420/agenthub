@@ -54,6 +54,7 @@ export function ScenarioManifestPanel({
   const [artifactBody, setArtifactBody] = useState<Record<string, unknown>>({});
   const [versionDescription, setVersionDescription] = useState("");
   const versionDescriptionRef = useRef<HTMLInputElement>(null);
+  const deepLinkAppliedRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -201,6 +202,48 @@ export function ScenarioManifestPanel({
   }, [api, optionsUrl, refreshArtifact]);
 
   useEffect(() => {
+    if (deepLinkAppliedRef.current || refreshArtifact) return;
+    deepLinkAppliedRef.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const targetType = params.get("artifact_type") ?? "";
+    const targetLogicalId = params.get("logical_id") ?? "";
+    const targetVersionId = params.get("artifact_version_id") ?? "";
+    if (!targetType || !targetLogicalId || !/^\d+$/.test(targetVersionId)) return;
+    let cancelled = false;
+    async function selectDeepLinkedArtifact() {
+      try {
+        const [logicalResult, versionResult] = await Promise.all([
+          api.manifestOptions(optionsUrl, { artifact_type: targetType }),
+          api.manifestOptions(optionsUrl, {
+            artifact_type: targetType,
+            logical_id: targetLogicalId,
+          }),
+        ]);
+        if (cancelled) return;
+        setArtifactType(targetType);
+        setLogicalId(targetLogicalId);
+        if (logicalResult.level === "logical_artifact") {
+          setLogicals(logicalResult.options as ManifestLogicalOption[]);
+        }
+        if (versionResult.level === "exact_version") {
+          const exactVersions = versionResult.options as ManifestVersionOption[];
+          setVersions(exactVersions);
+          setRoles(versionResult.roles ?? []);
+          if (exactVersions.some((item) => String(item.id) === targetVersionId)) {
+            setVersionId(targetVersionId);
+          } else {
+            setStatus("Deep link exact artifact bu senaryo için kullanılamıyor.");
+          }
+        }
+      } catch (error) {
+        if (!cancelled) setStatus(formatError(error));
+      }
+    }
+    void selectDeepLinkedArtifact();
+    return () => { cancelled = true; };
+  }, [api, optionsUrl, refreshArtifact]);
+
+  useEffect(() => {
     if (!selectedVersion) {
       setPreview(null);
       setPromptText("");
@@ -296,6 +339,20 @@ export function ScenarioManifestPanel({
       const published = await api.publishArtifactDraft(
         draft.id, draft.revision, versionDescription.trim(),
       );
+      if ("BroadcastChannel" in window) {
+        const artifactChannel = new BroadcastChannel("agenthub-artifact-authoring");
+        artifactChannel.postMessage({
+          kind: "artifact_published",
+          artifactType: published.artifact_type,
+          artifactVersionId: published.artifact_version_id,
+          logicalId: published.logical_id,
+          version: published.version,
+          body: preview.artifact_type === "prompt_template"
+            ? { ...draft.body, template: promptText }
+            : artifactBody,
+        });
+        artifactChannel.close();
+      }
       await applySelection({
         artifact_version_id: published.artifact_version_id,
         role: effectiveRole,

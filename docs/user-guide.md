@@ -147,6 +147,16 @@ uyumsuz parser/MIME birleşimlerinde güvenli bir compatibility koduyla durur. �
 özet ayrı bir `summary` chunk olarak, checksum ve exact model/prompt provenance ile saklanır; hata
 durumunda build bunu sessizce atlamaz.
 
+Exact document-set manager staged indeks formunu yeniden açtığında son preparation seçimlerinin
+altısı da otomatik seçili gelir. Bir seçim değiştirildiğinde yalnız o embedding, parçalama, arama,
+OCR, özet model veya özet prompt sürümünün güvenli ayrıntısı açılır. Embedding/OCR kartlarında host,
+path, secret, TLS ve egress ayarları hiçbir zaman gösterilmez; yalnız platform yöneticisi ayrı
+platform yönetim bağlantısını görür. Parçalama, arama ve prompt artifact'lerinde **Yeni immutable
+sürüm düzenle** Scenario Studio'yu yeni sekmede exact sürümle açar. Yeni sürüm yayımlanırsa açık
+doküman-seti sekmesi diğer beş seçimi kaybetmeden o exact sürümü seçer. Bu istemci kolaylığı yetki
+vermez; build isteği bütün profil ve artifact kimliklerini sunucuda tenant ve document-set kapsamıyla
+yeniden doğrular.
+
 Arama profili `keyword`, `vector` veya `hybrid` seçebilir. Keyword ve vector aynı immutable,
 tenant-scoped PostgreSQL store ve aynı ACL/tombstone filtresini kullanır. Hybrid sonuçlar sabit
 weighted reciprocal-rank fusion sözleşmesiyle birleştirilir; component rank/score ve fused score

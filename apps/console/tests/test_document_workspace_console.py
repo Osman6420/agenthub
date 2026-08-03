@@ -16,8 +16,9 @@ from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
+from apps.catalog.models import AIProject, Scenario
 from apps.documents import storage
-from apps.documents.models import Document, DocumentSetVersionStatus
+from apps.documents.models import Document, DocumentSetVersionStatus, ScenarioDocumentSetBinding
 from apps.documents.services import (
     create_document_set,
     publish_document_set_version,
@@ -27,6 +28,8 @@ from apps.identity.models import (
     DocumentSetResponsibilityAssignment,
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
 )
 from apps.identity.roles import Role
 from apps.ingestion.models import (
@@ -34,9 +37,12 @@ from apps.ingestion.models import (
     EmbeddingProfileStatus,
     IndexStatus,
     IndexVersion,
+    OcrProfile,
     TenantEmbeddingProfileGrant,
+    TenantOcrProfileGrant,
 )
 from apps.ingestion.tasks import build_document_set_index_task
+from apps.orchestration.models import ModelProfile
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
@@ -247,7 +253,23 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     org = Organization.objects.create(slug="org-a", name="A")
     other = Organization.objects.create(slug="org-b", name="B")
     document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
-    client.force_login(_member("owner", org, Role.PROJECT_OWNER))
+    owner = _member("owner", org, Role.PROJECT_OWNER)
+    project = AIProject.objects.create(organization=org, slug="assistant", name="Assistant")
+    scenario = Scenario.objects.create(project=project, slug="answer", name="Answer")
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(organization=org, user=owner),
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=owner,
+    )
+    ScenarioDocumentSetBinding.objects.create(
+        organization=org,
+        scenario=scenario,
+        document_set=document_set,
+        created_by="owner",
+    )
+    client.force_login(owner)
     client.post(
         reverse("console:document_set_bulk_upload", args=[document_set.pk]),
         {"uploads": SimpleUploadedFile("one.txt", b"one")},
@@ -257,25 +279,96 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     granted = _profile(org)
     foreign = _profile(other, logical_id="foreign")
     chunking, retrieval = _document_profiles(org)
+    ocr = OcrProfile.objects.create(
+        logical_id="ocr",
+        revision=1,
+        host="ocr.internal.example",
+        secret_ref="secret://ocr",  # noqa: S106 -- opaque reference, not a credential
+        created_by="platform-admin",
+    )
+    TenantOcrProfileGrant.objects.create(
+        organization=org,
+        ocr_profile=ocr,
+        created_by="platform-admin",
+    )
+    model_profile = ModelProfile.objects.create(
+        logical_id="summary-model",
+        revision=1,
+        host="model.internal.example",
+        model="summary-v1",
+        secret_ref="secret://model",  # noqa: S106 -- opaque reference, not a credential
+        created_by="platform-admin",
+    )
+    summary_model = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.MODEL_PROFILE,
+        logical_id="summary-model-ref",
+        body={"profile_id": str(model_profile.public_id)},
+        created_by="owner",
+    )
+    summary_prompt = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        logical_id="summary-prompt",
+        body={"template": "SUMMARIZE_CONTENT"},
+        created_by="owner",
+    )
     url = reverse("console:document_set_build_index", args=[version.pk])
 
     detail = client.get(reverse("console:document_set_detail", args=[document_set.pk]))
-    assert "embed" in detail.content.decode()
-    assert "embedding.internal.example" not in detail.content.decode()
-    assert "secret://embedding" not in detail.content.decode()
+    detail_body = detail.content.decode()
+    assert "embed" in detail_body
+    assert "embed-v1" in detail_body
+    assert "64D vector" in detail_body
+    assert "&quot;strategy&quot;: &quot;characters&quot;" in detail_body
+    assert "&quot;mode&quot;: &quot;hybrid&quot;" in detail_body
+    assert "async_markdown_ocr" in detail_body
+    assert "summary-model r1" in detail_body
+    assert "summary-v1" in detail_body
+    assert "SUMMARIZE_CONTENT" in detail_body
+    assert "Yeni immutable sürüm düzenle" in detail_body
+    assert "artifact_type=chunking_profile" in detail_body
+    assert f"artifact_version_id={chunking.pk}" in detail_body
+    assert "Platform-managed immutable revizyon" in detail_body
+    assert "Platform profillerini yönet" not in detail_body
+    assert "embedding.internal.example" not in detail_body
+    assert "secret://embedding" not in detail_body
+    assert "ocr.internal.example" not in detail_body
+    assert "secret://ocr" not in detail_body
+    assert "model.internal.example" not in detail_body
+    assert "secret://model" not in detail_body
+
+    auditor = _member("auditor", org, Role.AUDITOR)
+    client.force_login(auditor)
+    read_only_detail = client.get(reverse("console:document_set_detail", args=[document_set.pk]))
+    assert read_only_detail.status_code == 200
+    assert "SUMMARIZE_CONTENT" not in read_only_detail.content.decode()
+    assert "data-profile-inspector" not in read_only_detail.content.decode()
+    client.force_login(owner)
 
     with patch("apps.console.views.create_build_job", return_value=(object(), True)) as create_job:
         response = client.post(
             url,
             {
                 "embedding_profile": granted.pk,
-                "ocr_profile": "",
+                "ocr_profile": ocr.pk,
                 "chunking_profile": chunking.pk,
                 "retrieval_profile": retrieval.pk,
+                "summary_model_profile": summary_model.pk,
+                "summary_prompt_contract": summary_prompt.pk,
             },
         )
         assert response.status_code == 302
         create_job.assert_called_once()
+
+    configured = client.get(reverse("console:document_set_detail", args=[document_set.pk]))
+    configured_body = configured.content.decode()
+    assert f'<option value="{granted.pk}" selected>' in configured_body
+    assert f'<option value="{ocr.pk}" selected>' in configured_body
+    assert f'<option value="{chunking.pk}" selected>' in configured_body
+    assert f'<option value="{retrieval.pk}" selected>' in configured_body
+    assert f'<option value="{summary_model.pk}" selected>' in configured_body
+    assert f'<option value="{summary_prompt.pk}" selected>' in configured_body
 
     with patch("apps.console.views.create_build_job") as create_job:
         client.post(url, {"embedding_profile": foreign.pk, "ocr_profile": ""})

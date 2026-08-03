@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -186,6 +187,7 @@ from apps.ingestion.models import (
     ConfluenceProfile,
     ConfluenceSyncRun,
     ConnectorType,
+    DocumentSetPreparationProfile,
     EmbeddingProfile,
     IndexStatus,
     IndexVersion,
@@ -4071,6 +4073,195 @@ def document_set_detail(
             "scenario__project__slug", "scenario__slug"
         )
     )
+    authoring_scenario = (
+        next(
+            (
+                binding.scenario
+                for binding in bindings
+                if can_author_scenarios(
+                    request.user,
+                    binding.scenario.organization_id,
+                    project=binding.scenario.project,
+                    scenario=binding.scenario,
+                )
+            ),
+            None,
+        )
+        if can_write
+        else None
+    )
+    preparation = (
+        DocumentSetPreparationProfile.objects.filter(
+            organization_id=document_set.organization_id,
+            document_set=document_set,
+        )
+        .select_related(
+            "embedding_profile",
+            "ocr_profile",
+            "chunking_profile",
+            "retrieval_profile",
+            "summary_model_profile",
+            "summary_prompt_contract",
+        )
+        .first()
+        if can_write
+        else None
+    )
+    build_initial = (
+        {
+            "embedding_profile": preparation.embedding_profile_id,
+            "ocr_profile": preparation.ocr_profile_id,
+            "chunking_profile": preparation.chunking_profile_id,
+            "retrieval_profile": preparation.retrieval_profile_id,
+            "summary_model_profile": preparation.summary_model_profile_id,
+            "summary_prompt_contract": preparation.summary_prompt_contract_id,
+            "auto_prepare": preparation.auto_prepare,
+        }
+        if preparation is not None
+        else {}
+    )
+    build_form = DocumentSetBuildForm(
+        organization_id=document_set.organization_id,
+        auto_id=False,
+        initial=build_initial,
+    )
+
+    def _bounded_with_selected(queryset: Any, selected_id: object) -> list[Any]:
+        items = list(queryset[:100])
+        if selected_id and all(item.pk != selected_id for item in items):
+            selected = queryset.filter(pk=selected_id).first()
+            if selected is not None:
+                items.append(selected)
+        return items
+
+    def _artifact_edit_url(artifact: ArtifactVersion) -> str:
+        if authoring_scenario is None or artifact.type not in {
+            ArtifactType.CHUNKING_PROFILE,
+            ArtifactType.RETRIEVAL_PROFILE,
+            ArtifactType.PROMPT_TEMPLATE,
+        }:
+            return ""
+        query = urlencode(
+            {
+                "organization": document_set.organization.slug,
+                "scenario": str(authoring_scenario.public_id),
+                "artifact_type": artifact.type,
+                "logical_id": artifact.logical_id,
+                "artifact_version_id": artifact.pk,
+            }
+        )
+        return f"{reverse('console:builder')}?{query}"
+
+    def _artifact_details(field_name: str) -> list[dict[str, object]]:
+        field = cast(Any, build_form.fields[field_name])
+        artifacts = _bounded_with_selected(field.queryset, build_initial.get(field_name))
+        model_profiles_by_public_id: dict[str, ModelProfile] = {}
+        if field_name == "summary_model_profile":
+            profile_ids = [
+                artifact.body.get("profile_id")
+                for artifact in artifacts
+                if isinstance(artifact.body.get("profile_id"), str)
+            ]
+            model_profiles_by_public_id = {
+                str(profile.public_id): profile
+                for profile in ModelProfile.objects.filter(
+                    public_id__in=profile_ids,
+                    status=ModelProfileStatus.ACTIVE,
+                ).only(
+                    "public_id",
+                    "logical_id",
+                    "revision",
+                    "provider",
+                    "model",
+                    "max_output_tokens",
+                )
+            }
+        details: list[dict[str, object]] = []
+        for artifact in artifacts:
+            summary = f"sha256 {artifact.checksum[:12]} · {artifact.version_description}"
+            if artifact.type == ArtifactType.MODEL_PROFILE:
+                profile_id = artifact.body.get("profile_id")
+                profile = model_profiles_by_public_id.get(str(profile_id))
+                summary = (
+                    f"{profile.logical_id} r{profile.revision} · {profile.provider} / "
+                    f"{profile.model} · en fazla {profile.max_output_tokens} output token"
+                    if profile is not None
+                    else "Referans verilen platform model profili aktif değil veya bulunamadı."
+                )
+            edit_url = _artifact_edit_url(artifact)
+            encoded_body = json.dumps(artifact.body, ensure_ascii=False, indent=2)
+            body_too_large = len(encoded_body.encode("utf-8")) > 32 * 1024
+            details.append(
+                {
+                    "id": artifact.pk,
+                    "title": artifact.ref,
+                    "summary": summary,
+                    "body_json": "" if body_too_large else encoded_body,
+                    "body_too_large": body_too_large,
+                    "edit_url": edit_url,
+                    "edit_reason": (
+                        "Yeni immutable sürüm Scenario Studio’da oluşturulur."
+                        if edit_url
+                        else (
+                            "Model profili platform-managed referanstır; burada salt okunur."
+                            if artifact.type == ArtifactType.MODEL_PROFILE
+                            else "Düzenlemek için bağlı senaryoda author sorumluluğu gerekir."
+                        )
+                    ),
+                }
+            )
+        return details
+
+    build_profile_details: dict[str, list[dict[str, object]]] = {
+        "embedding": [],
+        "ocr": [],
+        "chunking": [],
+        "retrieval": [],
+        "summary_model": [],
+        "summary_prompt": [],
+    }
+    if can_write:
+        embedding_profiles = _bounded_with_selected(
+            cast(Any, build_form.fields["embedding_profile"]).queryset,
+            build_initial.get("embedding_profile"),
+        )
+        ocr_profiles = _bounded_with_selected(
+            cast(Any, build_form.fields["ocr_profile"]).queryset,
+            build_initial.get("ocr_profile"),
+        )
+        build_profile_details = {
+            "embedding": [
+                {
+                    "id": profile.pk,
+                    "title": f"{profile.logical_id}:r{profile.revision}",
+                    "summary": (
+                        f"{profile.provider} / {profile.model} · {profile.dimensions}D "
+                        f"{profile.index_type} · {profile.distance_metric} · {profile.status}"
+                    ),
+                    "bounds": (
+                        f"batch ≤ {profile.max_batch_size} · timeout {profile.timeout_seconds}s"
+                    ),
+                }
+                for profile in embedding_profiles
+            ],
+            "ocr": [
+                {
+                    "id": profile.pk,
+                    "title": f"{profile.logical_id}:r{profile.revision}",
+                    "summary": f"{profile.provider} · {profile.status}",
+                    "bounds": (
+                        f"en fazla {profile.max_pages} sayfa · "
+                        f"yükleme ≤ {profile.max_upload_bytes} bayt · "
+                        f"timeout {profile.timeout_seconds}s"
+                    ),
+                }
+                for profile in ocr_profiles
+            ],
+            "chunking": _artifact_details("chunking_profile"),
+            "retrieval": _artifact_details("retrieval_profile"),
+            "summary_model": _artifact_details("summary_model_profile"),
+            "summary_prompt": _artifact_details("summary_prompt_contract"),
+        }
     grants = list(
         document_set.grants.filter(principal_type=GrantPrincipalType.CONSUMER).order_by(
             "principal_ref"
@@ -4128,8 +4319,10 @@ def document_set_detail(
             "sources": document_set.connector_sources.order_by("name"),
             "bulk_upload_form": DocumentSetBulkUploadForm(),
             # The same choices render once per published set version; omit duplicate HTML ids.
-            "build_form": DocumentSetBuildForm(
-                organization_id=document_set.organization_id, auto_id=False
+            "build_form": build_form,
+            "build_profile_details": build_profile_details,
+            "platform_profile_manage_url": (
+                reverse("console:platform_setup") if is_platform_admin(request.user) else ""
             ),
             "candidate_docs": candidate_docs,
             "bindings": bindings,

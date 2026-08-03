@@ -480,7 +480,10 @@ In progress — owner authorized sequential implementation and per-part commits 
 [Part 1 — prompt-first artifact foundation](../scenario-studio-authoring-journey-closure-part-1/plan.md)
 was committed at `ef05d3b`. [Part 2 — retrieval/profile authoring and staged-index selectors](
 ../scenario-studio-authoring-journey-closure-part-2/plan.md) Part 2A retrieval/chunking structured
-authoring is implemented and verified; Part 2B staged-index/profile-safe selectors remains next. The
+authoring was committed at `e8e9800`; Part 2B staged-index six-selector inspection, safe projections,
+persisted defaults and exact Studio handoff are implemented and verified, pending their isolated
+commit. Closed model-reference creation and the remaining registry capability matrix still keep
+Part 2 in progress. The
 [prompt inline manifest correction](../prompt-inline-manifest-authoring/plan.md) was implemented and
 verified first after owner acceptance showed that Part 1's separate preview/editor controls did not
 yet provide the required select–inspect–edit–bind task. Later milestones remain planned.
