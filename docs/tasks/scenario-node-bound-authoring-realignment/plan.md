@@ -165,6 +165,11 @@ frontend called the Generate-binding route. The web role was recreated without r
 frontend JSON client was hardened against HTML/empty error bodies, and the exact route plus client
 behavior were verified.
 
+Part 3 PostgreSQL follow-up (2026-08-04) is implemented and verified: the first authenticated PUT
+exposed a PostgreSQL-only `FOR UPDATE` restriction because nullable project/scenario relations were
+joined in the locking query. The lock now targets only the workflow row and PostgreSQL-backed tests
+cover the path.
+
 Operational rule for this slice: legacy refs and absent bindings remain readable and retain the
 current runtime fallback. Only server-derived node roles participate in automatic artifact
 publication; an explicit legacy/custom role is never silently overwritten until the author saves

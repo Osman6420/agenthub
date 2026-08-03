@@ -245,11 +245,9 @@ def save_generate_node_binding(
 ) -> WorkflowDraft:
     """Save one Generate node and its governed prompt/model author state atomically."""
 
-    locked = (
-        WorkflowDraft.objects.select_for_update()
-        .select_related("organization", "project", "scenario")
-        .get(pk=draft.pk)
-    )
+    # Lock only the workflow row. ``project`` and ``scenario`` are nullable, so joining
+    # them here creates nullable-side outer joins that PostgreSQL refuses to lock.
+    locked = WorkflowDraft.objects.select_for_update().get(pk=draft.pk)
     _require_revision(expected=expected_revision, actual=locked.revision)
     if not isinstance(prompt_text, str) or not prompt_text.strip():
         raise BuilderError("prompt_text_required")

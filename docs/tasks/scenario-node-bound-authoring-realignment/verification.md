@@ -96,3 +96,15 @@
 - The root watcher error recurred after a plain restart, so the canonical Compose web command now
   watches only `/app/apps` and `/app/config` rather than traversing unrelated worktrees/caches. The
   recreated role reported those exact watch roots and no subsequent watcher error.
+
+## Part 3 follow-up — PostgreSQL workflow-row lock
+
+- The first authenticated Generate-binding PUT reached the new route but PostgreSQL rejected
+  `select_for_update().select_related("project", "scenario")`: both relations are nullable and the
+  generated outer join attempted to lock its nullable side.
+- The transaction now locks only the authoritative `WorkflowDraft` row. Related objects are resolved
+  separately inside the same transaction, retaining stale-revision and tenant/scenario checks.
+- Ruff format/check passed. The Generate-binding suite passed in both the standard test profile
+  (`2 passed`) and a real PostgreSQL disposable test database (`2 passed`).
+- The bounded live watcher detected `apps/builder/services.py`, reloaded the web child successfully,
+  and `/v1/health/live` remained HTTP 200. No live scenario mutation was issued during verification.
