@@ -762,7 +762,11 @@ def artifact_drafts(request: HttpRequest) -> HttpResponse:
             source = ArtifactVersion.objects.filter(
                 pk=source_id,
                 organization=org,
-                type=ArtifactType.PROMPT_TEMPLATE,
+                type__in={
+                    ArtifactType.PROMPT_TEMPLATE,
+                    ArtifactType.CHUNKING_PROFILE,
+                    ArtifactType.RETRIEVAL_PROFILE,
+                },
             ).first()
             if source is None:
                 raise Http404
@@ -786,7 +790,8 @@ def artifact_drafts(request: HttpRequest) -> HttpResponse:
             project=project,
             scenario=scenario,
             artifact_type=artifact_type,
-            name=payload.get("name", "") or (f"{source.logical_id} prompt" if source else ""),
+            name=payload.get("name", "")
+            or (f"{source.logical_id} {source.type}" if source else ""),
             logical_id=logical_id,
             logical_description=logical_description,
             body=body,
@@ -963,7 +968,13 @@ def scenario_artifact_version(request: HttpRequest, public_id: UUID, pk: int) ->
             "checksum": artifact.checksum,
             "body": None if too_large else artifact.body,
             "body_too_large": too_large,
-            "can_create_new_version": can_author and artifact.type == ArtifactType.PROMPT_TEMPLATE,
+            "can_create_new_version": can_author
+            and artifact.type
+            in {
+                ArtifactType.PROMPT_TEMPLATE,
+                ArtifactType.CHUNKING_PROFILE,
+                ArtifactType.RETRIEVAL_PROFILE,
+            },
         }
     )
 

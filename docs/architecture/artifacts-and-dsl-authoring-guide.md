@@ -274,12 +274,12 @@ customer_query:v3
 | --- | --- | --- |
 | `input_contract` | Gateway/scenario input şeması | JSON Schema Draft 2020-12 schema-validity |
 | `output_contract` | Runtime output şeması | JSON Schema Draft 2020-12 schema-validity |
-| `prompt_template` | Model prompt metni | Genel object + inline-secret kontrolü; runtime `template` okur |
+| `prompt_template` | Model prompt metni | Zorunlu, boş olmayan `template`; 128 KiB sınırı + inline-secret kontrolü |
 | `policy_profile` | Runtime output/policy kısıtları | Genel object; mevcut runtime citation politikasını okur |
 | `model_profile` | Platform model profile referansı | Yalnız `profile_id` UUID |
 | `source_definition` | Kaynak tanımı için registry türü | Henüz tipe özel sıkı şema yok |
-| `chunking_profile` | Chunk davranışı için registry türü | Henüz tipe özel sıkı şema yok |
-| `retrieval_profile` | Retrieval davranışı | Henüz tipe özel sıkı şema yok |
+| `chunking_profile` | Chunk davranışı için registry türü | Kapalı `agenthub/chunking/v1`; strateji, boyut, örtüşme ve parça sınırları |
+| `retrieval_profile` | Retrieval davranışı | Kapalı `agenthub/retrieval/v1`; mod, top-k, skor, hybrid ağırlık ve routing sınırları |
 | `workflow_definition` | Deterministic DAG | Sıkı compiler |
 | `custom_node_definition` | Preinstalled custom node manifesti | Sıkı validator + registration/runtime kontrolleri |
 | `tool_definition` | Governed outbound tool | Sıkı validator |

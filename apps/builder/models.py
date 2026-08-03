@@ -101,6 +101,8 @@ class ArtifactDraft(TimeStampedModel):
             (ArtifactType.INPUT_CONTRACT, "Input contract"),
             (ArtifactType.OUTPUT_CONTRACT, "Output contract"),
             (ArtifactType.PROMPT_TEMPLATE, "Prompt template"),
+            (ArtifactType.CHUNKING_PROFILE, "Chunking profile"),
+            (ArtifactType.RETRIEVAL_PROFILE, "Retrieval profile"),
         ],
     )
     name = models.CharField(max_length=200)

@@ -126,6 +126,104 @@ def test_prompt_draft_publish_creates_new_immutable_version(bf: BuilderFixture) 
     assert draft.revision == 2
 
 
+@pytest.mark.parametrize(
+    ("artifact_type", "body"),
+    [
+        (
+            "chunking_profile",
+            {
+                "api_version": "agenthub/chunking/v1",
+                "kind": "ChunkingProfile",
+                "strategy": "tokens",
+                "size": 800,
+                "overlap": 80,
+                "max_chunks": 500,
+            },
+        ),
+        (
+            "retrieval_profile",
+            {
+                "api_version": "agenthub/retrieval/v1",
+                "kind": "RetrievalProfile",
+                "mode": "hybrid",
+                "top_k": 8,
+                "score_threshold": 0.2,
+                "vector_weight": 0.7,
+                "keyword_weight": 0.3,
+            },
+        ),
+    ],
+)
+def test_governed_profile_draft_publishes_immutable_version(
+    bf: BuilderFixture, artifact_type: str, body: dict[str, object]
+) -> None:
+    draft = services.create_artifact_draft(
+        organization=bf.org,
+        project=bf.project,
+        scenario=bf.scenario,
+        artifact_type=artifact_type,
+        name="Governed profile",
+        logical_id=f"test.{artifact_type}",
+        logical_description="Stable governed behavior",
+        body=body,
+        actor="author",
+    )
+    published = services.publish_artifact_draft(
+        draft,
+        actor="author",
+        expected_revision=1,
+        version_description="Initial governed profile",
+    )
+    assert published.type == artifact_type
+    assert published.version == 1
+    assert published.body == body
+
+
+@pytest.mark.parametrize(
+    ("artifact_type", "body"),
+    [
+        (
+            "chunking_profile",
+            {
+                "api_version": "agenthub/chunking/v1",
+                "kind": "ChunkingProfile",
+                "strategy": "tokens",
+                "size": 99,
+                "unexpected": True,
+            },
+        ),
+        (
+            "retrieval_profile",
+            {
+                "api_version": "agenthub/retrieval/v1",
+                "kind": "RetrievalProfile",
+                "mode": "hybrid",
+                "top_k": 8,
+                "vector_weight": 0.9,
+                "keyword_weight": 0.9,
+            },
+        ),
+    ],
+)
+def test_governed_profile_draft_rejects_canonical_validation_failures(
+    bf: BuilderFixture, artifact_type: str, body: dict[str, object]
+) -> None:
+    with pytest.raises(services.BuilderError) as exc:
+        services.create_artifact_draft(
+            organization=bf.org,
+            project=bf.project,
+            scenario=bf.scenario,
+            artifact_type=artifact_type,
+            name="Invalid profile",
+            logical_id=f"invalid.{artifact_type}",
+            logical_description="Invalid governed behavior",
+            body=body,
+            actor="author",
+        )
+    assert exc.value.code == "candidate_invalid_artifact"
+    assert not ArtifactDraft.objects.filter(logical_id=f"invalid.{artifact_type}").exists()
+
+
 @pytest.mark.parametrize("logical_id", ["Uppercase", "../prompt", "prompt/name", ".prompt"])
 def test_artifact_draft_rejects_unsafe_logical_ids(bf: BuilderFixture, logical_id: str) -> None:
     with pytest.raises(services.BuilderError) as exc:

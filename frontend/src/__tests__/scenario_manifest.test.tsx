@@ -140,7 +140,7 @@ describe("Scenario Studio exact candidate manifest", () => {
     fireEvent.click(screen.getByText("Yeni sürümü yayımla ve ekle"));
     expect(await screen.findByText(/answer_prompt:v2/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText(/answer_prompt:v1/)).not.toBeInTheDocument());
-    expect(screen.getByText(/Yeni immutable prompt v2 yayımlandı/)).toBeInTheDocument();
+    expect(screen.getByText(/Yeni immutable prompt_template v2 yayımlandı/)).toBeInTheDocument();
   });
 
   it("selects the newly published exact version when the picker remounts", async () => {
@@ -195,6 +195,100 @@ describe("Scenario Studio exact candidate manifest", () => {
       expect(screen.getByLabelText("Manifest kesin sürümü")).toHaveValue("12");
     });
     expect(await screen.findByLabelText("Seçili prompt metni")).toHaveAttribute("readonly");
+  });
+
+  it("edits and versions a retrieval profile through structured fields", async () => {
+    let published = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const value = String(url);
+      let payload: unknown;
+      if (value.includes("artifact-versions/21")) {
+        payload = {
+          id: 21, artifact_type: "retrieval_profile", logical_id: "default.retrieval",
+          logical_description: "Default retrieval", version: 2,
+          version_description: "More results", checksum: "c".repeat(64),
+          body: { api_version: "agenthub/retrieval/v1", kind: "RetrievalProfile",
+            mode: "vector", top_k: 12 }, body_too_large: false,
+          can_create_new_version: true,
+        };
+      } else if (value.includes("artifact-versions/20")) {
+        payload = {
+          id: 20, artifact_type: "retrieval_profile", logical_id: "default.retrieval",
+          logical_description: "Default retrieval", version: 1,
+          version_description: "Initial", checksum: "b".repeat(64),
+          body: { api_version: "agenthub/retrieval/v1", kind: "RetrievalProfile",
+            mode: "vector", top_k: 8 }, body_too_large: false,
+          can_create_new_version: true,
+        };
+      } else if (value.includes("/artifact-drafts/30/publish/")) {
+        published = true;
+        payload = {
+          published: true, artifact_version_id: 21, artifact_type: "retrieval_profile",
+          logical_id: "default.retrieval", logical_description: "Default retrieval",
+          version: 2, version_description: "More results", checksum: "c".repeat(64), revision: 3,
+        };
+      } else if (value.includes("/artifact-drafts/30/")) {
+        payload = {
+          id: 30, draft_kind: "artifact", artifact_type: "retrieval_profile",
+          organization: "org", organization_id: 1, project_id: 2, scenario_id: 3,
+          name: "default.retrieval retrieval_profile", logical_id: "default.retrieval",
+          logical_description: "Default retrieval",
+          body: { api_version: "agenthub/retrieval/v1", kind: "RetrievalProfile",
+            mode: "vector", top_k: 12 }, last_published_version: 1,
+          last_published_at: null, updated_at: "2026-08-03T00:00:00Z",
+          revision: 2, can_write: true,
+        };
+      } else if (value.endsWith("/artifact-drafts/")) {
+        payload = {
+          id: 30, draft_kind: "artifact", artifact_type: "retrieval_profile",
+          organization: "org", organization_id: 1, project_id: 2, scenario_id: 3,
+          name: "default.retrieval retrieval_profile", logical_id: "default.retrieval",
+          logical_description: "Default retrieval",
+          body: { api_version: "agenthub/retrieval/v1", kind: "RetrievalProfile",
+            mode: "vector", top_k: 8 }, last_published_version: 1,
+          last_published_at: null, updated_at: "2026-08-03T00:00:00Z",
+          revision: 1, can_write: true,
+        };
+      } else if (value.includes("artifact_type=retrieval_profile") &&
+        value.includes("logical_id=default.retrieval")) {
+        payload = { level: "exact_version", roles: ["retrieval_profile"], options: published
+          ? [{ id: 21, version: 2, description: "More results", checksum: "c".repeat(64),
+            status: "published", pinned_release_count: 0 }]
+          : [{ id: 20, version: 1, description: "Initial", checksum: "b".repeat(64),
+            status: "published", pinned_release_count: 0 }] };
+      } else if (value.includes("artifact_type=retrieval_profile")) {
+        payload = { level: "logical_artifact", options: [{ value: "default.retrieval",
+          label: "default.retrieval", description: "Default retrieval", latest_version: 1 }] };
+      } else {
+        payload = { level: "artifact_type", options: [{ value: "retrieval_profile",
+          label: "Retrieval profile", description: "Retrieval" }] };
+      }
+      return new Response(JSON.stringify(payload), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    render(<ScenarioManifestPanel api={new BuilderApi("/console/api/builder/")}
+      scenarioPublicId="scenario" optionsUrl="/artifact-options/" organization="org"
+      projectId={2} scenarioId={3} />);
+    await screen.findByRole("option", { name: "Retrieval profile" });
+    fireEvent.change(screen.getByLabelText("Manifest artifact türü"), {
+      target: { value: "retrieval_profile" },
+    });
+    await screen.findByRole("option", { name: "default.retrieval" });
+    fireEvent.change(screen.getByLabelText("Manifest mantıksal artifactı"), {
+      target: { value: "default.retrieval" },
+    });
+    await screen.findByRole("option", { name: /v1/ });
+    fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), { target: { value: "20" } });
+    expect(await screen.findByLabelText("Arama sonuç sayısı")).toHaveValue(8);
+    fireEvent.change(screen.getByLabelText("Arama sonuç sayısı"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Prompt sürüm değişiklikleri"), {
+      target: { value: "More results" },
+    });
+    fireEvent.click(screen.getByText("Yeni sürümü yayımla ve ekle"));
+    expect(await screen.findByText(/default.retrieval:v2/)).toBeInTheDocument();
+    expect(screen.getByText(/retrieval_profile v2 yayımlandı/)).toBeInTheDocument();
   });
 
   it("preserves selected exact pins when canonical preflight and compile fail", async () => {

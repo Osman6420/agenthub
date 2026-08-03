@@ -82,17 +82,20 @@ Studio'da **Yayımla** işlemi ayrıca exact version açıklaması ister; bu met
 sürümde ne olduğunu veya neyin değiştiğini açıklar.
 
 Scenario Studio'daki **Yeni prompt** alanı prompt metnini doğrudan düzenler; `prompt_ref` veya elle
-hazırlanmış bir artifact ID gerektirmez. Taslak doğrulanıp değişiklik açıklamasıyla yayımlandığında
-yeni immutable exact sürüm oluşur. Candidate manifest seçicisinde exact sürüm seçildikten sonra
-**Artifact içeriğini aç** ile gövde görülebilir; prompt sürümlerinde **Yeni sürüm olarak düzenle** eski
-sürümü değiştirmeden yeni bir taslak açar. Yayın tamamlanınca yeni exact sürüm seçicide otomatik
-seçilir. Viewer bu içeriği yalnız salt okunur görür; oluşturma, düzenleme ve yayımlama scenario author
-sorumluluğu gerektirir.
+hazırlanmış bir artifact ID gerektirmez. **Yeni parçalama / arama profili** alanı da canonical
+`chunking/v1` ve `retrieval/v1` alanlarını yapılandırılmış kontrollerle oluşturur. Taslak doğrulanıp
+değişiklik açıklamasıyla yayımlandığında yeni immutable exact sürüm oluşur.
+
+Candidate manifest seçicisinde exact sürüm seçilince gövde ayrıca bir “aç” adımı olmadan otomatik
+gösterilir. Prompt metni textarea'da; parçalama ve arama profilleri alan bazlı editörde görünür.
+İçerik değişmediyse mevcut exact sürüm eklenir; değiştiyse açıklama zorunlu olur ve yeni immutable
+sürüm yayımlanıp aynı manifest rolündeki eski seçimin yerini alır. Viewer içeriği salt okunur görür;
+oluşturma, düzenleme ve yayımlama scenario author sorumluluğu gerektirir.
 
 Candidate release hazırlanırken seçim sırası **artifact type → logical artifact → exact version**
 şeklindedir. Her seviyenin açıklaması, exact checksum ve daha önce kaç release tarafından pinlendiği
-seçimden önce gösterilir. Manifest rolü serbest metin değildir; yalnız seçilen artifact type ile
-uyumlu kapalı seçeneklerden seçilir. Senaryo çağrı bölümündeki kopyalanabilir `curl` örneği, aktif
+seçimden önce gösterilir. Manifest rolü workflow gereksiniminden veya artifact türünden otomatik
+türetilir ve primary akışta ayrıca sorulmaz. Senaryo çağrı bölümündeki kopyalanabilir `curl` örneği, aktif
 release'in compiler-supported execution mode'larına göre Chat Completions veya background Responses
 biçiminde ve dahili ID yerine senaryo alias'ıyla üretilir.
 

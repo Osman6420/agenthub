@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, BuilderApi } from "./api";
 import { AiAuthoringPanel } from "./AiAuthoringPanel";
 import { ArtifactDraftEditor } from "./ArtifactDraftEditor";
+import { NewGovernedProfilePanel } from "./NewGovernedProfilePanel";
 import { Editor } from "./Editor";
 import { ScenarioManifestPanel } from "./ScenarioManifestPanel";
 import type { AiCandidateResult, ArtifactDraft, BuilderInitial, CapabilityMissingResult, Draft, NodeSchema, OrgOption } from "./types";
@@ -372,7 +373,9 @@ export function App({
           style={draftRow}>
           <span><strong>{draft.name}</strong>{" "}<span style={{ color: "#8b95a7" }}>
             ({draft.artifact_type === "input_contract" ? "girdi" :
-              draft.artifact_type === "output_contract" ? "çıktı" : "prompt"}; {draft.logical_id})
+              draft.artifact_type === "output_contract" ? "çıktı" :
+                draft.artifact_type === "chunking_profile" ? "parçalama" :
+                  draft.artifact_type === "retrieval_profile" ? "arama" : "prompt"}; {draft.logical_id})
           </span></span>
           <button type="button" onClick={() => void openArtifact(draft.id)} style={openBtn}>Aç</button>
         </li>)}
@@ -394,6 +397,14 @@ export function App({
           Prompt taslağı oluştur
         </button>
       </section>}
+
+      {canAuthorScenario && initial?.project_id && initial.scenario_id &&
+        <NewGovernedProfilePanel api={api} organization={orgSlug}
+          projectId={initial.project_id} scenarioId={initial.scenario_id}
+          onCreated={(draft) => {
+            void reload();
+            setActiveArtifact(draft);
+          }} />}
 
       {canAuthorScenario && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
         lockedProjectId={initial?.project_id} scenarioId={initial?.scenario_id}

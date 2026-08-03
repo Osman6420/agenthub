@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
+import { GovernedProfileEditor } from "./GovernedProfileEditor";
 import type { ArtifactDraft, ArtifactPublishResult, DiagnosticsResult } from "./types";
 
 export function ArtifactDraftEditor({
@@ -21,12 +22,15 @@ export function ArtifactDraftEditor({
   const [promptText, setPromptText] = useState(() =>
     typeof draft.body.template === "string" ? draft.body.template : "",
   );
+  const [profileBody, setProfileBody] = useState(draft.body);
   const [versionDescription, setVersionDescription] = useState("");
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResult | null>(null);
   const [status, setStatus] = useState("");
   const versionDescriptionRef = useRef<HTMLInputElement>(null);
 
   function parsedBody(): Record<string, unknown> | null {
+    if (draft.artifact_type === "chunking_profile" ||
+      draft.artifact_type === "retrieval_profile") return profileBody;
     try {
       const value = JSON.parse(bodyText) as unknown;
       if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
@@ -59,6 +63,7 @@ export function ArtifactDraftEditor({
       );
       onChange(updated);
       setBodyText(JSON.stringify(updated.body, null, 2));
+      setProfileBody(updated.body);
       setStatus("Taslak kaydedildi.");
       return updated;
     } catch (error) {
@@ -109,7 +114,11 @@ export function ArtifactDraftEditor({
     ? "Girdi sözleşmesi"
     : draft.artifact_type === "output_contract"
       ? "Çıktı sözleşmesi"
-      : "Prompt şablonu";
+      : draft.artifact_type === "chunking_profile"
+        ? "Parçalama profili"
+        : draft.artifact_type === "retrieval_profile"
+          ? "Arama profili"
+          : "Prompt şablonu";
 
   return <section>
     <button type="button" onClick={onClose}>← Taslaklar</button>
@@ -125,7 +134,13 @@ export function ArtifactDraftEditor({
       <textarea aria-label="prompt metni" rows={14} value={promptText}
         disabled={!draft.can_write} onChange={(event) => setPromptText(event.target.value)} />
     </label>}
-    <details open={draft.artifact_type !== "prompt_template"}>
+    {(draft.artifact_type === "chunking_profile" ||
+      draft.artifact_type === "retrieval_profile") && <GovernedProfileEditor
+        type={draft.artifact_type} body={profileBody} onChange={setProfileBody}
+        readOnly={!draft.can_write} />}
+    <details open={draft.artifact_type !== "prompt_template"}
+      hidden={draft.artifact_type === "chunking_profile" ||
+        draft.artifact_type === "retrieval_profile"}>
       <summary>Gelişmiş JSON</summary>
       <textarea aria-label="sözleşme JSON içeriği" rows={18} value={bodyText}
         disabled={!draft.can_write} onChange={(event) => setBodyText(event.target.value)} />

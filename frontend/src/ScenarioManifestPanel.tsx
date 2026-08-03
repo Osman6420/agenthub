@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
+import { GovernedProfileEditor } from "./GovernedProfileEditor";
 import type {
   ArtifactVersionPreview,
   ManifestLogicalOption,
@@ -50,6 +51,7 @@ export function ScenarioManifestPanel({
   const [preview, setPreview] = useState<ArtifactVersionPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [promptText, setPromptText] = useState("");
+  const [artifactBody, setArtifactBody] = useState<Record<string, unknown>>({});
   const [versionDescription, setVersionDescription] = useState("");
   const versionDescriptionRef = useRef<HTMLInputElement>(null);
 
@@ -106,6 +108,10 @@ export function ScenarioManifestPanel({
     typeof preview.body?.template === "string" ? preview.body.template : "";
   const promptChanged = preview?.artifact_type === "prompt_template" &&
     promptText !== originalPromptText;
+  const profileChanged = (preview?.artifact_type === "chunking_profile" ||
+    preview?.artifact_type === "retrieval_profile") &&
+    JSON.stringify(artifactBody) !== JSON.stringify(preview.body ?? {});
+  const artifactChanged = promptChanged || profileChanged;
 
   async function chooseType(value: string, requiredRole = "") {
     setArtifactType(value);
@@ -118,6 +124,7 @@ export function ScenarioManifestPanel({
     setDiagnostics([]);
     setPreview(null);
     setPromptText("");
+    setArtifactBody({});
     setVersionDescription("");
     if (!value) return;
     try {
@@ -138,6 +145,7 @@ export function ScenarioManifestPanel({
     setDiagnostics([]);
     setPreview(null);
     setPromptText("");
+    setArtifactBody({});
     setVersionDescription("");
     if (!value) return;
     try {
@@ -196,16 +204,19 @@ export function ScenarioManifestPanel({
     if (!selectedVersion) {
       setPreview(null);
       setPromptText("");
+      setArtifactBody({});
       return;
     }
     let cancelled = false;
     setPreviewLoading(true);
     setPreview(null);
     setPromptText("");
+    setArtifactBody({});
     setVersionDescription("");
     void api.artifactVersionPreview(scenarioPublicId, selectedVersion.id).then((result) => {
       if (cancelled) return;
       setPreview(result);
+      setArtifactBody(result.body ?? {});
       setPromptText(result.artifact_type === "prompt_template" &&
         typeof result.body?.template === "string" ? result.body.template : "");
     }).catch((error: unknown) => {
@@ -256,15 +267,15 @@ export function ScenarioManifestPanel({
     });
   }
 
-  async function publishChangedPrompt() {
-    if (!preview || !promptChanged || !effectiveRole) return;
+  async function publishChangedArtifact() {
+    if (!preview || !artifactChanged || !effectiveRole) return;
     if (!versionDescription.trim()) {
       setStatus("Bu sürümde nelerin değiştiğini yazın.");
       versionDescriptionRef.current?.focus();
       return;
     }
     if (!organization || projectId === undefined || scenarioId === undefined) {
-      setStatus("Yeni prompt sürümü için proje ve senaryo bağlamı bulunamadı.");
+      setStatus("Yeni artifact sürümü için proje ve senaryo bağlamı bulunamadı.");
       return;
     }
     setBusy(true);
@@ -278,7 +289,9 @@ export function ScenarioManifestPanel({
       });
       draft = await api.updateArtifactDraft(draft.id, {
         revision: draft.revision,
-        body: { ...draft.body, template: promptText },
+        body: preview.artifact_type === "prompt_template"
+          ? { ...draft.body, template: promptText }
+          : artifactBody,
       });
       const published = await api.publishArtifactDraft(
         draft.id, draft.revision, versionDescription.trim(),
@@ -293,7 +306,7 @@ export function ScenarioManifestPanel({
         description: published.version_description,
       });
       await chooseLogical(published.logical_id, String(published.artifact_version_id));
-      setStatus(`Yeni immutable prompt v${published.version} yayımlandı ve manifest’e eklendi.`);
+      setStatus(`Yeni immutable ${published.artifact_type} v${published.version} yayımlandı ve manifest’e eklendi.`);
     } catch (error) {
       setStatus(formatError(error));
     } finally {
@@ -424,10 +437,17 @@ export function ScenarioManifestPanel({
                   onChange={(event) => setPromptText(event.target.value)}
                   style={{ width: "100%", marginTop: 6 }} />
               </label>
-            : <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                {JSON.stringify(preview.body, null, 2)}
-              </pre>}
-        {promptChanged && preview.can_create_new_version && <label style={{ display: "block" }}>
+            : preview.artifact_type === "chunking_profile" ||
+                preview.artifact_type === "retrieval_profile"
+              ? null
+              : <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                  {JSON.stringify(preview.body, null, 2)}
+                </pre>}
+        {(preview.artifact_type === "chunking_profile" ||
+          preview.artifact_type === "retrieval_profile") && !preview.body_too_large &&
+          <GovernedProfileEditor type={preview.artifact_type} body={artifactBody}
+            onChange={setArtifactBody} readOnly={!preview.can_create_new_version} />}
+        {artifactChanged && preview.can_create_new_version && <label style={{ display: "block" }}>
           Bu sürümde neler değişti?
           <input ref={versionDescriptionRef} aria-label="Prompt sürüm değişiklikleri"
             value={versionDescription}
@@ -435,8 +455,8 @@ export function ScenarioManifestPanel({
             style={{ width: "100%", marginTop: 6 }} />
         </label>}
         <div style={{ marginTop: 10 }}>
-          {promptChanged && preview.can_create_new_version
-            ? <button type="button" disabled={busy} onClick={() => void publishChangedPrompt()}>
+          {artifactChanged && preview.can_create_new_version
+            ? <button type="button" disabled={busy} onClick={() => void publishChangedArtifact()}>
                 Yeni sürümü yayımla ve ekle
               </button>
             : <button type="button" disabled={busy || !effectiveRole}

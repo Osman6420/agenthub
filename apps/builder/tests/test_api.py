@@ -671,6 +671,55 @@ def test_prompt_draft_create_publish_and_viewer_denial(client: Client, bf: Build
     )
 
 
+@pytest.mark.parametrize(
+    ("artifact_type", "body"),
+    [
+        (
+            "chunking_profile",
+            {
+                "api_version": "agenthub/chunking/v1",
+                "kind": "ChunkingProfile",
+                "strategy": "headings",
+                "size": 1000,
+                "overlap": 100,
+                "max_chunks": 500,
+            },
+        ),
+        (
+            "retrieval_profile",
+            {
+                "api_version": "agenthub/retrieval/v1",
+                "kind": "RetrievalProfile",
+                "mode": "vector",
+                "top_k": 10,
+                "score_threshold": 0.1,
+            },
+        ),
+    ],
+)
+def test_governed_profile_draft_api_creates_new_logical_artifact(
+    client: Client, bf: BuilderFixture, artifact_type: str, body: dict[str, object]
+) -> None:
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:artifact_drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "artifact_type": artifact_type,
+            "name": "New governed profile",
+            "logical_id": f"new.{artifact_type}",
+            "logical_description": "Stable governed profile purpose",
+            "body": body,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["artifact_type"] == artifact_type
+    assert response.json()["body"] == body
+
+
 def test_exact_artifact_preview_and_source_are_tenant_scoped(
     client: Client, bf: BuilderFixture
 ) -> None:
@@ -749,6 +798,39 @@ def test_exact_artifact_preview_and_source_are_tenant_scoped(
     assert copied_again.status_code == 200
     assert copied_again.json()["id"] == copied.json()["id"]
     assert ArtifactDraft.objects.filter(logical_id="preview.prompt").count() == 1
+    retrieval = create_artifact_version(
+        organization=bf.org,
+        artifact_type=ArtifactType.RETRIEVAL_PROFILE,
+        logical_id="preview.retrieval",
+        logical_description="Retrieval purpose",
+        version_description="Initial",
+        body={
+            "api_version": "agenthub/retrieval/v1",
+            "kind": "RetrievalProfile",
+            "mode": "vector",
+            "top_k": 5,
+        },
+        created_by="author",
+    )
+    retrieval_preview_url = reverse(
+        "builder_api:scenario_artifact_version", args=[bf.scenario.public_id, retrieval.pk]
+    )
+    retrieval_preview = client.get(retrieval_preview_url)
+    assert retrieval_preview.status_code == 200
+    assert retrieval_preview.json()["can_create_new_version"] is True
+    retrieval_copy = _post(
+        client,
+        reverse("builder_api:artifact_drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "source_artifact_version_id": retrieval.pk,
+        },
+    )
+    assert retrieval_copy.status_code == 201
+    assert retrieval_copy.json()["artifact_type"] == "retrieval_profile"
+    assert retrieval_copy.json()["body"]["top_k"] == 5
     foreign_copy = _post(
         client,
         reverse("builder_api:artifact_drafts"),

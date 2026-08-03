@@ -36,6 +36,8 @@ AUTHORABLE_ARTIFACT_TYPES = frozenset(
         ArtifactType.INPUT_CONTRACT,
         ArtifactType.OUTPUT_CONTRACT,
         ArtifactType.PROMPT_TEMPLATE,
+        ArtifactType.CHUNKING_PROFILE,
+        ArtifactType.RETRIEVAL_PROFILE,
     }
 )
 
@@ -391,7 +393,7 @@ def publish_artifact_draft(
     version_description: str,
     request_id: str = "",
 ) -> ArtifactVersion:
-    """Publish mutable prompt/contract author state as a new immutable exact version."""
+    """Publish mutable governed artifact author state as a new immutable exact version."""
 
     locked = ArtifactDraft.objects.select_for_update().get(pk=draft.pk)
     _require_revision(expected=expected_revision, actual=locked.revision)

@@ -165,7 +165,7 @@ export class BuilderApi {
     organization: string;
     project_id: number;
     scenario_id: number;
-    artifact_type?: "prompt_template";
+      artifact_type?: "prompt_template" | "chunking_profile" | "retrieval_profile";
     name?: string;
     logical_id?: string;
     logical_description?: string;
