@@ -1,0 +1,124 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: agenthub-external-demo-restricted
+parameters:
+  - {name: DEMO_IMAGE, required: true}
+  - {name: DEMO_ROUTE_HOST, required: true}
+objects:
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: agenthub-external-demo
+      labels: {app.kubernetes.io/part-of: agenthub}
+    automountServiceAccountToken: false
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: agenthub-external-demo
+      labels:
+        app.kubernetes.io/name: agenthub-external-demo
+        app.kubernetes.io/part-of: agenthub
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: agenthub-external-demo}
+      strategy: {type: Recreate}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: agenthub-external-demo
+            app.kubernetes.io/part-of: agenthub
+        spec:
+          serviceAccountName: agenthub-external-demo
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: demo
+              image: ${DEMO_IMAGE}
+              imagePullPolicy: IfNotPresent
+              ports:
+                - {name: http, containerPort: 8080}
+              readinessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 5
+                timeoutSeconds: 2
+              livenessProbe:
+                httpGet: {path: /healthz, port: http}
+                periodSeconds: 20
+                timeoutSeconds: 2
+              resources:
+                requests: {cpu: 50m, memory: 64Mi, ephemeral-storage: 16Mi}
+                limits: {cpu: 500m, memory: 256Mi, ephemeral-storage: 64Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: {drop: [ALL]}
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+              volumeMounts:
+                - {name: credentials, mountPath: /run/secrets/agenthub-demo, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: credentials
+              secret:
+                secretName: agenthub-external-demo-credentials
+                defaultMode: 288
+                items:
+                  - {key: credentials.json, path: credentials.json}
+            - name: tmp
+              emptyDir: {sizeLimit: 64Mi}
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: agenthub-external-demo
+      labels:
+        app.kubernetes.io/name: agenthub-external-demo
+        app.kubernetes.io/part-of: agenthub
+    spec:
+      selector: {app.kubernetes.io/name: agenthub-external-demo}
+      ports:
+        - {name: http, port: 8080, targetPort: http}
+  - apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: agenthub-external-demo
+      labels:
+        app.kubernetes.io/name: agenthub-external-demo
+        app.kubernetes.io/part-of: agenthub
+    spec:
+      host: ${DEMO_ROUTE_HOST}
+      to: {kind: Service, name: agenthub-external-demo}
+      port: {targetPort: http}
+      tls: {termination: edge, insecureEdgeTerminationPolicy: Redirect}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: agenthub-external-demo-ingress
+      labels: {app.kubernetes.io/part-of: agenthub}
+    spec:
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: agenthub-external-demo}
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels: {network.openshift.io/policy-group: ingress}
+          ports:
+            - {protocol: TCP, port: 8080}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: agenthub-demo-to-web
+      labels: {app.kubernetes.io/part-of: agenthub}
+    spec:
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: agenthub-web}
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels: {app.kubernetes.io/name: agenthub-external-demo}
+          ports:
+            - {protocol: TCP, port: 8000}

@@ -8,11 +8,12 @@ import os
 import secrets
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
 
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.services import create_artifact_version
@@ -48,12 +49,13 @@ from apps.identity.models import (
 )
 from apps.identity.tokens import create_token, hash_token
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
-from apps.ingestion.models import EmbeddingProfile, IndexStatus
+from apps.ingestion.models import EmbeddingProfile, EmbeddingProfileStatus, IndexStatus
 from apps.ingestion.staged_build import build_staged_index, promote_staged_index
-from apps.orchestration.models import ModelProfile
+from apps.orchestration.models import ModelProfile, ModelProfileStatus
 from apps.orchestration.services import register_model_profile
 from apps.releases.compiler import ArtifactRef, compile_release, promote_release
 from apps.releases.models import ReleaseStatus
+from apps.tenancy.context import set_tenant_context
 from apps.tenancy.models import Organization, OrganizationMembership
 from apps.workflows.presets import agent_loop_workflow, document_answer_workflow, empty_workflow
 
@@ -179,16 +181,48 @@ class Command(BaseCommand):
         parser.add_argument("--wikipedia-language", default="tr", choices=["tr", "en"])
         parser.add_argument("--refresh-wikipedia", action="store_true")
         parser.add_argument("--rotate-tokens", action="store_true")
+        parser.add_argument("--no-print-secrets", action="store_true")
+        parser.add_argument(
+            "--model-profile-id",
+            default="",
+            help=(
+                "Reuse an active platform ModelProfile instead of creating the local Gemini "
+                "profile."
+            ),
+        )
+        parser.add_argument(
+            "--embedding-profile-id",
+            default="",
+            help=(
+                "Reuse an active platform EmbeddingProfile instead of the deterministic local "
+                "demo profile."
+            ),
+        )
+        parser.add_argument(
+            "--api-base",
+            default="http://127.0.0.1:8000",
+            help="Server-side AgentHub API base written to the demo credential file.",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         if settings.RUNTIME_MODEL_PROVIDER != (
             "apps.orchestration.providers.OpenAICompatibleModelProvider"
         ):
             raise CommandError("External demo requires the OpenAI-compatible model provider")
-        if not os.environ.get("MODEL_SECRET_GEMINI"):
-            raise CommandError("External demo requires MODEL_SECRET_GEMINI")
-        if settings.RUNTIME_EMBEDDING_PROVIDER:
+        model_profile_id = str(options.get("model_profile_id", "")).strip()
+        embedding_profile_id = str(options.get("embedding_profile_id", "")).strip()
+        if not model_profile_id and not os.environ.get("MODEL_SECRET_GEMINI"):
+            raise CommandError("External demo requires --model-profile-id or MODEL_SECRET_GEMINI")
+        if embedding_profile_id and settings.RUNTIME_EMBEDDING_PROVIDER != (
+            "apps.ingestion.embedding.OpenAICompatibleEmbeddingClient"
+        ):
+            raise CommandError(
+                "External demo with --embedding-profile-id requires the OpenAI-compatible "
+                "embedding provider"
+            )
+        if not embedding_profile_id and settings.RUNTIME_EMBEDDING_PROVIDER:
             raise CommandError("External demo requires deterministic local embeddings")
+        api_base = self._validate_api_base(str(options.get("api_base", "")))
         credentials_path = Path(str(options["credentials_file"])).resolve()
         existing_credentials = self._read_credentials(credentials_path)
         existing_operator = existing_credentials.get("operator", {})
@@ -201,12 +235,50 @@ class Command(BaseCommand):
             or secrets.token_urlsafe(12)
         )
 
+        payload, tokens = self._provision(
+            password=password,
+            existing_credentials=existing_credentials,
+            model_profile_id=model_profile_id,
+            embedding_profile_id=embedding_profile_id,
+            api_base=api_base,
+            wikipedia_title=str(options["wikipedia_title"]),
+            wikipedia_language=str(options["wikipedia_language"]),
+            refresh_wikipedia=bool(options["refresh_wikipedia"]),
+            rotate_tokens=bool(options["rotate_tokens"]),
+        )
+        self._write_credentials(credentials_path, payload)
+        self.stdout.write(self.style.SUCCESS("External consumer demo ready."))
+        self.stdout.write(f"credentials file: {credentials_path}")
+        if not bool(options.get("no_print_secrets", False)):
+            self.stdout.write(f"operator username: {OPERATOR_USERNAME}")
+            self.stdout.write(f"operator password: {password}")
+            for key, token in tokens.items():
+                self.stdout.write(f"{key} token: {token}")
+
+    @transaction.atomic
+    def _provision(
+        self,
+        *,
+        password: str,
+        existing_credentials: dict[str, Any],
+        model_profile_id: str,
+        embedding_profile_id: str,
+        api_base: str,
+        wikipedia_title: str,
+        wikipedia_language: str,
+        refresh_wikipedia: bool,
+        rotate_tokens: bool,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
         users = self._ensure_users(password)
         organization = self._ensure_organization(users)
         project = self._ensure_project(organization, users)
         scenarios = self._ensure_scenarios(organization, project, users)
-        model_profile = self._ensure_model_profile(users[PLATFORM_USERNAME])
-        embedding_profile = self._ensure_embedding_profile(users[PLATFORM_USERNAME], organization)
+        model_profile = self._ensure_model_profile(
+            users[PLATFORM_USERNAME], profile_id=model_profile_id
+        )
+        embedding_profile = self._ensure_embedding_profile(
+            users[PLATFORM_USERNAME], organization, profile_id=embedding_profile_id
+        )
         document_set = self._ensure_document_set(organization, users)
         self._ensure_scenario_document_access(document_set, scenarios, users)
         set_version = self._ensure_wikipedia_index(
@@ -214,9 +286,9 @@ class Command(BaseCommand):
             document_set=document_set,
             embedding_profile=embedding_profile,
             actor=users[DOC_MANAGER_USERNAME],
-            title=str(options["wikipedia_title"]),
-            language=str(options["wikipedia_language"]),
-            refresh=bool(options["refresh_wikipedia"]),
+            title=wikipedia_title,
+            language=wikipedia_language,
+            refresh=refresh_wikipedia,
         )
         self._ensure_releases(
             organization=organization,
@@ -229,10 +301,10 @@ class Command(BaseCommand):
         tokens = self._ensure_tokens(
             consumers,
             existing_credentials,
-            rotate=bool(options["rotate_tokens"]),
+            rotate=rotate_tokens,
         )
         payload = {
-            "api_base": "http://127.0.0.1:8000",
+            "api_base": api_base,
             "operator": {"username": OPERATOR_USERNAME, "password": password},
             "consumers": {
                 key: {
@@ -243,17 +315,11 @@ class Command(BaseCommand):
                 for key in CONSUMERS
             },
             "wikipedia": {
-                "title": str(options["wikipedia_title"]),
-                "language": str(options["wikipedia_language"]),
+                "title": wikipedia_title,
+                "language": wikipedia_language,
             },
         }
-        self._write_credentials(credentials_path, payload)
-        self.stdout.write(self.style.SUCCESS("External consumer demo ready."))
-        self.stdout.write(f"operator username: {OPERATOR_USERNAME}")
-        self.stdout.write(f"operator password: {password}")
-        self.stdout.write(f"credentials file: {credentials_path}")
-        for key, token in tokens.items():
-            self.stdout.write(f"{key} token: {token}")
+        return payload, tokens
 
     @staticmethod
     def _read_credentials(path: Path) -> dict[str, Any]:
@@ -274,6 +340,27 @@ class Command(BaseCommand):
         except OSError:
             # Windows ACLs remain authoritative when POSIX mode bits are unavailable.
             pass
+
+    @staticmethod
+    def _validate_api_base(value: str) -> str:
+        parsed = urlsplit(value.strip())
+        if (
+            parsed.scheme != "http"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise CommandError("api-base must be an HTTP origin without credentials or a path")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise CommandError("api-base port is invalid") from exc
+        if port is not None and not 1 <= port <= 65535:
+            raise CommandError("api-base port is invalid")
+        return value.strip().rstrip("/")
 
     @staticmethod
     def _ensure_users(password: str) -> dict[str, Any]:
@@ -301,6 +388,7 @@ class Command(BaseCommand):
         organization, _created = Organization.objects.get_or_create(
             slug=ORG_SLUG, defaults={"name": "External Consumer Demo"}
         )
+        set_tenant_context(organization.pk)
         membership, _created = OrganizationMembership.objects.get_or_create(
             organization=organization, user=users[OPERATOR_USERNAME]
         )
@@ -363,7 +451,14 @@ class Command(BaseCommand):
         return scenarios
 
     @staticmethod
-    def _ensure_model_profile(actor: Any) -> ModelProfile:
+    def _ensure_model_profile(actor: Any, *, profile_id: str = "") -> ModelProfile:
+        if profile_id:
+            try:
+                return ModelProfile.objects.get(
+                    public_id=profile_id, status=ModelProfileStatus.ACTIVE
+                )
+            except (ModelProfile.DoesNotExist, ValueError) as exc:
+                raise CommandError("model profile is unavailable") from exc
         existing = ModelProfile.objects.filter(
             logical_id="external-demo-gemini", revision=1
         ).first()
@@ -386,7 +481,20 @@ class Command(BaseCommand):
         )
 
     @staticmethod
-    def _ensure_embedding_profile(actor: Any, organization: Organization) -> EmbeddingProfile:
+    def _ensure_embedding_profile(
+        actor: Any, organization: Organization, *, profile_id: str = ""
+    ) -> EmbeddingProfile:
+        if profile_id:
+            try:
+                selected = EmbeddingProfile.objects.get(
+                    public_id=profile_id, status=EmbeddingProfileStatus.ACTIVE
+                )
+            except (EmbeddingProfile.DoesNotExist, ValueError) as exc:
+                raise CommandError("embedding profile is unavailable") from exc
+            grant_embedding_profile(
+                actor=actor, organization=organization, embedding_profile=selected
+            )
+            return selected
         profile = EmbeddingProfile.objects.filter(
             logical_id="external-demo-deterministic", revision=1
         ).first()
@@ -482,6 +590,7 @@ class Command(BaseCommand):
         active = document_set.versions.filter(
             status=DocumentSetVersionStatus.ACTIVE,
             built_index_version__status=IndexStatus.ACTIVE,
+            built_index_version__embedding_profile=embedding_profile,
         ).first()
         if active is not None and not refresh:
             return active
@@ -552,7 +661,7 @@ class Command(BaseCommand):
         model_artifact = self._artifact(
             organization,
             ArtifactType.MODEL_PROFILE,
-            "external-demo.gemini-model",
+            "external-demo.model",
             {"profile_id": str(model_profile.public_id)},
         )
         retrieval_artifact = self._artifact(
@@ -570,13 +679,27 @@ class Command(BaseCommand):
             },
         )
         for alias, scenario in scenarios.items():
+            config = SCENARIOS[alias]
             active = scenario.releases.filter(status=ReleaseStatus.ACTIVE).first()
-            if active is not None and (
-                alias not in {"wikipedia-qa", "wikipedia-brief"}
-                or set_version.pk in active.manifest.get("document_set_versions", [])
+            active_artifacts = active.manifest.get("artifacts", {}) if active is not None else {}
+            active_model = (
+                active_artifacts.get("model_profile", {})
+                if isinstance(active_artifacts, dict)
+                else {}
+            )
+            model_matches = config["kind"] == "smoke" or (
+                isinstance(active_model, dict)
+                and active_model.get("checksum") == model_artifact.checksum
+            )
+            if (
+                active is not None
+                and (
+                    alias not in {"wikipedia-qa", "wikipedia-brief"}
+                    or set_version.pk in active.manifest.get("document_set_versions", [])
+                )
+                and model_matches
             ):
                 continue
-            config = SCENARIOS[alias]
             refs: list[ArtifactRef] = []
             input_contract = self._artifact(
                 organization,

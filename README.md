@@ -132,6 +132,7 @@ authorized, non-self approval (30-minute expiry, request-checksum bound); a work
 - [Coding-agent handoff](docs/ai/agent-handoff.md)
 - [Local startup, health checks and manual testing](docs/manual-testing-guide.md)
 - [Single-command local stack runbook](docs/operations/local-development-stack.md)
+- [OpenShift installation from Ubuntu](docs/operations/openshift-ubuntu-installation.md)
 - [Master plan](docs/planning/master-plan.md)
 - [ADR index](docs/adr/README.md)
 - [Task documentation and templates](docs/tasks/README.md)

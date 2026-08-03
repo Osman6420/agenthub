@@ -55,6 +55,13 @@ deterministic workflow, and an explicit authorization-denial path through the pu
 not add a production surface or public contract. See the
 [archived task record](archive/external-consumer-demo-2026-08-02/plan.md).
 
+A runnable Ubuntu/`oc` OpenShift installation path is implemented and offline/container verified.
+It provides restricted-SCC-safe, resource-bounded workloads, separate migration/runtime credentials,
+digest-pinned application/static/demo images, generic OpenAI-compatible model and embedding profiles,
+and an optional cluster-hosted external showcase. This is not live-cluster evidence; environment
+admission, egress, trust, quota and managed-service validation remain required. See the
+[archived task record](archive/openshift-ubuntu-install-guide-2026-08-03/plan.md).
+
 Phase 2 closure P11 is implemented and offline/staging-equivalent verified: all nine formerly
 indirect tables now carry direct tenant lineage; 47 direct-tenant tables use canonical FORCE RLS;
 operator, gateway and worker paths install bounded transaction-local tenant scope; and reviewed

@@ -1,5 +1,10 @@
 # Operations Standard
 
+Deployment guides:
+
+- [OpenShift installation from Ubuntu](openshift-ubuntu-installation.md) — restricted SCC,
+  resource limits, immutable images, generic model/embedding profiles and optional external demo.
+
 Repository-owned operational controls and deployment manifests are verified as drafts unless their
 task evidence explicitly records a live environment. The following sections define required
 documentation before a component is production-ready; a reviewed draft is not evidence of an
@@ -34,9 +39,10 @@ Document application/configuration/data rollback or forward-fix triggers, compat
 Each runbook names symptoms, prerequisites, safe diagnostic steps, bounded remediation, verification, escalation, and owner. Production access must be least-privileged, approved, and audited.
 
 PostgreSQL/pgvector, Redis, object-storage configuration, and distinct Django/Celery
-process roles are implemented for local operation. OpenShift manifests,
-Prometheus-style metrics, production credentials, and production embedding/model
-adapters remain future work.
+process roles are implemented for local operation. OpenShift drafts and the Ubuntu installer are
+reviewable repository artifacts; they are not evidence of a live cluster deployment. Prometheus-style
+metrics and opt-in OpenAI-compatible model/embedding adapters are implemented, while production
+credentials, destination approval and target-cluster validation remain environment work.
 
 The Phase 2.8 static-asset production path is implemented and offline/container verified: immutable
 application and static image targets, fail-closed frontend/`collectstatic` checks, version-matched

@@ -22,6 +22,8 @@ staticfiles/
 media/
 .runtime/
 examples/external-consumer-demo/credentials.local.json
+deploy/openshift/install/*.env
+!deploy/openshift/install/openshift.env.example
 celerybeat-schedule*
 
 # Test / type / lint caches

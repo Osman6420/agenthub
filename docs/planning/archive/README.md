@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [OpenShift Ubuntu installation guide (offline verified 2026-08-03)](openshift-ubuntu-install-guide-2026-08-03/plan.md);
+  [verification](openshift-ubuntu-install-guide-2026-08-03/verification.md).
+
 - [External consumer demo (completed 2026-08-02)](external-consumer-demo-2026-08-02/plan.md);
   [verification](external-consumer-demo-2026-08-02/verification.md).
 

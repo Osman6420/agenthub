@@ -25,3 +25,15 @@ request, creates a managed document-set index, and serves four scenarios.
 
 Open `http://127.0.0.1:4173`. The server binds only to loopback and does not expose the operator
 password or consumer tokens to browser JavaScript.
+
+## OpenShift
+
+The local defaults remain loopback-only. The reviewed OpenShift image starts the same server with
+explicit `--allow-network-bind` and `--allow-cluster-upstream` flags, mounts the credential JSON from
+a read-only Secret, and proxies only to `http://agenthub-web:8000`. Build it with
+`deploy/external-demo.Dockerfile`; install it through the optional path in
+[`docs/operations/openshift-ubuntu-installation.md`](../../docs/operations/openshift-ubuntu-installation.md).
+
+For a non-Gemini installation, pre-register active generic model and embedding profiles and pass
+their public ids to `seed_external_consumer_demo` with `--model-profile-id` and
+`--embedding-profile-id`. The real embedding dimension must match the registered profile exactly.
