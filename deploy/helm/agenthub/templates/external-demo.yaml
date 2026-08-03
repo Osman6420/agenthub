@@ -1,0 +1,131 @@
+{{- if .Values.externalDemo.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agenthub.fullname" . }}-external-demo
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "external-demo") | nindent 4 }}
+automountServiceAccountToken: false
+{{- with .Values.imagePullSecrets }}
+imagePullSecrets:
+{{- range . }}
+  - name: {{ .name | quote }}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agenthub.fullname" . }}-external-demo
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "external-demo") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "external-demo") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "external-demo") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+      annotations:
+        agenthub.io/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+    spec:
+      serviceAccountName: {{ include "agenthub.fullname" . }}-external-demo
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: demo
+          image: {{ include "agenthub.demoImage" . | quote }}
+          imagePullPolicy: {{ .Values.externalDemo.image.pullPolicy }}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.externalDemo.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: credentials, mountPath: /run/secrets/agenthub-demo, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: credentials
+          secret:
+            secretName: {{ .Values.externalDemo.credentialsSecret | quote }}
+            defaultMode: 288
+            items: [{key: credentials.json, path: credentials.json}]
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.externalDemo.tmpSizeLimit | quote }}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agenthub.fullname" . }}-external-demo
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "external-demo") | nindent 4 }}
+spec:
+  selector:
+    {{- include "agenthub.selectorLabels" (dict "root" . "component" "external-demo") | nindent 4 }}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "agenthub.fullname" . }}-external-demo
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "external-demo") | nindent 4 }}
+spec:
+  host: {{ required "externalDemo.routeHost is required when enabled" .Values.externalDemo.routeHost | quote }}
+  to: {kind: Service, name: {{ include "agenthub.fullname" . }}-external-demo}
+  port: {targetPort: http}
+  tls: {termination: edge, insecureEdgeTerminationPolicy: Redirect}
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub.fullname" . }}-external-demo-ingress
+  labels:
+    {{- include "agenthub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "external-demo") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressNamespaceLabels | nindent 14 }}
+      ports: [{protocol: TCP, port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub.fullname" . }}-demo-to-web
+  labels:
+    {{- include "agenthub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "agenthub.selectorLabels" (dict "root" . "component" "external-demo") | nindent 14 }}
+      ports: [{protocol: TCP, port: 8000}]
+{{- end }}
+{{- end }}

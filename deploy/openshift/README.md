@@ -1,7 +1,13 @@
 # Sprint 7 OpenShift Drafts
 
-For the runnable Ubuntu/`oc` installation path, restricted-SCC templates, generic
-OpenAI-compatible model/embedding configuration and optional external-consumer showcase, see
+For the preferred packaged Helm path, see
+[`docs/operations/openshift-helm-installation.md`](../../docs/operations/openshift-helm-installation.md)
+and [`deploy/helm/agenthub`](../helm/agenthub/). For a self-contained, non-production demo with
+PostgreSQL/pgvector, Redis and MinIO in the same namespace, see
+[`docs/operations/openshift-bundled-stack-helm.md`](../../docs/operations/openshift-bundled-stack-helm.md)
+and [`deploy/helm/agenthub-stack`](../helm/agenthub-stack/). For the lower-level Ubuntu/`oc` installation path,
+restricted-SCC templates, generic OpenAI-compatible model/embedding configuration and optional
+external-consumer showcase, see
 [`docs/operations/openshift-ubuntu-installation.md`](../../docs/operations/openshift-ubuntu-installation.md)
 and [`deploy/openshift/install`](install/). The older `platform.yaml` in this directory remains a
 reviewable base draft; do not mix the two paths in one rollout.

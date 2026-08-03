@@ -1,0 +1,279 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "agenthub-stack.fullname" . }}-postgresql
+  labels:
+    {{- include "agenthub-stack.componentLabels" (dict "root" . "component" "postgresql") | nindent 4 }}
+spec:
+  serviceName: {{ include "agenthub-stack.fullname" . }}-postgresql
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "agenthub-stack.selectorLabels" (dict "root" . "component" "postgresql") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub-stack.selectorLabels" (dict "root" . "component" "postgresql") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub-stack
+    spec:
+      serviceAccountName: {{ include "agenthub-stack.fullname" . }}-postgresql
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "agenthub-stack.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub-stack.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: postgresql
+          image: {{ include "agenthub-stack.image" (dict "name" "postgresql" "image" .Values.postgresql.image) | quote }}
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.postgresql.existingSecret | quote }}
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          startupProbe:
+            exec:
+              command:
+                - "/bin/sh"
+                - "-ec"
+                - 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+            periodSeconds: 5
+            failureThreshold: 60
+            timeoutSeconds: 3
+          readinessProbe:
+            exec:
+              command:
+                - "/bin/sh"
+                - "-ec"
+                - 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - "/bin/sh"
+                - "-ec"
+                - 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+            periodSeconds: 20
+            failureThreshold: 6
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub-stack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: tmp, mountPath: /tmp }
+            - { name: run, mountPath: /var/run/postgresql }
+            - { name: dshm, mountPath: /dev/shm }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d/10-agenthub-init.sh, subPath: 10-agenthub-init.sh, readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: {{ .Values.postgresql.tmpSizeLimit | quote }} }
+        - name: run
+          emptyDir: { sizeLimit: {{ .Values.postgresql.runtimeSocketSizeLimit | quote }} }
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: {{ .Values.postgresql.sharedMemorySizeLimit | quote }} }
+        - name: init
+          configMap:
+            name: {{ include "agenthub-stack.fullname" . }}-postgres-init
+            defaultMode: 365
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "agenthub-stack.componentLabels" (dict "root" . "component" "postgresql") | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.postgresql.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests: { storage: {{ .Values.postgresql.persistence.size | quote }} }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "agenthub-stack.fullname" . }}-redis
+  labels:
+    {{- include "agenthub-stack.componentLabels" (dict "root" . "component" "redis") | nindent 4 }}
+spec:
+  serviceName: {{ include "agenthub-stack.fullname" . }}-redis
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "agenthub-stack.selectorLabels" (dict "root" . "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub-stack.selectorLabels" (dict "root" . "component" "redis") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub-stack
+    spec:
+      serviceAccountName: {{ include "agenthub-stack.fullname" . }}-redis
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- include "agenthub-stack.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub-stack.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: redis
+          image: {{ include "agenthub-stack.image" (dict "name" "redis" "image" .Values.redis.image) | quote }}
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              umask 077
+              printf 'bind 0.0.0.0\nprotected-mode yes\nport 6379\nrequirepass %s\nappendonly yes\ndir /data\n' \
+                "$REDIS_PASSWORD" > /tmp/redis.conf
+              exec redis-server /tmp/redis.conf
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.existingSecret | quote }}
+                  key: REDIS_PASSWORD
+            - name: HOME
+              value: /tmp
+          ports:
+            - name: redis
+              containerPort: 6379
+          startupProbe:
+            exec:
+              command:
+                - "/bin/sh"
+                - "-ec"
+                - 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping'
+            periodSeconds: 5
+            failureThreshold: 24
+            timeoutSeconds: 3
+          readinessProbe:
+            exec:
+              command:
+                - "/bin/sh"
+                - "-ec"
+                - 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping'
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - "/bin/sh"
+                - "-ec"
+                - 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping'
+            periodSeconds: 20
+            failureThreshold: 6
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub-stack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: {{ .Values.redis.tmpSizeLimit | quote }} }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "agenthub-stack.componentLabels" (dict "root" . "component" "redis") | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.redis.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests: { storage: {{ .Values.redis.persistence.size | quote }} }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "agenthub-stack.fullname" . }}-minio
+  labels:
+    {{- include "agenthub-stack.componentLabels" (dict "root" . "component" "minio") | nindent 4 }}
+spec:
+  serviceName: {{ include "agenthub-stack.fullname" . }}-minio
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "agenthub-stack.selectorLabels" (dict "root" . "component" "minio") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub-stack.selectorLabels" (dict "root" . "component" "minio") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub-stack
+    spec:
+      serviceAccountName: {{ include "agenthub-stack.fullname" . }}-minio
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "agenthub-stack.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub-stack.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: minio
+          image: {{ include "agenthub-stack.image" (dict "name" "minio" "image" .Values.minio.image) | quote }}
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          command: ["minio"]
+          args: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
+          envFrom:
+            - secretRef:
+                name: {{ .Values.minio.existingSecret | quote }}
+          env:
+            - name: HOME
+              value: /tmp
+          ports:
+            - { name: api, containerPort: 9000 }
+            - { name: console, containerPort: 9001 }
+          startupProbe:
+            httpGet: { path: /minio/health/live, port: api }
+            periodSeconds: 5
+            failureThreshold: 24
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: api }
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: api }
+            periodSeconds: 20
+            failureThreshold: 6
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub-stack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: {{ .Values.minio.tmpSizeLimit | quote }} }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "agenthub-stack.componentLabels" (dict "root" . "component" "minio") | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.minio.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests: { storage: {{ .Values.minio.persistence.size | quote }} }

@@ -1,0 +1,74 @@
+# Non-production all-in-one example. Replace every host/name and all-zero digest.
+agenthub:
+  releaseId: release-20260803-1
+  images:
+    application:
+      repository: registry.example.com/team/agenthub
+      digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    static:
+      repository: registry.example.com/team/agenthub-static
+      digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  route:
+    enabled: true
+    host: agenthub-stack.apps.cluster.example.com
+  objectStore:
+    # This plaintext Service URL is allowed only by this non-production stack.
+    endpoint: http://agenthub-stack-minio:9000
+    bucket: agenthub-demo
+    region: us-east-1
+    allowInsecureHttp: true
+  provider:
+    model:
+      logicalId: primary-chat
+      revision: 1
+      host: llm-gateway.example.com
+      port: 443
+      path: /v1/chat/completions
+      name: replace-with-chat-model
+    embedding:
+      logicalId: primary-embedding
+      revision: 1
+      host: embedding-gateway.example.com
+      port: 443
+      path: /v1/embeddings
+      name: replace-with-embedding-model
+      dimensions: 1024
+      indexType: vector
+  bootstrap:
+    actor: platform-recovery
+  existingSecrets:
+    web: agenthub-web-secrets
+    runtime: agenthub-runtime-secrets
+    ingestion: agenthub-ingestion-secrets
+    beat: agenthub-beat-secrets
+    migration: agenthub-migration-secrets
+    bootstrap: agenthub-bootstrap-credentials
+  externalDemo: {enabled: false}
+
+postgresql:
+  image:
+    repository: registry.example.com/team/agenthub-postgresql
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  existingSecret: agenthub-stack-postgresql
+  persistence: {storageClass: "", size: 10Gi}
+
+redis:
+  image:
+    repository: registry.example.com/team/redis
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  existingSecret: agenthub-stack-redis
+  persistence: {storageClass: "", size: 2Gi}
+
+minio:
+  image:
+    repository: registry.example.com/team/minio
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  clientImage:
+    repository: registry.example.com/team/minio-mc
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  existingSecret: agenthub-stack-minio
+  persistence: {storageClass: "", size: 10Gi}
+
+# For a private registry, create the pull Secret separately and uncomment:
+# imagePullSecrets:
+#   - name: approved-registry-pull-secret

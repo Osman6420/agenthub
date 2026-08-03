@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agenthub.fullname" . }}-web
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "web") | nindent 4 }}
+spec:
+  selector:
+    {{- include "agenthub.selectorLabels" (dict "root" . "component" "web") | nindent 4 }}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agenthub.fullname" . }}-static
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "static") | nindent 4 }}
+spec:
+  selector:
+    {{- include "agenthub.selectorLabels" (dict "root" . "component" "static") | nindent 4 }}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+{{- if .Values.route.enabled }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "agenthub.fullname" . }}-web
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "web") | nindent 4 }}
+spec:
+  host: {{ required "route.host is required when routes are enabled" .Values.route.host | quote }}
+  to: {kind: Service, name: {{ include "agenthub.fullname" . }}-web}
+  port: {targetPort: http}
+  tls:
+    termination: {{ .Values.route.tls.termination | quote }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy | quote }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "agenthub.fullname" . }}-static
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "static") | nindent 4 }}
+spec:
+  host: {{ .Values.route.host | quote }}
+  path: /static
+  to: {kind: Service, name: {{ include "agenthub.fullname" . }}-static}
+  port: {targetPort: http}
+  tls:
+    termination: {{ .Values.route.tls.termination | quote }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy | quote }}
+{{- end }}

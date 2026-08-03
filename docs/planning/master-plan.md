@@ -62,6 +62,18 @@ and an optional cluster-hosted external showcase. This is not live-cluster evide
 admission, egress, trust, quota and managed-service validation remain required. See the
 [archived task record](archive/openshift-ubuntu-install-guide-2026-08-03/plan.md).
 
+The OpenShift deployment is also packaged as a restricted-SCC-safe Helm chart with closed non-secret
+values, external Secret preparation, ordered migration/bootstrap hooks, digest-pinned images,
+resource-bound roles, Routes and release-scoped NetworkPolicies. Helm 3/4 lint, render, packaging and
+offline security invariants pass; live cluster admission and connectivity remain required. See the
+[archived Helm task record](archive/openshift-helm-installation-2026-08-03/plan.md).
+
+A separate bundled Helm topology for demonstrations is implemented and offline verified. It composes
+the application chart with single-replica PostgreSQL/pgvector, Redis and MinIO in one namespace,
+while preserving arbitrary-UID restricted-SCC behavior, resource bounds, external Secrets and
+retained PVCs. It is explicitly not a production or high-availability topology. See the
+[archived task record](archive/openshift-bundled-stack-helm-2026-08-03/plan.md).
+
 Phase 2 closure P11 is implemented and offline/staging-equivalent verified: all nine formerly
 indirect tables now carry direct tenant lineage; 47 direct-tenant tables use canonical FORCE RLS;
 operator, gateway and worker paths install bounded transaction-local tenant scope; and reviewed

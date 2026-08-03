@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "agenthub.fullname" . }}-test-connection
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "test") | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  securityContext:
+    {{- include "agenthub.podSecurityContext" . | nindent 4 }}
+  {{- include "agenthub.imagePullSecrets" . | nindent 2 }}
+  containers:
+    - name: readiness
+      image: {{ include "agenthub.applicationImage" . | quote }}
+      imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+      command: [curl]
+      args: [--fail, --show-error, --silent, http://{{ include "agenthub.fullname" . }}-web:8000/v1/health/ready]
+      resources:
+        requests: {cpu: 10m, memory: 32Mi, ephemeral-storage: 16Mi}
+        limits: {cpu: 100m, memory: 64Mi, ephemeral-storage: 32Mi}
+      securityContext:
+        {{- include "agenthub.containerSecurityContext" . | nindent 8 }}
+      volumeMounts: [{name: tmp, mountPath: /tmp}]
+  volumes:
+    - name: tmp
+      emptyDir: {sizeLimit: 32Mi}

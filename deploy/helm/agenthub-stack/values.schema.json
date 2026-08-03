@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agenthub", "postgresql", "redis", "minio"],
+  "properties": {
+    "nameOverride": {"type": "string", "maxLength": 40},
+    "fullnameOverride": {"type": "string", "maxLength": 40},
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {"name": {"$ref": "#/definitions/kubernetesName"}}
+      }
+    },
+    "agenthub": {"type": "object"},
+    "postgresql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "existingSecret", "persistence", "resources", "tmpSizeLimit", "runtimeSocketSizeLimit", "sharedMemorySizeLimit"],
+      "properties": {
+        "image": {"$ref": "#/definitions/image"},
+        "existingSecret": {"$ref": "#/definitions/kubernetesName"},
+        "persistence": {"$ref": "#/definitions/persistence"},
+        "resources": {"$ref": "#/definitions/resources"},
+        "tmpSizeLimit": {"type": "string", "minLength": 1},
+        "runtimeSocketSizeLimit": {"type": "string", "minLength": 1},
+        "sharedMemorySizeLimit": {"type": "string", "minLength": 1}
+      }
+    },
+    "redis": {"$ref": "#/definitions/statefulService"},
+    "minio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "clientImage", "existingSecret", "persistence", "resources", "clientResources", "tmpSizeLimit"],
+      "properties": {
+        "image": {"$ref": "#/definitions/image"},
+        "clientImage": {"$ref": "#/definitions/image"},
+        "existingSecret": {"$ref": "#/definitions/kubernetesName"},
+        "persistence": {"$ref": "#/definitions/persistence"},
+        "resources": {"$ref": "#/definitions/resources"},
+        "clientResources": {"$ref": "#/definitions/resources"},
+        "tmpSizeLimit": {"type": "string", "minLength": 1}
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {"enabled": {"type": "boolean"}}
+    }
+  },
+  "definitions": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1, "pattern": "^[^\\s@]+$"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "statefulService": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "existingSecret", "persistence", "resources", "tmpSizeLimit"],
+      "properties": {
+        "image": {"$ref": "#/definitions/image"},
+        "existingSecret": {"$ref": "#/definitions/kubernetesName"},
+        "persistence": {"$ref": "#/definitions/persistence"},
+        "resources": {"$ref": "#/definitions/resources"},
+        "tmpSizeLimit": {"type": "string", "minLength": 1}
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["storageClass", "size"],
+      "properties": {
+        "storageClass": {"type": "string", "maxLength": 253},
+        "size": {"type": "string", "pattern": "^[1-9][0-9]*(Ei|Pi|Ti|Gi|Mi|Ki)$"}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"$ref": "#/definitions/resourceList"},
+        "limits": {"$ref": "#/definitions/resourceList"}
+      }
+    },
+    "resourceList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory", "ephemeral-storage"],
+      "properties": {
+        "cpu": {"type": "string", "minLength": 1},
+        "memory": {"type": "string", "minLength": 1},
+        "ephemeral-storage": {"type": "string", "minLength": 1}
+      }
+    },
+    "kubernetesName": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$"}
+  }
+}

@@ -1,0 +1,57 @@
+# Non-secret example. Replace every example host/name and every all-zero digest.
+releaseId: release-20260803-1
+
+images:
+  application:
+    repository: registry.example.com/team/agenthub
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  static:
+    repository: registry.example.com/team/agenthub-static
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+route:
+  enabled: true
+  host: agenthub-demo.apps.cluster.example.com
+
+objectStore:
+  endpoint: https://s3.example.com
+  bucket: agenthub-demo
+  region: us-east-1
+  allowInsecureHttp: false
+
+provider:
+  model:
+    logicalId: primary-chat
+    revision: 1
+    host: llm-gateway.example.com
+    port: 443
+    path: /v1/chat/completions
+    name: replace-with-chat-model
+  embedding:
+    logicalId: primary-embedding
+    revision: 1
+    host: embedding-gateway.example.com
+    port: 443
+    path: /v1/embeddings
+    name: replace-with-embedding-model
+    dimensions: 1024
+    indexType: vector
+
+bootstrap:
+  actor: platform-recovery
+
+# Add only Secret names here. Never put Secret values in a Helm values file.
+existingSecrets:
+  web: agenthub-web-secrets
+  runtime: agenthub-runtime-secrets
+  ingestion: agenthub-ingestion-secrets
+  beat: agenthub-beat-secrets
+  migration: agenthub-migration-secrets
+  bootstrap: agenthub-bootstrap-credentials
+
+# For a private registry, create the pull Secret separately and uncomment:
+# imagePullSecrets:
+#   - name: approved-registry-pull-secret
+
+externalDemo:
+  enabled: false

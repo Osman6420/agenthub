@@ -1,5 +1,9 @@
 # AgentHub OpenShift installation from Ubuntu
 
+> The preferred packaged path is the [Helm installation guide](openshift-helm-installation.md).
+> This document remains the lower-level `oc process`/OpenShift Template alternative and the detailed
+> source for image, provider, network and operational constraints.
+
 This guide installs AgentHub and, optionally, the standalone external-consumer showcase from an
 Ubuntu terminal using `oc`. It is designed for OpenShift's default restricted SCC: workloads do not
 request root, a fixed UID, privilege escalation, Linux capabilities or Kubernetes API credentials.

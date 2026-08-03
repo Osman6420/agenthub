@@ -1,0 +1,74 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub.fullname" . }}-default-deny-ingress
+  labels:
+    {{- include "agenthub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "agenthub.name" . | quote }}
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub.fullname" . }}-route-ingress
+  labels:
+    {{- include "agenthub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: [{{ include "agenthub.name" . | quote }}]}
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}]}
+      - {key: app.kubernetes.io/component, operator: In, values: [web, static]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressNamespaceLabels | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: 8000}
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub.fullname" . }}-monitoring-ingress
+  labels:
+    {{- include "agenthub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.monitoringNamespaceLabels | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: 8000}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub.fullname" . }}-helm-test-to-web
+  labels:
+    {{- include "agenthub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "agenthub.selectorLabels" (dict "root" . "component" "test") | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: 8000}
+{{- end }}

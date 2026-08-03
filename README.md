@@ -96,7 +96,7 @@ Prometheus scrapes `/internal/metrics` with a secret-backed bearer token through
 cluster networking. Optional OTLP export is configured with an allowlisted
 `OTEL_EXPORTER_OTLP_ENDPOINT`; an empty value disables export without affecting requests.
 MCP is default-off and must be enabled only in an approved internal/VPN overlay. Draft
-OpenShift, monitoring, and runbook assets are under `deploy/openshift`,
+OpenShift, Helm, monitoring, and runbook assets are under `deploy/openshift`, `deploy/helm`,
 `deploy/monitoring`, and `docs/operations`.
 
 ## Workflow runtime
@@ -132,7 +132,9 @@ authorized, non-self approval (30-minute expiry, request-checksum bound); a work
 - [Coding-agent handoff](docs/ai/agent-handoff.md)
 - [Local startup, health checks and manual testing](docs/manual-testing-guide.md)
 - [Single-command local stack runbook](docs/operations/local-development-stack.md)
-- [OpenShift installation from Ubuntu](docs/operations/openshift-ubuntu-installation.md)
+- [OpenShift installation with Helm](docs/operations/openshift-helm-installation.md) — preferred
+- [OpenShift bundled demo stack with Helm](docs/operations/openshift-bundled-stack-helm.md) — same-namespace PostgreSQL/Redis/MinIO
+- [OpenShift installation from Ubuntu](docs/operations/openshift-ubuntu-installation.md) — lower-level `oc` path
 - [Master plan](docs/planning/master-plan.md)
 - [ADR index](docs/adr/README.md)
 - [Task documentation and templates](docs/tasks/README.md)

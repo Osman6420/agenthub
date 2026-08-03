@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["releaseId", "images", "route", "objectStore", "provider", "existingSecrets"],
+  "properties": {
+    "releaseId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$"
+    },
+    "nameOverride": {"type": "string", "maxLength": 63},
+    "fullnameOverride": {"type": "string", "maxLength": 40},
+    "rolloutNonce": {"type": "string", "maxLength": 128},
+    "global": {"type": "object", "maxProperties": 0},
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application", "static"],
+      "properties": {
+        "application": {"$ref": "#/definitions/image"},
+        "static": {"$ref": "#/definitions/image"}
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "host": {"$ref": "#/definitions/dnsName"},
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "termination": {"type": "string", "const": "edge"},
+            "insecureEdgeTerminationPolicy": {"type": "string", "enum": ["Redirect", "Allow", "None"]}
+          }
+        }
+      }
+    },
+    "objectStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint", "bucket", "region", "allowInsecureHttp"],
+      "properties": {
+        "endpoint": {"type": "string", "pattern": "^https?://\\S+$"},
+        "bucket": {"type": "string", "minLength": 1, "maxLength": 255},
+        "region": {"type": "string", "minLength": 1, "maxLength": 100},
+        "allowInsecureHttp": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"allowInsecureHttp": {"const": false}}},
+          "then": {"properties": {"endpoint": {"pattern": "^https://\\S+$"}}}
+        }
+      ]
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "embedding"],
+      "properties": {
+        "model": {"$ref": "#/definitions/provider"},
+        "embedding": {"$ref": "#/definitions/embeddingProvider"}
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "actor": {"type": "string", "minLength": 1, "maxLength": 150}
+      }
+    },
+    "migration": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
+    "web": {"$ref": "#/definitions/workload"},
+    "runtimeWorker": {"$ref": "#/definitions/workload"},
+    "ingestionWorker": {"$ref": "#/definitions/workload"},
+    "evalWorker": {"$ref": "#/definitions/workload"},
+    "beat": {"$ref": "#/definitions/workload"},
+    "static": {"$ref": "#/definitions/workload"},
+    "hookResources": {"$ref": "#/definitions/workload"},
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "ingressNamespaceLabels": {"$ref": "#/definitions/stringMap"},
+        "monitoringNamespaceLabels": {"$ref": "#/definitions/stringMap"}
+      }
+    },
+    "existingSecrets": {
+      "type": "object",
+      "required": ["web", "runtime", "ingestion", "beat", "migration", "bootstrap"],
+      "additionalProperties": false,
+      "properties": {
+        "web": {"$ref": "#/definitions/kubernetesName"},
+        "runtime": {"$ref": "#/definitions/kubernetesName"},
+        "ingestion": {"$ref": "#/definitions/kubernetesName"},
+        "beat": {"$ref": "#/definitions/kubernetesName"},
+        "migration": {"$ref": "#/definitions/kubernetesName"},
+        "bootstrap": {"$ref": "#/definitions/kubernetesName"}
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {"name": {"$ref": "#/definitions/kubernetesName"}}
+      }
+    },
+    "externalDemo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"$ref": "#/definitions/imageOptional"},
+        "routeHost": {"type": "string"},
+        "credentialsSecret": {"$ref": "#/definitions/kubernetesName"},
+        "resources": {"$ref": "#/definitions/resources"},
+        "tmpSizeLimit": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"externalDemo": {"properties": {"enabled": {"const": true}}}}},
+      "then": {
+        "properties": {
+          "externalDemo": {
+            "properties": {
+              "image": {"$ref": "#/definitions/image"},
+              "routeHost": {"$ref": "#/definitions/dnsName"}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1, "pattern": "^[^\\s@]+$"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "imageOptional": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {"type": "string"},
+        "digest": {"type": "string"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logicalId", "revision", "host", "port", "path", "name"],
+      "properties": {
+        "logicalId": {"type": "string", "minLength": 1, "maxLength": 120},
+        "revision": {"type": "integer", "minimum": 1},
+        "host": {"$ref": "#/definitions/dnsName"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "path": {"type": "string", "pattern": "^/[^?#]*$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 255}
+      }
+    },
+    "embeddingProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logicalId", "revision", "host", "port", "path", "name", "dimensions", "indexType"],
+      "properties": {
+        "logicalId": {"type": "string", "minLength": 1, "maxLength": 120},
+        "revision": {"type": "integer", "minimum": 1},
+        "host": {"$ref": "#/definitions/dnsName"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "path": {"type": "string", "pattern": "^/[^?#]*$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 255},
+        "dimensions": {"type": "integer", "minimum": 1, "maximum": 4000},
+        "indexType": {"type": "string", "enum": ["vector", "halfvec"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"indexType": {"const": "vector"}}},
+          "then": {"properties": {"dimensions": {"maximum": 2000}}}
+        }
+      ]
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resources", "tmpSizeLimit"],
+      "properties": {
+        "resources": {"$ref": "#/definitions/resources"},
+        "tmpSizeLimit": {"type": "string", "minLength": 1},
+        "replicas": {"type": "integer", "minimum": 1},
+        "concurrency": {"type": "integer", "minimum": 1}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"$ref": "#/definitions/resourceList"},
+        "limits": {"$ref": "#/definitions/resourceList"}
+      }
+    },
+    "resourceList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory", "ephemeral-storage"],
+      "properties": {
+        "cpu": {"type": "string", "minLength": 1},
+        "memory": {"type": "string", "minLength": 1},
+        "ephemeral-storage": {"type": "string", "minLength": 1}
+      }
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
+    "dnsName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "kubernetesName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$"
+    }
+  }
+}

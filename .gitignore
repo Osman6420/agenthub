@@ -24,6 +24,8 @@ media/
 examples/external-consumer-demo/credentials.local.json
 deploy/openshift/install/*.env
 !deploy/openshift/install/openshift.env.example
+/agenthub-values*.yaml
+/agenthub-openshift.tar.gz
 celerybeat-schedule*
 
 # Test / type / lint caches

@@ -1,0 +1,14 @@
+AgentHub release {{ .Release.Name }} is installed in namespace {{ .Release.Namespace }}.
+
+Console: https://{{ .Values.route.host }}/console/
+Readiness: https://{{ .Values.route.host }}/v1/health/ready
+
+Verify:
+  helm status {{ .Release.Name }} -n {{ .Release.Namespace }}
+  oc get pods,jobs,routes -n {{ .Release.Namespace }}
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }} --logs
+
+The bootstrap password Secret is external to Helm. After a successful first install, delete it:
+  oc delete secret {{ .Values.existingSecrets.bootstrap }} -n {{ .Release.Namespace }}
+
+Keep the remaining external Secrets. Helm uninstall intentionally does not delete them or managed data.

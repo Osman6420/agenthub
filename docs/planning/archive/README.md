@@ -4,6 +4,12 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [OpenShift bundled stack Helm chart (offline verified 2026-08-03)](openshift-bundled-stack-helm-2026-08-03/plan.md);
+  [verification](openshift-bundled-stack-helm-2026-08-03/verification.md).
+
+- [OpenShift Helm installation (offline verified 2026-08-03)](openshift-helm-installation-2026-08-03/plan.md);
+  [verification](openshift-helm-installation-2026-08-03/verification.md).
+
 - [OpenShift Ubuntu installation guide (offline verified 2026-08-03)](openshift-ubuntu-install-guide-2026-08-03/plan.md);
   [verification](openshift-ubuntu-install-guide-2026-08-03/verification.md).
 
