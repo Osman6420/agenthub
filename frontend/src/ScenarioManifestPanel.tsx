@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
 import type {
-  ArtifactDraft,
   ArtifactVersionPreview,
   ManifestLogicalOption,
   ManifestPresetOption,
@@ -22,7 +21,6 @@ export function ScenarioManifestPanel({
   organization,
   projectId,
   scenarioId,
-  onOpenArtifactDraft,
   refreshArtifact,
 }: {
   api: BuilderApi;
@@ -31,7 +29,6 @@ export function ScenarioManifestPanel({
   organization?: string;
   projectId?: number;
   scenarioId?: number;
-  onOpenArtifactDraft?: (draft: ArtifactDraft) => void;
   refreshArtifact?: { id: number; artifactType: string; logicalId: string };
 }) {
   const [types, setTypes] = useState<ManifestTypeOption[]>([]);
@@ -41,7 +38,6 @@ export function ScenarioManifestPanel({
   const [artifactType, setArtifactType] = useState("");
   const [logicalId, setLogicalId] = useState("");
   const [versionId, setVersionId] = useState("");
-  const [role, setRole] = useState("");
   const [requiredRole, setRequiredRole] = useState("");
   const [selected, setSelected] = useState<SelectedManifestItem[]>([]);
   const [requirements, setRequirements] = useState<ManifestRequirement[]>([]);
@@ -52,6 +48,10 @@ export function ScenarioManifestPanel({
   const [dirty, setDirty] = useState(false);
   const [dirtyNoticeVisible, setDirtyNoticeVisible] = useState(false);
   const [preview, setPreview] = useState<ArtifactVersionPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [promptText, setPromptText] = useState("");
+  const [versionDescription, setVersionDescription] = useState("");
+  const versionDescriptionRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -101,20 +101,24 @@ export function ScenarioManifestPanel({
     () => versions.find((item) => String(item.id) === versionId),
     [versionId, versions],
   );
-  const duplicateVersion = selected.some((item) => item.artifact_version_id === selectedVersion?.id);
-  const duplicateRole = selected.some((item) => item.role === role);
-  const canAdd = Boolean(selectedVersion && role && !duplicateVersion && !duplicateRole);
+  const effectiveRole = requiredRole || roles[0] || artifactType;
+  const originalPromptText = preview?.artifact_type === "prompt_template" &&
+    typeof preview.body?.template === "string" ? preview.body.template : "";
+  const promptChanged = preview?.artifact_type === "prompt_template" &&
+    promptText !== originalPromptText;
 
   async function chooseType(value: string, requiredRole = "") {
     setArtifactType(value);
     setLogicalId("");
     setVersionId("");
-    setRole(requiredRole);
     setRequiredRole(requiredRole);
     setLogicals([]);
     setVersions([]);
     setRoles([]);
     setDiagnostics([]);
+    setPreview(null);
+    setPromptText("");
+    setVersionDescription("");
     if (!value) return;
     try {
       const result = await api.manifestOptions(optionsUrl, { artifact_type: value });
@@ -129,10 +133,12 @@ export function ScenarioManifestPanel({
   async function chooseLogical(value: string, selectVersionId = "") {
     setLogicalId(value);
     setVersionId("");
-    setRole(requiredRole);
     setVersions([]);
     setRoles([]);
     setDiagnostics([]);
+    setPreview(null);
+    setPromptText("");
+    setVersionDescription("");
     if (!value) return;
     try {
       const result = await api.manifestOptions(optionsUrl, {
@@ -186,65 +192,45 @@ export function ScenarioManifestPanel({
     return () => { cancelled = true; };
   }, [api, optionsUrl, refreshArtifact]);
 
-  async function openPreview() {
-    if (!selectedVersion) return;
-    setBusy(true);
-    setStatus("");
-    try {
-      setPreview(await api.artifactVersionPreview(scenarioPublicId, selectedVersion.id));
-    } catch (error) {
-      setStatus(formatError(error));
-    } finally {
-      setBusy(false);
+  useEffect(() => {
+    if (!selectedVersion) {
+      setPreview(null);
+      setPromptText("");
+      return;
     }
-  }
+    let cancelled = false;
+    setPreviewLoading(true);
+    setPreview(null);
+    setPromptText("");
+    setVersionDescription("");
+    void api.artifactVersionPreview(scenarioPublicId, selectedVersion.id).then((result) => {
+      if (cancelled) return;
+      setPreview(result);
+      setPromptText(result.artifact_type === "prompt_template" &&
+        typeof result.body?.template === "string" ? result.body.template : "");
+    }).catch((error: unknown) => {
+      if (!cancelled) setStatus(formatError(error));
+    }).finally(() => {
+      if (!cancelled) setPreviewLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [api, scenarioPublicId, selectedVersion]);
 
-  async function editPreviewAsNewVersion() {
-    if (!preview || !organization || !projectId || !scenarioId || !onOpenArtifactDraft) return;
-    setBusy(true);
-    setStatus("");
-    try {
-      const draft = await api.createArtifactDraft({
-        organization,
-        project_id: projectId,
-        scenario_id: scenarioId,
-        source_artifact_version_id: preview.id,
-      });
-      onOpenArtifactDraft(draft);
-    } catch (error) {
-      setStatus(formatError(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function addSelection() {
-    if (!selectedVersion || !canAdd) return;
+  async function applySelection(item: SelectedManifestItem) {
     setSelected((current) => [
-      ...current,
-      {
-        artifact_version_id: selectedVersion.id,
-        role,
-        artifactType,
-        logicalId,
-        version: selectedVersion.version,
-        checksum: selectedVersion.checksum,
-        description: selectedVersion.description,
-      },
+      ...current.filter((candidate) => candidate.role !== item.role),
+      item,
     ]);
     setDirty(true);
     setDirtyNoticeVisible(true);
     setDiagnostics([]);
     setStatus("Manifest değişti; kanonik ön kontrol yeniden çalıştırılmalıdır.");
     setReleaseId(null);
-    setVersionId("");
-    setRole("");
-    setRequiredRole("");
-    if (artifactType === "workflow_definition" && role === "workflow_definition") {
+    if (item.artifactType === "workflow_definition" && item.role === "workflow_definition") {
       try {
         const result = await api.manifestRequirements(
           scenarioPublicId,
-          selectedVersion.id,
+          item.artifact_version_id,
         );
         setDiagnostics(result.diagnostics);
         setRequirements(result.requirements ?? []);
@@ -254,6 +240,64 @@ export function ScenarioManifestPanel({
       } catch (error) {
         setStatus(formatError(error));
       }
+    }
+  }
+
+  async function useSelectedVersion() {
+    if (!selectedVersion || !effectiveRole) return;
+    await applySelection({
+      artifact_version_id: selectedVersion.id,
+      role: effectiveRole,
+      artifactType,
+      logicalId,
+      version: selectedVersion.version,
+      checksum: selectedVersion.checksum,
+      description: selectedVersion.description,
+    });
+  }
+
+  async function publishChangedPrompt() {
+    if (!preview || !promptChanged || !effectiveRole) return;
+    if (!versionDescription.trim()) {
+      setStatus("Bu sürümde nelerin değiştiğini yazın.");
+      versionDescriptionRef.current?.focus();
+      return;
+    }
+    if (!organization || projectId === undefined || scenarioId === undefined) {
+      setStatus("Yeni prompt sürümü için proje ve senaryo bağlamı bulunamadı.");
+      return;
+    }
+    setBusy(true);
+    setStatus("");
+    try {
+      let draft = await api.createArtifactDraft({
+        organization,
+        project_id: projectId,
+        scenario_id: scenarioId,
+        source_artifact_version_id: preview.id,
+      });
+      draft = await api.updateArtifactDraft(draft.id, {
+        revision: draft.revision,
+        body: { ...draft.body, template: promptText },
+      });
+      const published = await api.publishArtifactDraft(
+        draft.id, draft.revision, versionDescription.trim(),
+      );
+      await applySelection({
+        artifact_version_id: published.artifact_version_id,
+        role: effectiveRole,
+        artifactType: published.artifact_type,
+        logicalId: published.logical_id,
+        version: published.version,
+        checksum: published.checksum,
+        description: published.version_description,
+      });
+      await chooseLogical(published.logical_id, String(published.artifact_version_id));
+      setStatus(`Yeni immutable prompt v${published.version} yayımlandı ve manifest’e eklendi.`);
+    } catch (error) {
+      setStatus(formatError(error));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -355,7 +399,6 @@ export function ScenarioManifestPanel({
         <select aria-label="Manifest kesin sürümü" value={versionId}
           disabled={!logicalId} onChange={(event) => {
             setVersionId(event.target.value);
-            setPreview(null);
           }}>
           <option value="">Sürüm seçin</option>
           {versions.map((item) => <option key={item.id} value={item.id}>
@@ -363,23 +406,9 @@ export function ScenarioManifestPanel({
           </option>)}
         </select>
       </label>
-      <label>Manifest rolü
-        <select aria-label="Manifest rolü" value={role}
-          disabled={!versionId || Boolean(requiredRole)}
-          onChange={(event) => setRole(event.target.value)}>
-          <option value="">Rol seçin</option>
-          {roles.map((item) => <option key={item} value={item}>{item}</option>)}
-        </select>
-      </label>
-      <button type="button" disabled={!canAdd}
-        onClick={() => void addSelection()}>Manifest’e ekle</button>
     </div>
 
-    {selectedVersion && <div style={{ margin: "10px 0" }}>
-      <button type="button" disabled={busy} onClick={() => void openPreview()}>
-        Artifact içeriğini aç
-      </button>
-    </div>}
+    {previewLoading && <p role="status">Artifact içeriği yükleniyor…</p>}
 
     {preview && <section aria-label="Exact artifact önizleme" style={selectedRow}>
       <div style={{ minWidth: 0, width: "100%" }}>
@@ -388,22 +417,35 @@ export function ScenarioManifestPanel({
         <p>{preview.logical_description}</p>
         {preview.body_too_large
           ? <div role="alert">İçerik güvenli önizleme sınırını aşıyor.</div>
-          : <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-              {JSON.stringify(preview.body, null, 2)}
-            </pre>}
-        {preview.can_create_new_version && onOpenArtifactDraft && <button type="button"
-          disabled={busy} onClick={() => void editPreviewAsNewVersion()}>
-          Yeni sürüm olarak düzenle
-        </button>}
+          : preview.artifact_type === "prompt_template"
+            ? <label style={{ display: "block" }}>Prompt metni
+                <textarea aria-label="Seçili prompt metni" rows={12} value={promptText}
+                  readOnly={!preview.can_create_new_version}
+                  onChange={(event) => setPromptText(event.target.value)}
+                  style={{ width: "100%", marginTop: 6 }} />
+              </label>
+            : <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                {JSON.stringify(preview.body, null, 2)}
+              </pre>}
+        {promptChanged && preview.can_create_new_version && <label style={{ display: "block" }}>
+          Bu sürümde neler değişti?
+          <input ref={versionDescriptionRef} aria-label="Prompt sürüm değişiklikleri"
+            value={versionDescription}
+            onChange={(event) => setVersionDescription(event.target.value)}
+            style={{ width: "100%", marginTop: 6 }} />
+        </label>}
+        <div style={{ marginTop: 10 }}>
+          {promptChanged && preview.can_create_new_version
+            ? <button type="button" disabled={busy} onClick={() => void publishChangedPrompt()}>
+                Yeni sürümü yayımla ve ekle
+              </button>
+            : <button type="button" disabled={busy || !effectiveRole}
+                onClick={() => void useSelectedVersion()}>
+                Bu exact sürümü ekle
+              </button>}
+        </div>
       </div>
-      <button type="button" onClick={() => setPreview(null)}>Kapat</button>
     </section>}
-
-    {(duplicateVersion || duplicateRole) && <div role="alert" style={errorBox}>
-      {duplicateVersion
-        ? "Bu exact version zaten seçili."
-        : "Bu manifest rolü zaten başka bir exact version tarafından kullanılıyor."}
-    </div>}
 
     {selected.length === 0
       ? <p style={{ color: "#8b95a7" }}>Henüz exact artifact seçilmedi.</p>

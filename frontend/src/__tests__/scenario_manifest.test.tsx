@@ -9,11 +9,21 @@ afterEach(() => {
 });
 
 describe("Scenario Studio exact candidate manifest", () => {
-  it("previews an exact body and opens a prompt as a new-version draft", async () => {
+  it("shows a selected prompt inline, publishes a changed version, and adds it", async () => {
+    let published = false;
+    let mutationCount = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
       const value = String(url);
       let payload: unknown;
-      if (value.includes("artifact-versions/7")) {
+      if (value.includes("artifact-versions/12")) {
+        payload = {
+          id: 12, artifact_type: "prompt_template", logical_id: "answer_prompt",
+          logical_description: "Stable answer behavior", version: 2,
+          version_description: "Tone update", checksum: "b".repeat(64),
+          body: { template: "UPDATED_PROMPT_TEXT" }, body_too_large: false,
+          can_create_new_version: false,
+        };
+      } else if (value.includes("artifact-versions/7")) {
         payload = {
           id: 7,
           artifact_type: "prompt_template",
@@ -26,7 +36,26 @@ describe("Scenario Studio exact candidate manifest", () => {
           body_too_large: false,
           can_create_new_version: true,
         };
+      } else if (value.includes("/artifact-drafts/9/publish/")) {
+        mutationCount += 1;
+        published = true;
+        payload = {
+          published: true, artifact_version_id: 12, artifact_type: "prompt_template",
+          logical_id: "answer_prompt", logical_description: "Stable answer behavior",
+          version: 2, version_description: "Tone update", checksum: "b".repeat(64), revision: 3,
+        };
+      } else if (value.includes("/artifact-drafts/9/")) {
+        mutationCount += 1;
+        payload = {
+          id: 9, draft_kind: "artifact", artifact_type: "prompt_template",
+          organization: "org", organization_id: 1, project_id: 2, scenario_id: 3,
+          name: "answer_prompt prompt", logical_id: "answer_prompt",
+          logical_description: "Stable answer behavior", body: { template: "UPDATED_PROMPT_TEXT" },
+          last_published_version: 0, last_published_at: null,
+          updated_at: "2026-08-03T00:00:00Z", revision: 2, can_write: true,
+        };
       } else if (value.endsWith("/artifact-drafts/")) {
+        mutationCount += 1;
         payload = {
           id: 9,
           draft_kind: "artifact",
@@ -50,10 +79,14 @@ describe("Scenario Studio exact candidate manifest", () => {
         payload = {
           level: "exact_version",
           roles: ["prompt_template"],
-          options: [{
+          options: published ? [{
+            id: 12, version: 2, description: "Tone update", checksum: "b".repeat(64),
+            status: "published", pinned_release_count: 0,
+          }, {
             id: 7, version: 1, description: "Initial", checksum: "a".repeat(64),
             status: "published", pinned_release_count: 0,
-          }],
+          }] : [{ id: 7, version: 1, description: "Initial", checksum: "a".repeat(64),
+            status: "published", pinned_release_count: 0 }],
         };
       } else if (value.includes("artifact_type=prompt_template")) {
         payload = {
@@ -74,10 +107,9 @@ describe("Scenario Studio exact candidate manifest", () => {
         headers: { "Content-Type": "application/json" },
       });
     }));
-    const onOpenArtifactDraft = vi.fn();
     render(<ScenarioManifestPanel api={new BuilderApi("/console/api/builder/")}
       scenarioPublicId="scenario" optionsUrl="/artifact-options/" organization="org"
-      projectId={2} scenarioId={3} onOpenArtifactDraft={onOpenArtifactDraft} />);
+      projectId={2} scenarioId={3} />);
 
     await screen.findByRole("option", { name: "Prompt" });
     fireEvent.change(screen.getByLabelText("Manifest artifact türü"), {
@@ -91,12 +123,24 @@ describe("Scenario Studio exact candidate manifest", () => {
     fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), {
       target: { value: "7" },
     });
-    fireEvent.click(screen.getByText("Artifact içeriğini aç"));
-    expect(await screen.findByText(/PRIVATE_PROMPT_TEXT/)).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Yeni sürüm olarak düzenle"));
-    await waitFor(() => expect(onOpenArtifactDraft).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 9, artifact_type: "prompt_template" }),
-    ));
+    const prompt = await screen.findByLabelText("Seçili prompt metni");
+    expect(prompt).toHaveValue("PRIVATE_PROMPT_TEXT");
+    expect(screen.queryByLabelText("Manifest rolü")).not.toBeInTheDocument();
+    expect(screen.queryByText("Artifact içeriğini aç")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Bu exact sürümü ekle"));
+    expect(screen.getAllByText(/answer_prompt:v1/).length).toBeGreaterThan(0);
+    fireEvent.change(prompt, { target: { value: "UPDATED_PROMPT_TEXT" } });
+    fireEvent.click(screen.getByText("Yeni sürümü yayımla ve ekle"));
+    expect(mutationCount).toBe(0);
+    expect(screen.getByLabelText("Prompt sürüm değişiklikleri")).toHaveFocus();
+    expect(screen.getByText("Bu sürümde nelerin değiştiğini yazın.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Prompt sürüm değişiklikleri"), {
+      target: { value: "Tone update" },
+    });
+    fireEvent.click(screen.getByText("Yeni sürümü yayımla ve ekle"));
+    expect(await screen.findByText(/answer_prompt:v2/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/answer_prompt:v1/)).not.toBeInTheDocument());
+    expect(screen.getByText(/Yeni immutable prompt v2 yayımlandı/)).toBeInTheDocument();
   });
 
   it("selects the newly published exact version when the picker remounts", async () => {
@@ -105,7 +149,15 @@ describe("Scenario Studio exact candidate manifest", () => {
       const type = parsed.searchParams.get("artifact_type");
       const logical = parsed.searchParams.get("logical_id");
       let payload: unknown;
-      if (!type) {
+      if (parsed.pathname.includes("artifact-versions/12")) {
+        payload = {
+          id: 12, artifact_type: "prompt_template", logical_id: "answer_prompt",
+          logical_description: "Stable answer behavior", version: 2,
+          version_description: "Updated", checksum: "b".repeat(64),
+          body: { template: "Updated" }, body_too_large: false,
+          can_create_new_version: false,
+        };
+      } else if (!type) {
         payload = {
           level: "artifact_type",
           options: [{ value: "prompt_template", label: "Prompt", description: "Prompt" }],
@@ -142,6 +194,7 @@ describe("Scenario Studio exact candidate manifest", () => {
       expect(screen.getByLabelText("Manifest mantıksal artifactı")).toHaveValue("answer_prompt");
       expect(screen.getByLabelText("Manifest kesin sürümü")).toHaveValue("12");
     });
+    expect(await screen.findByLabelText("Seçili prompt metni")).toHaveAttribute("readonly");
   });
 
   it("preserves selected exact pins when canonical preflight and compile fail", async () => {
@@ -150,7 +203,21 @@ describe("Scenario Studio exact candidate manifest", () => {
       const value = String(url);
       calls.push(value);
       let payload: unknown;
-      if (value.includes("release-manifest/preflight")) {
+      if (value.includes("artifact-versions/")) {
+        const isTool = value.includes("/43/");
+        payload = {
+          id: isTool ? 43 : 42,
+          artifact_type: isTool ? "tool_binding" : "workflow_definition",
+          logical_id: isTool ? "search_binding" : "support_flow",
+          logical_description: isTool ? "Search tool" : "Support",
+          version: isTool ? 1 : 2,
+          version_description: isTool ? "Search v1" : "Adds validation",
+          checksum: (isTool ? "b" : "a").repeat(64),
+          body: isTool ? { tool: "search" } : { definition: { nodes: [] } },
+          body_too_large: false,
+          can_create_new_version: false,
+        };
+      } else if (value.includes("release-manifest/preflight")) {
         payload = {
           ok: false,
           diagnostics: [{
@@ -251,13 +318,10 @@ describe("Scenario Studio exact candidate manifest", () => {
     fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), {
       target: { value: "42" },
     });
-    fireEvent.change(screen.getByLabelText("Manifest rolü"), {
-      target: { value: "workflow_definition" },
-    });
-    fireEvent.click(screen.getByText("Manifest’e ekle"));
+    fireEvent.click(await screen.findByText("Bu exact sürümü ekle"));
 
-    expect(screen.getAllByText("workflow_definition").length).toBeGreaterThan(1);
-    expect(screen.getByText(/support_flow:v2/)).toBeInTheDocument();
+    expect(screen.getAllByText("workflow_definition").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/support_flow:v2/).length).toBeGreaterThan(0);
     expect(await screen.findByText("tool_binding.search")).toBeInTheDocument();
     expect(screen.getByText(/node search/)).toBeInTheDocument();
     fireEvent.click(screen.getByText("Bu rol için artifact seç"));
@@ -269,19 +333,17 @@ describe("Scenario Studio exact candidate manifest", () => {
     fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), {
       target: { value: "43" },
     });
-    expect(screen.getByLabelText("Manifest rolü")).toHaveValue("tool_binding.search");
-    expect(screen.getByLabelText("Manifest rolü")).toBeDisabled();
-    fireEvent.click(screen.getByText("Manifest’e ekle"));
-    expect(screen.getByText(/search_binding:v1/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByText("Bu exact sürümü ekle"));
+    expect(screen.getAllByText(/search_binding:v1/).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByText("Kanonik ön kontrol"));
     await screen.findByText(/Kanonik ön kontrol düzeltme gerektiriyor/);
-    expect(screen.getByText(/support_flow:v2/)).toBeInTheDocument();
+    expect(screen.getAllByText(/support_flow:v2/).length).toBeGreaterThan(0);
     expect(screen.getByText(/workflow_missing/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Candidate release derle"));
     await screen.findByText(/Candidate oluşturulmadı/);
-    expect(screen.getByText(/support_flow:v2/)).toBeInTheDocument();
+    expect(screen.getAllByText(/support_flow:v2/).length).toBeGreaterThan(0);
     expect(screen.getByText(/workflow_compile_failed/)).toBeInTheDocument();
     await waitFor(() => expect(calls.some((url) => url.includes("release-manifest/compile"))).toBe(true));
   });
@@ -290,7 +352,14 @@ describe("Scenario Studio exact candidate manifest", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const value = String(url);
       let payload: unknown;
-      if (value.includes("release-manifest/compile")) {
+      if (value.includes("artifact-versions/7")) {
+        payload = {
+          id: 7, artifact_type: "workflow_definition", logical_id: "flow",
+          logical_description: "Flow", version: 1, version_description: "First",
+          checksum: "a".repeat(64), body: { definition: { nodes: [] } },
+          body_too_large: false, can_create_new_version: false,
+        };
+      } else if (value.includes("release-manifest/compile")) {
         payload = {
           ok: true,
           diagnostics: [],
@@ -349,16 +418,13 @@ describe("Scenario Studio exact candidate manifest", () => {
     fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), {
       target: { value: "7" },
     });
-    fireEvent.change(screen.getByLabelText("Manifest rolü"), {
-      target: { value: "workflow_definition" },
-    });
-    fireEvent.click(screen.getByText("Manifest’e ekle"));
+    fireEvent.click(await screen.findByText("Bu exact sürümü ekle"));
     fireEvent.click(screen.getByText("Candidate release derle"));
 
     expect(await screen.findByText("Candidate #17 aç")).toHaveAttribute(
       "href", "/console/releases/17/",
     );
-    expect(screen.getByText(/flow:v1/)).toBeInTheDocument();
+    expect(screen.getAllByText(/flow:v1/).length).toBeGreaterThan(0);
   });
 
   it("loads a recommendation and exposes explicit dirty-state choices", async () => {

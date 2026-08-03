@@ -478,8 +478,11 @@ is never an authorization or readiness authority.
 
 In progress — owner authorized sequential implementation and per-part commits on 2026-08-03.
 [Part 1 — prompt-first artifact foundation](../scenario-studio-authoring-journey-closure-part-1/plan.md)
-is implemented and verified, pending its isolated commit. Part 2 will extend the same governed
-authoring model to retrieval and profile artifacts; later milestones remain planned.
+was committed at `ef05d3b`. [Part 2 — retrieval/profile authoring and staged-index selectors](
+../scenario-studio-authoring-journey-closure-part-2/plan.md) remains the next expansion unit. The
+[prompt inline manifest correction](../prompt-inline-manifest-authoring/plan.md) was implemented and
+verified first after owner acceptance showed that Part 1's separate preview/editor controls did not
+yet provide the required select–inspect–edit–bind task. Later milestones remain planned.
 
 ## Completion criteria
 
