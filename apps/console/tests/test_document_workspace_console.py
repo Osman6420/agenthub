@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import ANY, patch
@@ -326,9 +327,10 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     assert "summary-model r1" in detail_body
     assert "summary-v1" in detail_body
     assert "SUMMARIZE_CONTENT" in detail_body
-    assert "Yeni immutable sürüm düzenle" in detail_body
-    assert "artifact_type=chunking_profile" in detail_body
-    assert f"artifact_version_id={chunking.pk}" in detail_body
+    assert "Yeni sürümü yayımla" in detail_body
+    assert 'data-artifact-type="chunking_profile"' in detail_body
+    assert f'data-source-artifact-id="{chunking.pk}"' in detail_body
+    assert "bağlı senaryoda author sorumluluğu gerekir" not in detail_body
     assert "Platform-managed immutable revizyon" in detail_body
     assert "Platform profillerini yönet" not in detail_body
     assert "embedding.internal.example" not in detail_body
@@ -373,6 +375,149 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     with patch("apps.console.views.create_build_job") as create_job:
         client.post(url, {"embedding_profile": foreign.pk, "ocr_profile": ""})
         create_job.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_profile_authoring_uses_exact_document_set_manager_not_scenario_author(
+    client: Client,
+) -> None:
+    org = Organization.objects.create(slug="org-a", name="A")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    document_set.versions.create(
+        organization=org,
+        version=1,
+        status=DocumentSetVersionStatus.PROMOTABLE,
+    )
+    chunking, _ = _document_profiles(org)
+    manager = _member("manager", org, Role.DOCUMENT_MANAGER)
+    publish_url = reverse(
+        "console:document_set_profile_artifact_publish", args=[document_set.public_id]
+    )
+
+    client.force_login(manager)
+    detail = client.get(
+        reverse("console:document_set_detail_public", args=[document_set.public_id])
+    )
+    assert detail.status_code == 200
+    detail_body = detail.content.decode()
+    assert f'data-source-artifact-id="{chunking.pk}"' in detail_body
+    assert "Yeni parçalama profili ekle" in detail_body
+    assert "bağlı senaryoda author sorumluluğu gerekir" not in detail_body
+    published = client.post(
+        publish_url,
+        data=json.dumps(
+            {
+                "source_artifact_id": chunking.pk,
+                "artifact_type": ArtifactType.CHUNKING_PROFILE,
+                "version_description": "Larger chunks",
+                "body": {**chunking.body, "size": 900},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert published.status_code == 201
+    payload = published.json()
+    assert payload["version"] == 2
+    assert payload["body"]["size"] == 900
+    assert ArtifactVersion.objects.get(pk=payload["artifact_version_id"]).created_by == "manager"
+    assert AuditEvent.objects.filter(
+        action="document_set.profile_artifact.publish",
+        outcome="success",
+        resource_id="chunk:v2",
+    ).exists()
+    created = client.post(
+        publish_url,
+        data=json.dumps(
+            {
+                "artifact_type": ArtifactType.PROMPT_TEMPLATE,
+                "logical_id": "kb.summary",
+                "logical_description": "Document summary instruction",
+                "version_description": "Initial wording",
+                "body": {"template": "Summarize the document."},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert created.status_code == 201
+    assert created.json()["version"] == 1
+
+    other = Organization.objects.create(slug="org-b", name="B")
+    foreign = create_artifact_version(
+        organization=other,
+        artifact_type=ArtifactType.CHUNKING_PROFILE,
+        logical_id="foreign.chunk",
+        body=chunking.body,
+        created_by="foreign",
+    )
+    foreign_source = client.post(
+        publish_url,
+        data=json.dumps(
+            {
+                "source_artifact_id": foreign.pk,
+                "version_description": "Forged source",
+                "body": {**chunking.body, "size": 1000},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert foreign_source.status_code == 400
+    assert foreign_source.json()["code"] == "source_artifact_unavailable"
+
+    scenario_editor = _member("scenario-editor", org, Role.SCENARIO_EDITOR)
+    membership = OrganizationMembership.objects.get(organization=org, user=scenario_editor)
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=membership,
+        document_set=document_set,
+        responsibility=DocumentSetResponsibility.METADATA_VIEWER,
+        assigned_by=manager,
+    )
+    project = AIProject.objects.create(organization=org, slug="assistant", name="Assistant")
+    scenario = Scenario.objects.create(project=project, slug="answer", name="Answer")
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=membership,
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=manager,
+    )
+    ScenarioDocumentSetBinding.objects.create(
+        organization=org,
+        scenario=scenario,
+        document_set=document_set,
+        created_by="manager",
+    )
+    client.force_login(scenario_editor)
+    viewer_detail = client.get(
+        reverse("console:document_set_detail_public", args=[document_set.public_id])
+    )
+    assert viewer_detail.status_code == 200
+    assert "data-document-profile-editor" not in viewer_detail.content.decode()
+    denied = client.post(
+        publish_url,
+        data=json.dumps(
+            {
+                "source_artifact_id": chunking.pk,
+                "version_description": "Forbidden",
+                "body": {**chunking.body, "size": 1000},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert denied.status_code == 403
+    assert (
+        ArtifactVersion.objects.filter(
+            organization=org,
+            type=ArtifactType.CHUNKING_PROFILE,
+            logical_id=chunking.logical_id,
+        ).count()
+        == 2
+    )
+    assert AuditEvent.objects.filter(
+        action="document_set.profile_artifact.publish",
+        outcome="failure",
+        reason="not_allowed",
+    ).exists()
 
 
 @pytest.mark.django_db

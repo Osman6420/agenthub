@@ -15,6 +15,8 @@
 - Rename/copy nodes to collide with another node's prompt/model/retrieval role.
 - Treat missing and invalid explicit bindings alike and silently fall back to a default.
 - Use Scenario Editor candidate authority to promote, activate, canary or otherwise affect traffic.
+- Use authority over one bound scenario to create/version profiles for a shared document set, or use
+  authority over one document set to mutate another set's selected artifact lineage.
 - Leak model/embedding/OCR endpoint or secret fields through inline selectors or diagnostics.
 - Migrate retrieval ownership in a way that changes an active release/index without explicit publish
   and promotion.
@@ -25,6 +27,8 @@
   explicit-binding failure is deny-closed.
 - Matched Scenario Editor/Release Manager allow-deny tests for candidate and every live transition,
   including direct POST and cross-tenant probes.
+- Matched Document Set Manager/scenario-only editor/viewer tests: only the exact set manager may
+  create/version its preparation artifacts, regardless of how many scenarios bind the set.
 - Safe profile serializers with endpoint/secret negative assertions and no content-bearing audit.
 - Compiler-version/checkpoint compatibility tests plus legacy release/index replay evidence.
 - Additive migration, preserved historical provenance, prior-active-state rollback and browser tests

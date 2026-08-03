@@ -77,6 +77,9 @@ without gaining any live-traffic authority.
 
 ## Authorization lifecycle
 
+- Exact Document Set Manager: inspect, create and version chunking and document-summary
+  prompt/model artifacts for that document set. A bound-scenario responsibility is neither required
+  nor sufficient; the same set may be shared by multiple scenarios.
 - Exact Scenario Editor: edit workflow and node-bound artifacts, override contracts, assemble,
   preflight and compile a candidate, and run required evaluation.
 - Release Manager/Approver: promote, rollback, canary/traffic transitions, scenario activate/disable
@@ -87,17 +90,20 @@ without gaining any live-traffic authority.
 
 ## Delivery parts
 
-1. **Defaults and navigation:** automatic input/output defaults; move eval authoring; remove redundant
+1. **Document-set authority correction:** remove bound-scenario author lookup from every staged-index
+   authoring affordance; add exact document-set-manager create/new-version endpoints and inline
+   controls with tenant/type/profile re-resolution.
+2. **Defaults and navigation:** automatic input/output defaults; move eval authoring; remove redundant
    scenario-main actions without breaking direct-route authorization.
-2. **Generate-node binding:** inline prompt/model controls, stable hidden roles, immutable reuse/new
+3. **Generate-node binding:** inline prompt/model controls, stable hidden roles, immutable reuse/new
    version behavior, multi-Generate support and release dependency tests.
-3. **Retrieve-node binding:** DSL/compiler/runtime `retrieval_profile_ref`, per-node structured editor,
+4. **Retrieve-node binding:** DSL/compiler/runtime `retrieval_profile_ref`, per-node structured editor,
    multi-Retrieve support, compatibility fallback and compiled-contract bump.
-4. **Document-set inline authoring:** chunking and summary prompt/model inline edit/new-version;
+5. **Document-set inline authoring:** chunking and summary prompt/model inline edit/new-version;
    retire Studio handoffs and preserve safe embedding/OCR projection.
-5. **Candidate authority simplification:** allow exact Scenario Editors to preflight/compile/evaluate;
+6. **Candidate authority simplification:** allow exact Scenario Editors to preflight/compile/evaluate;
    keep all live traffic transitions release-manager-only.
-6. **Cleanup and migration:** remove obsolete generic primary controls, migrate/deprecate duplicate
+7. **Cleanup and migration:** remove obsolete generic primary controls, migrate/deprecate duplicate
    retrieval ownership additively, update current-behavior docs, and run full PostgreSQL/browser gates.
 
 ## Acceptance criteria
@@ -133,4 +139,5 @@ without gaining any live-traffic authority.
 
 ## Status
 
-Planned. No application code or authorization behavior is changed by this planning update.
+Part 8A implemented and verified: document-set profile create/new-version now uses exact Document Set
+Manager authority, independent of every bound scenario. Later delivery parts remain planned.

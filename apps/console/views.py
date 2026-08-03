@@ -14,7 +14,6 @@ from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -94,6 +93,10 @@ from apps.documents.models import (
     GrantPrincipalType,
     ParseStatus,
     ScenarioDocumentSetBinding,
+)
+from apps.documents.profile_authoring import (
+    DocumentProfileAuthoringError,
+    publish_document_profile_artifact,
 )
 from apps.documents.services import DocumentError, DocumentSetControlError
 from apps.documents.storage import StorageError
@@ -4130,23 +4133,6 @@ def document_set_detail(
             "scenario__project__slug", "scenario__slug"
         )
     )
-    authoring_scenario = (
-        next(
-            (
-                binding.scenario
-                for binding in bindings
-                if can_author_scenarios(
-                    request.user,
-                    binding.scenario.organization_id,
-                    project=binding.scenario.project,
-                    scenario=binding.scenario,
-                )
-            ),
-            None,
-        )
-        if can_write
-        else None
-    )
     preparation = (
         DocumentSetPreparationProfile.objects.filter(
             organization_id=document_set.organization_id,
@@ -4191,25 +4177,6 @@ def document_set_detail(
                 items.append(selected)
         return items
 
-    def _artifact_edit_url(artifact: ArtifactVersion) -> str:
-        if authoring_scenario is None or artifact.type not in {
-            ArtifactType.CHUNKING_PROFILE,
-            ArtifactType.RETRIEVAL_PROFILE,
-            ArtifactType.PROMPT_TEMPLATE,
-            ArtifactType.MODEL_PROFILE,
-        }:
-            return ""
-        query = urlencode(
-            {
-                "organization": document_set.organization.slug,
-                "scenario": str(authoring_scenario.public_id),
-                "artifact_type": artifact.type,
-                "logical_id": artifact.logical_id,
-                "artifact_version_id": artifact.pk,
-            }
-        )
-        return f"{reverse('console:builder')}?{query}"
-
     def _artifact_details(field_name: str) -> list[dict[str, object]]:
         field = cast(Any, build_form.fields[field_name])
         artifacts = _bounded_with_selected(field.queryset, build_initial.get(field_name))
@@ -4246,7 +4213,6 @@ def document_set_detail(
                     if profile is not None
                     else "Referans verilen platform model profili aktif değil veya bulunamadı."
                 )
-            edit_url = _artifact_edit_url(artifact)
             encoded_body = json.dumps(artifact.body, ensure_ascii=False, indent=2)
             body_too_large = len(encoded_body.encode("utf-8")) > 32 * 1024
             details.append(
@@ -4256,12 +4222,14 @@ def document_set_detail(
                     "summary": summary,
                     "body_json": "" if body_too_large else encoded_body,
                     "body_too_large": body_too_large,
-                    "edit_url": edit_url,
-                    "edit_reason": (
-                        "Yeni immutable sürüm Scenario Studio’da oluşturulur."
-                        if edit_url
-                        else "Düzenlemek için bağlı senaryoda author sorumluluğu gerekir."
-                    ),
+                    "artifact_type": artifact.type,
+                    "prompt_text": artifact.body.get("template", "")
+                    if artifact.type == ArtifactType.PROMPT_TEMPLATE
+                    else "",
+                    "profile_id": artifact.body.get("profile_id", "")
+                    if artifact.type == ArtifactType.MODEL_PROFILE
+                    else "",
+                    "can_edit": can_promote_index,
                 }
             )
         return details
@@ -4316,6 +4284,80 @@ def document_set_detail(
             "summary_model": _artifact_details("summary_model_profile"),
             "summary_prompt": _artifact_details("summary_prompt_contract"),
         }
+    document_model_profiles = (
+        list(
+            ModelProfile.objects.filter(status=ModelProfileStatus.ACTIVE)
+            .only(
+                "public_id",
+                "logical_id",
+                "revision",
+                "provider",
+                "model",
+                "max_output_tokens",
+            )
+            .order_by("logical_id", "-revision")[:100]
+        )
+        if can_promote_index
+        else []
+    )
+    selected_model_profile_ids = {
+        str(item.get("profile_id"))
+        for item in build_profile_details["summary_model"]
+        if item.get("profile_id")
+    }
+    missing_model_profile_ids = selected_model_profile_ids - {
+        str(profile.public_id) for profile in document_model_profiles
+    }
+    if missing_model_profile_ids:
+        document_model_profiles.extend(
+            ModelProfile.objects.filter(
+                public_id__in=missing_model_profile_ids,
+                status=ModelProfileStatus.ACTIVE,
+            ).only(
+                "public_id",
+                "logical_id",
+                "revision",
+                "provider",
+                "model",
+                "max_output_tokens",
+            )
+        )
+    document_model_profile_options = [
+        {
+            "id": str(profile.public_id),
+            "label": (
+                f"{profile.logical_id}:r{profile.revision} · {profile.provider} / {profile.model}"
+            ),
+        }
+        for profile in document_model_profiles
+    ]
+    document_profile_new_bodies = {
+        ArtifactType.CHUNKING_PROFILE: json.dumps(
+            {
+                "api_version": "agenthub/chunking/v1",
+                "kind": "ChunkingProfile",
+                "strategy": "tokens",
+                "size": 800,
+                "overlap": 80,
+                "max_chunks": 1000,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        ArtifactType.RETRIEVAL_PROFILE: json.dumps(
+            {
+                "api_version": "agenthub/retrieval/v1",
+                "kind": "RetrievalProfile",
+                "mode": "hybrid",
+                "top_k": 8,
+                "score_threshold": 0,
+                "vector_weight": 0.7,
+                "keyword_weight": 0.3,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+    }
     grants = list(
         document_set.grants.filter(principal_type=GrantPrincipalType.CONSUMER).order_by(
             "principal_ref"
@@ -4375,6 +4417,14 @@ def document_set_detail(
             # The same choices render once per published set version; omit duplicate HTML ids.
             "build_form": build_form,
             "build_profile_details": build_profile_details,
+            "document_model_profile_options": document_model_profile_options,
+            "document_profile_new_bodies": document_profile_new_bodies,
+            "profile_artifact_publish_url": reverse(
+                "console:document_set_profile_artifact_publish",
+                args=[document_set.public_id],
+            )
+            if can_promote_index
+            else "",
             "platform_profile_manage_url": (
                 reverse("console:platform_setup") if is_platform_admin(request.user) else ""
             ),
@@ -4414,6 +4464,57 @@ def document_set_detail(
             "can_quarantine": can_quarantine,
             "max_batch_files": int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20)),
         },
+    )
+
+
+@login_required
+@require_POST
+@sensitive_variables("payload")
+def document_set_profile_artifact_publish(request: HttpRequest, public_id: object) -> JsonResponse:
+    document_set = _scoped_document_set(request.user, None, public_id)
+    try:
+        content_length = int(request.headers.get("Content-Length", "0") or 0)
+    except ValueError:
+        content_length = 0
+    if content_length > 160_000:
+        return JsonResponse({"ok": False, "code": "payload_too_large"}, status=413)
+    raw_body = request.body
+    if len(raw_body) > 160_000:
+        return JsonResponse({"ok": False, "code": "payload_too_large"}, status=413)
+    try:
+        payload = json.loads(raw_body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return JsonResponse({"ok": False, "code": "payload_invalid"}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"ok": False, "code": "payload_invalid"}, status=400)
+    try:
+        artifact = publish_document_profile_artifact(
+            user=request.user,
+            document_set=document_set,
+            source_artifact_id=payload.get("source_artifact_id"),
+            artifact_type=payload.get("artifact_type"),
+            logical_id=payload.get("logical_id"),
+            logical_description=payload.get("logical_description"),
+            version_description=payload.get("version_description"),
+            body=payload.get("body"),
+            request_id=_request_id(request),
+        )
+    except DocumentProfileAuthoringError as exc:
+        if exc.code == "not_allowed":
+            raise PermissionDenied from exc
+        return JsonResponse({"ok": False, "code": exc.code}, status=400)
+    return JsonResponse(
+        {
+            "ok": True,
+            "artifact_version_id": artifact.pk,
+            "artifact_type": artifact.type,
+            "logical_id": artifact.logical_id,
+            "version": artifact.version,
+            "version_description": artifact.version_description,
+            "checksum": artifact.checksum,
+            "body": artifact.body,
+        },
+        status=201,
     )
 
 

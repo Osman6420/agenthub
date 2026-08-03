@@ -235,6 +235,11 @@ urlpatterns = [
         name="document_set_quarantine_change",
     ),
     path(
+        "document-sets/id/<uuid:public_id>/profile-artifacts/publish/",
+        views.document_set_profile_artifact_publish,
+        name="document_set_profile_artifact_publish",
+    ),
+    path(
         "document-sets/id/<uuid:public_id>/ask/",
         views.document_set_ask,
         name="document_set_ask",

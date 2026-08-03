@@ -157,12 +157,13 @@ Exact document-set manager staged indeks formunu yeniden açtığında son prepa
 altısı da otomatik seçili gelir. Bir seçim değiştirildiğinde yalnız o embedding, parçalama, arama,
 OCR, özet model veya özet prompt sürümünün güvenli ayrıntısı açılır. Embedding/OCR kartlarında host,
 path, secret, TLS ve egress ayarları hiçbir zaman gösterilmez; yalnız platform yöneticisi ayrı
-platform yönetim bağlantısını görür. Parçalama, arama ve prompt artifact'lerinde **Yeni immutable
-sürüm düzenle** Scenario Studio'yu yeni sekmede exact sürümle açar. Yeni sürüm yayımlanırsa açık
-doküman-seti sekmesi diğer beş seçimi kaybetmeden o exact sürümü seçer. Özet model artifact'i de
-aynı akışta aktif platform profil UUID'si seçilerek yeni immutable sürüme çıkarılabilir. Bu istemci kolaylığı yetki
-vermez; build isteği bütün profil ve artifact kimliklerini sunucuda tenant ve document-set kapsamıyla
-yeniden doğrular.
+platform yönetim bağlantısını görür. Exact Document Set Manager parçalama, arama, özet prompt ve
+özet model artifact'lerinin seçili içeriğini aynı doküman-seti sayfasında düzenleyebilir veya yeni
+logical artifact ekleyebilir. Değişiklik açıklaması zorunludur; yayın yeni immutable exact sürüm
+oluşturup yalnız bu açık formda seçer. Bağlı senaryolardaki author sorumluluğu bu yetkiyi vermez ve
+gerekli değildir; aynı set birden fazla senaryo tarafından paylaşılabilir. Özet model artifact'inde
+yalnız aktif platform profil UUID'si seçilir. Build isteği bütün profil ve artifact kimliklerini
+sunucuda tenant ve exact document-set kapsamıyla yeniden doğrular.
 
 Arama profili `keyword`, `vector` veya `hybrid` seçebilir. Keyword ve vector aynı immutable,
 tenant-scoped PostgreSQL store ve aynı ACL/tombstone filtresini kullanır. Hybrid sonuçlar sabit

@@ -322,6 +322,8 @@ an evaluated candidate while every live-traffic transition remains release-manag
   multiple nodes.
 - Remove duplicate primary retrieval ownership from document preparation through an additive,
   backward-compatible migration while preserving historical index provenance.
+- Author every document-set preparation artifact under exact Document Set Manager authority; bound
+  scenario author responsibility is neither required nor sufficient for a shared set.
 - Replace scenario-main input/output/eval creation with preset defaults, explicit contract override
   and point-of-use evaluation preparation.
 - Allow exact Scenario Editors to assemble/preflight/compile/evaluate candidates, but deny promote,
@@ -330,6 +332,11 @@ an evaluated candidate while every live-traffic transition remains release-manag
 **Acceptance:** two Generate and two Retrieve nodes execute distinct exact bindings; document-set
 profiles are edited in place; a fresh scenario needs no manual contract selection; legacy workflows
 remain compatible; matched authorization tests prove editors stop before live traffic.
+
+**Part 8A implemented / verified 2026-08-03:** document-set preparation artifact creation and
+versioning no longer depends on any bound scenario. Exact Document Set Managers edit and add
+immutable versions inline; scenario-only editors are server-denied. Evidence is recorded in the
+[active task verification](../../tasks/scenario-node-bound-authoring-realignment/verification.md).
 
 ## Risks
 

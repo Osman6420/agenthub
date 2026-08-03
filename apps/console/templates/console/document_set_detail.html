@@ -92,7 +92,7 @@
         <form method="post" action="{% url 'console:document_set_version_publish' v.id %}" style="margin-top:12px;">{% csrf_token %}<button class="button primary" type="submit">Taslağı yayımla</button></form>
         {% endif %}
       </div>
-      <div id="build">
+      <div id="build" data-profile-publish-url="{{ profile_artifact_publish_url }}">
         <h4>İndeksler</h4>
         {% for index in v.indexes %}
         <div class="access-row" id="index-version-{{ index.id }}"><div><strong>{{ index.profile }}</strong><p class="muted">İndeks v{{ index.version }} · {{ index.documents }} doküman · {{ index.chunks }} parça{% if index.reused_documents %} · {{ index.reused_documents }} yeniden kullanıldı{% endif %}</p></div><span class="badge {{ index.status }}">{{ index.status }}</span>{% if index.can_promote %}<form method="post" action="{% url 'console:document_set_promote_index' index.id %}">{% csrf_token %}<button class="button primary" type="submit">Aktif et</button></form>{% endif %}</div>
@@ -106,11 +106,11 @@
         <form class="compact-form" method="post" action="{% url 'console:document_set_build_index' v.id %}">
           {% csrf_token %}
           <div class="profile-field" data-profile-field><label>Embedding profili</label>{{ build_form.embedding_profile }}{% include "console/document_profile_inspector.html" with label="Embedding profili" items=build_profile_details.embedding platform_managed=True platform_profile_manage_url=platform_profile_manage_url %}</div>
-          <div class="profile-field" data-profile-field data-artifact-type="chunking_profile"><label style="margin-top:8px;">Parçalama profili</label>{{ build_form.chunking_profile }}{% include "console/document_profile_inspector.html" with label="Parçalama profili" items=build_profile_details.chunking %}</div>
-          <div class="profile-field" data-profile-field data-artifact-type="retrieval_profile"><label style="margin-top:8px;">Arama profili</label>{{ build_form.retrieval_profile }}{% include "console/document_profile_inspector.html" with label="Arama profili" items=build_profile_details.retrieval %}</div>
+          <div class="profile-field" data-profile-field data-artifact-type="chunking_profile"><label style="margin-top:8px;">Parçalama profili</label>{{ build_form.chunking_profile }}{% include "console/document_profile_inspector.html" with label="Parçalama profili" items=build_profile_details.chunking authorable=True artifact_type="chunking_profile" new_body_json=document_profile_new_bodies.chunking_profile %}</div>
+          <div class="profile-field" data-profile-field data-artifact-type="retrieval_profile"><label style="margin-top:8px;">Arama profili</label>{{ build_form.retrieval_profile }}{% include "console/document_profile_inspector.html" with label="Arama profili" items=build_profile_details.retrieval authorable=True artifact_type="retrieval_profile" new_body_json=document_profile_new_bodies.retrieval_profile %}</div>
           <div class="profile-field" data-profile-field><label style="margin-top:8px;">OCR profili</label>{{ build_form.ocr_profile }}{% include "console/document_profile_inspector.html" with label="OCR profili" items=build_profile_details.ocr platform_managed=True platform_profile_manage_url=platform_profile_manage_url %}</div>
-          <div class="profile-field" data-profile-field data-artifact-type="model_profile"><label style="margin-top:8px;">Özet model profili</label>{{ build_form.summary_model_profile }}{% include "console/document_profile_inspector.html" with label="Özet model profili" items=build_profile_details.summary_model %}</div>
-          <div class="profile-field" data-profile-field data-artifact-type="prompt_template"><label style="margin-top:8px;">Özet prompt sözleşmesi</label>{{ build_form.summary_prompt_contract }}{% include "console/document_profile_inspector.html" with label="Özet prompt sözleşmesi" items=build_profile_details.summary_prompt %}</div>
+          <div class="profile-field" data-profile-field data-artifact-type="model_profile"><label style="margin-top:8px;">Özet model profili</label>{{ build_form.summary_model_profile }}{% include "console/document_profile_inspector.html" with label="Özet model profili" items=build_profile_details.summary_model authorable=True artifact_type="model_profile" %}</div>
+          <div class="profile-field" data-profile-field data-artifact-type="prompt_template"><label style="margin-top:8px;">Özet prompt sözleşmesi</label>{{ build_form.summary_prompt_contract }}{% include "console/document_profile_inspector.html" with label="Özet prompt sözleşmesi" items=build_profile_details.summary_prompt authorable=True artifact_type="prompt_template" %}</div>
           <label style="margin-top:8px;">{{ build_form.auto_prepare }} Sonraki yayımlanan sürümleri otomatik staged hazırla</label>
           <button class="button secondary" type="submit" style="margin-top:10px;">Staged indeks oluştur</button>
         </form>
@@ -147,5 +147,5 @@
   {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_grant_consumer_public' set.public_id %}">{% csrf_token %}<div class="field-row"><select name="consumer_id" required>{% for consumer in candidate_consumers %}<option value="{{ consumer.id }}">{{ consumer }}</option>{% endfor %}</select><button class="button secondary" type="submit">Retrieval izni ver</button></div></form>{% endif %}
 </div>
 
-<script type="module" src="{% static 'console/document-profiles.js' %}?v=exact-profile-1"></script>
+<script type="module" src="{% static 'console/document-profiles.js' %}?v=document-authoring-1"></script>
 {% endblock %}
