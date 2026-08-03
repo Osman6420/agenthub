@@ -476,8 +476,10 @@ is never an authorization or readiness authority.
 
 ## Status
 
-Planned — owner-requested corrective scope recorded 2026-08-03. No implementation, migration,
-authorization change, public API change, or runtime mutation has been performed by this planning task.
+In progress — owner authorized sequential implementation and per-part commits on 2026-08-03.
+[Part 1 — prompt-first artifact foundation](../scenario-studio-authoring-journey-closure-part-1/plan.md)
+is implemented and verified, pending its isolated commit. Part 2 will extend the same governed
+authoring model to retrieval and profile artifacts; later milestones remain planned.
 
 ## Completion criteria
 

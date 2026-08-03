@@ -32,6 +32,13 @@ from apps.workflows.compiler import compile_workflow
 # Draft bodies are author working state, not production payloads; keep them bounded so a
 # single draft cannot exhaust storage or the JSON parser.
 MAX_DRAFT_BODY_BYTES = 256 * 1024
+AUTHORABLE_ARTIFACT_TYPES = frozenset(
+    {
+        ArtifactType.INPUT_CONTRACT,
+        ArtifactType.OUTPUT_CONTRACT,
+        ArtifactType.PROMPT_TEMPLATE,
+    }
+)
 
 
 def ai_authoring_request_limit(*, accept: bool) -> int:
@@ -200,7 +207,7 @@ def diagnose_artifact(artifact_type: str, body: Any) -> dict[str, Any]:
     """Run the canonical validator for an allowlisted AI candidate type."""
     if artifact_type == ArtifactType.WORKFLOW_DEFINITION:
         return diagnose(body)
-    if artifact_type not in {ArtifactType.INPUT_CONTRACT, ArtifactType.OUTPUT_CONTRACT}:
+    if artifact_type not in AUTHORABLE_ARTIFACT_TYPES:
         raise BuilderError("unsupported_artifact_type")
     if not isinstance(body, dict):
         return {
@@ -223,13 +230,14 @@ def create_artifact_draft(
     artifact_type: str,
     name: str,
     logical_id: str,
-    body: dict[str, Any],
+    logical_description: str = "",
+    body: Any,
     actor: str,
     request_id: str = "",
     prompt_contract: dict[str, Any] | None = None,
 ) -> ArtifactDraft:
     """Persist validated non-workflow author state without publishing an artifact."""
-    if artifact_type not in {ArtifactType.INPUT_CONTRACT, ArtifactType.OUTPUT_CONTRACT}:
+    if artifact_type not in AUTHORABLE_ARTIFACT_TYPES:
         raise BuilderError("unsupported_artifact_type")
     if project.organization_id != organization.id:
         raise BuilderError("project_mismatch")
@@ -237,6 +245,7 @@ def create_artifact_draft(
         raise BuilderError("scenario_mismatch")
     name = (name or "").strip()
     logical_id = (logical_id or "").strip()
+    logical_description = " ".join((logical_description or "").split())
     if not name:
         raise BuilderError("name_required")
     if len(name) > 200:
@@ -249,6 +258,22 @@ def create_artifact_draft(
         validate_slug(logical_id)
     except ValidationError as exc:
         raise BuilderError("logical_id_invalid") from exc
+    if not logical_description:
+        logical_description = f"{name} {artifact_type}"
+    if len(logical_description) > 1000:
+        raise BuilderError("logical_description_too_large")
+    existing_description = (
+        ArtifactVersion.objects.filter(
+            organization=organization,
+            type=artifact_type,
+            logical_id=logical_id,
+        )
+        .order_by("-version")
+        .values_list("logical_description", flat=True)
+        .first()
+    )
+    if existing_description and logical_description != existing_description:
+        raise BuilderError("logical_description_mismatch")
     safe_prompt_contract = _safe_prompt_contract_metadata(prompt_contract)
     diagnostics = diagnose_artifact(artifact_type, _validated_body(body))
     if not diagnostics["ok"]:
@@ -264,6 +289,7 @@ def create_artifact_draft(
         artifact_type=artifact_type,
         name=name,
         logical_id=logical_id,
+        logical_description=logical_description,
         body=body,
         created_by=actor,
         updated_by=actor,
@@ -360,6 +386,56 @@ def _audit_artifact_draft(actor: str, verb: str, draft: ArtifactDraft, *, reques
 
 
 @transaction.atomic
+def publish_artifact_draft(
+    draft: ArtifactDraft,
+    *,
+    actor: str,
+    expected_revision: Any,
+    version_description: str,
+    request_id: str = "",
+) -> ArtifactVersion:
+    """Publish mutable prompt/contract author state as a new immutable exact version."""
+
+    locked = ArtifactDraft.objects.select_for_update().get(pk=draft.pk)
+    _require_revision(expected=expected_revision, actual=locked.revision)
+    version_description = " ".join((version_description or "").split())
+    if not version_description:
+        raise BuilderError("version_description_required")
+    if len(version_description) > 1000:
+        raise BuilderError("version_description_too_large")
+    try:
+        artifact = create_artifact_version(
+            organization=locked.organization,
+            artifact_type=locked.artifact_type,
+            logical_id=locked.logical_id,
+            logical_description=locked.logical_description,
+            version_description=version_description,
+            body=_validated_body(locked.body),
+            created_by=actor,
+        )
+    except (ArtifactValidationError, ValueError) as exc:
+        raise BuilderError("publish_rejected", str(exc)) from exc
+    locked.last_published_version = artifact.version
+    locked.last_published_at = timezone.now()
+    locked.revision += 1
+    locked.save(
+        update_fields=["last_published_version", "last_published_at", "revision", "updated_at"]
+    )
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="console.builder.artifact_draft.publish",
+        outcome="success",
+        organization_id=locked.organization_id,
+        resource_type=locked.artifact_type,
+        resource_id=f"{locked.logical_id}:v{artifact.version}",
+        reason=artifact.checksum,
+        request_id=request_id,
+    )
+    return artifact
+
+
+@transaction.atomic
 def publish_draft(
     draft: WorkflowDraft,
     *,
@@ -379,7 +455,7 @@ def publish_draft(
     _require_revision(expected=expected_revision, actual=locked.revision)
     version_description = " ".join((version_description or "").split())
     if not version_description:
-        version_description = f"{locked.name} published version"
+        raise BuilderError("version_description_required")
     if len(version_description) > 1000:
         raise BuilderError("version_description_too_large")
     try:

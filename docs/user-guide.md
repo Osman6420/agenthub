@@ -81,6 +81,14 @@ yayımlamaz. Logical artifact açıklaması workflow'un sürümler boyunca deği
 Studio'da **Yayımla** işlemi ayrıca exact version açıklaması ister; bu metin yalnız o immutable
 sürümde ne olduğunu veya neyin değiştiğini açıklar.
 
+Scenario Studio'daki **Yeni prompt** alanı prompt metnini doğrudan düzenler; `prompt_ref` veya elle
+hazırlanmış bir artifact ID gerektirmez. Taslak doğrulanıp değişiklik açıklamasıyla yayımlandığında
+yeni immutable exact sürüm oluşur. Candidate manifest seçicisinde exact sürüm seçildikten sonra
+**Artifact içeriğini aç** ile gövde görülebilir; prompt sürümlerinde **Yeni sürüm olarak düzenle** eski
+sürümü değiştirmeden yeni bir taslak açar. Yayın tamamlanınca yeni exact sürüm seçicide otomatik
+seçilir. Viewer bu içeriği yalnız salt okunur görür; oluşturma, düzenleme ve yayımlama scenario author
+sorumluluğu gerektirir.
+
 Candidate release hazırlanırken seçim sırası **artifact type → logical artifact → exact version**
 şeklindedir. Her seviyenin açıklaması, exact checksum ve daha önce kaç release tarafından pinlendiği
 seçimden önce gösterilir. Manifest rolü serbest metin değildir; yalnız seçilen artifact type ile

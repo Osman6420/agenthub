@@ -29,6 +29,11 @@ urlpatterns = [
         api.release_manifest_compile,
         name="release_manifest_compile",
     ),
+    path(
+        "scenarios/<uuid:public_id>/artifact-versions/<int:pk>/",
+        api.scenario_artifact_version,
+        name="scenario_artifact_version",
+    ),
     path("artifact-drafts/", api.artifact_drafts, name="artifact_drafts"),
     path(
         "artifact-drafts/<int:pk>/",
@@ -39,6 +44,11 @@ urlpatterns = [
         "artifact-drafts/<int:pk>/diagnostics/",
         api.artifact_draft_diagnostics,
         name="artifact_draft_diagnostics",
+    ),
+    path(
+        "artifact-drafts/<int:pk>/publish/",
+        api.artifact_draft_publish,
+        name="artifact_draft_publish",
     ),
     path("drafts/", api.drafts, name="drafts"),
     path("drafts/<int:pk>/", api.draft_detail, name="draft_detail"),

@@ -48,6 +48,15 @@ def validate_body(artifact_type: str, body: Any) -> None:
         except SchemaError as exc:
             raise ArtifactValidationError(f"invalid JSON Schema: {exc.message}") from exc
 
+    if artifact_type == ArtifactType.PROMPT_TEMPLATE:
+        template = body.get("template")
+        if not isinstance(template, str) or not template.strip():
+            raise ArtifactValidationError(
+                "prompt template must contain a non-empty template string"
+            )
+        if len(template.encode("utf-8")) > 128 * 1024:
+            raise ArtifactValidationError("prompt template exceeds the 128 KiB limit")
+
     if artifact_type == ArtifactType.EVAL_SUITE:
         try:
             validate_eval_suite_body(body)

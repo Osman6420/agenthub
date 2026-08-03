@@ -8,6 +8,8 @@ import type {
   CapabilityMissingResult,
   AiCandidateType,
   ArtifactDraft,
+  ArtifactPublishResult,
+  ArtifactVersionPreview,
   Draft,
   DiagnosticsResult,
   ManifestCompileResult,
@@ -159,6 +161,23 @@ export class BuilderApi {
     return request(this.url("/artifact-drafts/"));
   }
 
+  createArtifactDraft(payload: {
+    organization: string;
+    project_id: number;
+    scenario_id: number;
+    artifact_type?: "prompt_template";
+    name?: string;
+    logical_id?: string;
+    logical_description?: string;
+    body?: Record<string, unknown>;
+    source_artifact_version_id?: number;
+  }): Promise<ArtifactDraft> {
+    return request(this.url("/artifact-drafts/"), {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
   getArtifactDraft(id: number): Promise<ArtifactDraft> {
     return request(this.url(`/artifact-drafts/${id}/`));
   }
@@ -185,6 +204,23 @@ export class BuilderApi {
       method: "POST",
       body: JSON.stringify({ body }),
     });
+  }
+
+  publishArtifactDraft(
+    id: number, revision: number, versionDescription: string,
+  ): Promise<ArtifactPublishResult> {
+    return request(this.url(`/artifact-drafts/${id}/publish/`), {
+      method: "POST",
+      body: JSON.stringify({ revision, version_description: versionDescription }),
+    });
+  }
+
+  artifactVersionPreview(
+    scenarioPublicId: string, artifactVersionId: number,
+  ): Promise<ArtifactVersionPreview> {
+    return request(this.url(
+      `/scenarios/${encodeURIComponent(scenarioPublicId)}/artifact-versions/${artifactVersionId}/`,
+    ));
   }
 
   getDraft(id: number): Promise<Draft> {

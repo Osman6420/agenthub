@@ -35,6 +35,13 @@ export function App({
   const [newId, setNewId] = useState("");
   const [newLogicalDescription, setNewLogicalDescription] = useState("");
   const [newJson, setNewJson] = useState("");
+  const [promptName, setPromptName] = useState("");
+  const [promptId, setPromptId] = useState("");
+  const [promptDescription, setPromptDescription] = useState("");
+  const [promptText, setPromptText] = useState("");
+  const [publishedArtifact, setPublishedArtifact] = useState<{
+    id: number; artifactType: ArtifactDraft["artifact_type"]; logicalId: string;
+  }>();
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
   const [scenarioAutoHandled, setScenarioAutoHandled] = useState(false);
   const [transient, setTransient] = useState<{ result: AiCandidateResult; projectId: number } | null>(null);
@@ -68,7 +75,8 @@ export function App({
       setSchema(s);
       setDrafts(list.drafts.filter((d) => d.organization === orgSlug &&
         (!initial?.scenario_id || d.scenario_id === initial.scenario_id)));
-      setArtifactDrafts(artifactList.drafts.filter((d) => d.organization === orgSlug));
+      setArtifactDrafts(artifactList.drafts.filter((d) => d.organization === orgSlug &&
+        (!initial?.scenario_id || d.scenario_id === initial.scenario_id)));
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
     }
@@ -180,6 +188,31 @@ export function App({
     });
   }, [initial?.active_workflow, initial?.project_id, initial?.scenario_id, orgSlug]);
 
+  const createPrompt = useCallback(async () => {
+    if (!initial?.project_id || !initial.scenario_id) return;
+    try {
+      const draft = await api.createArtifactDraft({
+        organization: orgSlug,
+        project_id: initial.project_id,
+        scenario_id: initial.scenario_id,
+        artifact_type: "prompt_template",
+        name: promptName,
+        logical_id: promptId,
+        logical_description: promptDescription,
+        body: { template: promptText },
+      });
+      setPromptName("");
+      setPromptId("");
+      setPromptDescription("");
+      setPromptText("");
+      await reload();
+      setActiveArtifact(draft);
+    } catch (err) {
+      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+    }
+  }, [api, initial?.project_id, initial?.scenario_id, orgSlug, promptDescription,
+    promptId, promptName, promptText, reload]);
+
   if (active && schema) {
     return (
       <div>
@@ -234,6 +267,11 @@ export function App({
             api={api}
             scenarioPublicId={initial.scenario_public_id}
             optionsUrl={initial.artifact_options_url}
+            organization={orgSlug}
+            projectId={initial.project_id}
+            scenarioId={initial.scenario_id}
+            onOpenArtifactDraft={setActiveArtifact}
+            refreshArtifact={publishedArtifact}
           />}
       </div>
     );
@@ -242,7 +280,12 @@ export function App({
   if (activeArtifact) {
     return <ArtifactDraftEditor api={api} draft={activeArtifact}
       onChange={(draft) => { setActiveArtifact(draft); void reload(); }}
-      onClose={() => setActiveArtifact(null)} />;
+      onClose={() => setActiveArtifact(null)}
+      onPublished={(result) => setPublishedArtifact({
+        id: result.artifact_version_id,
+        artifactType: activeArtifact.artifact_type,
+        logicalId: activeArtifact.logical_id,
+      })} />;
   }
 
   return (
@@ -315,21 +358,44 @@ export function App({
           api={api}
           scenarioPublicId={initial.scenario_public_id}
           optionsUrl={initial.artifact_options_url}
+          organization={orgSlug}
+          projectId={initial.project_id}
+          scenarioId={initial.scenario_id}
+          onOpenArtifactDraft={setActiveArtifact}
+          refreshArtifact={publishedArtifact}
         />}
 
-      <h2 style={{ margin: "20px 0 8px" }}>Sözleşme taslakları</h2>
+      <h2 style={{ margin: "20px 0 8px" }}>Artifact taslakları</h2>
       {artifactDrafts.length === 0 && <div style={{ color: "#8b95a7" }}>
-        Henüz sözleşme taslağı yok.
+        Henüz artifact taslağı yok.
       </div>}
       <ul style={{ listStyle: "none", padding: 0 }}>
         {artifactDrafts.map((draft) => <li key={draft.id} className="ah-builder-draft-row"
           style={draftRow}>
           <span><strong>{draft.name}</strong>{" "}<span style={{ color: "#8b95a7" }}>
-            ({draft.artifact_type === "input_contract" ? "girdi" : "çıktı"}; {draft.logical_id})
+            ({draft.artifact_type === "input_contract" ? "girdi" :
+              draft.artifact_type === "output_contract" ? "çıktı" : "prompt"}; {draft.logical_id})
           </span></span>
           <button type="button" onClick={() => void openArtifact(draft.id)} style={openBtn}>Aç</button>
         </li>)}
       </ul>
+
+      {canAuthorScenario && <section style={{ marginTop: 16, padding: 12,
+        border: "1px solid #334155", borderRadius: 8 }}>
+        <h3>Yeni prompt</h3>
+        <label>Ad<input aria-label="yeni prompt adı" value={promptName}
+          onChange={(event) => setPromptName(event.target.value)} /></label>
+        <label>Logical ID<input aria-label="yeni prompt logical id" value={promptId}
+          onChange={(event) => setPromptId(event.target.value)} /></label>
+        <label>Kalıcı amaç<input aria-label="yeni prompt açıklaması" value={promptDescription}
+          maxLength={1000} onChange={(event) => setPromptDescription(event.target.value)} /></label>
+        <label>Prompt metni<textarea aria-label="yeni prompt metni" rows={8} value={promptText}
+          onChange={(event) => setPromptText(event.target.value)} /></label>
+        <button type="button" disabled={!promptName.trim() || !promptId.trim() ||
+          !promptDescription.trim() || !promptText.trim()} onClick={() => void createPrompt()}>
+          Prompt taslağı oluştur
+        </button>
+      </section>}
 
       {canAuthorScenario && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
         lockedProjectId={initial?.project_id} scenarioId={initial?.scenario_id}

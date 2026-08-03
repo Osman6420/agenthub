@@ -62,8 +62,12 @@ def test_diagnose_ok_for_valid_body(bf: BuilderFixture) -> None:
 
 
 def test_publish_increments_version(bf: BuilderFixture) -> None:
-    first = services.publish_draft(bf.draft, actor="author", expected_revision=1)
-    second = services.publish_draft(bf.draft, actor="author", expected_revision=2)
+    first = services.publish_draft(
+        bf.draft, actor="author", expected_revision=1, version_description="Initial"
+    )
+    second = services.publish_draft(
+        bf.draft, actor="author", expected_revision=2, version_description="Second"
+    )
     assert first.version == 1
     assert second.version == 2
     assert (
@@ -78,8 +82,101 @@ def test_publish_is_immutable_source_of_truth(bf: BuilderFixture) -> None:
     # The published artifact checksum is the canonical checksum of the draft body.
     from apps.artifacts.validation import compute_checksum
 
-    artifact = services.publish_draft(bf.draft, actor="author", expected_revision=1)
+    artifact = services.publish_draft(
+        bf.draft, actor="author", expected_revision=1, version_description="Initial"
+    )
     assert artifact.checksum == compute_checksum(bf.draft.body)
+
+
+def test_prompt_draft_publish_creates_new_immutable_version(bf: BuilderFixture) -> None:
+    first = ArtifactVersion.objects.create(
+        organization=bf.org,
+        type="prompt_template",
+        logical_id="answer_prompt",
+        logical_description="Stable answer behavior",
+        version=1,
+        version_description="Initial",
+        body={"template": "Old text"},
+        checksum="a" * 64,
+        created_by="author",
+    )
+    draft = services.create_artifact_draft(
+        organization=bf.org,
+        project=bf.project,
+        scenario=bf.scenario,
+        artifact_type="prompt_template",
+        name="Answer prompt",
+        logical_id="answer_prompt",
+        logical_description="Stable answer behavior",
+        body={"template": "New text"},
+        actor="author",
+    )
+    published = services.publish_artifact_draft(
+        draft,
+        actor="author",
+        expected_revision=1,
+        version_description="Clarifies answer",
+    )
+    first.refresh_from_db()
+    draft.refresh_from_db()
+    assert first.body == {"template": "Old text"}
+    assert published.version == 2
+    assert published.body == {"template": "New text"}
+    assert draft.last_published_version == 2
+    assert draft.revision == 2
+
+
+def test_prompt_publish_requires_version_description(bf: BuilderFixture) -> None:
+    draft = services.create_artifact_draft(
+        organization=bf.org,
+        project=bf.project,
+        scenario=bf.scenario,
+        artifact_type="prompt_template",
+        name="Answer prompt",
+        logical_id="answer_prompt",
+        logical_description="Stable answer behavior",
+        body={"template": "Text"},
+        actor="author",
+    )
+    with pytest.raises(services.BuilderError) as exc:
+        services.publish_artifact_draft(
+            draft, actor="author", expected_revision=1, version_description=" "
+        )
+    assert exc.value.code == "version_description_required"
+    assert not ArtifactVersion.objects.filter(logical_id="answer_prompt").exists()
+
+
+def test_prompt_publish_rolls_back_when_audit_fails(
+    bf: BuilderFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    draft = services.create_artifact_draft(
+        organization=bf.org,
+        project=bf.project,
+        scenario=bf.scenario,
+        artifact_type="prompt_template",
+        name="Answer prompt",
+        logical_id="answer_prompt",
+        logical_description="Stable answer behavior",
+        body={"template": "PRIVATE_PROMPT_TEXT"},
+        actor="author",
+    )
+
+    def fail_audit(**_kwargs) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(services, "record_event", fail_audit)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        services.publish_artifact_draft(
+            draft,
+            actor="author",
+            expected_revision=1,
+            version_description="Reviewed prompt",
+        )
+
+    draft.refresh_from_db()
+    assert draft.revision == 1
+    assert draft.last_published_version == 0
+    assert not ArtifactVersion.objects.filter(logical_id="answer_prompt").exists()
 
 
 def test_artifact_draft_create_rolls_back_when_audit_fails(

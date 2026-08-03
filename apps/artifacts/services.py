@@ -40,6 +40,9 @@ def create_artifact_version(
     if artifact_type not in ArtifactType.values:
         raise ValueError(f"unknown artifact type: {artifact_type}")
 
+    # Serialize next-version allocation per tenant. Published artifact versions are rare
+    # control-plane writes; the tenant-row lock prevents concurrent authors from racing on N+1.
+    Organization.objects.select_for_update().only("pk").get(pk=organization.pk)
     validate_body(artifact_type, body)
     existing_logical_description = (
         ArtifactVersion.objects.filter(

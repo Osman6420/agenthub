@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import type { BuilderController } from "../useBuilder";
 
@@ -18,6 +18,8 @@ export function Toolbar({
 }) {
   const { readOnly, isDirty, diagnostics } = builder;
   const [versionDescription, setVersionDescription] = useState("");
+  const [versionError, setVersionError] = useState("");
+  const versionDescriptionRef = useRef<HTMLInputElement>(null);
   return (
     <div style={{ borderBottom: "1px solid #262b36" }}>
       <div className="ah-builder-toolbar-row">
@@ -45,11 +47,15 @@ export function Toolbar({
         <label style={{ fontSize: 12, color: "#8b95a7" }}>
           Exact version açıklaması
           <input
+            ref={versionDescriptionRef}
             aria-label="exact version açıklaması"
             value={versionDescription}
             maxLength={1000}
             disabled={readOnly}
-            onChange={(event) => setVersionDescription(event.target.value)}
+            onChange={(event) => {
+              setVersionDescription(event.target.value);
+              if (event.target.value.trim()) setVersionError("");
+            }}
             placeholder="Bu sürümde ne var/değişti?"
             style={{ marginLeft: 6, minWidth: 220 }}
           />
@@ -67,13 +73,24 @@ export function Toolbar({
         </button>
         <button
           type="button"
-          disabled={busy || readOnly || !versionDescription.trim()}
-          onClick={() => onAction("publish", versionDescription)}
+          disabled={busy || readOnly}
+          onClick={() => {
+            if (!versionDescription.trim()) {
+              setVersionError("Bu sürümde nelerin değiştiğini yazın.");
+              versionDescriptionRef.current?.focus();
+              return;
+            }
+            setVersionError("");
+            onAction("publish", versionDescription);
+          }}
           style={btn("#2563eb")}
         >
           Yayımla
         </button>
       </div>
+      {versionError && <div role="alert" style={{ padding: "0 14px 8px", color: "#fca5a5" }}>
+        {versionError}
+      </div>}
       {builder.status && (
         <div style={{ padding: "0 14px 8px", color: "#8b95a7", fontSize: 13 }} role="status">
           {builder.status}

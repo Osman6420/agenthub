@@ -8,8 +8,8 @@ immutable ``workflow_definition`` ``ArtifactVersion``; the draft itself remains 
 so a later publish creates the next artifact version. The draft body carries no tenant
 selector — every query is scoped by the authoritative ``organization`` column.
 
-P10.2 adds ``ArtifactDraft`` for allowlisted JSON Schema input/output contracts. It is
-mutable author state with no publish route; immutable artifact creation remains separate.
+``ArtifactDraft`` is mutable author state for allowlisted non-workflow artifacts. Publishing
+always routes through the canonical immutable artifact service.
 """
 
 from __future__ import annotations
@@ -75,8 +75,7 @@ class WorkflowDraft(TimeStampedModel):
 class ArtifactDraft(TimeStampedModel):
     """Mutable author working state for allowlisted non-workflow artifacts.
 
-    P10.2 intentionally exposes no publish route for this model. A later governed publish
-    surface must re-authorize and route through the canonical artifact service.
+    Published versions remain immutable; this row is only editable working state.
     """
 
     organization = models.ForeignKey(
@@ -101,14 +100,18 @@ class ArtifactDraft(TimeStampedModel):
         choices=[
             (ArtifactType.INPUT_CONTRACT, "Input contract"),
             (ArtifactType.OUTPUT_CONTRACT, "Output contract"),
+            (ArtifactType.PROMPT_TEMPLATE, "Prompt template"),
         ],
     )
     name = models.CharField(max_length=200)
     logical_id = models.CharField(max_length=128)
+    logical_description = models.TextField(blank=True, max_length=1000)
     body = models.JSONField(default=dict)
     created_by = models.CharField(max_length=200)
     updated_by = models.CharField(max_length=200)
     revision = models.PositiveBigIntegerField(default=1)
+    last_published_version = models.PositiveIntegerField(default=0)
+    last_published_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [

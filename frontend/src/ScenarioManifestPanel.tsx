@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, BuilderApi } from "./api";
 import type {
+  ArtifactDraft,
+  ArtifactVersionPreview,
   ManifestLogicalOption,
   ManifestPresetOption,
   ManifestRequirement,
@@ -17,10 +19,20 @@ export function ScenarioManifestPanel({
   api,
   scenarioPublicId,
   optionsUrl,
+  organization,
+  projectId,
+  scenarioId,
+  onOpenArtifactDraft,
+  refreshArtifact,
 }: {
   api: BuilderApi;
   scenarioPublicId: string;
   optionsUrl: string;
+  organization?: string;
+  projectId?: number;
+  scenarioId?: number;
+  onOpenArtifactDraft?: (draft: ArtifactDraft) => void;
+  refreshArtifact?: { id: number; artifactType: string; logicalId: string };
 }) {
   const [types, setTypes] = useState<ManifestTypeOption[]>([]);
   const [logicals, setLogicals] = useState<ManifestLogicalOption[]>([]);
@@ -39,6 +51,7 @@ export function ScenarioManifestPanel({
   const [releaseId, setReleaseId] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
   const [dirtyNoticeVisible, setDirtyNoticeVisible] = useState(false);
+  const [preview, setPreview] = useState<ArtifactVersionPreview | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -113,7 +126,7 @@ export function ScenarioManifestPanel({
     }
   }
 
-  async function chooseLogical(value: string) {
+  async function chooseLogical(value: string, selectVersionId = "") {
     setLogicalId(value);
     setVersionId("");
     setRole(requiredRole);
@@ -128,12 +141,80 @@ export function ScenarioManifestPanel({
       });
       if (result.level === "exact_version") {
         setVersions(result.options as ManifestVersionOption[]);
+        if (selectVersionId && (result.options as ManifestVersionOption[]).some(
+          (item) => String(item.id) === selectVersionId,
+        )) setVersionId(selectVersionId);
         setRoles(requiredRole
           ? [requiredRole, ...(result.roles ?? []).filter((item) => item !== requiredRole)]
           : (result.roles ?? []));
       }
     } catch (error) {
       setStatus(formatError(error));
+    }
+  }
+
+  useEffect(() => {
+    if (!refreshArtifact) return;
+    const target = refreshArtifact;
+    let cancelled = false;
+    async function selectPublishedArtifact() {
+      setStatus("");
+      setArtifactType(target.artifactType);
+      setLogicalId(target.logicalId);
+      try {
+        const [logicalResult, versionResult] = await Promise.all([
+          api.manifestOptions(optionsUrl, { artifact_type: target.artifactType }),
+          api.manifestOptions(optionsUrl, {
+            artifact_type: target.artifactType,
+            logical_id: target.logicalId,
+          }),
+        ]);
+        if (cancelled) return;
+        if (logicalResult.level === "logical_artifact") {
+          setLogicals(logicalResult.options as ManifestLogicalOption[]);
+        }
+        if (versionResult.level === "exact_version") {
+          setVersions(versionResult.options as ManifestVersionOption[]);
+          setVersionId(String(target.id));
+          setRoles(versionResult.roles ?? []);
+        }
+      } catch (error) {
+        if (!cancelled) setStatus(formatError(error));
+      }
+    }
+    void selectPublishedArtifact();
+    return () => { cancelled = true; };
+  }, [api, optionsUrl, refreshArtifact]);
+
+  async function openPreview() {
+    if (!selectedVersion) return;
+    setBusy(true);
+    setStatus("");
+    try {
+      setPreview(await api.artifactVersionPreview(scenarioPublicId, selectedVersion.id));
+    } catch (error) {
+      setStatus(formatError(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function editPreviewAsNewVersion() {
+    if (!preview || !organization || !projectId || !scenarioId || !onOpenArtifactDraft) return;
+    setBusy(true);
+    setStatus("");
+    try {
+      const draft = await api.createArtifactDraft({
+        organization,
+        project_id: projectId,
+        scenario_id: scenarioId,
+        source_artifact_version_id: preview.id,
+      });
+      onOpenArtifactDraft(draft);
+    } catch (error) {
+      setStatus(formatError(error));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -272,7 +353,10 @@ export function ScenarioManifestPanel({
       </label>
       <label>Kesin sürüm
         <select aria-label="Manifest kesin sürümü" value={versionId}
-          disabled={!logicalId} onChange={(event) => setVersionId(event.target.value)}>
+          disabled={!logicalId} onChange={(event) => {
+            setVersionId(event.target.value);
+            setPreview(null);
+          }}>
           <option value="">Sürüm seçin</option>
           {versions.map((item) => <option key={item.id} value={item.id}>
             v{item.version} · {item.checksum.slice(0, 12)}
@@ -290,6 +374,30 @@ export function ScenarioManifestPanel({
       <button type="button" disabled={!canAdd}
         onClick={() => void addSelection()}>Manifest’e ekle</button>
     </div>
+
+    {selectedVersion && <div style={{ margin: "10px 0" }}>
+      <button type="button" disabled={busy} onClick={() => void openPreview()}>
+        Artifact içeriğini aç
+      </button>
+    </div>}
+
+    {preview && <section aria-label="Exact artifact önizleme" style={selectedRow}>
+      <div style={{ minWidth: 0, width: "100%" }}>
+        <strong>{preview.logical_id}:v{preview.version}</strong>
+        <div>{preview.artifact_type} · sha256 {preview.checksum.slice(0, 12)}</div>
+        <p>{preview.logical_description}</p>
+        {preview.body_too_large
+          ? <div role="alert">İçerik güvenli önizleme sınırını aşıyor.</div>
+          : <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+              {JSON.stringify(preview.body, null, 2)}
+            </pre>}
+        {preview.can_create_new_version && onOpenArtifactDraft && <button type="button"
+          disabled={busy} onClick={() => void editPreviewAsNewVersion()}>
+          Yeni sürüm olarak düzenle
+        </button>}
+      </div>
+      <button type="button" onClick={() => setPreview(null)}>Kapat</button>
+    </section>}
 
     {(duplicateVersion || duplicateRole) && <div role="alert" style={errorBox}>
       {duplicateVersion

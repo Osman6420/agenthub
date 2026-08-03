@@ -123,6 +123,19 @@ def test_inline_secret_rejected(org: Organization) -> None:
 
 
 @pytest.mark.django_db
+def test_prompt_template_requires_nonempty_bounded_template(org: Organization) -> None:
+    for body in ({}, {"template": " "}, {"template": 42}):
+        with pytest.raises(ArtifactValidationError, match="non-empty template"):
+            create_artifact_version(
+                organization=org,
+                artifact_type=ArtifactType.PROMPT_TEMPLATE,
+                logical_id="bad_prompt",
+                body=body,
+                created_by="alice",
+            )
+
+
+@pytest.mark.django_db
 def test_model_profile_reference_allowed(org: Organization) -> None:
     artifact = create_artifact_version(
         organization=org,

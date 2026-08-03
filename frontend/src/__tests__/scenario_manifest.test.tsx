@@ -9,6 +9,141 @@ afterEach(() => {
 });
 
 describe("Scenario Studio exact candidate manifest", () => {
+  it("previews an exact body and opens a prompt as a new-version draft", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+      const value = String(url);
+      let payload: unknown;
+      if (value.includes("artifact-versions/7")) {
+        payload = {
+          id: 7,
+          artifact_type: "prompt_template",
+          logical_id: "answer_prompt",
+          logical_description: "Stable answer behavior",
+          version: 1,
+          version_description: "Initial",
+          checksum: "a".repeat(64),
+          body: { template: "PRIVATE_PROMPT_TEXT" },
+          body_too_large: false,
+          can_create_new_version: true,
+        };
+      } else if (value.endsWith("/artifact-drafts/")) {
+        payload = {
+          id: 9,
+          draft_kind: "artifact",
+          artifact_type: "prompt_template",
+          organization: "org",
+          organization_id: 1,
+          project_id: 2,
+          scenario_id: 3,
+          name: "answer_prompt prompt",
+          logical_id: "answer_prompt",
+          logical_description: "Stable answer behavior",
+          body: { template: "PRIVATE_PROMPT_TEXT" },
+          last_published_version: 0,
+          last_published_at: null,
+          updated_at: "2026-08-03T00:00:00Z",
+          revision: 1,
+          can_write: true,
+        };
+      } else if (value.includes("artifact_type=prompt_template") &&
+        value.includes("logical_id=answer_prompt")) {
+        payload = {
+          level: "exact_version",
+          roles: ["prompt_template"],
+          options: [{
+            id: 7, version: 1, description: "Initial", checksum: "a".repeat(64),
+            status: "published", pinned_release_count: 0,
+          }],
+        };
+      } else if (value.includes("artifact_type=prompt_template")) {
+        payload = {
+          level: "logical_artifact",
+          options: [{
+            value: "answer_prompt", label: "answer_prompt",
+            description: "Stable answer behavior", latest_version: 1,
+          }],
+        };
+      } else {
+        payload = {
+          level: "artifact_type",
+          options: [{ value: "prompt_template", label: "Prompt", description: "Prompt" }],
+        };
+      }
+      return new Response(JSON.stringify(payload), {
+        status: options?.method === "POST" ? 201 : 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+    const onOpenArtifactDraft = vi.fn();
+    render(<ScenarioManifestPanel api={new BuilderApi("/console/api/builder/")}
+      scenarioPublicId="scenario" optionsUrl="/artifact-options/" organization="org"
+      projectId={2} scenarioId={3} onOpenArtifactDraft={onOpenArtifactDraft} />);
+
+    await screen.findByRole("option", { name: "Prompt" });
+    fireEvent.change(screen.getByLabelText("Manifest artifact türü"), {
+      target: { value: "prompt_template" },
+    });
+    await screen.findByRole("option", { name: "answer_prompt" });
+    fireEvent.change(screen.getByLabelText("Manifest mantıksal artifactı"), {
+      target: { value: "answer_prompt" },
+    });
+    await screen.findByRole("option", { name: /v1/ });
+    fireEvent.change(screen.getByLabelText("Manifest kesin sürümü"), {
+      target: { value: "7" },
+    });
+    fireEvent.click(screen.getByText("Artifact içeriğini aç"));
+    expect(await screen.findByText(/PRIVATE_PROMPT_TEXT/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Yeni sürüm olarak düzenle"));
+    await waitFor(() => expect(onOpenArtifactDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 9, artifact_type: "prompt_template" }),
+    ));
+  });
+
+  it("selects the newly published exact version when the picker remounts", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const parsed = new URL(String(url), window.location.origin);
+      const type = parsed.searchParams.get("artifact_type");
+      const logical = parsed.searchParams.get("logical_id");
+      let payload: unknown;
+      if (!type) {
+        payload = {
+          level: "artifact_type",
+          options: [{ value: "prompt_template", label: "Prompt", description: "Prompt" }],
+        };
+      } else if (!logical) {
+        payload = {
+          level: "logical_artifact",
+          options: [{
+            value: "answer_prompt", label: "answer_prompt",
+            description: "Stable answer behavior", latest_version: 2,
+          }],
+        };
+      } else {
+        payload = {
+          level: "exact_version",
+          roles: ["prompt_template"],
+          options: [{
+            id: 12, version: 2, description: "Updated", checksum: "b".repeat(64),
+            status: "published", pinned_release_count: 0,
+          }],
+        };
+      }
+      return new Response(JSON.stringify(payload), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    render(<ScenarioManifestPanel api={new BuilderApi("/console/api/builder/")}
+      scenarioPublicId="scenario" optionsUrl="/artifact-options/"
+      refreshArtifact={{ id: 12, artifactType: "prompt_template", logicalId: "answer_prompt" }} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Manifest artifact türü")).toHaveValue("prompt_template");
+      expect(screen.getByLabelText("Manifest mantıksal artifactı")).toHaveValue("answer_prompt");
+      expect(screen.getByLabelText("Manifest kesin sürümü")).toHaveValue("12");
+    });
+  });
+
   it("preserves selected exact pins when canonical preflight and compile fail", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {

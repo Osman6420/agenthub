@@ -53,6 +53,19 @@ export interface ManifestVersionOption {
   pinned_release_count: number;
 }
 
+export interface ArtifactVersionPreview {
+  id: number;
+  artifact_type: string;
+  logical_id: string;
+  logical_description: string;
+  version: number;
+  version_description: string;
+  checksum: string;
+  body: Record<string, unknown> | null;
+  body_too_large: boolean;
+  can_create_new_version: boolean;
+}
+
 export interface ManifestOptionsResult {
   level: "artifact_type" | "logical_artifact" | "exact_version" | "preset";
   artifact_type?: string;
@@ -273,16 +286,32 @@ export type AiCandidateType = "workflow_definition" | "input_contract" | "output
 export interface ArtifactDraft {
   id: number;
   draft_kind: "artifact";
-  artifact_type: "input_contract" | "output_contract";
+  artifact_type: "input_contract" | "output_contract" | "prompt_template";
   organization: string;
   organization_id: number;
   project_id: number | null;
+  scenario_id: number | null;
   name: string;
   logical_id: string;
+  logical_description: string;
   body: Record<string, unknown>;
+  last_published_version: number;
+  last_published_at: string | null;
   updated_at: string;
   revision: number;
   can_write: boolean;
+}
+
+export interface ArtifactPublishResult {
+  published: boolean;
+  artifact_version_id: number;
+  artifact_type: string;
+  logical_id: string;
+  logical_description: string;
+  version: number;
+  version_description: string;
+  checksum: string;
+  revision: number;
 }
 
 export type AcceptedCandidateDraft = Draft | ArtifactDraft;

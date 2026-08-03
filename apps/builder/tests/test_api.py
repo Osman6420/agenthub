@@ -609,10 +609,143 @@ def test_publish_rejects_inline_secret(client: Client, bf: BuilderFixture) -> No
 
     client.force_login(bf.author)
     url = reverse("builder_api:draft_publish", args=[bf.draft.pk])
-    response = _post(client, url, {"revision": 1})
+    response = _post(client, url, {"revision": 1, "version_description": "Secret rejection test"})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "publish_rejected"
     assert not ArtifactVersion.objects.filter(organization=bf.org).exists()
+
+
+def test_workflow_publish_requires_version_description(client: Client, bf: BuilderFixture) -> None:
+    client.force_login(bf.author)
+    response = _post(
+        client,
+        reverse("builder_api:draft_publish", args=[bf.draft.pk]),
+        {"revision": 1, "version_description": " "},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "version_description_required"
+    assert not ArtifactVersion.objects.filter(organization=bf.org).exists()
+
+
+def test_prompt_draft_create_publish_and_viewer_denial(client: Client, bf: BuilderFixture) -> None:
+    create_url = reverse("builder_api:artifact_drafts")
+    payload = {
+        "organization": bf.org.slug,
+        "project_id": bf.project.pk,
+        "scenario_id": bf.scenario.pk,
+        "artifact_type": "prompt_template",
+        "name": "Answer prompt",
+        "logical_id": "answer_prompt",
+        "logical_description": "Stable answer behavior",
+        "body": {"template": "Answer safely"},
+    }
+    client.force_login(bf.viewer)
+    assert _post(client, create_url, payload).status_code == 403
+
+    client.force_login(bf.author)
+    created = _post(client, create_url, payload)
+    assert created.status_code == 201
+    assert created.json()["artifact_type"] == "prompt_template"
+    draft_id = created.json()["id"]
+    publish_url = reverse("builder_api:artifact_draft_publish", args=[draft_id])
+    missing_note = _post(client, publish_url, {"revision": 1, "version_description": ""})
+    assert missing_note.status_code == 400
+    assert missing_note.json()["error"]["code"] == "version_description_required"
+    published = _post(
+        client,
+        publish_url,
+        {"revision": 1, "version_description": "Initial reviewed prompt"},
+    )
+    assert published.status_code == 201
+    assert published.json()["version"] == 1
+    assert AuditEvent.objects.filter(action="console.builder.artifact_draft.publish").exists()
+
+    client.force_login(bf.viewer)
+    assert (
+        _post(
+            client,
+            publish_url,
+            {"revision": 2, "version_description": "Unauthorized"},
+        ).status_code
+        == 403
+    )
+
+
+def test_exact_artifact_preview_and_source_are_tenant_scoped(
+    client: Client, bf: BuilderFixture
+) -> None:
+    source = create_artifact_version(
+        organization=bf.org,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        logical_id="preview_prompt",
+        logical_description="Preview purpose",
+        version_description="Initial",
+        body={"template": "TENANT_PRIVATE_PROMPT"},
+        created_by="author",
+    )
+    foreign = create_artifact_version(
+        organization=bf.other_org,
+        artifact_type=ArtifactType.PROMPT_TEMPLATE,
+        logical_id="foreign_prompt",
+        body={"template": "FOREIGN_PRIVATE_PROMPT"},
+        created_by="outsider",
+    )
+    manager = _release_manager(bf)
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=bf.org,
+        membership=OrganizationMembership.objects.get(organization=bf.org, user=bf.author),
+        scenario=bf.scenario,
+        responsibility=ScenarioResponsibility.RELEASE_MANAGER,
+        assigned_by=manager,
+    )
+
+    client.force_login(manager)
+    preview_url = reverse(
+        "builder_api:scenario_artifact_version", args=[bf.scenario.public_id, source.pk]
+    )
+    preview = client.get(preview_url)
+    assert preview.status_code == 200
+    assert preview.json()["body"] == {"template": "TENANT_PRIVATE_PROMPT"}
+    assert preview.json()["can_create_new_version"] is False
+    preview_audit = AuditEvent.objects.get(
+        action="console.builder.artifact_version.preview", resource_id="preview_prompt:v1"
+    )
+    assert "TENANT_PRIVATE_PROMPT" not in str(preview_audit.__dict__)
+    assert (
+        client.get(
+            reverse(
+                "builder_api:scenario_artifact_version",
+                args=[bf.scenario.public_id, foreign.pk],
+            )
+        ).status_code
+        == 404
+    )
+
+    client.force_login(bf.author)
+    assert client.get(preview_url).json()["can_create_new_version"] is True
+    copied = _post(
+        client,
+        reverse("builder_api:artifact_drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "source_artifact_version_id": source.pk,
+        },
+    )
+    assert copied.status_code == 201
+    assert copied.json()["body"] == {"template": "TENANT_PRIVATE_PROMPT"}
+    foreign_copy = _post(
+        client,
+        reverse("builder_api:artifact_drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "source_artifact_version_id": foreign.pk,
+        },
+    )
+    assert foreign_copy.status_code == 404
 
 
 # --- Node schema (redaction) ------------------------------------------------
@@ -1396,7 +1529,7 @@ def test_ai_candidate_rejects_unavailable_contract_revision_before_egress(
     assert FakeAuthoringProvider.calls == []
 
 
-def test_artifact_draft_is_tenant_scoped_mutable_and_has_no_publish_action(
+def test_artifact_draft_is_tenant_scoped_mutable_and_detail_does_not_publish(
     client: Client, bf: BuilderFixture
 ) -> None:
     draft = ArtifactDraft.objects.create(
@@ -1434,7 +1567,7 @@ def test_artifact_draft_is_tenant_scoped_mutable_and_has_no_publish_action(
     )
     assert updated.status_code == 200
     assert updated.json()["name"] == "Girdi v2"
-    # POST is deliberately absent: generic drafts cannot publish in P10.2.
+    # Publication is a separate, explicitly authorized endpoint; detail POST stays absent.
     assert _post(client, detail_url, {}).status_code == 405
     assert not ArtifactVersion.objects.exists()
     assert (
