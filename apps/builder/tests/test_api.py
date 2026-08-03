@@ -677,7 +677,7 @@ def test_exact_artifact_preview_and_source_are_tenant_scoped(
     source = create_artifact_version(
         organization=bf.org,
         artifact_type=ArtifactType.PROMPT_TEMPLATE,
-        logical_id="preview_prompt",
+        logical_id="preview.prompt",
         logical_description="Preview purpose",
         version_description="Initial",
         body={"template": "TENANT_PRIVATE_PROMPT"},
@@ -708,7 +708,7 @@ def test_exact_artifact_preview_and_source_are_tenant_scoped(
     assert preview.json()["body"] == {"template": "TENANT_PRIVATE_PROMPT"}
     assert preview.json()["can_create_new_version"] is False
     preview_audit = AuditEvent.objects.get(
-        action="console.builder.artifact_version.preview", resource_id="preview_prompt:v1"
+        action="console.builder.artifact_version.preview", resource_id="preview.prompt:v1"
     )
     assert "TENANT_PRIVATE_PROMPT" not in str(preview_audit.__dict__)
     assert (
@@ -735,6 +735,20 @@ def test_exact_artifact_preview_and_source_are_tenant_scoped(
     )
     assert copied.status_code == 201
     assert copied.json()["body"] == {"template": "TENANT_PRIVATE_PROMPT"}
+    assert copied.json()["logical_id"] == "preview.prompt"
+    copied_again = _post(
+        client,
+        reverse("builder_api:artifact_drafts"),
+        {
+            "organization": bf.org.slug,
+            "project_id": bf.project.pk,
+            "scenario_id": bf.scenario.pk,
+            "source_artifact_version_id": source.pk,
+        },
+    )
+    assert copied_again.status_code == 200
+    assert copied_again.json()["id"] == copied.json()["id"]
+    assert ArtifactDraft.objects.filter(logical_id="preview.prompt").count() == 1
     foreign_copy = _post(
         client,
         reverse("builder_api:artifact_drafts"),

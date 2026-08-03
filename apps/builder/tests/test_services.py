@@ -126,6 +126,23 @@ def test_prompt_draft_publish_creates_new_immutable_version(bf: BuilderFixture) 
     assert draft.revision == 2
 
 
+@pytest.mark.parametrize("logical_id", ["Uppercase", "../prompt", "prompt/name", ".prompt"])
+def test_artifact_draft_rejects_unsafe_logical_ids(bf: BuilderFixture, logical_id: str) -> None:
+    with pytest.raises(services.BuilderError) as exc:
+        services.create_artifact_draft(
+            organization=bf.org,
+            project=bf.project,
+            scenario=bf.scenario,
+            artifact_type="prompt_template",
+            name="Answer prompt",
+            logical_id=logical_id,
+            logical_description="Stable answer behavior",
+            body={"template": "Text"},
+            actor="author",
+        )
+    assert exc.value.code == "logical_id_invalid"
+
+
 def test_prompt_publish_requires_version_description(bf: BuilderFixture) -> None:
     draft = services.create_artifact_draft(
         organization=bf.org,

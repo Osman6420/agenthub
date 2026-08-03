@@ -14,8 +14,6 @@ import json
 import re
 from typing import Any
 
-from django.core.exceptions import ValidationError
-from django.core.validators import validate_slug
 from django.db import transaction
 from django.utils import timezone
 
@@ -32,6 +30,7 @@ from apps.workflows.compiler import compile_workflow
 # Draft bodies are author working state, not production payloads; keep them bounded so a
 # single draft cannot exhaust storage or the JSON parser.
 MAX_DRAFT_BODY_BYTES = 256 * 1024
+_ARTIFACT_LOGICAL_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 AUTHORABLE_ARTIFACT_TYPES = frozenset(
     {
         ArtifactType.INPUT_CONTRACT,
@@ -254,10 +253,8 @@ def create_artifact_draft(
         raise BuilderError("logical_id_required")
     if len(logical_id) > 128:
         raise BuilderError("logical_id_too_large")
-    try:
-        validate_slug(logical_id)
-    except ValidationError as exc:
-        raise BuilderError("logical_id_invalid") from exc
+    if not _ARTIFACT_LOGICAL_ID.fullmatch(logical_id):
+        raise BuilderError("logical_id_invalid")
     if not logical_description:
         logical_description = f"{name} {artifact_type}"
     if len(logical_description) > 1000:

@@ -772,6 +772,15 @@ def artifact_drafts(request: HttpRequest) -> HttpResponse:
             source.logical_description if source else payload.get("logical_description", "")
         )
         body = source.body if source else payload.get("body")
+        if source is not None:
+            existing = ArtifactDraft.objects.filter(
+                organization=org,
+                scenario=scenario,
+                artifact_type=source.type,
+                logical_id=source.logical_id,
+            ).first()
+            if existing is not None:
+                return JsonResponse(_serialize_artifact_draft(existing, can_write=True))
         draft = services.create_artifact_draft(
             organization=org,
             project=project,

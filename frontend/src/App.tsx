@@ -270,7 +270,10 @@ export function App({
             organization={orgSlug}
             projectId={initial.project_id}
             scenarioId={initial.scenario_id}
-            onOpenArtifactDraft={setActiveArtifact}
+            onOpenArtifactDraft={(draft) => {
+              setActive(null);
+              setActiveArtifact(draft);
+            }}
             refreshArtifact={publishedArtifact}
           />}
       </div>
@@ -361,7 +364,10 @@ export function App({
           organization={orgSlug}
           projectId={initial.project_id}
           scenarioId={initial.scenario_id}
-          onOpenArtifactDraft={setActiveArtifact}
+          onOpenArtifactDraft={(draft) => {
+            setActive(null);
+            setActiveArtifact(draft);
+          }}
           refreshArtifact={publishedArtifact}
         />}
 
