@@ -378,10 +378,9 @@ export function App({
           <span><strong>{draft.name}</strong>{" "}<span style={{ color: "#8b95a7" }}>
             ({draft.artifact_type === "input_contract" ? "girdi" :
               draft.artifact_type === "output_contract" ? "çıktı" :
-                draft.artifact_type === "chunking_profile" ? "parçalama" :
-                  draft.artifact_type === "retrieval_profile" ? "arama" :
-                    draft.artifact_type === "model_profile" ? "model referansı" :
-                      "prompt"}; {draft.logical_id})
+                draft.artifact_type === "retrieval_profile" ? "arama" :
+                  draft.artifact_type === "model_profile" ? "model referansı" :
+                    "prompt"}; {draft.logical_id})
           </span></span>
           <button type="button" onClick={() => void openArtifact(draft.id)} style={openBtn}>Aç</button>
         </li>)}

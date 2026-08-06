@@ -74,3 +74,16 @@ it("creates a model-profile artifact from a safe UUID-only platform choice", asy
   expect(JSON.stringify(requests[0]?.body)).not.toContain("host");
   expect(JSON.stringify(requests[0]?.body)).not.toContain("secret");
 });
+
+it("offers no chunking profile: that artifact is owned by the document set", () => {
+  render(<NewGovernedProfilePanel api={new BuilderApi("/console/api/builder/")}
+    organization="org" projectId={2} scenarioId={3} onCreated={vi.fn()} />);
+
+  const select = screen.getByLabelText("yeni profil türü") as HTMLSelectElement;
+  expect([...select.options].map((option) => option.value)).toEqual([
+    "retrieval_profile", "model_profile",
+  ]);
+  expect(screen.queryByText("Parçalama profili")).not.toBeInTheDocument();
+  // The default selection must be a scenario-owned type, never a document-set one.
+  expect(select.value).toBe("retrieval_profile");
+});

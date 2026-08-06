@@ -498,7 +498,10 @@ def _scoped_draft(request: HttpRequest, pk: int) -> WorkflowDraft:
 
 def _scoped_artifact_draft(request: HttpRequest, pk: int) -> ArtifactDraft:
     allowed = allowed_organization_ids(request.user)
-    qs = ArtifactDraft.objects.select_related("organization", "project", "scenario")
+    # Document-set-owned drafts are not reachable through Studio, including by direct URL.
+    qs = ArtifactDraft.objects.select_related("organization", "project", "scenario").exclude(
+        artifact_type__in=services.DOCUMENT_SET_OWNED_ARTIFACT_TYPES
+    )
     if allowed is not None:
         qs = qs.filter(organization_id__in=allowed)
     draft = qs.filter(pk=pk).first()
@@ -976,7 +979,6 @@ def artifact_drafts(request: HttpRequest) -> HttpResponse:
                 type__in={
                     ArtifactType.PROMPT_TEMPLATE,
                     ArtifactType.MODEL_PROFILE,
-                    ArtifactType.CHUNKING_PROFILE,
                     ArtifactType.RETRIEVAL_PROFILE,
                 },
             ).first()
@@ -1013,7 +1015,9 @@ def artifact_drafts(request: HttpRequest) -> HttpResponse:
         return JsonResponse(_serialize_artifact_draft(draft, can_write=True), status=201)
 
     allowed = allowed_organization_ids(request.user)
-    qs = ArtifactDraft.objects.select_related("organization", "project", "scenario")
+    qs = ArtifactDraft.objects.select_related("organization", "project", "scenario").exclude(
+        artifact_type__in=services.DOCUMENT_SET_OWNED_ARTIFACT_TYPES
+    )
     if allowed is not None:
         qs = qs.filter(organization_id__in=allowed)
     return JsonResponse(
@@ -1185,7 +1189,6 @@ def scenario_artifact_version(request: HttpRequest, public_id: UUID, pk: int) ->
             in {
                 ArtifactType.PROMPT_TEMPLATE,
                 ArtifactType.MODEL_PROFILE,
-                ArtifactType.CHUNKING_PROFILE,
                 ArtifactType.RETRIEVAL_PROFILE,
             },
         }

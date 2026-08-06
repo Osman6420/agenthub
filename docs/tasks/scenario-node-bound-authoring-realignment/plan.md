@@ -192,3 +192,23 @@ publication; an explicit legacy/custom role is never silently overwritten until 
 that node through the new editor. Binding is one-way: there is no UI action that returns a bound
 Retrieve node to the release-level fallback. Automatic candidate/manifest pinning of the generated
 retrieval roles remains out of scope here.
+
+Part 5 (document-set inline authoring) is implemented and automatically verified. Acceptance
+criterion 4 was already met by
+Part 8A: chunking, retrieval, summary-model and summary-prompt artifacts can all be inspected,
+versioned and created from the document-set staged-index page. The remaining work is therefore
+**retiring the Scenario Studio handoff for chunking**, which is owned by the document set:
+
+- remove `chunking_profile` from every Studio authoring surface — the builder's authorable artifact
+  types, the artifact-draft source allowlist, the new-version eligibility set, the draft list and
+  the draft detail route — so the document-set page is the single primary editor;
+- exclude `chunking_profile` from the scenario release-manifest artifact picker. It is consumed only
+  by `apps/ingestion` staged preparation and is referenced by neither `apps/releases` nor
+  `apps/orchestration`, so it is not a release-pinnable role;
+- hide existing unpublished chunking drafts from the Studio surface entirely (owner decision) while
+  leaving the rows and every published immutable version intact; and
+- drop the chunking editor from the React authoring components so no client path can produce one.
+
+Owner decision for this slice: current scenarios are demo data, so no compatibility allowance is
+required for chunking roles previously reachable through Studio. Published chunking artifact
+versions and the document-set preparation profiles that pin them are untouched.

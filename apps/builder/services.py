@@ -34,13 +34,16 @@ from apps.workflows.compiler import compile_workflow
 # single draft cannot exhaust storage or the JSON parser.
 MAX_DRAFT_BODY_BYTES = 256 * 1024
 _ARTIFACT_LOGICAL_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+# Chunking is owned by the document set, not the scenario: it is consumed only by
+# ``apps.ingestion`` staged preparation and is authored from the document-set page. Studio must
+# not offer a second, scenario-scoped way to write it.
+DOCUMENT_SET_OWNED_ARTIFACT_TYPES = frozenset({ArtifactType.CHUNKING_PROFILE})
 AUTHORABLE_ARTIFACT_TYPES = frozenset(
     {
         ArtifactType.INPUT_CONTRACT,
         ArtifactType.OUTPUT_CONTRACT,
         ArtifactType.PROMPT_TEMPLATE,
         ArtifactType.MODEL_PROFILE,
-        ArtifactType.CHUNKING_PROFILE,
         ArtifactType.RETRIEVAL_PROFILE,
     }
 )

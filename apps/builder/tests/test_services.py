@@ -130,17 +130,6 @@ def test_prompt_draft_publish_creates_new_immutable_version(bf: BuilderFixture) 
     ("artifact_type", "body"),
     [
         (
-            "chunking_profile",
-            {
-                "api_version": "agenthub/chunking/v1",
-                "kind": "ChunkingProfile",
-                "strategy": "tokens",
-                "size": 800,
-                "overlap": 80,
-                "max_chunks": 500,
-            },
-        ),
-        (
             "retrieval_profile",
             {
                 "api_version": "agenthub/retrieval/v1",
@@ -182,16 +171,6 @@ def test_governed_profile_draft_publishes_immutable_version(
 @pytest.mark.parametrize(
     ("artifact_type", "body"),
     [
-        (
-            "chunking_profile",
-            {
-                "api_version": "agenthub/chunking/v1",
-                "kind": "ChunkingProfile",
-                "strategy": "tokens",
-                "size": 99,
-                "unexpected": True,
-            },
-        ),
         (
             "retrieval_profile",
             {

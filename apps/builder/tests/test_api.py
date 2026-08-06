@@ -676,17 +676,6 @@ def test_prompt_draft_create_publish_and_viewer_denial(client: Client, bf: Build
     ("artifact_type", "body"),
     [
         (
-            "chunking_profile",
-            {
-                "api_version": "agenthub/chunking/v1",
-                "kind": "ChunkingProfile",
-                "strategy": "headings",
-                "size": 1000,
-                "overlap": 100,
-                "max_chunks": 500,
-            },
-        ),
-        (
             "retrieval_profile",
             {
                 "api_version": "agenthub/retrieval/v1",

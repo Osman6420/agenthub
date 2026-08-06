@@ -217,6 +217,45 @@ def test_artifact_options_are_tenant_scoped_bounded_and_explain_each_level(
     assert '"body"' not in rendered
 
 
+def test_artifact_options_exclude_document_set_owned_chunking_profiles(client: Client) -> None:
+    """Chunking is consumed only by staged preparation; it is not a release-pinnable role."""
+
+    org = Organization.objects.create(slug="chunking-scope-org", name="Chunking Scope")
+    project = AIProject.objects.create(organization=org, slug="project", name="Project")
+    scenario = create_console_scenario(project=project, name="Scenario")
+    create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.CHUNKING_PROFILE,
+        logical_id="set_chunking",
+        logical_description="Owned by the document set",
+        version_description="Initial",
+        body={
+            "api_version": "agenthub/chunking/v1",
+            "kind": "ChunkingProfile",
+            "strategy": "tokens",
+            "size": 800,
+            "overlap": 80,
+            "max_chunks": 500,
+        },
+        created_by="document-set-manager",
+    )
+    client.force_login(_member(org, "chunking-scope-admin"))
+    url = reverse("console:scenario_artifact_options", args=[scenario.public_id])
+
+    types = client.get(url)
+    assert types.status_code == 200
+    assert ArtifactType.CHUNKING_PROFILE not in {item["value"] for item in types.json()["options"]}
+    # An explicit request for the retired type is a 404, not an empty list.
+    assert client.get(url, {"artifact_type": ArtifactType.CHUNKING_PROFILE}).status_code == 404
+    assert (
+        client.get(
+            url,
+            {"artifact_type": ArtifactType.CHUNKING_PROFILE, "logical_id": "set_chunking"},
+        ).status_code
+        == 404
+    )
+
+
 def test_artifact_options_allow_author_read_but_keep_release_preset_manager_only(
     client: Client,
 ) -> None:

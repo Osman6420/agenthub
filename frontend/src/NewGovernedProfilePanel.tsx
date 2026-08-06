@@ -5,7 +5,8 @@ import { defaultGovernedProfileBody, GovernedProfileEditor } from "./GovernedPro
 import { ModelProfileSelect } from "./ModelProfileSelect";
 import type { ArtifactDraft } from "./types";
 
-type ProfileType = "chunking_profile" | "retrieval_profile" | "model_profile";
+// Chunking is document-set owned and is authored from the document-set page, never from Studio.
+type ProfileType = "retrieval_profile" | "model_profile";
 
 export function NewGovernedProfilePanel({ api, organization, projectId, scenarioId, onCreated }: {
   api: BuilderApi;
@@ -14,11 +15,11 @@ export function NewGovernedProfilePanel({ api, organization, projectId, scenario
   scenarioId: number;
   onCreated: (draft: ArtifactDraft) => void;
 }) {
-  const [type, setType] = useState<ProfileType>("chunking_profile");
+  const [type, setType] = useState<ProfileType>("retrieval_profile");
   const [name, setName] = useState("");
   const [logicalId, setLogicalId] = useState("");
   const [description, setDescription] = useState("");
-  const [body, setBody] = useState(() => defaultGovernedProfileBody("chunking_profile"));
+  const [body, setBody] = useState(() => defaultGovernedProfileBody("retrieval_profile"));
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -53,7 +54,6 @@ export function NewGovernedProfilePanel({ api, organization, projectId, scenario
         setBody(nextType === "model_profile" ? { profile_id: "" } :
           defaultGovernedProfileBody(nextType));
       }}>
-        <option value="chunking_profile">Parçalama profili</option>
         <option value="retrieval_profile">Arama profili</option>
         <option value="model_profile">Özet model profil referansı</option>
       </select>

@@ -313,7 +313,7 @@ export interface ArtifactDraft {
   id: number;
   draft_kind: "artifact";
   artifact_type: "input_contract" | "output_contract" | "prompt_template" |
-    "model_profile" | "chunking_profile" | "retrieval_profile";
+    "model_profile" | "retrieval_profile";
   organization: string;
   organization_id: number;
   project_id: number | null;

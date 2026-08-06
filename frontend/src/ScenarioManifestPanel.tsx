@@ -117,8 +117,7 @@ export function ScenarioManifestPanel({
     typeof preview.body?.template === "string" ? preview.body.template : "";
   const promptChanged = preview?.artifact_type === "prompt_template" &&
     promptText !== originalPromptText;
-  const profileChanged = (preview?.artifact_type === "chunking_profile" ||
-    preview?.artifact_type === "retrieval_profile" ||
+  const profileChanged = (preview?.artifact_type === "retrieval_profile" ||
     preview?.artifact_type === "model_profile") &&
     JSON.stringify(artifactBody) !== JSON.stringify(preview.body ?? {});
   const artifactChanged = promptChanged || profileChanged;
@@ -511,8 +510,7 @@ export function ScenarioManifestPanel({
                   onChange={(event) => setPromptText(event.target.value)}
                   style={{ width: "100%", marginTop: 6 }} />
               </label>
-            : preview.artifact_type === "chunking_profile" ||
-                preview.artifact_type === "retrieval_profile"
+            : preview.artifact_type === "retrieval_profile"
               ? null
               : preview.artifact_type === "model_profile" && organization &&
                   projectId !== undefined && scenarioId !== undefined
@@ -525,8 +523,7 @@ export function ScenarioManifestPanel({
               : <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                   {JSON.stringify(preview.body, null, 2)}
                 </pre>}
-        {(preview.artifact_type === "chunking_profile" ||
-          preview.artifact_type === "retrieval_profile") && !preview.body_too_large &&
+        {preview.artifact_type === "retrieval_profile" && !preview.body_too_large &&
           <GovernedProfileEditor type={preview.artifact_type} body={artifactBody}
             onChange={setArtifactBody} readOnly={!preview.can_create_new_version} />}
         {artifactChanged && preview.can_create_new_version && <label style={{ display: "block" }}>

@@ -220,3 +220,65 @@ the Part 7 cleanup slice.
   `apps/retrieval/providers.py`. Both are outside the approved Part 4 scope and are reported, not
   worked around.
 - Known limitation: a bound Retrieve node cannot be returned to release-level fallback from the UI.
+
+## Part 5 — document-set inline authoring (Studio handoff retirement)
+
+### Baseline finding
+
+Acceptance criterion 4 was already met by Part 8A: `document_profile_inspector.html` renders inspect,
+new-version and create-new controls for chunking, retrieval, summary-model and summary-prompt on the
+document-set staged-index page. This slice therefore delivered only the retirement of the Studio
+handoff for chunking, which `apps/ingestion` alone consumes — `apps/releases` and
+`apps/orchestration` contain no `chunking_profile` reference, so it is not a release-pinnable role.
+
+### What changed
+
+- `apps.builder.services` gained `DOCUMENT_SET_OWNED_ARTIFACT_TYPES` and dropped
+  `chunking_profile` from `AUTHORABLE_ARTIFACT_TYPES`.
+- `apps.builder.api` removed chunking from the artifact-draft source allowlist and the
+  new-version eligibility set, excluded document-set-owned drafts from the draft list, and made
+  `_scoped_artifact_draft` exclude them so detail, update, delete and publish all 404 by direct URL.
+- `apps.console.views.scenario_artifact_options` excludes document-set-owned types from the type
+  list and returns 404 for an explicit chunking request.
+- The React authoring components (`NewGovernedProfilePanel`, `ArtifactDraftEditor`,
+  `ScenarioManifestPanel`, `App`, `GovernedProfileEditor`, api/types unions) no longer have any
+  chunking path, so no client can produce one.
+
+### Automated evidence
+
+- `pytest apps/builder/tests/test_document_set_owned_artifacts.py`: 4 passed (new file).
+- `pytest apps/builder apps/console/tests/test_phase_2_8_part_4.py
+  apps/console/tests/test_document_workspace_console.py`: 116 passed.
+- Full SQLite suite: **1167 passed, 61 skipped**.
+- PostgreSQL profile for `apps/builder apps/console`: **356 passed, 0 failed**.
+- Frontend: typecheck passed, `npm test` 12 files / **50 passed**, production bundle rebuilt.
+- `ruff format --check` and `ruff check` clean for `apps/builder` and `apps/console`;
+  `manage.py check` no issues; `makemigrations --check --dry-run` no changes (no migration).
+
+### What the tests prove
+
+- Chunking is absent from `AUTHORABLE_ARTIFACT_TYPES` and present in
+  `DOCUMENT_SET_OWNED_ARTIFACT_TYPES`; the service rejects a chunking draft with
+  `unsupported_artifact_type` and persists nothing.
+- The draft API rejects a chunking create (400) and refuses to seed a draft from a published
+  chunking artifact (404).
+- A pre-existing chunking draft disappears from the list and returns 404 on detail, update and
+  publish, while the row itself stays intact and unmodified.
+- The release-manifest picker omits chunking from its type list and 404s an explicit request at both
+  the logical and exact-version levels.
+- The Studio profile panel offers only `retrieval_profile` and `model_profile`, defaults to a
+  scenario-owned type, and renders no chunking editor anywhere.
+
+### Environment note
+
+Host-run PostgreSQL tests that upload a document need `OBJECT_STORE_ENDPOINT`,
+`OBJECT_STORE_BUCKET`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` exported for the published
+MinIO port; `config.settings.local` defaults to the real S3 backend while `config.settings.test`
+uses an in-memory store. Without them `test_phase_2_5_part_2` fails with `STORAGE_PUT_FAILED`. This
+is a profile gap, not a regression — the same test passes once the endpoint is set.
+
+### Not yet verified
+
+- The rendered UX pass for the document-set page and the Studio profile panel after chunking
+  removal. Server-side behavior is covered above; the browser gate's UX rows still need a real
+  browser.

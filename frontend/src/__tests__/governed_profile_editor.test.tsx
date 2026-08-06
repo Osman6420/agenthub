@@ -4,19 +4,19 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultGovernedProfileBody, GovernedProfileEditor } from "../GovernedProfileEditor";
 
 describe("GovernedProfileEditor", () => {
-  it("edits only the closed chunking fields", () => {
+  it("edits only the closed retrieval fields and exposes no raw JSON escape hatch", () => {
     const onChange = vi.fn();
-    render(<GovernedProfileEditor type="chunking_profile"
-      body={defaultGovernedProfileBody("chunking_profile")} onChange={onChange} />);
+    render(<GovernedProfileEditor type="retrieval_profile"
+      body={defaultGovernedProfileBody("retrieval_profile")} onChange={onChange} />);
 
     expect(screen.queryByRole("textbox", { name: /JSON/i })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Parçalama stratejisi"), {
-      target: { value: "headings" },
-    });
+    // Chunking is document-set owned; Studio must not render a chunking editor at all.
+    expect(screen.queryByLabelText("Parçalama stratejisi")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Arama sonuç sayısı"), { target: { value: "12" } });
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      api_version: "agenthub/chunking/v1",
-      kind: "ChunkingProfile",
-      strategy: "headings",
+      api_version: "agenthub/retrieval/v1",
+      kind: "RetrievalProfile",
+      top_k: 12,
     }));
   });
 

@@ -1,16 +1,7 @@
-type GovernedProfileType = "chunking_profile" | "retrieval_profile";
+// Chunking profiles are authored on the document-set page, never in Studio.
+type GovernedProfileType = "retrieval_profile";
 
-export function defaultGovernedProfileBody(type: GovernedProfileType): Record<string, unknown> {
-  if (type === "chunking_profile") {
-    return {
-      api_version: "agenthub/chunking/v1",
-      kind: "ChunkingProfile",
-      strategy: "tokens",
-      size: 800,
-      overlap: 80,
-      max_chunks: 1000,
-    };
-  }
+export function defaultGovernedProfileBody(_type: GovernedProfileType): Record<string, unknown> {
   return {
     api_version: "agenthub/retrieval/v1",
     kind: "RetrievalProfile",
@@ -22,8 +13,8 @@ export function defaultGovernedProfileBody(type: GovernedProfileType): Record<st
   };
 }
 
-export function GovernedProfileEditor({ type, body, onChange, readOnly = false }: {
-  type: GovernedProfileType;
+export function GovernedProfileEditor({ body, onChange, readOnly = false }: {
+  type?: GovernedProfileType;
   body: Record<string, unknown>;
   onChange: (body: Record<string, unknown>) => void;
   readOnly?: boolean;
@@ -40,35 +31,6 @@ export function GovernedProfileEditor({ type, body, onChange, readOnly = false }
       return;
     }
     setValue(key, Number(value));
-  }
-
-  if (type === "chunking_profile") {
-    return <fieldset disabled={readOnly} style={fieldsetStyle}>
-      <legend>Parçalama ayarları</legend>
-      <p style={hintStyle}><code>agenthub/chunking/v1</code> · alanlar canonical validator ile doğrulanır.</p>
-      <label>Strateji
-        <select aria-label="Parçalama stratejisi" value={String(body.strategy ?? "tokens")}
-          onChange={(event) => setValue("strategy", event.target.value)}>
-          {(["characters", "tokens", "headings", "pages", "tables"] as const).map((value) =>
-            <option key={value} value={value}>{value}</option>)}
-        </select>
-      </label>
-      <label>Parça boyutu
-        <input aria-label="Parça boyutu" type="number" min={100} max={8000}
-          value={Number(body.size ?? 800)}
-          onChange={(event) => setValue("size", Number(event.target.value))} />
-      </label>
-      <label>Örtüşme
-        <input aria-label="Parça örtüşmesi" type="number" min={0}
-          value={Number(body.overlap ?? 0)}
-          onChange={(event) => setValue("overlap", Number(event.target.value))} />
-      </label>
-      <label>En fazla parça
-        <input aria-label="En fazla parça" type="number" min={1}
-          value={Number(body.max_chunks ?? 1000)}
-          onChange={(event) => setValue("max_chunks", Number(event.target.value))} />
-      </label>
-    </fieldset>;
   }
 
   const mode = String(body.mode ?? "hybrid");

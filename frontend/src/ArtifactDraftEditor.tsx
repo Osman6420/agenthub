@@ -34,8 +34,7 @@ export function ArtifactDraftEditor({
   const versionDescriptionRef = useRef<HTMLInputElement>(null);
 
   function parsedBody(): Record<string, unknown> | null {
-    if (draft.artifact_type === "chunking_profile" ||
-      draft.artifact_type === "retrieval_profile") return profileBody;
+    if (draft.artifact_type === "retrieval_profile") return profileBody;
     if (draft.artifact_type === "model_profile") return { profile_id: modelProfileId };
     try {
       const value = JSON.parse(bodyText) as unknown;
@@ -122,13 +121,11 @@ export function ArtifactDraftEditor({
     ? "Girdi sözleşmesi"
     : draft.artifact_type === "output_contract"
       ? "Çıktı sözleşmesi"
-      : draft.artifact_type === "chunking_profile"
-        ? "Parçalama profili"
-        : draft.artifact_type === "retrieval_profile"
-          ? "Arama profili"
-          : draft.artifact_type === "model_profile"
-            ? "Özet model profil referansı"
-            : "Prompt şablonu";
+      : draft.artifact_type === "retrieval_profile"
+        ? "Arama profili"
+        : draft.artifact_type === "model_profile"
+          ? "Özet model profil referansı"
+          : "Prompt şablonu";
 
   return <section>
     <button type="button" onClick={onClose}>← Taslaklar</button>
@@ -144,18 +141,17 @@ export function ArtifactDraftEditor({
       <textarea aria-label="prompt metni" rows={14} value={promptText}
         disabled={!draft.can_write} onChange={(event) => setPromptText(event.target.value)} />
     </label>}
-    {(draft.artifact_type === "chunking_profile" ||
-      draft.artifact_type === "retrieval_profile") && <GovernedProfileEditor
-        type={draft.artifact_type} body={profileBody} onChange={setProfileBody}
-        readOnly={!draft.can_write} />}
+    {draft.artifact_type === "retrieval_profile" && <GovernedProfileEditor
+      type={draft.artifact_type} body={profileBody} onChange={setProfileBody}
+      readOnly={!draft.can_write} />}
     {draft.artifact_type === "model_profile" && draft.project_id !== null &&
       draft.scenario_id !== null && <ModelProfileSelect api={api}
         organization={draft.organization} projectId={draft.project_id}
         scenarioId={draft.scenario_id} value={modelProfileId}
         onChange={setModelProfileId} readOnly={!draft.can_write} />}
     <details open={draft.artifact_type !== "prompt_template"}
-      hidden={draft.artifact_type === "chunking_profile" ||
-        draft.artifact_type === "retrieval_profile" || draft.artifact_type === "model_profile"}>
+      hidden={draft.artifact_type === "retrieval_profile" ||
+        draft.artifact_type === "model_profile"}>
       <summary>Gelişmiş JSON</summary>
       <textarea aria-label="sözleşme JSON içeriği" rows={18} value={bodyText}
         disabled={!draft.can_write} onChange={(event) => setBodyText(event.target.value)} />

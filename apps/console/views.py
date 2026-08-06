@@ -1702,7 +1702,9 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
         )
     artifact_type = request.GET.get("artifact_type", "").strip()
     logical_id = request.GET.get("logical_id", "").strip()
-    queryset = ArtifactVersion.objects.filter(organization_id=scenario.organization_id)
+    queryset = ArtifactVersion.objects.filter(organization_id=scenario.organization_id).exclude(
+        type__in=builder_services.DOCUMENT_SET_OWNED_ARTIFACT_TYPES
+    )
 
     if not artifact_type:
         available_types = set(queryset.values_list("type", flat=True).distinct())
@@ -1719,7 +1721,10 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
         ]
         return JsonResponse({"level": "artifact_type", "options": options})
 
-    if artifact_type not in ArtifactType.values:
+    if (
+        artifact_type not in ArtifactType.values
+        or artifact_type in builder_services.DOCUMENT_SET_OWNED_ARTIFACT_TYPES
+    ):
         raise Http404
     queryset = queryset.filter(type=artifact_type)
     if not logical_id:
