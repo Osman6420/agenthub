@@ -384,3 +384,68 @@ run: it would write an `EvalRun` row against owner data, and the automated suite
 - The rendered UX pass for the release page under an editor identity.
 - The release-manifest preset recommendation remains release-manager-only by prior design; it was
   not re-scoped and has no new evidence.
+
+## Part 7 — cleanup and migration
+
+### What changed
+
+- `ingestion.0014_deprecate_document_set_retrieval_ownership` relaxes
+  `DocumentSetPreparationProfile.retrieval_profile` to nullable. `IndexVersion.retrieval_profile`
+  and `StagedIndexBuildJob.retrieval_profile` were already nullable and were not touched.
+- `configure_preparation` accepts `retrieval_profile=None`; the console build form makes the field
+  optional and the document-set page shows it only as read-only historical provenance.
+- `apps/documents/profile_authoring.AUTHORABLE_TYPES` no longer contains `retrieval_profile`, so the
+  document set can no longer version one.
+- `apps/builder/services.delete_draft` deletes the workflow's node-owned artifact drafts
+  (`node_owned_role_ids`) with a per-row audit event.
+- `docs/ai/engineering-rules.md` records the task's actual behavior in the always-loaded
+  current-behavior section.
+
+### Migration rollout and rollback
+
+Catalog-only `ALTER COLUMN … DROP NOT NULL`: no row rewrite, no index rebuild, no table scan, so
+the lock is brief and the change is safe while serving. The reverse operation restores `NOT NULL`
+and only succeeds while no row is null; after a profile is saved without a retrieval profile the
+forward fix is to keep the column nullable. This is documented in the migration module itself.
+
+### Automated evidence
+
+- `pytest apps/builder/tests/test_draft_deletion_cleanup.py`: 2 passed (new file).
+- `pytest apps/documents/tests/test_retrieval_ownership_deprecation.py`: 3 passed (new file).
+- `pytest apps/console apps/documents apps/ingestion`: 462 passed, 27 skipped.
+- Full SQLite suite: **1187 passed, 61 skipped**.
+- PostgreSQL profile for `apps/builder apps/console apps/documents apps/ingestion apps/releases`,
+  with the new migration applied to a fresh database: **634 passed, 2 skipped** (both skips assert
+  the off-PostgreSQL guard).
+- `ruff format --check apps` and `ruff check apps` pass repository-wide; `mypy apps` reports only
+  the 3 pre-existing `test_api.py` errors; `manage.py check` no issues;
+  `makemigrations --check --dry-run` reports no further changes.
+
+### What the tests prove
+
+- Deleting a bound workflow draft removes exactly its three node-owned artifact drafts (one
+  retrieval role plus the generate prompt/model pair), audits each removal, and leaves the published
+  immutable versions and an unrelated author-owned draft intact.
+- The document set rejects retrieval authoring with `artifact_type_unsupported` and creates no
+  artifact version.
+- `configure_preparation` succeeds with no retrieval profile and the resulting policy passes
+  `full_clean`.
+- An existing retrieval pin still round-trips and its immutable artifact is never removed.
+
+### Live evidence
+
+The migration was applied to the running Compose PostgreSQL:
+
+- `showmigrations` moved `ingestion.0014` to applied; `migrate` reported OK.
+- `information_schema` confirms `retrieval_profile_id` is now nullable.
+- The single existing preparation profile kept `retrieval_profile_id = 12`, so no row lost its
+  provenance.
+- After a web-only restart `/v1/health/live` returned HTTP 200 and the document-set page rendered
+  the retrieval deprecation notice, offered **no** retrieval authoring, and still offered chunking
+  authoring.
+
+### Not yet verified
+
+- The rendered UX pass across the reshaped document-set, scenario and release pages. This is the
+  last open row of the mandatory browser gate for the whole task.
+- Frontend gates were not re-run for this slice because it changed no frontend file.

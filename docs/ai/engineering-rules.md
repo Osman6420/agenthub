@@ -335,6 +335,38 @@ Remaining for phase completion: publish the owner-reviewed S01–S07 GitOps pack
 demo-seed reset (E), and real-broker recovery drills, live Grafana/Prometheus verification, the
 recorded Turkish browser journey and owner sign-off (F).
 
+The `scenario-node-bound-authoring-realignment` task realigned artifact authoring with the domain
+object that consumes each artifact. Implemented and verified (SQLite + PostgreSQL + frontend; the
+rendered UX rows of the browser gate remain open):
+**Node-bound authoring** — the workflow `generate` and `retrieve` nodes each own their artifacts.
+Prompt text, model choice and the structured retrieval profile are edited inside the node; the
+server derives hidden, deterministic, collision-checked manifest roles (`gen_*`, `ret_*`) from the
+immutable workflow logical identity plus node id, saves the workflow body and the node-owned
+artifact drafts in one transaction under exact Scenario Editor authority with optimistic revision
+control, and publishes only changed bodies as immutable versions. Retrieve DSL gained optional
+`retrieval_profile_ref`; the release dependency extractor requires an exact `retrieval_profile`
+artifact for that role and the runtime resolves it per node, failing closed
+(`WORKFLOW_RETRIEVAL_BINDING_INVALID`) when an explicit binding is absent or invalid. Release-level
+retrieval remains the fallback only when a node carries no binding, so legacy workflows are
+unchanged. `COMPILER_VERSION` is `workflow-compiler/v6` (stale claims/checkpoints cannot resume);
+the compiled graph `api_version` deliberately stays at `agenthub/compiled-workflow/v5` so
+already-compiled releases keep executing. Binding is one-way and automatic manifest pinning is not
+implemented.
+**Ownership boundaries** — chunking is document-set owned and unreachable from Scenario Studio,
+including by direct URL, and is absent from the release-manifest picker. Query-time retrieval is
+node owned: `DocumentSetPreparationProfile.retrieval_profile` is now nullable
+(`ingestion.0014`, a catalog-only NOT NULL relaxation that rewrites no row), the document-set page
+no longer offers retrieval selection or authoring, and existing pins plus `IndexVersion` retrieval
+references are retained as historical provenance.
+**Defaults and authority** — scenario creation prepares the canonical input/output contracts as
+immutable v1 artifacts (`{"query": …}` in, `{"answer": …, "sources": […]}` out; closed schemas,
+idempotent preparation), the scenario page shows contract status with a single explicit override
+instead of a creation panel, and eval-suite preparation lives in the candidate evaluation step. An
+exact Scenario Editor can resolve requirements, preflight, compile a candidate and run the required
+evaluation; promotion, rollback, canary and scenario activation remain release-manager-only and are
+denied server-side. Deleting a workflow draft now also removes its node-owned artifact drafts,
+audited, leaving published versions untouched.
+
 Review the final diff for scope, layering, compatibility, authorization, privacy, failure modes, concurrency, operability, and accidental files. Record every executed command and result in task verification. State checks that could not run and the risk this leaves; never infer success from an agent assertion.
 
 ## Recommended enforcement (not implemented)

@@ -139,6 +139,23 @@ without gaining any live-traffic authority.
 
 ## Status
 
+Part 7 (cleanup and migration) is implemented and verified. This closing slice:
+
+- makes `DocumentSetPreparationProfile.retrieval_profile` nullable (`ingestion.0014`), removes the
+  document-set retrieval selector and its authoring type from the primary flow, and keeps existing
+  pins plus `IndexVersion`/`StagedIndexBuildJob` references — both already nullable — as historical
+  provenance;
+- fixes the defect found during Part 4 live verification: deleting a workflow draft now also deletes
+  that workflow's node-owned artifact drafts, each audited, leaving published immutable versions and
+  the author's own logical artifacts untouched; and
+- updates the always-loaded current-behavior section in `docs/ai/engineering-rules.md`.
+
+Migration rollout: `ingestion.0014` is a catalog-only `DROP NOT NULL`. No row is rewritten, no index
+is rebuilt and no table is scanned, so it is safe while the application serves traffic. Rollback:
+the reverse operation restores `NOT NULL` and therefore only succeeds while no preparation profile
+has a null `retrieval_profile_id`; once one has been saved without a profile the forward fix is to
+keep the column nullable rather than reverse the migration.
+
 Part 8A implemented and verified: document-set profile create/new-version now uses exact Document Set
 Manager authority, independent of every bound scenario.
 

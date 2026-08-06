@@ -16,10 +16,12 @@ from apps.documents.models import DocumentSet
 from apps.orchestration.models import ModelProfile, ModelProfileStatus
 from apps.tenancy.services import can_manage_document_set_operations
 
+# Retrieval is deliberately absent: query-time behavior is authored inside the executing
+# Retrieve node, so the document set no longer versions a retrieval profile. Existing
+# references stay readable as historical provenance.
 AUTHORABLE_TYPES = frozenset(
     {
         ArtifactType.CHUNKING_PROFILE,
-        ArtifactType.RETRIEVAL_PROFILE,
         ArtifactType.PROMPT_TEMPLATE,
         ArtifactType.MODEL_PROFILE,
     }

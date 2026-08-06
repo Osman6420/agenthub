@@ -429,8 +429,13 @@ class DocumentSetBuildForm(forms.Form):
     chunking_profile = forms.ModelChoiceField(
         queryset=ArtifactVersion.objects.none(), label="Parçalama profili"
     )
+    # Deprecated primary control: query-time retrieval comes from the executing Retrieve
+    # node. The field stays so an existing pin round-trips as historical provenance, but it
+    # is no longer required and is not offered in the primary flow.
     retrieval_profile = forms.ModelChoiceField(
-        queryset=ArtifactVersion.objects.none(), label="Arama profili"
+        queryset=ArtifactVersion.objects.none(),
+        required=False,
+        label="Arama profili (kullanımdan kalktı)",
     )
     summary_model_profile = forms.ModelChoiceField(
         queryset=ArtifactVersion.objects.none(),

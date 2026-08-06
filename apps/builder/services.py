@@ -505,12 +505,48 @@ def update_draft(
     return locked
 
 
+def node_owned_role_ids(draft: WorkflowDraft) -> set[str]:
+    """Return every server-owned artifact role this workflow's nodes generate."""
+
+    body = draft.body if isinstance(draft.body, dict) else {}
+    spec = body.get("spec")
+    nodes = spec.get("nodes", []) if isinstance(spec, dict) else []
+    roles: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not node_id:
+            continue
+        if node.get("type") == "generate":
+            roles.update(generate_node_roles(draft, node_id).values())
+        elif node.get("type") == "retrieve":
+            roles.add(retrieve_node_role(draft, node_id))
+    return roles
+
+
 @transaction.atomic
 def delete_draft(
     draft: WorkflowDraft, *, actor: str, expected_revision: Any, request_id: str = ""
 ) -> None:
     locked = WorkflowDraft.objects.select_for_update().get(pk=draft.pk)
     _require_revision(expected=expected_revision, actual=locked.revision)
+    # Node-owned artifact drafts exist only to back this workflow's nodes, so deleting the
+    # workflow must not leave them orphaned and unreachable. Published immutable versions are
+    # never touched, and an author's own logical artifacts keep their own lifecycle.
+    roles = node_owned_role_ids(locked)
+    if roles and locked.project_id is not None and locked.scenario_id is not None:
+        orphans = list(
+            ArtifactDraft.objects.select_for_update().filter(
+                organization_id=locked.organization_id,
+                project_id=locked.project_id,
+                scenario_id=locked.scenario_id,
+                logical_id__in=roles,
+            )
+        )
+        for orphan in orphans:
+            _audit_artifact_draft(actor, "delete", orphan, request_id=request_id)
+            orphan.delete()
     _audit(actor, "delete", locked, request_id=request_id)
     locked.delete()
 

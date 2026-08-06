@@ -553,9 +553,14 @@ class DocumentSetPreparationProfile(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="document_preparation_chunking_profiles",
     )
+    # Deprecated as a primary control: query-time retrieval now comes from the executing
+    # Retrieve node's binding. Existing values are retained as historical provenance, so the
+    # column is only relaxed to nullable and never rewritten.
     retrieval_profile = models.ForeignKey(
         "artifacts.ArtifactVersion",
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="document_preparation_retrieval_profiles",
     )
     ocr_profile = models.ForeignKey(

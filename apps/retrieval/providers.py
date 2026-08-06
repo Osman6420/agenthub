@@ -82,9 +82,7 @@ class DemoRetrievalProvider:
         threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
         if 0.82 < threshold:
             return []
-        document_set_version_id = (
-            document_set_version_ids[0] if document_set_version_ids else None
-        )
+        document_set_version_id = document_set_version_ids[0] if document_set_version_ids else None
         index_version_id = index_versions[0] if index_versions else None
         return [
             RetrievedChunk(

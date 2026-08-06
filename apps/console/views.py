@@ -4404,19 +4404,6 @@ def document_set_detail(
             ensure_ascii=False,
             indent=2,
         ),
-        ArtifactType.RETRIEVAL_PROFILE: json.dumps(
-            {
-                "api_version": "agenthub/retrieval/v1",
-                "kind": "RetrievalProfile",
-                "mode": "hybrid",
-                "top_k": 8,
-                "score_threshold": 0,
-                "vector_weight": 0.7,
-                "keyword_weight": 0.3,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
     }
     grants = list(
         document_set.grants.filter(principal_type=GrantPrincipalType.CONSUMER).order_by(

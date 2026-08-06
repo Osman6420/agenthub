@@ -22,7 +22,7 @@ def configure_preparation(
     document_set: DocumentSet,
     embedding_profile: EmbeddingProfile,
     chunking_profile: ArtifactVersion,
-    retrieval_profile: ArtifactVersion,
+    retrieval_profile: ArtifactVersion | None,
     ocr_profile: OcrProfile | None,
     summary_model_profile: ArtifactVersion | None,
     summary_prompt_contract: ArtifactVersion | None,
@@ -61,7 +61,7 @@ def configure_preparation(
         after={
             "embedding_profile_id": str(embedding_profile.public_id),
             "chunking_profile_ref": chunking_profile.ref,
-            "retrieval_profile_ref": retrieval_profile.ref,
+            "retrieval_profile_ref": retrieval_profile.ref if retrieval_profile else None,
             "summary_enabled": summary_model_profile is not None,
             "auto_prepare": auto_prepare,
         },
