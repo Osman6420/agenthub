@@ -229,3 +229,18 @@ Part 2 (defaults and navigation) is implemented and automatically verified. This
 The override route keeps its exact Scenario Editor authorization: creating a scenario does not make
 the creator its editor, and a project administrator without the exact scenario responsibility is
 still denied.
+
+Part 6 (candidate authority simplification) is implemented and automatically verified. Owner
+approval for this authorization-contract change was given before implementation. This delivery
+slice:
+
+- lets an exact Scenario Editor resolve manifest requirements, preflight a manifest and compile a
+  candidate release through `apps/builder/api._candidate_scenario`, alongside a release manager; and
+- lets the same editor run the required evaluation through `_evaluable_release`, because an eval
+  produces a redacted report and changes no release status.
+
+Everything that can move live traffic is untouched and still resolves through `_manageable_release`:
+promotion, rollback, canary start/stop and scenario activation/disable remain release-manager-only.
+UI affordances follow the same split — a candidate release shows the eval action to an editor and no
+traffic control at all. The release-manifest **preset recommendation** stays release-manager-only;
+it was a deliberate existing control and Part 6 does not name it.

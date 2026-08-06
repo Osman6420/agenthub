@@ -224,30 +224,15 @@ def transient_diagnostics(request: HttpRequest) -> HttpResponse:
     return JsonResponse(services.diagnose(payload.get("body")))
 
 
-def _release_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
-    scenario = (
-        Scenario.objects.select_related("organization", "project")
-        .filter(public_id=public_id)
-        .first()
-    )
-    if scenario is None:
-        raise Http404
-    allowed = allowed_organization_ids(request.user)
-    if allowed is not None and scenario.organization_id not in allowed:
-        raise Http404
-    decision = authorize(
-        user=request.user,
-        capability=Capability.SCENARIO_RELEASE,
-        organization=scenario.organization,
-        project=scenario.project,
-        scenario=scenario,
-    )
-    if not decision.allowed:
-        raise PermissionDenied
-    return scenario
+def _candidate_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
+    """Resolve a scenario for candidate preparation.
 
+    Preparing a candidate — assembling a manifest, preflighting it and compiling it — is
+    authoring work, so an exact Scenario Editor is allowed alongside a release manager. It
+    changes no live traffic: promotion, rollback, canary and scenario activation remain
+    release-manager-only and are enforced separately.
+    """
 
-def _artifact_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
     scenario = (
         Scenario.objects.select_related("organization", "project")
         .filter(public_id=public_id)
@@ -275,6 +260,10 @@ def _artifact_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
     return scenario
 
 
+def _artifact_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
+    return _candidate_scenario(request, public_id)
+
+
 def _manifest_payload_result(
     *, scenario: Scenario, payload: dict[str, Any]
 ) -> tuple[list[Any] | None, JsonResponse | None]:
@@ -296,7 +285,7 @@ def _manifest_payload_result(
 def release_manifest_preflight(request: HttpRequest, public_id: UUID) -> HttpResponse:
     """Run canonical release compilation inside an always-rollback transaction."""
 
-    scenario = _release_scenario(request, public_id)
+    scenario = _candidate_scenario(request, public_id)
     payload = _json_body(
         request,
         max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,
@@ -320,7 +309,7 @@ def release_manifest_preflight(request: HttpRequest, public_id: UUID) -> HttpRes
 def release_manifest_requirements(request: HttpRequest, public_id: UUID) -> HttpResponse:
     """Return deterministic manifest roles required by one exact published workflow."""
 
-    scenario = _release_scenario(request, public_id)
+    scenario = _candidate_scenario(request, public_id)
     payload = _json_body(
         request,
         max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,
@@ -343,7 +332,7 @@ def release_manifest_requirements(request: HttpRequest, public_id: UUID) -> Http
 def release_manifest_compile(request: HttpRequest, public_id: UUID) -> HttpResponse:
     """Create one audited candidate or return a safe canonical diagnostic."""
 
-    scenario = _release_scenario(request, public_id)
+    scenario = _candidate_scenario(request, public_id)
     payload = _json_body(
         request,
         max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,

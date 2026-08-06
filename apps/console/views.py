@@ -2922,6 +2922,12 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
         release.organization_id,
         scenario=release.scenario,
     )
+    can_author_artifacts = can_author_scenarios(
+        request.user,
+        release.organization_id,
+        project=release.scenario.project,
+        scenario=release.scenario,
+    )
     canaries = list(release.canaries.select_related("consumer").order_by("-created_at")[:100])
     pre_active = release.status in {ReleaseStatus.CANDIDATE, ReleaseStatus.CANARY}
     artifact_rows = _release_artifact_rows(release)
@@ -2949,16 +2955,13 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
             "manifest_too_large": manifest_too_large,
             "canaries": canaries,
             "can_manage": can_manage,
-            "can_eval": can_manage and pre_active,
+            # Evaluation is candidate preparation, so an exact Scenario Editor may run it.
+            # Every traffic transition below stays release-manager-only.
+            "can_eval": (can_manage or can_author_artifacts) and pre_active,
             "can_promote": can_manage and pre_active,
             "can_start_canary": can_manage and pre_active,
             "can_rollback": can_manage and release.status == ReleaseStatus.SUPERSEDED,
-            "can_author_artifacts": can_author_scenarios(
-                request.user,
-                release.organization_id,
-                project=release.scenario.project,
-                scenario=release.scenario,
-            ),
+            "can_author_artifacts": can_author_artifacts,
             "latest_eval": EvalRun.objects.filter(release=release).order_by("-created_at").first(),
             "is_disabled": release.organization.status == OrganizationStatus.DISABLED,
         },
@@ -2966,6 +2969,8 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
 
 
 def _manageable_release(user: UserLike, release_id: int) -> ScenarioRelease:
+    """Resolve a release for an action that can change live traffic."""
+
     release = _scoped_release(user, release_id)
     if not can_manage_scenario_releases(
         user,
@@ -2976,10 +2981,33 @@ def _manageable_release(user: UserLike, release_id: int) -> ScenarioRelease:
     return release
 
 
+def _evaluable_release(user: UserLike, release_id: int) -> ScenarioRelease:
+    """Resolve a release for required evaluation.
+
+    Running an eval is candidate preparation, not a traffic decision: it produces a
+    redacted report and changes no release status, so an exact Scenario Editor is allowed
+    alongside a release manager. Promotion, rollback, canary and scenario activation keep
+    using :func:`_manageable_release`.
+    """
+
+    release = _scoped_release(user, release_id)
+    organization_id = release.scenario.project.organization_id
+    if can_manage_scenario_releases(user, organization_id, scenario=release.scenario):
+        return release
+    if not can_author_scenarios(
+        user,
+        organization_id,
+        project=release.scenario.project,
+        scenario=release.scenario,
+    ):
+        raise PermissionDenied
+    return release
+
+
 @login_required
 @require_POST
 def release_run_eval(request: HttpRequest, release_id: int) -> HttpResponse:
-    release = _manageable_release(request.user, release_id)
+    release = _evaluable_release(request.user, release_id)
     try:
         run = run_eval(release=release, created_by=request.user.get_username())
         messages.success(

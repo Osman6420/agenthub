@@ -325,3 +325,62 @@ is a profile gap, not a regression — the same test passes once the endpoint is
 - The rendered UX pass for the reshaped scenario page and the relocated eval-suite action.
 - Existing scenarios created before this slice have no prepared defaults; no backfill was run. They
   keep the previous behavior of an absent contract until an author creates one.
+
+## Part 6 — candidate authority simplification
+
+Owner approval for this authorization-contract change was recorded before implementation.
+
+### What changed
+
+- `apps/builder/api._release_scenario` became `_candidate_scenario`: manifest requirements,
+  preflight and compile now accept an exact Scenario Editor as well as a release manager.
+  `_artifact_scenario` delegates to it, so one helper owns candidate-preparation authority.
+- `apps/console/views._evaluable_release` allows the same editor to run a required evaluation.
+  `_manageable_release` is unchanged and still guards promote, rollback, canary and activation.
+- The release page computes `can_eval` from manager-or-author, so an editor sees the eval action on
+  a candidate and no traffic control.
+
+### Automated evidence
+
+- `pytest apps/console/tests/test_candidate_authority.py`: 8 passed (new file).
+- `pytest apps/console apps/builder apps/releases apps/evaluations`: 423 passed, 1 skipped.
+- Full SQLite suite: **1182 passed, 61 skipped**.
+- PostgreSQL profile for `apps/console apps/builder apps/releases apps/evaluations`:
+  **432 passed**.
+- `ruff format --check`/`ruff check` clean; `mypy apps` reports only the 3 pre-existing
+  `test_api.py` errors; `manage.py check` no issues; `makemigrations --check` no changes.
+
+### What the tests prove
+
+- A Scenario Editor resolves requirements, preflights and compiles a candidate (HTTP 201), and the
+  compile produces a candidate without activating anything.
+- The same editor runs an evaluation: an `EvalRun` is created and the release stays `candidate`.
+- The same editor receives **HTTP 403** on promote, rollback, canary start and scenario lifecycle
+  change, and no release becomes active.
+- The release page shows the editor the eval action and none of the promote/rollback/canary URLs.
+- A Scenario Viewer is denied both preflight and evaluation, and no `EvalRun` is created.
+- A foreign-tenant editor receives 404 — not 403 — on both the builder and console surfaces, so
+  cross-tenant existence is not disclosed.
+
+### Live evidence
+
+Compose web was restarted to load the change; `/v1/health/live` returned HTTP 200.
+
+| Identity | Action | Result |
+| --- | --- | --- |
+| `editor` | GET candidate release detail | HTTP 200 |
+| `editor` | POST promote | **HTTP 403** |
+| `editor` | POST rollback | **HTTP 403** |
+| `editor` | GET canary start | **HTTP 403** |
+| `auditor` | POST run eval | **HTTP 403** |
+| `editor` | candidate release page affordances | eval action present; promote, rollback and canary absent |
+| `auditor` | candidate release page affordances | eval action absent |
+
+No live release, scenario or traffic state was changed. The positive live eval was deliberately not
+run: it would write an `EvalRun` row against owner data, and the automated suites already cover it.
+
+### Not yet verified
+
+- The rendered UX pass for the release page under an editor identity.
+- The release-manifest preset recommendation remains release-manager-only by prior design; it was
+  not re-scoped and has no new evidence.

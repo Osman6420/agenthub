@@ -23,41 +23,40 @@ not store general startup instructions or assumed service status in this handoff
 
 1. **Task and outcome:** Continue
    [`scenario-node-bound-authoring-realignment/plan.md`](../tasks/scenario-node-bound-authoring-realignment/plan.md).
-   Parts 3, 4 and 5 are implemented and automatically verified; the next reviewable unit is Part 2
-   (defaults and navigation) or Part 6 (candidate authority), whichever the owner picks.
+   Parts 2, 3, 4, 5, 6 and 8A are implemented and automatically verified. The remaining reviewable
+   unit is Part 7 (cleanup and additive retrieval-ownership migration).
 2. **Approved scope:** Owner-approved decisions already applied: only `COMPILER_VERSION` moved to
-   v6, Retrieve binding is one-way, automatic manifest pinning is deferred, and only
-   `chunking_profile` was retired from Studio. Do not start Part 7 retrieval-ownership migration or
-   any live-traffic authorization change without a new approval.
-3. **Decisions and assumptions:** Workflow DSL stores only server-owned refs; raw bodies stay in
-   governed artifact drafts/versions. An unbound Retrieve node seeds from the scenario's active
-   release. Chunking is document-set owned and unreachable from Studio, including by direct URL.
-   Current scenarios are demo data, so no chunking compatibility allowance was required.
-4. **Working tree:** Branch `feat/foundation-sprint-0-1`. Parts 4 and its evidence are committed
-   (`e5f1ca1`, `73ae121`, `a4f4b79`). Part 5 is uncommitted at handoff time unless a later commit
-   exists: `apps/builder/{api.py,services.py}`, `apps/console/views.py`,
-   `apps/builder/tests/{test_api.py,test_services.py}`,
-   `apps/console/tests/test_phase_2_8_part_4.py`, the React authoring components and their tests,
-   plus the plan/verification records. New file:
-   `apps/builder/tests/test_document_set_owned_artifacts.py`. The generated
+   v6; Retrieve binding is one-way; automatic manifest pinning is deferred; only `chunking_profile`
+   was retired from Studio; and Part 6's authorization change was explicitly approved. Part 7's
+   data-touching migration needs its own rollout/rollback review before it starts.
+3. **Decisions and assumptions:** Workflow DSL stores only server-owned refs. An unbound Retrieve
+   node seeds from the scenario's active release. Chunking is document-set owned and unreachable
+   from Studio. Contract defaults are canonical and closed, prepared at scenario creation, and
+   idempotent. Candidate preparation and evaluation are authoring work; every traffic transition
+   stays release-manager-only.
+4. **Working tree:** Branch `feat/foundation-sprint-0-1`. Parts 4, 5 and 2 are committed
+   (`e5f1ca1`, `73ae121`, `a4f4b79`, `b37ea6a`, `459c4ff`). Part 6 is uncommitted at handoff time
+   unless a later commit exists: `apps/builder/api.py`, `apps/console/views.py`,
+   `apps/console/templates/console/release_detail.html`, plus
+   `apps/console/tests/test_candidate_authority.py` and the plan/verification records. The generated
    `apps/builder/static/builder/` bundle is current and gitignored.
 5. **Verification:** Evidence is in
    [`verification.md`](../tasks/scenario-node-bound-authoring-realignment/verification.md).
-   Latest: full SQLite 1167 passed / 61 skipped; PostgreSQL `apps/builder`+`apps/console` 356
-   passed; frontend typecheck + 50 vitest + production build; ruff/`manage.py check`/
-   `makemigrations --check` clean. Browser-gate rows L1-L16 passed live with three operator
-   identities. **Outstanding:** the rendered UX rows, which need a real browser.
-6. **Runtime:** Canonical Compose roles are running and `/v1/health/live` returned HTTP 200. No
-   migration was added by Parts 4 or 5 and no restart is required; re-check live state first.
-   Host-run PostgreSQL tests that upload a document need `OBJECT_STORE_ENDPOINT`,
-   `OBJECT_STORE_BUCKET` and the MinIO credentials exported, or they fail with
-   `STORAGE_PUT_FAILED`.
+   Latest: full SQLite 1182 passed / 61 skipped; PostgreSQL console/builder/releases/evaluations 432
+   passed; ruff, mypy (3 pre-existing errors only), `manage.py check` and `makemigrations --check`
+   clean. Live matched-identity probes passed for both the retrieve-binding route and the new
+   candidate authority. **Outstanding:** the rendered UX rows, which need a real browser.
+6. **Runtime:** Canonical Compose roles are running and `/v1/health/live` returned HTTP 200 after a
+   web-only restart. No migration was added by Parts 2, 4, 5 or 6. Host-run PostgreSQL tests that
+   upload a document need `OBJECT_STORE_ENDPOINT`, `OBJECT_STORE_BUCKET` and the MinIO credentials
+   exported, or they fail with `STORAGE_PUT_FAILED`.
 7. **Risks and blockers:** The rendered UX gate is the only blocker for `Verified`. Repository-wide
    `mypy apps` (3 errors in `apps/builder/tests/test_api.py`) and `ruff format --check apps`
    (`apps/retrieval/providers.py`) were already failing at `88e4e18` and are deliberately untouched.
-   Deleting a workflow draft still orphans its node-owned artifact drafts (routed to Part 7).
-8. **Next action:** Ask the owner whether to run the rendered UX pass, take Part 2 (defaults and
-   navigation), or take Part 6 (candidate authority).
+   Deleting a workflow draft still orphans its node-owned artifact drafts. Scenarios created before
+   Part 2 have no prepared contract defaults; no backfill was run.
+8. **Next action:** Ask the owner whether to start Part 7 (with its migration rollout/rollback plan),
+   fix the orphaned artifact-draft defect, or run the rendered UX pass.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:
