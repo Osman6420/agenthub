@@ -183,10 +183,22 @@ stack. Credentials were supplied by the owner for this run only and are not reco
 | L9 | Nonexistent draft id | HTTP 404 |
 | L10 | Existing draft, node id that is not a Retrieve node | HTTP 400 with a content-free code |
 
-The probe used one disposable workflow draft created and then deleted through the console API. No
+A second run covered matched permitted/forbidden identities on a `demo`-tenant draft, with the
+`editor` (exact Scenario Editor) and `auditor` (organization auditor) console accounts:
+
+| # | Check | Result |
+| --- | --- | --- |
+| L11 | `editor` creates the draft and GETs the binding | HTTP 201 / HTTP 200 with `can_write=true` |
+| L12 | `editor` saves the binding | HTTP 200 |
+| L13 | `auditor` GETs the same binding | HTTP 200 with **`can_write=false`** — read is allowed, write authority is not advertised |
+| L14 | `auditor` PUTs the same binding | **HTTP 403**, no state change |
+| L15 | `editor` requests a foreign-tenant draft's binding | **HTTP 404**, no existence disclosure |
+| L16 | `auditor` requests the same foreign-tenant draft | **HTTP 404** |
+
+Both runs used disposable workflow drafts created and then deleted through the console API. No
 existing draft, scenario, release or index was modified, nothing was published, and the environment
 was confirmed restored afterwards (workflow drafts `1..6` unchanged, zero `ret_*` artifact drafts,
-zero `ret_*` artifact versions).
+zero `ret_*` artifact versions, zero probe drafts).
 
 **Defect found during the live run:** deleting a workflow draft leaves its node-owned artifact
 drafts behind (two orphan `retrieval_profile` drafts had to be removed explicitly). This affects
@@ -196,13 +208,12 @@ the Part 7 cleanup slice.
 
 ### Not yet verified / blocked
 
-- **The mandatory browser gate is only partially satisfied.** The authorization, direct-URL/POST and
-  route-liveness rows above ran against the real server, but: (a) only the `admin` identity was
-  available — the `editor`, `auditor` and `releaser` operator passwords were not supplied, so matched
-  permitted/forbidden identity pairing and visible affordance parity were not exercised live (they
-  are covered by automated tests only); and (b) no rendering engine was available, so the human UX
-  assessment (discoverability, click count, keyboard use, responsive layout, browser console/network
-  review) has not been done. These rows remain outstanding.
+- **The mandatory browser gate is satisfied for authorization, not for UX.** The authorization,
+  matched-identity, cross-tenant, direct-URL/POST and route-liveness rows (L1–L16) ran against the
+  real server with three distinct operator identities. No rendering engine was available, so the
+  human UX assessment — discoverability, click count, feedback, error recovery, keyboard use,
+  responsive layout at 390/900/1440 px and browser console/network review — has **not** been done
+  and remains outstanding for the Retrieve node panel.
 - Repository-wide `mypy apps` still reports **3 pre-existing errors** in
   `apps/builder/tests/test_api.py` (unmodified by this slice, present at commit `88e4e18`), and
   repository-wide `ruff format --check apps` still reports pre-existing drift in

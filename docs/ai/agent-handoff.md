@@ -48,9 +48,10 @@ not store general startup instructions or assumed service status in this handoff
    [`verification.md`](../tasks/scenario-node-bound-authoring-realignment/verification.md).
    Automated verification is complete: full SQLite 1165 passed / 61 skipped; PostgreSQL affected
    suites 380 passed; frontend typecheck + 49 vitest + production build; ruff/`manage.py check`/
-   `makemigrations --check` clean for this slice. An authenticated platform-admin live session
-   covered the L1–L10 authorization/route rows. **Still outstanding:** matched editor/auditor
-   identity pairing (their passwords were not available) and the human UX/rendering rows.
+   `makemigrations --check` clean for this slice. Authenticated live sessions with three operator
+   identities covered browser-gate rows L1–L16 (authorization, matched editor/auditor pairing,
+   cross-tenant 404, route liveness). **Still outstanding:** the human UX/rendering rows, which need
+   a real browser.
 6. **Runtime:** Canonical Compose roles are running and `/v1/health/live` returned HTTP 200. The new
    retrieve-binding route answers JSON HTTP 401 unauthenticated, so the URLconf is live. This slice
    adds no migration and requires no restart; re-check live state before relying on it.
@@ -58,9 +59,8 @@ not store general startup instructions or assumed service status in this handoff
    `mypy apps` (3 errors in `apps/builder/tests/test_api.py`) and `ruff format --check apps`
    (`apps/retrieval/providers.py`) were already failing at `88e4e18` and are deliberately untouched.
    A bound Retrieve node cannot be unbound from the UI. Do not mutate a live scenario to verify.
-8. **Next action:** Close the remaining browser-gate rows with a signed-in Scenario Editor and a
-   matched viewer/auditor plus a rendered UX pass on the Retrieve node panel; the server-side
-   authorization rows already passed live as platform admin.
+8. **Next action:** Run the rendered UX pass on the Retrieve node panel in a real browser (the only
+   remaining gate row), then start Part 5 document-set inline authoring.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:
