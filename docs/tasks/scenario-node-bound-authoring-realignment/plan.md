@@ -170,7 +170,25 @@ exposed a PostgreSQL-only `FOR UPDATE` restriction because nullable project/scen
 joined in the locking query. The lock now targets only the workflow row and PostgreSQL-backed tests
 cover the path.
 
+Part 4 (Retrieve-node binding) is implemented and automatically verified (SQLite, PostgreSQL and
+frontend); the mandatory authenticated browser gate remains outstanding. This delivery slice:
+
+- adds optional `retrieval_profile_ref` to the canonical Retrieve-node config and moves
+  `COMPILER_VERSION` to `workflow-compiler/v6` so stale background claims/checkpoints cannot resume
+  under the changed semantics, while the compiled graph `api_version` stays at v5 so
+  already-compiled releases keep executing;
+- resolves an explicit node role to its exact release-pinned retrieval profile at runtime, fails
+  closed when that explicit binding is absent/invalid, and retains release-level fallback only when
+  the node has no binding;
+- puts the structured retrieval editor directly inside each Retrieve node, backed by exact Scenario
+  Editor authorization, optimistic revision control, deterministic hidden roles and immutable
+  changed-only publication, seeded from the scenario's active release while the node is unbound; and
+- proves two Retrieve nodes remain independent across UI authoring, DSL compilation, release
+  dependency extraction and runtime provider invocation, including PostgreSQL transaction evidence.
+
 Operational rule for this slice: legacy refs and absent bindings remain readable and retain the
 current runtime fallback. Only server-derived node roles participate in automatic artifact
 publication; an explicit legacy/custom role is never silently overwritten until the author saves
-that Generate node through the new editor.
+that node through the new editor. Binding is one-way: there is no UI action that returns a bound
+Retrieve node to the release-level fallback. Automatic candidate/manifest pinning of the generated
+retrieval roles remains out of scope here.

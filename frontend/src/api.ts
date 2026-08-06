@@ -19,6 +19,7 @@ import type {
   ManifestSelectionPayload,
   ModelProfileOption,
   GenerateNodeBinding,
+  RetrieveNodeBinding,
   NodeSchema,
 } from "./types";
 
@@ -279,6 +280,29 @@ export class BuilderApi {
   ): Promise<{ draft: Draft; binding: GenerateNodeBinding }> {
     return request(this.url(
       `/drafts/${draftId}/generate-nodes/${encodeURIComponent(nodeId)}/binding/`,
+    ), {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  retrieveNodeBinding(draftId: number, nodeId: string): Promise<RetrieveNodeBinding> {
+    return request(this.url(
+      `/drafts/${draftId}/retrieve-nodes/${encodeURIComponent(nodeId)}/binding/`,
+    ));
+  }
+
+  saveRetrieveNodeBinding(
+    draftId: number,
+    nodeId: string,
+    payload: {
+      revision: number;
+      workflow_body: Record<string, unknown>;
+      profile_body: Record<string, unknown>;
+    },
+  ): Promise<{ draft: Draft; binding: RetrieveNodeBinding }> {
+    return request(this.url(
+      `/drafts/${draftId}/retrieve-nodes/${encodeURIComponent(nodeId)}/binding/`,
     ), {
       method: "PUT",
       body: JSON.stringify(payload),

@@ -59,5 +59,10 @@ urlpatterns = [
         api.generate_node_binding,
         name="generate_node_binding",
     ),
+    path(
+        "drafts/<int:pk>/retrieve-nodes/<str:node_id>/binding/",
+        api.retrieve_node_binding,
+        name="retrieve_node_binding",
+    ),
     path("drafts/<int:pk>/publish/", api.draft_publish, name="draft_publish"),
 ]

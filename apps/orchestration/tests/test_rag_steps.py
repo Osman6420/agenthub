@@ -68,6 +68,30 @@ def test_retrieve_for_release_uses_release_scope(monkeypatch: pytest.MonkeyPatch
     assert "text" in block["chunks"][0] and "score" in block["chunks"][0]
 
 
+def test_retrieve_for_release_uses_explicit_node_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Provider:
+        def retrieve(self, **kwargs: Any) -> list[RetrievedChunk]:
+            captured.update(kwargs)
+            return []
+
+    monkeypatch.setattr(
+        rag_steps,
+        "resolve_bundle",
+        lambda release: _fake_bundle(retrieval_profile={"top_k": 2}),
+    )
+    monkeypatch.setattr(rag_steps, "get_retrieval_provider", lambda: _Provider())
+
+    rag_steps.retrieve_for_release(
+        release=object(),
+        query="iade",
+        retrieval_profile={"mode": "hybrid", "top_k": 17},
+    )
+
+    assert captured["profile"] == {"mode": "hybrid", "top_k": 17}
+
+
 def test_generate_for_release_grounds_on_context(monkeypatch: pytest.MonkeyPatch) -> None:
     # Default StubModelProvider echoes the top retrieved chunk, proving the context is passed.
     monkeypatch.setattr(rag_steps, "resolve_bundle", lambda release: _fake_bundle())

@@ -21,8 +21,45 @@ not store general startup instructions or assumed service status in this handoff
 
 ## Active handoff
 
-No active agent transition. Phase 2.8 Part 3 is completed and its durable evidence is archived at
-`docs/planning/archive/phase-2-8-part-3-unified-workflow-engine-2026-07-28/`.
+1. **Task and outcome:** Continue Part 4 Retrieve-node binding in
+   [`scenario-node-bound-authoring-realignment/plan.md`](../tasks/scenario-node-bound-authoring-realignment/plan.md).
+   The reviewable unit is per-node structured retrieval authoring through DSL, release requirements,
+   runtime and immutable artifact publication; it is implemented and automatically verified, and is
+   awaiting only the mandatory authenticated browser gate.
+2. **Approved scope:** Finish Part 4 only. Preserve legacy release-level retrieval fallback when a
+   node binding is absent, fail closed for an explicit missing/invalid role, and keep exact Scenario
+   Editor write authorization. Do not start defaults/navigation, document-set cleanup, candidate
+   authority or live-traffic authorization changes.
+3. **Decisions and assumptions:** Workflow DSL stores only server-owned
+   `retrieval_profile_ref`; raw profile JSON remains in governed artifact drafts/versions. Multiple
+   Retrieve nodes use deterministic independent roles. Compiler contract is bumped from v5 to v6 so
+   stale background claims cannot resume. See the task plan and threat model.
+4. **Working tree:** Branch `feat/foundation-sprint-0-1`, last clean commit `88e4e18`. Part 4 is
+   uncommitted. Modified files are `apps/builder/{api.py,services.py,urls.py}`,
+   `apps/orchestration/{rag_steps.py,tests/test_rag_steps.py}`,
+   `apps/releases/authoring.py`, `apps/workflows/{compiler.py,models.py,runtime.py,
+   tests/test_generate_binding.py}`, `frontend/src/{Editor.tsx,api.ts,
+   components/NodeConfigPanel.tsx,types.ts,useBuilder.ts,__tests__/node_config_panel.test.tsx}`
+   and the task plan/verification records. Untracked:
+   `apps/workflows/tests/test_retrieve_binding.py` and
+   `apps/builder/tests/test_retrieve_node_binding.py`. Preserve all of these changes. The generated
+   `apps/builder/static/builder/` bundle is current and gitignored.
+5. **Verification:** Evidence is in
+   [`verification.md`](../tasks/scenario-node-bound-authoring-realignment/verification.md).
+   Automated verification is complete: full SQLite 1165 passed / 61 skipped; PostgreSQL affected
+   suites 380 passed; frontend typecheck + 49 vitest + production build; ruff/`manage.py check`/
+   `makemigrations --check` clean for this slice. **The mandatory authenticated browser gate has not
+   run** (no signed-in operator session).
+6. **Runtime:** Canonical Compose roles are running and `/v1/health/live` returned HTTP 200. The new
+   retrieve-binding route answers JSON HTTP 401 unauthenticated, so the URLconf is live. This slice
+   adds no migration and requires no restart; re-check live state before relying on it.
+7. **Risks and blockers:** The browser gate is the blocker for `Verified`. Repository-wide
+   `mypy apps` (3 errors in `apps/builder/tests/test_api.py`) and `ruff format --check apps`
+   (`apps/retrieval/providers.py`) were already failing at `88e4e18` and are deliberately untouched.
+   A bound Retrieve node cannot be unbound from the UI. Do not mutate a live scenario to verify.
+8. **Next action:** Run the section 10 browser gate against the current build with a signed-in
+   Scenario Editor and a matched viewer, covering the Retrieve node panel, then decide whether the
+   two pre-existing static-gate failures are fixed in a separate scoped change.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:

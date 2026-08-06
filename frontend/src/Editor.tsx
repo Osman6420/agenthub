@@ -256,6 +256,7 @@ export function Editor({
             onChange={builder.updateNodeConfig}
             onPatchData={builder.updateNodeData}
             onSaveGenerateBinding={builder.saveGenerateBinding}
+            onSaveRetrieveBinding={builder.saveRetrieveBinding}
             onRemove={builder.removeSelected}
           />
         )}

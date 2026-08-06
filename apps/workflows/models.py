@@ -58,7 +58,7 @@ class WorkflowVersion(models.Model):
     compiled_graph = models.JSONField()
     checksum = models.CharField(max_length=64)
     # The active compiled-contract version is set explicitly by ``compile_workflow_version``
-    # (``apps.workflows.compiler.COMPILER_VERSION``, currently ``workflow-compiler/v5``). This
+    # (``apps.workflows.compiler.COMPILER_VERSION``, currently ``workflow-compiler/v6``). This
     # column default is only a legacy fallback and is never used by the service path.
     compiler_version = models.CharField(max_length=32, default="workflow-compiler/v1")
     created_by = models.CharField(max_length=200)

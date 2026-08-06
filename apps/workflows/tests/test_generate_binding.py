@@ -59,6 +59,18 @@ def test_generate_rejects_non_identifier_ref() -> None:
         compile_workflow(_body({"prompt_ref": "not an identifier!"}))
 
 
-def test_retrieve_rejects_config() -> None:
+def test_retrieve_accepts_per_node_profile_binding() -> None:
+    compiled = compile_workflow(
+        _body(None, retrieve_config={"retrieval_profile_ref": "retrieve_support"})
+    )
+    retrieve = next(n for n in compiled.graph["nodes"] if n["id"] == "r")
+    assert retrieve["config"] == {"retrieval_profile_ref": "retrieve_support"}
+
+
+def test_retrieve_rejects_unknown_or_invalid_config() -> None:
     with pytest.raises(WorkflowCompileError):
         compile_workflow(_body(None, retrieve_config={"top_k": 5}))
+    with pytest.raises(WorkflowCompileError):
+        compile_workflow(
+            _body(None, retrieve_config={"retrieval_profile_ref": "not an identifier!"})
+        )

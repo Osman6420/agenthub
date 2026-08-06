@@ -12,7 +12,9 @@ const draft: Draft = {
   name: "Flow", logical_id: "flow", body: {}, last_published_version: 0,
   last_published_at: null, revision: 1, can_write: true,
 };
-const commonProps = { api, draft, onSaveGenerateBinding: vi.fn() };
+const commonProps = {
+  api, draft, onSaveGenerateBinding: vi.fn(), onSaveRetrieveBinding: vi.fn(),
+};
 
 const schema: NodeSchema = {
   organization: "org",
@@ -25,6 +27,17 @@ const schema: NodeSchema = {
       { name: "model_profile_ref", kind: "identifier", required: false },
     ],
   }],
+  tool_binding_roles: [],
+  custom_nodes: [],
+  projects: [],
+};
+
+const retrieveSchema: NodeSchema = {
+  organization: "org",
+  can_write: true,
+  dsl: { api_version: "agenthub/v1", kind: "Workflow" },
+  limits: { max_nodes: 50, max_edges: 100 },
+  node_types: [{ type: "retrieve", label: "Retrieve", category: "rag", fields: [] }],
   tool_binding_roles: [],
   custom_nodes: [],
   projects: [],
@@ -115,5 +128,71 @@ describe("node config panel", () => {
     expect(screen.queryByLabelText("model_profile_ref")).not.toBeInTheDocument();
     expect(screen.getByLabelText("platform model profili")).toBeInTheDocument();
     expect(screen.queryByText("Bu node için yapılandırma yok.")).not.toBeInTheDocument();
+  });
+
+  it("edits retrieval settings inside the retrieve node and never shows the manifest role", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      node_id: "primary",
+      profile_body: {
+        api_version: "agenthub/retrieval/v1", kind: "RetrievalProfile",
+        mode: "vector", top_k: 20, score_threshold: 0,
+      },
+      configured: false,
+    }), { status: 200 })));
+    const onSaveRetrieveBinding = vi.fn().mockResolvedValue({
+      node_id: "primary",
+      profile_body: {
+        api_version: "agenthub/retrieval/v1", kind: "RetrievalProfile",
+        mode: "vector", top_k: 5, score_threshold: 0,
+      },
+      configured: true,
+    });
+    const node = {
+      id: "primary",
+      type: "builderNode",
+      position: { x: 0, y: 0 },
+      data: { nodeType: "retrieve", config: {} },
+    } as Node<BuilderNodeData>;
+    render(<NodeConfigPanel schema={retrieveSchema} node={node} disabled={false}
+      onChange={vi.fn()} onPatchData={vi.fn()} onRemove={vi.fn()}
+      {...commonProps} onSaveRetrieveBinding={onSaveRetrieveBinding} />);
+
+    // The editor is seeded from the server, not from a hardcoded client default.
+    expect(await screen.findByLabelText("Arama sonuç sayısı")).toHaveValue(20);
+    expect(screen.queryByText("Bu node için yapılandırma yok.")).not.toBeInTheDocument();
+    // The server-owned manifest role is never rendered as an author-editable field.
+    expect(screen.queryByLabelText("retrieval_profile_ref")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Arama sonuç sayısı"), { target: { value: "5" } });
+    fireEvent.click(screen.getByText("Arama profilini kaydet"));
+    expect(onSaveRetrieveBinding).toHaveBeenCalledWith(
+      "primary",
+      expect.objectContaining({ mode: "vector", top_k: 5 }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Arama profili bu Retrieve node'una kaydedildi.",
+    );
+  });
+
+  it("keeps the retrieve editor read-only for a viewer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      node_id: "primary",
+      profile_body: {
+        api_version: "agenthub/retrieval/v1", kind: "RetrievalProfile",
+        mode: "keyword", top_k: 3, score_threshold: 0,
+      },
+      configured: true,
+    }), { status: 200 })));
+    const node = {
+      id: "primary",
+      type: "builderNode",
+      position: { x: 0, y: 0 },
+      data: { nodeType: "retrieve", config: {} },
+    } as Node<BuilderNodeData>;
+    render(<NodeConfigPanel schema={retrieveSchema} node={node} disabled={true}
+      onChange={vi.fn()} onPatchData={vi.fn()} onRemove={vi.fn()} {...commonProps} />);
+
+    expect(await screen.findByLabelText("Arama sonuç sayısı")).toBeDisabled();
+    expect(screen.queryByText("Arama profilini kaydet")).not.toBeInTheDocument();
   });
 });

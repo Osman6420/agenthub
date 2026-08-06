@@ -85,6 +85,13 @@ export interface GenerateNodeBinding {
   can_write?: boolean;
 }
 
+export interface RetrieveNodeBinding {
+  node_id: string;
+  profile_body: Record<string, unknown>;
+  configured: boolean;
+  can_write?: boolean;
+}
+
 export interface ManifestOptionsResult {
   level: "artifact_type" | "logical_artifact" | "exact_version" | "preset";
   artifact_type?: string;

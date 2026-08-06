@@ -15,6 +15,7 @@ import type {
   DiagnosticsResult,
   Draft,
   GenerateNodeBinding,
+  RetrieveNodeBinding,
   NodeConfig,
   NodeSchema,
   WorkflowDsl,
@@ -54,6 +55,9 @@ export interface BuilderController {
   saveGenerateBinding: (
     nodeId: string, promptText: string, modelProfileId: string,
   ) => Promise<GenerateNodeBinding>;
+  saveRetrieveBinding: (
+    nodeId: string, profileBody: Record<string, unknown>,
+  ) => Promise<RetrieveNodeBinding>;
   publish: (versionDescription?: string) => Promise<void>;
   applyJsonCandidate: (body: unknown, allowInvalid?: boolean) => Promise<boolean>;
 }
@@ -284,6 +288,38 @@ export function useBuilder(
     }
   }, [api, body, draft.id, draft.logical_id, readOnly, revision]);
 
+  const saveRetrieveBinding = useCallback(async (
+    nodeId: string, profileBody: Record<string, unknown>,
+  ) => {
+    if (readOnly || draft.id === 0) throw new Error("retrieve_binding_read_only");
+    try {
+      const result = await api.saveRetrieveNodeBinding(draft.id, nodeId, {
+        revision,
+        workflow_body: body as unknown as Record<string, unknown>,
+        profile_body: profileBody,
+      });
+      const parsed = dslToGraph(result.draft.body);
+      setNodes(parsed.nodes);
+      setEdges(parsed.edges);
+      setWorkflowId(parsed.workflowId || draft.logical_id);
+      setInputNodeId(parsed.inputNodeId);
+      setRevision(result.draft.revision);
+      setSavedCanonical(canonicalJson(graphToDsl({
+        workflowId: parsed.workflowId || draft.logical_id,
+        inputNodeId: parsed.inputNodeId,
+        nodes: parsed.nodes,
+        edges: parsed.edges,
+      })));
+      setStatus(`Retrieve ${nodeId} arama profili kaydedildi`);
+      return result.binding;
+    } catch (error) {
+      setStatus(error instanceof ApiError && error.code === "stale_revision"
+        ? "Taslak başka bir editör tarafından değiştirildi. Çalışmanız korunuyor; yenileyip uzlaştırın."
+        : String(error));
+      throw error;
+    }
+  }, [api, body, draft.id, draft.logical_id, readOnly, revision]);
+
   const publish = useCallback(async (versionDescription = "Published workflow version") => {
     if (readOnly) return;
     const publishRevision = isDirty ? await save() : revision;
@@ -355,6 +391,7 @@ export function useBuilder(
     runDiagnostics,
     save,
     saveGenerateBinding,
+    saveRetrieveBinding,
     publish,
     applyJsonCandidate,
   };

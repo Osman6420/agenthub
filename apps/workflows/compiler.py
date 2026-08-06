@@ -26,10 +26,12 @@ MAX_WAIT_SECONDS = 2_592_000
 MAX_CHILD_DEPTH = 3
 COMPOSITION_NODE_TYPES = frozenset({"subworkflow"})
 
-# Compiled-contract version (ADR-0008/ADR-0014). V5 adds compiler-owned execution-mode evidence;
-# stale graphs or checkpoints can never be resumed under changed semantics.
+# Compiled-contract version (ADR-0008/ADR-0014). The graph api_version stays at v5: v5 graphs
+# stay executable, so already-compiled releases keep running. The compiler version bumps to v6 for
+# per-node retrieval binding, so no claim or checkpoint compiled under the older retrieve semantics
+# can resume.
 COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v5"
-COMPILER_VERSION = "workflow-compiler/v5"
+COMPILER_VERSION = "workflow-compiler/v6"
 
 _SYNC_BLOCKER_BY_NODE_TYPE = {
     "tool": "tool_pause_policy_unproven",
@@ -412,8 +414,15 @@ def _validate_node(
         _validate_child_depth(config.get("max_depth"))
         if input_mapping is None or output_mapping is None:
             raise WorkflowCompileError("subworkflow node requires input_mapping and output_mapping")
-    elif node_type == "retrieve" and config:
-        raise WorkflowCompileError("retrieve node does not accept config")
+    elif node_type == "retrieve":
+        _require_exact_keys(
+            config,
+            {"retrieval_profile_ref"},
+            "retrieve config",
+            optional={"retrieval_profile_ref"},
+        )
+        if "retrieval_profile_ref" in config:
+            _identifier(config.get("retrieval_profile_ref"), "retrieve retrieval_profile_ref")
     elif node_type == "parallel":
         _require_exact_keys(
             config,

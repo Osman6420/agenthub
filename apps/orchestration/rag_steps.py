@@ -138,13 +138,17 @@ def chunks_from_state(state: dict[str, Any]) -> list[RetrievedChunk]:
 
 
 def retrieve_for_release(
-    *, release: Any, query: str, consumer_id: int | None = None
+    *,
+    release: Any,
+    query: str,
+    consumer_id: int | None = None,
+    retrieval_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run governed, release-scoped retrieval and return a JSON-safe ``retrieval`` state block."""
     bundle = resolve_bundle(release)
     chunks = get_retrieval_provider().retrieve(
         query=query,
-        profile=bundle.retrieval_profile,
+        profile=(retrieval_profile if retrieval_profile is not None else bundle.retrieval_profile),
         organization_id=bundle.organization_id,
         scenario_id=getattr(bundle, "scenario_id", getattr(release, "scenario_id", None)),
         index_versions=bundle.index_versions,

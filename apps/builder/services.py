@@ -46,6 +46,7 @@ AUTHORABLE_ARTIFACT_TYPES = frozenset(
 )
 
 _GENERATE_ROLE_PREFIX = "gen_"
+_RETRIEVE_ROLE_PREFIX = "ret_"
 
 
 def ai_authoring_request_limit(*, accept: bool) -> int:
@@ -96,14 +97,24 @@ def generate_node_roles(draft: WorkflowDraft, node_id: str) -> dict[str, str]:
     }
 
 
+def retrieve_node_role(draft: WorkflowDraft, node_id: str) -> str:
+    """Return the stable, server-owned retrieval manifest role for one Retrieve node."""
+
+    if not isinstance(node_id, str) or not node_id:
+        raise BuilderError("retrieve_node_invalid")
+    seed = f"{draft.organization_id}:{draft.logical_id}:{node_id}".encode()
+    identity = hashlib.sha256(seed).hexdigest()[:24]
+    return f"{_RETRIEVE_ROLE_PREFIX}{identity}_profile"
+
+
 def _workflow_node(body: dict[str, Any], node_id: str, *, node_type: str) -> dict[str, Any]:
     spec = body.get("spec")
     nodes = spec.get("nodes") if isinstance(spec, dict) else None
     if not isinstance(nodes, list):
-        raise BuilderError("generate_node_not_found")
+        raise BuilderError(f"{node_type}_node_not_found")
     matches = [node for node in nodes if isinstance(node, dict) and node.get("id") == node_id]
     if len(matches) != 1 or matches[0].get("type") != node_type:
-        raise BuilderError("generate_node_not_found")
+        raise BuilderError(f"{node_type}_node_not_found")
     return matches[0]
 
 
@@ -182,7 +193,7 @@ def get_generate_node_binding(draft: WorkflowDraft, *, node_id: str) -> dict[str
     }
 
 
-def _upsert_generate_artifact_draft(
+def _upsert_node_artifact_draft(
     *,
     workflow: WorkflowDraft,
     artifact_type: str,
@@ -206,7 +217,7 @@ def _upsert_generate_artifact_draft(
             existing.project_id != workflow.project_id
             or existing.scenario_id != workflow.scenario_id
         ):
-            raise BuilderError("generate_binding_collision")
+            raise BuilderError("node_binding_collision")
         return update_artifact_draft(
             existing,
             actor=actor,
@@ -269,7 +280,7 @@ def save_generate_node_binding(
     node["config"] = {**config, **roles}
 
     safe_node_name = node_id[:80]
-    _upsert_generate_artifact_draft(
+    _upsert_node_artifact_draft(
         workflow=locked,
         artifact_type=ArtifactType.PROMPT_TEMPLATE,
         logical_id=roles["prompt_ref"],
@@ -278,12 +289,98 @@ def save_generate_node_binding(
         actor=actor,
         request_id=request_id,
     )
-    _upsert_generate_artifact_draft(
+    _upsert_node_artifact_draft(
         workflow=locked,
         artifact_type=ArtifactType.MODEL_PROFILE,
         logical_id=roles["model_profile_ref"],
         name=f"{safe_node_name} model",
         body={"profile_id": model_profile_id},
+        actor=actor,
+        request_id=request_id,
+    )
+    return update_draft(
+        locked,
+        actor=actor,
+        expected_revision=locked.revision,
+        body=candidate,
+        request_id=request_id,
+    )
+
+
+def get_retrieve_node_binding(draft: WorkflowDraft, *, node_id: str) -> dict[str, Any]:
+    body = _validated_body(draft.body)
+    node = _workflow_node(body, node_id, node_type="retrieve")
+    raw_config = node.get("config")
+    config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+    expected_role = retrieve_node_role(draft, node_id)
+    configured_role = config.get("retrieval_profile_ref")
+    profile_body = _binding_artifact_body(
+        draft,
+        artifact_type=ArtifactType.RETRIEVAL_PROFILE,
+        configured_role=configured_role,
+        expected_role=expected_role,
+    )
+    scenario = draft.scenario
+    if profile_body is None and not configured_role and scenario is not None:
+        from apps.releases.services import get_active_release, get_artifact_body_for_role
+
+        active_release = get_active_release(scenario)
+        if active_release is not None:
+            profile_body = get_artifact_body_for_role(active_release, "retrieval_profile")
+    if not isinstance(profile_body, dict):
+        profile_body = {
+            "api_version": "agenthub/retrieval/v1",
+            "kind": "RetrievalProfile",
+            "mode": "hybrid",
+            "top_k": 8,
+            "score_threshold": 0,
+            "vector_weight": 0.7,
+            "keyword_weight": 0.3,
+        }
+    return {
+        "node_id": node_id,
+        "profile_body": profile_body,
+        "configured": configured_role == expected_role,
+    }
+
+
+@transaction.atomic
+def save_retrieve_node_binding(
+    draft: WorkflowDraft,
+    *,
+    actor: str,
+    expected_revision: Any,
+    workflow_body: Any,
+    node_id: str,
+    profile_body: Any,
+    request_id: str = "",
+) -> WorkflowDraft:
+    """Save one Retrieve node and its governed retrieval profile atomically."""
+
+    locked = WorkflowDraft.objects.select_for_update().get(pk=draft.pk)
+    _require_revision(expected=expected_revision, actual=locked.revision)
+    candidate = copy.deepcopy(_validated_body(workflow_body))
+    node = _workflow_node(candidate, node_id, node_type="retrieve")
+    role = retrieve_node_role(locked, node_id)
+    spec = candidate.get("spec")
+    nodes = spec.get("nodes", []) if isinstance(spec, dict) else []
+    for other in nodes:
+        if not isinstance(other, dict) or other.get("type") != "retrieve":
+            continue
+        other_id = other.get("id")
+        if isinstance(other_id, str) and other_id != node_id:
+            if retrieve_node_role(locked, other_id) == role:
+                raise BuilderError("node_binding_collision")
+    raw_config = node.get("config")
+    config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+    node["config"] = {**config, "retrieval_profile_ref": role}
+
+    _upsert_node_artifact_draft(
+        workflow=locked,
+        artifact_type=ArtifactType.RETRIEVAL_PROFILE,
+        logical_id=role,
+        name=f"{node_id[:80]} retrieval",
+        body=_validated_body(profile_body),
         actor=actor,
         request_id=request_id,
     )
@@ -674,7 +771,7 @@ def publish_artifact_draft(
     return artifact
 
 
-def _publish_generate_artifact_if_changed(
+def _publish_node_artifact_if_changed(
     *,
     workflow: WorkflowDraft,
     node_id: str,
@@ -696,9 +793,7 @@ def _publish_generate_artifact_if_changed(
         .first()
     )
     if author_draft is None:
-        raise BuilderError(
-            "generate_binding_missing", f"Generate node {node_id} binding is missing"
-        )
+        raise BuilderError("node_binding_missing", f"node {node_id} binding is missing")
     body = _validated_body(author_draft.body)
     try:
         validate_body(artifact_type, body)
@@ -735,7 +830,7 @@ def _publish_generate_artifact_if_changed(
     record_event(
         actor_type="user",
         actor_id=actor,
-        action="console.builder.generate_binding.publish",
+        action="console.builder.node_binding.publish",
         outcome="success",
         organization_id=workflow.organization_id,
         resource_type=artifact_type,
@@ -771,7 +866,7 @@ def _publish_generate_bindings(
         ):
             if config.get(field) != roles[field]:
                 continue  # Legacy/custom roles remain release-manager pinned and untouched.
-            _publish_generate_artifact_if_changed(
+            _publish_node_artifact_if_changed(
                 workflow=workflow,
                 node_id=node_id,
                 artifact_type=artifact_type,
@@ -780,6 +875,38 @@ def _publish_generate_bindings(
                 version_description=version_description,
                 request_id=request_id,
             )
+
+
+def _publish_retrieve_bindings(
+    workflow: WorkflowDraft,
+    *,
+    actor: str,
+    version_description: str,
+    request_id: str,
+) -> None:
+    body = _validated_body(workflow.body)
+    spec = body.get("spec")
+    nodes = spec.get("nodes", []) if isinstance(spec, dict) else []
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "retrieve":
+            continue
+        node_id = node.get("id")
+        if not isinstance(node_id, str):
+            continue
+        role = retrieve_node_role(workflow, node_id)
+        raw_config = node.get("config")
+        config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+        if config.get("retrieval_profile_ref") != role:
+            continue  # Legacy nodes retain release-level fallback or custom exact pins.
+        _publish_node_artifact_if_changed(
+            workflow=workflow,
+            node_id=node_id,
+            artifact_type=ArtifactType.RETRIEVAL_PROFILE,
+            logical_id=role,
+            actor=actor,
+            version_description=version_description,
+            request_id=request_id,
+        )
 
 
 @transaction.atomic
@@ -806,6 +933,12 @@ def publish_draft(
     if len(version_description) > 1000:
         raise BuilderError("version_description_too_large")
     _publish_generate_bindings(
+        locked,
+        actor=actor,
+        version_description=version_description,
+        request_id=request_id,
+    )
+    _publish_retrieve_bindings(
         locked,
         actor=actor,
         version_description=version_description,

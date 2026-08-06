@@ -1,12 +1,14 @@
 import type { Node } from "@xyflow/react";
 import { useEffect, useState } from "react";
 import { ApiError, type BuilderApi } from "../api";
+import { defaultGovernedProfileBody, GovernedProfileEditor } from "../GovernedProfileEditor";
 import { ModelProfileSelect } from "../ModelProfileSelect";
 import { fieldOptions, nodeTypeSchema } from "../schema";
 import type {
   BuilderNodeData,
   Draft,
   GenerateNodeBinding,
+  RetrieveNodeBinding,
   MappingEntry,
   NodeConfig,
   NodeFieldSchema,
@@ -30,6 +32,7 @@ export function NodeConfigPanel({
   api,
   draft,
   onSaveGenerateBinding,
+  onSaveRetrieveBinding,
 }: {
   schema: NodeSchema;
   node: Node<BuilderNodeData> | null;
@@ -42,6 +45,9 @@ export function NodeConfigPanel({
   onSaveGenerateBinding: (
     nodeId: string, promptText: string, modelProfileId: string,
   ) => Promise<GenerateNodeBinding>;
+  onSaveRetrieveBinding: (
+    nodeId: string, profileBody: Record<string, unknown>,
+  ) => Promise<RetrieveNodeBinding>;
 }) {
   if (!node) {
     return (
@@ -79,7 +85,8 @@ export function NodeConfigPanel({
         </div>
       )}
 
-      {typeSchema && typeSchema.fields.length === 0 && (
+      {typeSchema && typeSchema.fields.length === 0 &&
+        !["generate", "retrieve"].includes(node.data.nodeType) && (
         <div style={{ color: "#8b95a7", fontSize: 13 }}>Bu node için yapılandırma yok.</div>
       )}
 
@@ -90,6 +97,16 @@ export function NodeConfigPanel({
           nodeId={node.id}
           disabled={disabled}
           onSave={onSaveGenerateBinding}
+        />
+      )}
+
+      {node.data.nodeType === "retrieve" && (
+        <RetrieveBindingEditor
+          api={api}
+          draft={draft}
+          nodeId={node.id}
+          disabled={disabled}
+          onSave={onSaveRetrieveBinding}
         />
       )}
 
@@ -158,6 +175,76 @@ export function NodeConfigPanel({
       )}
     </aside>
   );
+}
+
+function RetrieveBindingEditor({
+  api,
+  draft,
+  nodeId,
+  disabled,
+  onSave,
+}: {
+  api: BuilderApi;
+  draft: Draft;
+  nodeId: string;
+  disabled: boolean;
+  onSave: (
+    nodeId: string, profileBody: Record<string, unknown>,
+  ) => Promise<RetrieveNodeBinding>;
+}) {
+  const [profileBody, setProfileBody] = useState<Record<string, unknown>>(
+    () => defaultGovernedProfileBody("retrieval_profile"),
+  );
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(draft.id > 0);
+
+  useEffect(() => {
+    if (draft.id === 0) return;
+    let active = true;
+    setLoading(true);
+    setStatus("");
+    void api.retrieveNodeBinding(draft.id, nodeId).then((binding) => {
+      if (!active) return;
+      setProfileBody(binding.profile_body);
+      setStatus(binding.configured
+        ? "Node arama profili yüklendi."
+        : "Mevcut release profili başlangıç değeri olarak yüklendi; kaydedince node'a özel olur.");
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setStatus(error instanceof ApiError && error.code === "retrieve_node_not_found"
+        ? "Yeni node: arama ayarlarını girip kaydedebilirsiniz."
+        : error instanceof ApiError ? `${error.code}: ${error.message}` : String(error));
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [api, draft.id, nodeId]);
+
+  if (draft.id === 0 || draft.project_id === null || draft.scenario_id === null) {
+    return <div role="note" style={gatedStyle}>
+      Arama profilini bağlamak için önce workflow adayını scenario taslağı olarak kaydedin.
+    </div>;
+  }
+
+  return <fieldset style={{ ...labelStyle, border: "1px solid #334155", borderRadius: 6, padding: 10 }}>
+    <legend>Retrieval ayarları</legend>
+    <GovernedProfileEditor
+      type="retrieval_profile"
+      body={profileBody}
+      onChange={setProfileBody}
+      readOnly={disabled || loading}
+    />
+    {!disabled && <button type="button" disabled={loading} onClick={() => {
+      setLoading(true);
+      setStatus("");
+      void onSave(nodeId, profileBody).then((binding) => {
+        setProfileBody(binding.profile_body);
+        setStatus("Arama profili bu Retrieve node'una kaydedildi.");
+      }).catch((error: unknown) => {
+        setStatus(error instanceof ApiError ? `${error.code}: ${error.message}` : String(error));
+      }).finally(() => setLoading(false));
+    }}>Arama profilini kaydet</button>}
+    {status && <div role="status" style={helpStyle}>{status}</div>}
+    <span style={helpStyle}>Artifact rolü sistem tarafından yönetilir; workflow JSON'unda gizli ref olarak tutulur.</span>
+  </fieldset>;
 }
 
 function GenerateBindingEditor({

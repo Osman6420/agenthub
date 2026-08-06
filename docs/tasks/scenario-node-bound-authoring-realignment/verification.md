@@ -108,3 +108,72 @@
   (`2 passed`) and a real PostgreSQL disposable test database (`2 passed`).
 - The bounded live watcher detected `apps/builder/services.py`, reloaded the web child successfully,
   and `/v1/health/live` remained HTTP 200. No live scenario mutation was issued during verification.
+
+## Part 4 — Retrieve-node binding (implemented; automated verification complete)
+
+### Locked decisions
+
+- Only `COMPILER_VERSION` moves to `workflow-compiler/v6`. `COMPILED_WORKFLOW_API_VERSION` stays at
+  `agenthub/compiled-workflow/v5` so already-compiled releases keep executing (acceptance criterion
+  7), while `background_claims` — which compares `COMPILER_VERSION` — refuses to resume any claim or
+  checkpoint produced under the old retrieve semantics.
+- An unbound Retrieve node seeds its editor from the scenario's **active release** retrieval profile,
+  so saving without edits preserves current behavior instead of silently applying client defaults.
+- Binding is one-way, matching Part 3: there is no "return to release fallback" action.
+- Automatic candidate/manifest pinning of the generated retrieval roles stays out of scope and
+  belongs to the later defaults/candidate-authority slices.
+
+### Automated evidence
+
+- `pytest apps/builder/tests/test_retrieve_node_binding.py`: 4 passed (new file).
+- `pytest apps/builder apps/workflows apps/releases apps/orchestration apps/console`:
+  625 passed, 11 skipped (PostgreSQL-only) — the `v5`→`v6` compiler bump broke no fixture or
+  assertion.
+- Full SQLite suite `pytest`: **1165 passed, 61 skipped**.
+- PostgreSQL profile (`config.settings.local`, `--create-db`, Compose PostgreSQL) for
+  `apps/builder apps/workflows apps/releases apps/orchestration`: **380 passed, 0 skipped** —
+  the workflow-row `select_for_update` path in `save_retrieve_node_binding` holds on real
+  PostgreSQL.
+- Frontend: `npm run typecheck` passed; `npm test` 12 files / **49 passed** (two new Retrieve panel
+  tests); `npm run build` produced the current Django static bundle.
+- `ruff format --check` and `ruff check` pass for every file changed by this slice;
+  `manage.py check` reported no issues and `makemigrations --check --dry-run` detected no changes
+  (this slice adds no migration).
+
+### What the tests prove
+
+- Two Retrieve nodes receive distinct deterministic `ret_*` roles, publish independent immutable
+  retrieval profiles, and a change to one node creates an N+1 version only for that node's role.
+- Republishing an unchanged draft creates no new artifact version.
+- Release dependency extraction requires an exact `retrieval_profile` artifact for each bound role;
+  an unbound node adds no requirement and keeps the release-level fallback.
+- A legacy/custom `retrieval_profile_ref` is still required by the extractor but is never
+  auto-versioned by the builder, so release-manager pins are not overwritten.
+- The editor seeds from the active release while unbound, switches to node-owned content once
+  bound, and leaves the sibling node reading the release profile.
+- API: foreign-tenant GET/PUT 404, viewer GET 200 with `can_write=false`, viewer PUT 403, stale
+  revision 409, invalid profile body 400 `candidate_invalid_artifact` with no artifact draft
+  persisted, and an authorized save that writes only the server-owned role into the node config.
+- Frontend: the retrieval editor renders server-seeded values, never exposes the manifest role as an
+  author field, submits the edited body, and is read-only for a viewer.
+
+### Live evidence
+
+- Compose reported PostgreSQL, Redis, MinIO, web, all three workers and beat running;
+  `/v1/health/live` returned HTTP 200.
+- An unauthenticated request to the new `/console/api/builder/drafts/<id>/retrieve-nodes/<node>/
+  binding/` route returned a JSON **HTTP 401** (not an HTML 404), proving the URLconf is live in the
+  running process. No draft, artifact, release or scenario state was mutated.
+
+### Not yet verified / blocked
+
+- **Mandatory browser UI/UX/authorization gate is not run.** The local browser session has no
+  signed-in operator identity and no credentials were read or entered, so the authenticated Retrieve
+  panel, matched allow/deny affordance parity and the human UX assessment remain outstanding. This
+  slice cannot be marked `Verified` for the gate until an operator session runs it.
+- Repository-wide `mypy apps` still reports **3 pre-existing errors** in
+  `apps/builder/tests/test_api.py` (unmodified by this slice, present at commit `88e4e18`), and
+  repository-wide `ruff format --check apps` still reports pre-existing drift in
+  `apps/retrieval/providers.py`. Both are outside the approved Part 4 scope and are reported, not
+  worked around.
+- Known limitation: a bound Retrieve node cannot be returned to release-level fallback from the UI.

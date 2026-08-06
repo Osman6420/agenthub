@@ -70,14 +70,29 @@ def _execute_eligible_node(
     config = node["config"]
     release = run.release
     if node_type == "retrieve":
+        from apps.artifacts.governed_dsl import (
+            GovernedDSLValidationError,
+            normalize_retrieval_profile,
+        )
         from apps.orchestration.rag_steps import retrieve_for_release
 
         query = _envelope_query(input_env) if input_env is not None else _workflow_query(state)
+        retrieval_profile: dict[str, Any] | None = None
+        retrieval_ref = config.get("retrieval_profile_ref")
+        if isinstance(retrieval_ref, str) and retrieval_ref:
+            body = get_artifact_body_for_role(release, retrieval_ref)
+            if not isinstance(body, dict):
+                raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_BINDING_INVALID")
+            try:
+                retrieval_profile = normalize_retrieval_profile(body)
+            except GovernedDSLValidationError as exc:
+                raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_BINDING_INVALID") from exc
         try:
             return retrieve_for_release(
                 release=release,
                 query=query,
                 consumer_id=run.consumer_id,
+                retrieval_profile=retrieval_profile,
             )
         except Exception as exc:
             raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_FAILED") from exc

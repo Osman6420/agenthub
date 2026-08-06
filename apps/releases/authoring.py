@@ -222,6 +222,12 @@ def analyze_workflow_requirements(
         elif node_type == "generate":
             require(config.get("prompt_ref"), ArtifactType.PROMPT_TEMPLATE, node_id)
             require(config.get("model_profile_ref"), ArtifactType.MODEL_PROFILE, node_id)
+        elif node_type == "retrieve":
+            require(
+                config.get("retrieval_profile_ref"),
+                ArtifactType.RETRIEVAL_PROFILE,
+                node_id,
+            )
         elif node_type == "subworkflow":
             child_role = config.get("workflow_role")
             if isinstance(child_role, str):

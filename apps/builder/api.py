@@ -850,6 +850,55 @@ def generate_node_binding(request: HttpRequest, pk: int, node_id: str) -> HttpRe
 
 
 @operator_api
+@require_http_methods(["GET", "PUT"])
+def retrieve_node_binding(request: HttpRequest, pk: int, node_id: str) -> HttpResponse:
+    """Inspect or atomically save the author-facing binding for one Retrieve node."""
+
+    draft = _scoped_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    can_write = _can_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    if request.method == "GET":
+        return JsonResponse(
+            {**services.get_retrieve_node_binding(draft, node_id=node_id), "can_write": can_write}
+        )
+
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(payload, {"revision", "workflow_body", "profile_body"})
+    updated = services.save_retrieve_node_binding(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        workflow_body=payload.get("workflow_body"),
+        node_id=node_id,
+        profile_body=payload.get("profile_body"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(
+        {
+            "draft": _serialize(updated, can_write=True),
+            "binding": services.get_retrieve_node_binding(updated, node_id=node_id),
+        }
+    )
+
+
+@operator_api
 @require_http_methods(["POST"])
 def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
     draft = _scoped_draft(request, pk)
