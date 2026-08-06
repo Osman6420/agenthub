@@ -165,12 +165,44 @@
   binding/` route returned a JSON **HTTP 401** (not an HTML 404), proving the URLconf is live in the
   running process. No draft, artifact, release or scenario state was mutated.
 
+### Authenticated live session (2026-08-06)
+
+Run against the current build with a signed-in platform-admin operator session on the local Compose
+stack. Credentials were supplied by the owner for this run only and are not recorded here.
+
+| # | Check | Result |
+| --- | --- | --- |
+| L1 | `/console/` and `/console/builder/` while signed in | HTTP 200 both |
+| L2 | Retrieve binding GET on an unbound node | HTTP 200, canonical seed profile, `configured=false`, `can_write=true`; no endpoint, secret or platform-model field in the payload |
+| L3 | PUT with a stale revision | HTTP 409, no state change |
+| L4 | PUT with `top_k=500` (outside the canonical bound) | HTTP 400, no artifact draft persisted |
+| L5 | Authorized PUT | HTTP 200; the node config receives only `retrieval_profile_ref`, never the node id or raw profile |
+| L6 | Second Retrieve node bound in the same draft | Distinct role (`ret_580c…` vs `ret_032c…`); binding one node leaves the sibling's config untouched |
+| L7 | GET on the still-unbound sibling | HTTP 200, `configured=false`, independent seed |
+| L8 | Unauthenticated GET on the binding route | HTTP 401 JSON |
+| L9 | Nonexistent draft id | HTTP 404 |
+| L10 | Existing draft, node id that is not a Retrieve node | HTTP 400 with a content-free code |
+
+The probe used one disposable workflow draft created and then deleted through the console API. No
+existing draft, scenario, release or index was modified, nothing was published, and the environment
+was confirmed restored afterwards (workflow drafts `1..6` unchanged, zero `ret_*` artifact drafts,
+zero `ret_*` artifact versions).
+
+**Defect found during the live run:** deleting a workflow draft leaves its node-owned artifact
+drafts behind (two orphan `retrieval_profile` drafts had to be removed explicitly). This affects
+Generate bindings equally and predates this slice's node binding work; it is unpublished,
+tenant-scoped working state only, so there is no release, runtime or disclosure impact. Recorded for
+the Part 7 cleanup slice.
+
 ### Not yet verified / blocked
 
-- **Mandatory browser UI/UX/authorization gate is not run.** The local browser session has no
-  signed-in operator identity and no credentials were read or entered, so the authenticated Retrieve
-  panel, matched allow/deny affordance parity and the human UX assessment remain outstanding. This
-  slice cannot be marked `Verified` for the gate until an operator session runs it.
+- **The mandatory browser gate is only partially satisfied.** The authorization, direct-URL/POST and
+  route-liveness rows above ran against the real server, but: (a) only the `admin` identity was
+  available — the `editor`, `auditor` and `releaser` operator passwords were not supplied, so matched
+  permitted/forbidden identity pairing and visible affordance parity were not exercised live (they
+  are covered by automated tests only); and (b) no rendering engine was available, so the human UX
+  assessment (discoverability, click count, keyboard use, responsive layout, browser console/network
+  review) has not been done. These rows remain outstanding.
 - Repository-wide `mypy apps` still reports **3 pre-existing errors** in
   `apps/builder/tests/test_api.py` (unmodified by this slice, present at commit `88e4e18`), and
   repository-wide `ruff format --check apps` still reports pre-existing drift in

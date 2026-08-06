@@ -48,8 +48,9 @@ not store general startup instructions or assumed service status in this handoff
    [`verification.md`](../tasks/scenario-node-bound-authoring-realignment/verification.md).
    Automated verification is complete: full SQLite 1165 passed / 61 skipped; PostgreSQL affected
    suites 380 passed; frontend typecheck + 49 vitest + production build; ruff/`manage.py check`/
-   `makemigrations --check` clean for this slice. **The mandatory authenticated browser gate has not
-   run** (no signed-in operator session).
+   `makemigrations --check` clean for this slice. An authenticated platform-admin live session
+   covered the L1–L10 authorization/route rows. **Still outstanding:** matched editor/auditor
+   identity pairing (their passwords were not available) and the human UX/rendering rows.
 6. **Runtime:** Canonical Compose roles are running and `/v1/health/live` returned HTTP 200. The new
    retrieve-binding route answers JSON HTTP 401 unauthenticated, so the URLconf is live. This slice
    adds no migration and requires no restart; re-check live state before relying on it.
@@ -57,9 +58,9 @@ not store general startup instructions or assumed service status in this handoff
    `mypy apps` (3 errors in `apps/builder/tests/test_api.py`) and `ruff format --check apps`
    (`apps/retrieval/providers.py`) were already failing at `88e4e18` and are deliberately untouched.
    A bound Retrieve node cannot be unbound from the UI. Do not mutate a live scenario to verify.
-8. **Next action:** Run the section 10 browser gate against the current build with a signed-in
-   Scenario Editor and a matched viewer, covering the Retrieve node panel, then decide whether the
-   two pre-existing static-gate failures are fixed in a separate scoped change.
+8. **Next action:** Close the remaining browser-gate rows with a signed-in Scenario Editor and a
+   matched viewer/auditor plus a rendered UX pass on the Retrieve node panel; the server-side
+   authorization rows already passed live as platform admin.
 
 When a transition is required, replace the sentence above with a compact record
 containing only:
