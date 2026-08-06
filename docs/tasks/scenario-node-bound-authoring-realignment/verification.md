@@ -282,3 +282,46 @@ is a profile gap, not a regression — the same test passes once the endpoint is
 - The rendered UX pass for the document-set page and the Studio profile panel after chunking
   removal. Server-side behavior is covered above; the browser gate's UX rows still need a real
   browser.
+
+## Part 2 — defaults and navigation
+
+### What changed
+
+- New `apps/console/scenario_defaults.py` owns the canonical default contract bodies, the exact
+  scenario-scoped logical-id helper and an idempotent `prepare_scenario_contract_defaults`.
+- `scenario_create` prepares both contracts inside the same transaction as the scenario, alias and
+  workflow draft, each with its own audit event.
+- The scenario detail page renders read-only contract status plus one explicit override action; the
+  three creation buttons are gone.
+- Eval-suite preparation moved to the release detail page (candidate evaluation step).
+- `_release_artifact_example` now seeds an override from the exact canonical default, and the eval
+  case example uses the canonical `query` key instead of `question`, which reached no node.
+
+### Automated evidence
+
+- `pytest apps/console/tests/test_scenario_contract_defaults.py`: 7 passed (new file).
+- `pytest apps/console apps/gateway apps/releases`: 318 passed.
+- Full SQLite suite: **1174 passed, 61 skipped**.
+- PostgreSQL profile for `apps/console apps/releases apps/gateway`: **325 passed**.
+- `ruff format --check` and `ruff check` clean for `apps/console`; `mypy apps` reports only the 3
+  pre-existing `test_api.py` errors; `manage.py check` no issues; `makemigrations --check` no
+  changes (no migration).
+
+### What the tests prove
+
+- All three presets produce exactly two v1 contract artifacts at the scenario-scoped logical ids,
+  with two matching audit events.
+- The defaults accept the canonical envelope and reject an empty body, an empty query, the wrong key
+  (`question`), an extra field, a missing `sources`, and a non-string answer — so the default is not
+  a permissive schema that silently weakens validation.
+- Re-running preparation creates no second version and returns nothing.
+- The scenario page shows the default status and exactly two override actions, contains no
+  `?type=eval_suite` creation link, and points to the evaluation step instead.
+- The override route seeds from the canonical default for an exact Scenario Editor and returns 403
+  for a project administrator without that exact scenario responsibility.
+
+### Not yet verified
+
+- The rendered UX pass for the reshaped scenario page and the relocated eval-suite action.
+- Existing scenarios created before this slice have no prepared defaults; no backfill was run. They
+  keep the previous behavior of an absent contract until an author creates one.

@@ -8,6 +8,7 @@
 <section class="card" aria-labelledby="release-lifecycle-title">
   <div class="section-heading"><div><p class="eyebrow">Yayın kararı</p><h2 id="release-lifecycle-title">Release yaşam döngüsü</h2><p class="muted">Eval, canary, promotion ve rollback ayrı, auditable kararlardır. Scenario activation ayrıca senaryo sayfasından yapılır.</p></div></div>
   {% if latest_eval %}<div class="notice"><strong>Son eval:</strong> {{ latest_eval.status }} · {{ latest_eval.passed_cases }}/{{ latest_eval.total_cases }} vaka · {{ latest_eval.created_at }}</div>{% else %}<div class="warning-box">Bu release için eval sonucu yok.</div>{% endif %}
+  {% if can_author_artifacts and not is_disabled %}<div class="actions"><a class="button secondary" href="{% url 'console:scenario_artifact_create' release.scenario.public_id %}?type=eval_suite">Eval suite hazırla</a><span class="muted">Eval suite bu adımda hazırlanır; yeni immutable sürüm candidate release'e ayrıca pinlenir.</span></div>{% endif %}
   {% if can_manage and not is_disabled %}
   <div class="actions">
     {% if can_eval %}<form class="inline" method="post" action="{% url 'console:release_run_eval' release.id %}">{% csrf_token %}<button class="button secondary" type="submit">Eval çalıştır</button></form>{% endif %}

@@ -61,9 +61,22 @@
 </section>
 
 <section class="card" aria-labelledby="release-inputs-title">
-  <div class="section-heading"><div><p class="eyebrow">Governed release girdileri</p><h2 id="release-inputs-title">Contract ve eval suite</h2><p class="muted">Her kayıt canonical validator'dan geçen, checksum'lı yeni bir immutable sürümdür; release'e otomatik pinlenmez.</p></div></div>
-  {% if can_write %}<div class="actions"><a class="button secondary" href="{% url 'console:scenario_artifact_create' scenario.public_id %}?type=input_contract">Input contract</a><a class="button secondary" href="{% url 'console:scenario_artifact_create' scenario.public_id %}?type=output_contract">Output contract</a><a class="button secondary" href="{% url 'console:scenario_artifact_create' scenario.public_id %}?type=eval_suite">Eval suite</a></div>{% else %}<p class="muted">Yeni sürüm oluşturmak exact Scenario editor sorumluluğu gerektirir. Release manager oluşturulmuş immutable sürümleri ayrıca pinler.</p>{% endif %}
-  {% for artifact in governed_artifacts %}<div class="access-row"><div><strong>{{ artifact.get_type_display }} · v{{ artifact.version }}</strong><p class="muted">{{ artifact.logical_description }} · {{ artifact.version_description }}</p></div><span class="mono">{{ artifact.checksum|slice:':12' }}</span></div>{% empty %}<p class="muted">Bu exact senaryo için guided contract/eval sürümü yok.</p>{% endfor %}
+  <div class="section-heading"><div><p class="eyebrow">Governed release girdileri</p><h2 id="release-inputs-title">Sözleşmeler</h2><p class="muted">Girdi ve çıktı sözleşmeleri senaryo oluşturulurken kanonik varsayılan olarak hazırlanır. Override tek, açık bir eylemdir ve yeni bir immutable sürüm üretir; release'e otomatik pinlenmez.</p></div></div>
+  {% for item in contract_status %}
+  <div class="access-row">
+    <div>
+      <strong>{{ item.label }}{% if item.current %} · v{{ item.current.version }}{% endif %}</strong>
+      {% if item.current %}<p class="muted">{{ item.current.version_description }}{% if item.is_default %} · kanonik varsayılan{% else %} · override edilmiş{% endif %}</p>
+      {% else %}<p class="muted">Bu senaryo için sözleşme hazırlanmamış.</p>{% endif %}
+    </div>
+    <div class="status-stack">
+      {% if item.current %}<span class="mono">{{ item.current.checksum|slice:':12' }}</span>{% endif %}
+      {% if can_write %}<a class="button secondary" href="{% url 'console:scenario_artifact_create' scenario.public_id %}?type={{ item.artifact_type }}">Sözleşmeyi override et</a>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% if not can_write %}<p class="muted">Override exact Scenario editor sorumluluğu gerektirir. Release manager oluşturulmuş immutable sürümleri ayrıca pinler.</p>{% endif %}
+  <p class="muted">Eval suite artık aday değerlendirme adımında, release detay sayfasında hazırlanır.</p>
 </section>
 
 {% if can_evaluate and active_release %}

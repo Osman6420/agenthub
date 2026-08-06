@@ -79,6 +79,11 @@ from apps.console.forms import (
     RestSourceForm,
     ScenarioForm,
 )
+from apps.console.scenario_defaults import (
+    default_contract_body,
+    prepare_scenario_contract_defaults,
+    scenario_artifact_logical_id,
+)
 from apps.documents import services as document_services
 from apps.documents.content_access import DocumentContentError, read_document_version_content
 from apps.documents.models import (
@@ -1518,6 +1523,30 @@ def scenario_detail(
             logical_id__startswith=f"scenario-{scenario.public_id.hex}-",
         ).order_by("type", "-version")[:60]
     )
+    # Contracts are a prepared default, not an authoring task: show the exact current version
+    # per type and offer one explicit override, never a creation panel.
+    contract_status = [
+        {
+            "artifact_type": artifact_type,
+            "label": ArtifactType(artifact_type).label,
+            "current": next(
+                (
+                    artifact
+                    for artifact in governed_artifacts
+                    if artifact.type == artifact_type
+                    and artifact.logical_id == scenario_artifact_logical_id(scenario, artifact_type)
+                ),
+                None,
+            ),
+            "is_default": not any(
+                artifact.type == artifact_type
+                and artifact.logical_id == scenario_artifact_logical_id(scenario, artifact_type)
+                and artifact.version > 1
+                for artifact in governed_artifacts
+            ),
+        }
+        for artifact_type in (ArtifactType.INPUT_CONTRACT, ArtifactType.OUTPUT_CONTRACT)
+    ]
     runtime_controls = applicable_runtime_controls(
         organization_id,
         project_id=scenario.project_id,
@@ -1542,6 +1571,7 @@ def scenario_detail(
             ),
             "release_rows": release_rows,
             "governed_artifacts": governed_artifacts,
+            "contract_status": contract_status,
             "artifact_type_descriptions": ARTIFACT_TYPE_DESCRIPTIONS,
             "invocation_guidance": _invocation_guidance(
                 active_release, aliases[0].alias if aliases else None
@@ -1663,7 +1693,7 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
             ArtifactType.OUTPUT_CONTRACT,
             ArtifactType.EVAL_SUITE,
         ):
-            candidates.append((preset_type, f"scenario-{scenario.public_id.hex}-{preset_type}"))
+            candidates.append((preset_type, scenario_artifact_logical_id(scenario, preset_type)))
         items: list[dict[str, object]] = []
         missing_roles: list[str] = []
         for role, logical_id in candidates:
@@ -2273,17 +2303,14 @@ def _release_artifact_example(artifact_type: str) -> dict[str, object]:
             "cases": [
                 {
                     "id": "smoke-1",
-                    "input": {"question": "Kontrollü bir test sorusu"},
+                    # ``query`` is the canonical runtime input key; ``question`` reaches no node.
+                    "input": {"query": "Kontrollü bir test sorusu"},
                     "assertions": [{"type": "workflow_completed"}],
                 }
             ]
         }
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {},
-        "additionalProperties": False,
-    }
+    # An override starts from the exact canonical default, so a widening edit is visible.
+    return default_contract_body(artifact_type)
 
 
 @login_required
@@ -2303,7 +2330,7 @@ def scenario_artifact_create(request: HttpRequest, public_id: object) -> HttpRes
     requested_type = request.POST.get("artifact_type") or request.GET.get("type", "")
     if requested_type not in _GOVERNED_RELEASE_ARTIFACT_TYPES:
         requested_type = ArtifactType.INPUT_CONTRACT
-    logical_id = f"scenario-{scenario.public_id.hex}-{requested_type}"
+    logical_id = scenario_artifact_logical_id(scenario, requested_type)
     latest = (
         ArtifactVersion.objects.filter(
             organization_id=scenario.organization_id,
@@ -2326,7 +2353,7 @@ def scenario_artifact_create(request: HttpRequest, public_id: object) -> HttpRes
     form = GovernedReleaseArtifactForm(request.POST or None, initial=initial)
     if request.method == "POST" and form.is_valid():
         artifact_type = form.cleaned_data["artifact_type"]
-        logical_id = f"scenario-{scenario.public_id.hex}-{artifact_type}"
+        logical_id = scenario_artifact_logical_id(scenario, artifact_type)
         try:
             artifact = create_artifact_version(
                 organization=scenario.organization,
@@ -6043,6 +6070,11 @@ def scenario_create(
                     logical_id=logical_id,
                     logical_description=form.cleaned_data["logical_description"],
                     body=_scenario_preset_body(form.cleaned_data["preset"], logical_id=logical_id),
+                    actor=request.user.get_username(),
+                    request_id=_request_id(request),
+                )
+                prepare_scenario_contract_defaults(
+                    scenario=scenario,
                     actor=request.user.get_username(),
                     request_id=_request_id(request),
                 )

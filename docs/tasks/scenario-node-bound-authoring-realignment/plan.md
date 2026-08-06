@@ -212,3 +212,20 @@ versioned and created from the document-set staged-index page. The remaining wor
 Owner decision for this slice: current scenarios are demo data, so no compatibility allowance is
 required for chunking roles previously reachable through Studio. Published chunking artifact
 versions and the document-set preparation profiles that pin them are untouched.
+
+Part 2 (defaults and navigation) is implemented and automatically verified. This delivery slice:
+
+- prepares the canonical input/output contract as immutable v1 artifacts inside the scenario-creation
+  transaction, so a new scenario is usable without manual artifact selection. The bodies describe
+  exactly the runtime envelope every builtin preset produces (`{"query": …}` in,
+  `{"answer": …, "sources": […]}` out) and are closed, not permissive; preparation is idempotent and
+  never overwrites an author's override;
+- replaces the scenario main page's input/output/eval **creation panel** with read-only contract
+  status (exact version, checksum, default-or-overridden) plus one explicit override action per
+  contract, per owner decision; and
+- moves eval-suite preparation to the candidate evaluation step on the release detail page, next to
+  the eval run action, and corrects the seeded eval-case example to the canonical `query` key.
+
+The override route keeps its exact Scenario Editor authorization: creating a scenario does not make
+the creator its editor, and a project administrator without the exact scenario responsibility is
+still denied.
