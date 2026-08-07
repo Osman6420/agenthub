@@ -12,10 +12,10 @@ from django.test import override_settings
 
 from apps.evaluations.question_services import (
     QuestionEvaluationError,
-    release_generates_text,
     require_real_model_provider,
     scenario_question_payload,
 )
+from apps.releases.lifecycle import release_generates_text
 from apps.releases.models import ScenarioRelease
 from apps.workflows.runtime import _workflow_query
 

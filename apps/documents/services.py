@@ -444,6 +444,65 @@ def create_document_set_version(
 
 
 @transaction.atomic
+def branch_document_set_version(
+    *, source: DocumentSetVersion, actor: str, request_id: str = ""
+) -> DocumentSetVersion:
+    """Open a draft seeded from an existing version's exact membership.
+
+    Any published version is a starting point, not a dead end: changing one document or one
+    profile should not mean rebuilding the set from an empty draft. The source version is
+    never mutated — a published snapshot stays frozen and the change becomes a new version.
+
+    Refuses while an author draft is already open, so two half-finished versions cannot
+    compete for the next publish.
+    """
+
+    from apps.ingestion.models import ConfluenceSyncRun, RestSyncRun
+
+    locked_set = DocumentSet.objects.select_for_update().get(pk=source.document_set_id)
+    connector_draft_ids = list(
+        ConfluenceSyncRun.objects.filter(
+            source__document_set=locked_set, candidate_set_version__isnull=False
+        ).values_list("candidate_set_version_id", flat=True)
+    ) + list(
+        RestSyncRun.objects.filter(
+            source__document_set=locked_set, candidate_set_version__isnull=False
+        ).values_list("candidate_set_version_id", flat=True)
+    )
+    existing = (
+        locked_set.versions.filter(status=DocumentSetVersionStatus.DRAFT)
+        .exclude(pk__in=connector_draft_ids)
+        .order_by("-version")
+        .first()
+    )
+    if existing is not None:
+        raise DocumentError("SET_DRAFT_ALREADY_OPEN", "an author draft is already open")
+    draft = create_document_set_version(document_set=locked_set, actor=actor, request_id=request_id)
+    for membership in source.memberships.order_by("ordinal", "id").select_related(
+        "document_version"
+    ):
+        add_document_to_set_version(
+            set_version=draft,
+            document_version=membership.document_version,
+            ordinal=membership.ordinal,
+            actor=actor,
+            request_id=request_id,
+        )
+    record_event(
+        actor_type="user",
+        actor_id=actor,
+        action="documents.set_version.branch",
+        outcome="success",
+        organization_id=locked_set.organization_id,
+        resource_type="document_set_version",
+        resource_id=f"{locked_set.logical_id}:v{draft.version}",
+        request_id=request_id,
+        after={"source_version": source.version, "members": draft.memberships.count()},
+    )
+    return draft
+
+
+@transaction.atomic
 def get_or_create_manual_draft(
     *, document_set: DocumentSet, actor: str, request_id: str = ""
 ) -> DocumentSetVersion:

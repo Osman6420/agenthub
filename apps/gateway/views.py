@@ -72,6 +72,16 @@ def _validate_input(release: Any, input_payload: dict[str, Any]) -> None:
         ) from None
 
 
+#: Safe client message and HTTP status per ``WorkflowRequestError`` code. Messages name the
+#: caller-visible condition only — no internal state, identifiers or dependency details.
+_REQUEST_ERROR_RESPONSES: dict[str, tuple[str, int]] = {
+    "IDEMPOTENCY_KEY_REQUIRED": ("A bounded Idempotency-Key header is required.", 400),
+    "EXECUTION_CONTEXT_INVALID": ("The execution context is not valid for this request.", 400),
+    "WORKFLOW_STATE_TOO_LARGE": ("The request input exceeds the allowed size.", 413),
+    "RUN_RUNTIME_SUSPENDED": ("The runtime is suspended and is not accepting new runs.", 503),
+}
+
+
 class _OpenAICompatibilityView(APIView):
     """Authorize and admit one canonical unified workflow request."""
 
@@ -203,11 +213,14 @@ class _OpenAICompatibilityView(APIView):
                         }
                     ],
                 ) from exc
-            raise ApiError(
-                ErrorCode.VALIDATION_ERROR,
-                "A bounded Idempotency-Key is required.",
-                http_status_code=400,
-            ) from exc
+            # Every remaining code used to answer "A bounded Idempotency-Key is required.",
+            # so a suspended runtime or an invalid execution context sent the caller looking
+            # at their header. Each code now says what actually happened; anything unmapped
+            # stays a generic, content-free rejection rather than a wrong specific one.
+            message, status = _REQUEST_ERROR_RESPONSES.get(
+                exc.code, ("The request could not be accepted.", 400)
+            )
+            raise ApiError(ErrorCode.VALIDATION_ERROR, message, http_status_code=status) from exc
 
         if created and self._requested_background:
             dispatch_unified_background_run(

@@ -1,0 +1,30 @@
+{% comment %}
+Renders a governed profile artifact as a real form instead of raw JSON. The field list,
+its choices and its bounds come from apps/console/profile_fields.py, which reads them from
+the same validator that will judge the result — so the form cannot offer something the
+server refuses, and the operator never has to guess the options.
+
+Expects: form_schema (profile_fields.profile_form output), values (current body or {}),
+prefix (unique id prefix).
+{% endcomment %}
+<div data-profile-form data-artifact-type="{{ form_schema.artifact_type }}">
+  {% for field in form_schema.fields %}
+  <div data-profile-form-field="{{ field.name }}"
+    {% if field.only_when %}data-only-when-field="mode" data-only-when-value="{{ field.only_when.mode }}"{% endif %}>
+    <label for="{{ prefix }}-{{ field.name }}">{{ field.label }}</label>
+    {% if field.kind == "select" %}
+      <select id="{{ prefix }}-{{ field.name }}" data-profile-form-input="{{ field.name }}" data-field-kind="select">
+        {% for choice in field.choices %}<option value="{{ choice.value }}">{{ choice.label }}</option>{% endfor %}
+      </select>
+    {% else %}
+      <input type="number" id="{{ prefix }}-{{ field.name }}" data-profile-form-input="{{ field.name }}"
+        data-field-kind="{{ field.kind }}" min="{{ field.min }}" max="{{ field.max }}"
+        {% if field.step %}step="{{ field.step }}"{% else %}step="1"{% endif %}>
+    {% endif %}
+    <p class="muted">{{ field.help }}
+      {% if field.kind != "select" %}<span class="mono">({{ field.min }}–{{ field.max }})</span>{% endif %}</p>
+  </div>
+  {% endfor %}
+  <script type="application/json" data-profile-form-defaults>{{ form_schema.defaults_json }}</script>
+  <script type="application/json" data-profile-form-values>{{ values_json }}</script>
+</div>

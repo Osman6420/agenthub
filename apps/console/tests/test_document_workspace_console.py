@@ -18,6 +18,7 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
+from apps.console.profile_fields import profile_defaults
 from apps.documents import storage
 from apps.documents.models import Document, DocumentSetVersionStatus, ScenarioDocumentSetBinding
 from apps.documents.services import (
@@ -34,6 +35,7 @@ from apps.identity.models import (
 )
 from apps.identity.roles import Role
 from apps.ingestion.models import (
+    DocumentSetPreparationProfile,
     EmbeddingProfile,
     EmbeddingProfileStatus,
     IndexStatus,
@@ -322,7 +324,9 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     assert "embed-v1" in detail_body
     assert "64D vector" in detail_body
     assert "&quot;strategy&quot;: &quot;characters&quot;" in detail_body
-    assert "&quot;mode&quot;: &quot;hybrid&quot;" in detail_body
+    # Query-time retrieval is owned by the executing Retrieve node, so the document-set page
+    # no longer offers the deprecated picker. The stored pin is retained as data.
+    assert "Arama profili (kullanımdan kalktı)" not in detail_body
     assert "async_markdown_ocr" in detail_body
     assert "summary-model r1" in detail_body
     assert "summary-v1" in detail_body
@@ -368,7 +372,12 @@ def test_build_request_accepts_only_tenant_granted_profile(client: Client) -> No
     assert f'<option value="{granted.pk}" selected>' in configured_body
     assert f'<option value="{ocr.pk}" selected>' in configured_body
     assert f'<option value="{chunking.pk}" selected>' in configured_body
-    assert f'<option value="{retrieval.pk}" selected>' in configured_body
+    # The retrieval pin is retained on the preparation profile as historical provenance but
+    # is no longer an author control on this page.
+    assert (
+        DocumentSetPreparationProfile.objects.get(document_set=document_set).retrieval_profile_id
+        == retrieval.pk
+    )
     assert f'<option value="{summary_model.pk}" selected>' in configured_body
     assert f'<option value="{summary_prompt.pk}" selected>' in configured_body
 
@@ -590,3 +599,52 @@ def test_build_worker_revalidates_tenant_and_is_idempotent() -> None:
     profile.save(update_fields=["status"])
     with pytest.raises(ValueError, match="EMBEDDING_PROFILE_NOT_GRANTED"):
         build_document_set_index_task.run(version.pk, profile.pk, org.pk, "owner")
+
+
+@pytest.mark.django_db
+def test_a_new_profile_is_named_not_identified(client: Client) -> None:
+    """Adding one chunking profile asked for a logical ID, a permanent purpose *and* a
+    first-version note — three ceremonies for one decision. The operator names it; the
+    server derives the immutable identity, as scenario and project creation already do.
+    """
+
+    org = Organization.objects.create(slug="derive-org", name="Derive")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    owner = _member("derive-owner", org, Role.PROJECT_OWNER)
+    client.force_login(owner)
+
+    response = client.post(
+        reverse("console:document_set_profile_artifact_publish", args=[document_set.public_id]),
+        data=json.dumps(
+            {
+                "artifact_type": ArtifactType.CHUNKING_PROFILE,
+                "display_name": "Uzun teknik dokümanlar",
+                "version_description": "İlk sürüm",
+                "body": profile_defaults(ArtifactType.CHUNKING_PROFILE),
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["logical_id"].startswith(f"{document_set.logical_id.replace('-', '_')}_")
+    artifact = ArtifactVersion.objects.get(pk=payload["artifact_version_id"])
+    assert artifact.logical_description == "KB · Uzun teknik dokümanlar"
+    assert artifact.version == 1
+
+    # A second profile with the same name gets its own identity instead of colliding.
+    again = client.post(
+        reverse("console:document_set_profile_artifact_publish", args=[document_set.public_id]),
+        data=json.dumps(
+            {
+                "artifact_type": ArtifactType.CHUNKING_PROFILE,
+                "display_name": "Uzun teknik dokümanlar",
+                "version_description": "İlk sürüm",
+                "body": {**profile_defaults(ArtifactType.CHUNKING_PROFILE), "size": 2000},
+            }
+        ),
+        content_type="application/json",
+    )
+    assert again.status_code == 201
+    assert again.json()["logical_id"] != payload["logical_id"]

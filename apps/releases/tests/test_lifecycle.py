@@ -371,3 +371,109 @@ def test_stop_canary_reverts_release_to_candidate() -> None:
     assert candidate.status == ReleaseStatus.CANDIDATE
     _, is_canary = select_release(scenario=scenario, consumer=consumer)
     assert is_canary is False
+
+
+def _generating_release(scenario: Scenario):
+    """A release whose compiled workflow asks a model to produce the answer."""
+
+    org = scenario.project.organization
+    create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.WORKFLOW_DEFINITION,
+        logical_id="generating_workflow",
+        body={
+            "api_version": "agenthub/v1",
+            "kind": "Workflow",
+            "metadata": {"id": "generating_workflow"},
+            "spec": {
+                "input_node": "request",
+                "nodes": [
+                    {"id": "request", "type": "input"},
+                    {"id": "answer", "type": "generate", "config": {}},
+                    {"id": "done", "type": "end"},
+                ],
+                "edges": [
+                    {"from": "request", "to": "answer"},
+                    {"from": "answer", "to": "done"},
+                ],
+            },
+        },
+        created_by="alice",
+    )
+    create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.EVAL_SUITE,
+        logical_id="generating_suite",
+        body={
+            "cases": [
+                {
+                    "id": "c1",
+                    "input": {"query": "x"},
+                    "assertions": [{"type": "workflow_completed"}],
+                }
+            ]
+        },
+        created_by="alice",
+    )
+    return compile_release(
+        scenario=scenario,
+        refs=[
+            ArtifactRef(
+                "workflow_definition", ArtifactType.WORKFLOW_DEFINITION, "generating_workflow", 1
+            ),
+            ArtifactRef("eval_suite", ArtifactType.EVAL_SUITE, "generating_suite", 1),
+        ],
+        runtime_version="rt:3.0.0",
+        created_by="alice",
+    )
+
+
+@pytest.mark.django_db
+def test_a_stub_answer_may_be_evaluated_but_never_served() -> None:
+    """With no real provider a generating workflow still answers — from the deterministic
+    stub, convincingly, with text no model produced. The eval suite passes on it and a
+    consumer cannot tell, so the traffic gate is where this has to be refused.
+    """
+
+    scenario = _scenario()
+    candidate = _generating_release(scenario)
+    _pass_eval(candidate)
+
+    with pytest.raises(LifecycleError) as promoted:
+        promote(release=candidate, actor="alice")
+    assert promoted.value.code == "MODEL_PROVIDER_NOT_CONFIGURED"
+
+    # Canary is the same exposure, so it is refused by the same gate.
+    consumer = _consumer(scenario, "canary-consumer")
+    with pytest.raises(LifecycleError) as exposed:
+        start_canary(release=candidate, consumer=consumer, ttl_seconds=3600, actor="alice")
+    assert exposed.value.code == "MODEL_PROVIDER_NOT_CONFIGURED"
+
+    candidate.refresh_from_db()
+    assert candidate.status == ReleaseStatus.CANDIDATE
+    assert AuditEvent.objects.filter(
+        action="release.promote", outcome="deny", reason="MODEL_PROVIDER_NOT_CONFIGURED"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_a_configured_provider_lets_the_same_release_go_live(settings) -> None:
+    scenario = _scenario()
+    candidate = _generating_release(scenario)
+    _pass_eval(candidate)
+    settings.RUNTIME_MODEL_PROVIDER = "OpenAICompatibleModelProvider"
+
+    promoted = promote(release=candidate, actor="alice")
+
+    assert promoted.status == ReleaseStatus.ACTIVE
+
+
+@pytest.mark.django_db
+def test_a_non_generating_release_needs_no_provider() -> None:
+    """A workflow that never calls a model cannot return a stub answer."""
+
+    scenario = _scenario()
+    candidate = _release(scenario)
+    _pass_eval(candidate)
+
+    assert promote(release=candidate, actor="alice").status == ReleaseStatus.ACTIVE

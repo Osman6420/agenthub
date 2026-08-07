@@ -447,9 +447,15 @@ class DocumentSetBuildForm(forms.Form):
         required=False,
         label="Özet prompt sözleşmesi (isteğe bağlı)",
     )
+    # On by default: nothing happens between publishing a set version and preparing its
+    # index except choosing these profiles, and they are stored after the first build — so
+    # the second click was ceremony. The prepared index is staged, never served, so this
+    # changes no query behaviour. It stays switchable because a paid embedding profile makes
+    # every publish cost something.
     auto_prepare = forms.BooleanField(
         required=False,
-        label="Sonraki yayımlanan set sürümlerini otomatik staged hazırla",
+        initial=True,
+        label="Sonraki sürümlerde indeksi otomatik hazırla",
     )
 
     def __init__(self, *args: Any, organization_id: int, **kwargs: Any) -> None:

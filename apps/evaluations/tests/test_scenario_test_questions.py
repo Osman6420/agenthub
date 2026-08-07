@@ -15,11 +15,13 @@ from apps.catalog.models import AIProject, Scenario
 from apps.evaluations.models import QuestionSet
 from apps.evaluations.scenario_questions import (
     JUDGE_PROMPT_TEMPLATE,
+    MAX_TERMS_PER_ROW,
     MODE_CONTAINS,
     MODE_EXACT,
     MODE_JUDGE,
     ScenarioQuestionError,
     build_eval_suite_body,
+    build_question_cases,
     get_judge_artifacts,
     judge_readiness,
     judge_target_release,
@@ -384,6 +386,100 @@ def test_a_superseded_candidate_never_becomes_the_evaluation_target(scenario: Sc
 
 def test_without_any_release_evaluation_fails_closed(scenario: Scenario) -> None:
     assert judge_target_release(scenario) is None
+
+
+def test_a_contains_row_takes_one_term_per_line_and_needs_all_of_them() -> None:
+    """A single expected string could only ever check one phrase."""
+
+    rows = normalize_rows(
+        [
+            {
+                "question": "İstanbul nelere başkent oldu?",
+                "mode": MODE_CONTAINS,
+                "expected": " bizans \n\n osmanlı \n",
+            }
+        ]
+    )
+
+    assert rows[0]["expected"] == "bizans\nosmanlı"
+    suite = build_eval_suite_body(rows)
+    assert suite["cases"][0]["assertions"] == [
+        {"type": "answer_contains", "value": "bizans"},
+        {"type": "answer_contains", "value": "osmanlı"},
+    ]
+    validate_eval_suite_body(suite)
+    # Each term is its own assertion on the question-set side too, so a failing run names
+    # the term that was missing instead of failing the whole row opaquely.
+    assert [item["value"] for item in build_question_cases(rows)[0]["assertions"]] == [
+        "bizans",
+        "osmanlı",
+    ]
+
+
+def test_only_contains_rows_split_on_lines() -> None:
+    """An exact match is one literal and the referee reads prose."""
+
+    rows = normalize_rows(
+        [
+            {"question": "S", "mode": MODE_EXACT, "expected": "14 gün"},
+            {"question": "S2", "mode": MODE_JUDGE, "expected": "İki satırlı\nbir beklenti"},
+        ]
+    )
+
+    assert rows[1]["expected"] == "İki satırlı\nbir beklenti"
+    cases = build_question_cases(rows)
+    assert cases[0]["assertions"] == [{"type": "exact", "value": "14 gün"}]
+    assert cases[1]["expected_answer"] == "İki satırlı\nbir beklenti"
+
+
+def test_too_many_terms_are_refused_with_a_stable_code() -> None:
+    terms = "\n".join(str(index) for index in range(MAX_TERMS_PER_ROW + 1))
+    with pytest.raises(ScenarioQuestionError) as exc:
+        normalize_rows([{"question": "S", "mode": MODE_CONTAINS, "expected": terms}])
+    assert exc.value.code == "TEST_QUESTION_TERM_COUNT_INVALID"
+
+
+def test_terms_and_the_citation_flag_round_trip_into_the_editor(scenario: Scenario) -> None:
+    """The citation checkbox reloaded unticked, so the next save silently dropped it."""
+
+    save_scenario_test_questions(
+        scenario=scenario,
+        actor="editor",
+        rows=[
+            {
+                "question": "Kargo?",
+                "mode": MODE_CONTAINS,
+                "expected": "3 iş günü\nkargo",
+                "require_citation": True,
+            },
+            {"question": "İade?", "mode": MODE_CONTAINS, "expected": "14 gün"},
+        ],
+    )
+
+    rows = load_rows(scenario)
+
+    assert rows[0]["expected"] == "3 iş günü\nkargo"
+    assert rows[0]["require_citation"] is True
+    assert rows[1]["require_citation"] is False
+
+
+def test_a_failing_term_is_named_in_the_assertion_outcome() -> None:
+    """Without the expected literal a multi-term row reports one opaque failure."""
+
+    from apps.evaluations.question_services import evaluate_answer_assertions
+
+    outcomes = evaluate_answer_assertions(
+        [
+            {"type": "normalized_contains", "value": "bizans"},
+            {"type": "normalized_contains", "value": "osmanlı"},
+        ],
+        {"answer": "İstanbul Bizans'a başkentlik yapmıştır."},
+    )
+
+    assert [(item["value"], item["passed"]) for item in outcomes] == [
+        ("bizans", True),
+        ("osmanlı", False),
+    ]
 
 
 @override_settings(EVALUATION_LLM_JUDGE_ENABLED=True)

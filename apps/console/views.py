@@ -52,7 +52,7 @@ from apps.catalog.lifecycle import ScenarioLifecycleError, activate_scenario, di
 from apps.catalog.models import AIProject, Scenario
 from apps.catalog.services import ProjectOwnerError, create_console_project, create_console_scenario
 from apps.console import context as console_context
-from apps.console import operations, scoping
+from apps.console import operations, profile_fields, scoping
 from apps.console.forms import (
     BindingForm,
     CanaryForm,
@@ -1409,23 +1409,12 @@ def _scenario_setup_steps(
             "enabled": can_write,
             "reason": author_reason,
         },
+        # Preparing the candidate comes *before* the test questions. Writing a question needs
+        # nothing, but running one needs a release to run it against, so the old order asked
+        # the operator to finish step 4 with a control that could not work yet.
         {
             "number": 4,
-            "title": "Test soruları",
-            "detail": (
-                f"Hazır · v{eval_suite_artifact.version}"
-                if eval_suite_artifact is not None
-                else "Test soruları hazırlanmamış."
-            ),
-            "state": "done" if eval_suite_artifact is not None else "todo",
-            "url": reverse("console:scenario_test_questions", args=[scenario.public_id]),
-            "action": "Test sorularını düzenle",
-            "enabled": can_write,
-            "reason": author_reason,
-        },
-        {
-            "number": 5,
-            "title": "Dene ve doğrula",
+            "title": "Aday sürüm hazırla",
             "detail": (
                 f"Son aday: #{latest_release.pk} · {latest_release.get_status_display()}"
                 if latest_release is not None
@@ -1443,6 +1432,20 @@ def _scenario_setup_steps(
                 else ""
             ),
             "link_label": f"Aday #{latest_release.pk} ayrıntısı" if latest_release else "",
+        },
+        {
+            "number": 5,
+            "title": "Test soruları",
+            "detail": (
+                f"Hazır · v{eval_suite_artifact.version}. Adayın üzerinde çalıştırın."
+                if eval_suite_artifact is not None
+                else "Test soruları hazırlanmamış."
+            ),
+            "state": "done" if eval_suite_artifact is not None else "todo",
+            "url": reverse("console:scenario_test_questions", args=[scenario.public_id]),
+            "action": "Test sorularını düzenle ve çalıştır",
+            "enabled": can_write,
+            "reason": author_reason,
         },
         {
             "number": 6,
@@ -1469,7 +1472,7 @@ def _scenario_setup_steps(
             "reason": (
                 release_reason
                 if not can_release
-                else "Yayına alınacak yeni bir aday yok; önce adım 5'i çalıştırın."
+                else "Yayına alınacak yeni bir aday yok; önce adım 4'ü çalıştırın."
             ),
             "link": (
                 reverse("console:release_detail", args=[active_release.pk])
@@ -1503,6 +1506,10 @@ def _invocation_guidance(
                     'curl -sS -X POST "$AGENTHUB_BASE_URL/v1/chat/completions" '
                     '-H "Authorization: Bearer $AGENTHUB_TOKEN" '
                     '-H "Content-Type: application/json" '
+                    # Required on every run request, not only the background one: an empty
+                    # key is refused with IDEMPOTENCY_KEY_REQUIRED. The example omitted it,
+                    # so the console's own primary snippet could not succeed.
+                    '-H "Idempotency-Key: $(uuidgen)" '
                     "-d '"
                     + json.dumps(
                         {"model": alias, "messages": [{"role": "user", "content": "Merhaba"}]},
@@ -1524,7 +1531,7 @@ def _invocation_guidance(
                     'curl -sS -X POST "$AGENTHUB_BASE_URL/v1/responses" '
                     '-H "Authorization: Bearer $AGENTHUB_TOKEN" '
                     '-H "Content-Type: application/json" '
-                    '-H "Idempotency-Key: replace-with-unique-key" '
+                    '-H "Idempotency-Key: $(uuidgen)" '
                     "-d '"
                     + json.dumps(
                         {"model": alias, "input": "Merhaba", "background": True},
@@ -1535,7 +1542,19 @@ def _invocation_guidance(
                 ),
             }
         )
-    return {"ready": bool(examples), "examples": examples, "modes": sorted(modes)}
+    return {
+        "ready": bool(examples),
+        "examples": examples,
+        "modes": sorted(modes),
+        # Stated once next to the snippets rather than left for the caller to discover from
+        # a 400. Both rules are enforced server-side in apps/workflows/services.py.
+        "idempotency_note": (
+            "Idempotency-Key her çağrıda zorunlu ve benzersiz olmalıdır. Aynı anahtarı aynı "
+            "gövdeyle tekrar gönderirseniz kayıtlı yanıt aynen döner (yeni çalışma başlamaz); "
+            "aynı anahtarı farklı gövdeyle gönderirseniz 409 IDEMPOTENCY_CONFLICT alırsınız. "
+            "Örnekteki $(uuidgen) her çalıştırmada yeni bir anahtar üretir."
+        ),
+    }
 
 
 def _ai_authoring_preflight() -> dict[str, object]:
@@ -1683,6 +1702,14 @@ def scenario_detail(
         ScenarioRelease.objects.filter(scenario=scenario).order_by("-created_at", "-pk").first()
     )
     pending_release = _pending_release(scenario)
+    # One-shot: the answer is shown once on the page that asked, then cleared so a reload
+    # does not resurrect a stale answer next to a newer question.
+    stored_ask = request.session.pop("scenario_ask", None)
+    ask_result = (
+        stored_ask
+        if isinstance(stored_ask, dict) and stored_ask.get("scenario") == str(scenario.public_id)
+        else None
+    )
     release_rows = [
         {
             "release": release,
@@ -1791,6 +1818,7 @@ def scenario_detail(
             "governed_artifacts": governed_artifacts,
             "contract_status": contract_status,
             "setup_steps": setup_steps,
+            "ask_result": ask_result,
             "studio_url": studio_url,
             "artifact_type_descriptions": ARTIFACT_TYPE_DESCRIPTIONS,
             "invocation_guidance": _invocation_guidance(
@@ -1956,7 +1984,7 @@ def scenario_test_questions(request: HttpRequest, public_id: object) -> HttpResp
                 messages.success(
                     request,
                     f"Test soruları kaydedildi (eval suite v{result['eval_suite'].version}). "
-                    "Yeni bir aday hazırlamak için adım 5'i çalıştırın.",
+                    "Yeni bir aday hazırlamak için adım 4'ü çalıştırın.",
                 )
             else:
                 messages.info(request, "Test soruları kaydedildi; eval suite değişmedi.")
@@ -1974,6 +2002,7 @@ def scenario_test_questions(request: HttpRequest, public_id: object) -> HttpResp
     # Which release the referee measures is not a detail: the whole point is to judge the
     # candidate before it is promoted, so the page names it instead of leaving it implicit.
     target_release = scenario_questions.judge_target_release(scenario)
+    last_run, last_answers = _last_question_run(request, scenario)
     return render(
         request,
         "console/scenario_test_questions.html",
@@ -1996,8 +2025,47 @@ def scenario_test_questions(request: HttpRequest, public_id: object) -> HttpResp
             "can_write": can_write,
             "author_reason": _AUTHOR_REASON,
             "max_rows": scenario_questions.MAX_ROWS,
+            "max_expected_chars": scenario_questions.MAX_EXPECTED_CHARS,
+            "last_run": last_run,
+            "last_answers": last_answers,
         },
     )
+
+
+def _last_question_run(
+    request: HttpRequest, scenario: Scenario
+) -> tuple[QuestionEvaluationRun | None, list[dict[str, Any]]]:
+    """Return the scenario's most recent evaluation and its per-question answers.
+
+    The answers already existed, but only on a separate report page the author had to
+    navigate to. Seeing what the scenario actually replied belongs next to the questions
+    that produced it. Content stays behind the same ``SCENARIO_TEST`` gate the report uses.
+    """
+
+    run = (
+        QuestionEvaluationRun.objects.filter(
+            organization=scenario.organization,
+            question_set_version__question_set__scenario=scenario,
+        )
+        .select_related("release__scenario__project", "question_set_version")
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    if run is None:
+        return None, []
+    if not _run_content_access(request, run):
+        return run, []
+    return run, [
+        {
+            "question": evidence.question_case.question,
+            "answer": evidence.generated_answer,
+            "status": evidence.status,
+            "error_code": evidence.error_code,
+            "assertions": evidence.assertions,
+            "judge": evidence.judge,
+        }
+        for evidence in run.case_evidence.select_related("question_case").order_by("ordinal")
+    ]
 
 
 _TEST_QUESTION_MESSAGES = {
@@ -2005,10 +2073,14 @@ _TEST_QUESTION_MESSAGES = {
     "TEST_QUESTION_TEXT_INVALID": "Her satırda bir soru metni olmalıdır.",
     "TEST_QUESTION_MODE_INVALID": "Geçersiz değerlendirme türü.",
     "TEST_QUESTION_EXPECTED_INVALID": "Her satırda beklenen cevap doldurulmalıdır.",
+    "TEST_QUESTION_TERM_COUNT_INVALID": (
+        f"“İçermeli” satırında en az 1, en çok {scenario_questions.MAX_TERMS_PER_ROW} terim olur; "
+        "her terimi ayrı satıra yazın."
+    ),
     "TEST_QUESTION_SET_ARCHIVED": "Bu senaryonun soru seti arşivlenmiş.",
     "JUDGE_MODEL_UNAVAILABLE": "Seçilen hakem modeli aktif değil.",
     "JUDGE_NOT_READY": "Hakem hazır değil; yukarıdaki gerekçeye bakın.",
-    "RELEASE_REQUIRED": "Ölçülecek bir sürüm yok. Önce adım 5'i çalıştırıp aday üretin.",
+    "RELEASE_REQUIRED": "Ölçülecek bir sürüm yok. Önce adım 4'ü çalıştırıp aday üretin.",
     "JUDGE_DISABLED": "LLM hakem bu kurulumda kapalı.",
     "JUDGE_PROVENANCE_INCOMPLETE": "Hakem modeli ve yönergesi birlikte pinlenmelidir.",
 }
@@ -2067,6 +2139,19 @@ def scenario_publish_and_verify(request: HttpRequest, public_id: object) -> Http
     return redirect("console:scenario_detail_public", public_id=scenario.public_id)
 
 
+_PROMOTION_BLOCKED_REASONS = {
+    "MODEL_PROVIDER_NOT_CONFIGURED": (
+        "Yayına alınamadı: bu senaryonun akışı cevabı bir modelden üretiyor ama bu kurulumda "
+        "gerçek bir model sağlayıcısı bağlı değil. Yayına alınsaydı çağıranlara deterministik "
+        "yer tutucu metin gerçek cevapmış gibi dönerdi. RUNTIME_MODEL_PROVIDER ve model "
+        "profilini bağlayın."
+    ),
+    "EVAL_REQUIRED": "Yayına alınamadı: bu adayın geçen bir test çalıştırması yok.",
+    "EVAL_SUITE_NOT_PINNED": "Yayına alınamadı: adayın manifestinde test seti pinli değil.",
+    "INDEX_NOT_READY": "Yayına alınamadı: pinlenen indekslerden en az biri hazır değil.",
+    "RELEASE_NOT_PROMOTABLE": "Yayına alınamadı: bu sürüm aday durumunda değil.",
+}
+
 _ACTIVATION_BLOCKED_REASONS = {
     "ACTIVE_ALIAS_REQUIRED": (
         "Release yayına alındı ancak senaryo çağrı alamıyor: aktif bir API adı (alias) yok."
@@ -2104,7 +2189,9 @@ def scenario_promote(request: HttpRequest, public_id: object) -> HttpResponse:
     try:
         promote(release=release, actor=request.user.get_username())
     except LifecycleError as exc:
-        messages.error(request, f"Yayına alınamadı: {exc.code}")
+        messages.error(
+            request, _PROMOTION_BLOCKED_REASONS.get(exc.code, f"Yayına alınamadı: {exc.code}")
+        )
         return redirect("console:scenario_detail_public", public_id=scenario.public_id)
     messages.success(request, f"Release #{release.pk} yayına alındı.")
 
@@ -2885,6 +2972,8 @@ def scenario_artifact_create(request: HttpRequest, public_id: object) -> HttpRes
             "form": form,
             "latest": latest,
             "logical_id": logical_id,
+            # Inline help for the raw JSON body: the options only lived in the validator.
+            "form_schema": profile_fields.profile_form(requested_type),
         },
     )
 
@@ -4507,8 +4596,10 @@ def document_set_detail(
             ],
         }
 
-    # Show only the current (latest) version expanded; older versions collapse behind a
-    # "Geçmiş sürümler" control as read-only summaries (Scope F).
+    # One expanded version plus a full list of the rest. The list used to be labelled
+    # "Geçmiş sürümler" while it actually held *every* version except the selected one, so
+    # selecting v1 filed the newest version under history. It is now "Diğer sürümler" and
+    # every entry says where it stands, with the newest marked.
     all_versions = list(
         document_set.versions.order_by("-version").annotate(_member_count=Count("memberships"))
     )
@@ -4521,12 +4612,13 @@ def document_set_detail(
             latest_version,
         )
     current_version = _version_detail(selected_version) if selected_version is not None else None
-    older_versions = [
+    other_versions = [
         {
             "id": v.id,
             "version": v.version,
             "status": v.status,
             "member_count": getattr(v, "_member_count", 0),
+            "is_latest": latest_version is not None and v.pk == latest_version.pk,
         }
         for v in all_versions
         if selected_version is None or v.pk != selected_version.pk
@@ -4877,19 +4969,29 @@ def document_set_detail(
         }
         for profile in document_model_profiles
     ]
+
+    # One source for the defaults: the field description also feeds the form and the help,
+    # so the JSON fallback and the rendered form can never start from different values.
+    def _profile_schema(artifact_type: str) -> dict[str, Any] | None:
+        schema = profile_fields.profile_form(artifact_type)
+        if schema is None:
+            return None
+        defaults = profile_fields.profile_defaults(artifact_type)
+        return {
+            **schema,
+            "artifact_type": artifact_type,
+            "defaults": defaults,
+            "defaults_json": json.dumps(defaults, ensure_ascii=False),
+        }
+
+    profile_schemas = {
+        artifact_type: _profile_schema(artifact_type)
+        for artifact_type in (ArtifactType.CHUNKING_PROFILE, ArtifactType.RETRIEVAL_PROFILE)
+    }
     document_profile_new_bodies = {
-        ArtifactType.CHUNKING_PROFILE: json.dumps(
-            {
-                "api_version": "agenthub/chunking/v1",
-                "kind": "ChunkingProfile",
-                "strategy": "tokens",
-                "size": 800,
-                "overlap": 80,
-                "max_chunks": 1000,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
+        artifact_type: json.dumps(schema["defaults"], ensure_ascii=False, indent=2)
+        for artifact_type, schema in profile_schemas.items()
+        if schema is not None
     }
     grants = list(
         document_set.grants.filter(principal_type=GrantPrincipalType.CONSUMER).order_by(
@@ -4941,7 +5043,7 @@ def document_set_detail(
                 "status": document_set.status,
             },
             "current_version": current_version,
-            "older_versions": older_versions,
+            "other_versions": other_versions,
             "latest_version": latest_version,
             "active_index": active_index,
             "lifecycle_steps": lifecycle_steps,
@@ -4952,6 +5054,7 @@ def document_set_detail(
             "build_profile_details": build_profile_details,
             "document_model_profile_options": document_model_profile_options,
             "document_profile_new_bodies": document_profile_new_bodies,
+            "profile_schemas": profile_schemas,
             "profile_artifact_publish_url": reverse(
                 "console:document_set_profile_artifact_publish",
                 args=[document_set.public_id],
@@ -5000,6 +5103,29 @@ def document_set_detail(
     )
 
 
+def _derive_profile_identity(
+    *, document_set: DocumentSet, artifact_type: str, display_name: str
+) -> tuple[str, str]:
+    """Allocate a stable, collision-free logical id and purpose from an operator's name."""
+
+    base = slugify(display_name)[:60].replace("-", "_") or "profil"
+    prefix = f"{document_set.logical_id.replace('-', '_')}_{artifact_type}"[:60]
+    candidate = f"{prefix}_{base}"[:128]
+    taken = set(
+        ArtifactVersion.objects.filter(
+            organization_id=document_set.organization_id,
+            type=artifact_type,
+            logical_id__startswith=candidate,
+        ).values_list("logical_id", flat=True)
+    )
+    logical_id = candidate
+    suffix = 2
+    while logical_id in taken:
+        logical_id = f"{candidate[:124]}_{suffix}"
+        suffix += 1
+    return logical_id, f"{document_set.name} · {display_name}"[:1000]
+
+
 @login_required
 @require_POST
 @sensitive_variables("payload")
@@ -5020,14 +5146,25 @@ def document_set_profile_artifact_publish(request: HttpRequest, public_id: objec
         return JsonResponse({"ok": False, "code": "payload_invalid"}, status=400)
     if not isinstance(payload, dict):
         return JsonResponse({"ok": False, "code": "payload_invalid"}, status=400)
+    logical_id = payload.get("logical_id")
+    logical_description = payload.get("logical_description")
+    display_name = payload.get("display_name")
+    if not logical_id and isinstance(display_name, str) and display_name.strip():
+        # The operator names the profile; the immutable identity is derived server-side,
+        # the same way scenario and project creation already allocate slugs.
+        logical_id, logical_description = _derive_profile_identity(
+            document_set=document_set,
+            artifact_type=str(payload.get("artifact_type") or ""),
+            display_name=display_name,
+        )
     try:
         artifact = publish_document_profile_artifact(
             user=request.user,
             document_set=document_set,
             source_artifact_id=payload.get("source_artifact_id"),
             artifact_type=payload.get("artifact_type"),
-            logical_id=payload.get("logical_id"),
-            logical_description=payload.get("logical_description"),
+            logical_id=logical_id,
+            logical_description=logical_description,
             version_description=payload.get("version_description"),
             body=payload.get("body"),
             request_id=_request_id(request),
@@ -6002,7 +6139,17 @@ def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpRespo
         raise PermissionDenied
     form = DocumentSetBuildForm(request.POST, organization_id=set_version.organization_id)
     if not form.is_valid():
-        messages.error(request, "İndeks isteği reddedildi: tenant’a açık bir profil seçin.")
+        # "tenant'a açık bir profil seçin" was the answer to every rejection, so a build that
+        # never started looked like a button that did nothing. Name the fields that failed.
+        labels = ", ".join(
+            str(form.fields[name].label or name) for name in form.errors if name in form.fields
+        )
+        messages.error(
+            request,
+            f"İndeks isteği reddedildi — şu alanlar geçerli değil: {labels}."
+            if labels
+            else "İndeks isteği reddedildi: tenant’a açık bir profil seçin.",
+        )
         return redirect(
             "console:document_set_detail_public", public_id=set_version.document_set.public_id
         )
@@ -6172,8 +6319,44 @@ def document_set_version_create(
     document_services.create_document_set_version(
         document_set=document_set, actor=request.user.get_username()
     )
-    messages.success(request, "Draft version created.")
+    messages.success(request, "Boş taslak açıldı.")
     return redirect("console:document_set_detail_public", public_id=document_set.public_id)
+
+
+@login_required
+@require_POST
+def document_set_version_branch(request: HttpRequest, version_pk: int) -> HttpResponse:
+    """Open a draft seeded from an existing version so one change becomes a new version."""
+
+    set_version = _scoped_set_version(request.user, version_pk)
+    document_set = set_version.document_set
+    if not can_manage_documents(
+        request.user, set_version.organization_id, document_set=document_set
+    ):
+        raise PermissionDenied
+    try:
+        draft = document_services.branch_document_set_version(
+            source=set_version,
+            actor=request.user.get_username(),
+            request_id=_request_id(request),
+        )
+    except DocumentError as exc:
+        messages.error(
+            request,
+            "Zaten açık bir taslak var; önce onu yayımlayın veya boşaltın."
+            if exc.code == "SET_DRAFT_ALREADY_OPEN"
+            else f"Yeni sürüm hazırlanamadı: {exc.code}",
+        )
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
+    messages.success(
+        request,
+        f"v{set_version.version} temel alınarak taslak v{draft.version} açıldı; "
+        f"{draft.memberships.count()} doküman kopyalandı.",
+    )
+    return redirect(
+        f"{reverse('console:document_set_detail_public', args=[document_set.public_id])}"
+        f"?version={draft.pk}#set-version-{draft.pk}"
+    )
 
 
 @login_required
@@ -7150,13 +7333,12 @@ def scenario_ask(request: HttpRequest, public_id: object) -> HttpResponse:
             )
             return redirect("console:scenario_detail_public", public_id=scenario.public_id)
         raise Http404 from exc
-    return render(
-        request,
-        "console/one_off_question_result.html",
-        {
-            "title": "Senaryo cevabı",
-            "question": form.cleaned_data["question"],
-            "result": result,
-            "back_url": reverse("console:scenario_detail_public", args=[scenario.public_id]),
-        },
-    )
+    # The answer returns to the page the question was asked from, with the question still in
+    # the box. A separate result page meant every follow-up question needed a trip back.
+    request.session["scenario_ask"] = {
+        "scenario": str(scenario.public_id),
+        "question": form.cleaned_data["question"],
+        "answer": result.answer,
+        "chunks": [{"title": chunk.title, "score": chunk.score} for chunk in (result.chunks or [])],
+    }
+    return redirect(f"{reverse('console:scenario_detail_public', args=[scenario.public_id])}#ask")

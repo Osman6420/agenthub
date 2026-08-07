@@ -26,6 +26,15 @@ MAX_OUTPUT_BYTES = 2_000_000
 MAX_CHUNKS = 10_000
 MAX_EXECUTION_SECONDS = 1.0
 
+#: Author-facing bounds. Named so the console can render a real form with the same limits
+#: the validator enforces, instead of asking an operator to guess them inside raw JSON.
+CHUNKING_STRATEGIES = ("characters", "tokens", "headings", "pages", "tables")
+CHUNKING_SIZE_MIN = 100
+CHUNKING_SIZE_MAX = 8_000
+RETRIEVAL_MODES = ("keyword", "vector", "hybrid")
+RETRIEVAL_TOP_K_MIN = 1
+RETRIEVAL_TOP_K_MAX = 50
+
 _FORBIDDEN_POINTER_SEGMENTS = {"__class__", "__dict__", "__proto__", "constructor", "prototype"}
 _TRANSFORM_TOP_KEYS = {"api_version", "kind", "spec"}
 _TRANSFORM_SPEC_KEYS = {"steps", "limits"}
@@ -178,9 +187,14 @@ def validate_chunking_profile(body: dict[str, Any]) -> None:
     _exact_keys(body, allowed, "chunking_unknown_field")
     if body.get("api_version") != "agenthub/chunking/v1" or body.get("kind") != "ChunkingProfile":
         _fail("chunking_version_invalid")
-    if body.get("strategy") not in {"characters", "tokens", "headings", "pages", "tables"}:
+    if body.get("strategy") not in set(CHUNKING_STRATEGIES):
         _fail("chunking_strategy_invalid")
-    _positive_int(body.get("size"), minimum=100, maximum=8_000, code="chunking_size_invalid")
+    _positive_int(
+        body.get("size"),
+        minimum=CHUNKING_SIZE_MIN,
+        maximum=CHUNKING_SIZE_MAX,
+        code="chunking_size_invalid",
+    )
     overlap = body.get("overlap", 0)
     if not isinstance(overlap, int) or isinstance(overlap, bool) or not 0 <= overlap < body["size"]:
         _fail("chunking_overlap_invalid")
@@ -208,9 +222,14 @@ def validate_retrieval_profile(body: dict[str, Any]) -> None:
     if body.get("api_version") != "agenthub/retrieval/v1" or body.get("kind") != "RetrievalProfile":
         _fail("retrieval_version_invalid")
     mode = body.get("mode")
-    if mode not in {"keyword", "vector", "hybrid"}:
+    if mode not in set(RETRIEVAL_MODES):
         _fail("retrieval_mode_invalid")
-    _positive_int(body.get("top_k"), minimum=1, maximum=50, code="retrieval_top_k_invalid")
+    _positive_int(
+        body.get("top_k"),
+        minimum=RETRIEVAL_TOP_K_MIN,
+        maximum=RETRIEVAL_TOP_K_MAX,
+        code="retrieval_top_k_invalid",
+    )
     threshold = body.get("score_threshold", 0.0)
     if (
         not isinstance(threshold, (int, float))

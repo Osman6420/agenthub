@@ -6,6 +6,7 @@
 <section class="card form-card">
   <p><strong>Logical kimlik:</strong> <span class="mono">{{ logical_id }}</span></p>
   {% if latest %}<div class="notice">Son immutable sürüm: v{{ latest.version }} · {{ latest.version_description }}</div>{% else %}<div class="notice">Bu tür için ilk immutable sürüm oluşturulacak.</div>{% endif %}
+  {% if form_schema %}{% include "console/field_info.html" with info_title=form_schema.label info_body=form_schema.summary info_items=form_schema.fields info_note="api_version ve kind sabittir; gövdede aynen kalmalıdır." %}{% endif %}
   <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Doğrula ve immutable sürümü oluştur</button></form>
 </section>
 {% endblock %}

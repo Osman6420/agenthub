@@ -401,6 +401,36 @@ written back as 0 passed with null metrics; and console questions reached the wo
 misconfiguration is retried as transient and quota exhaustion is indistinguishable from a bad
 credential. Changing it touches error-code and retry contracts and needs approval.
 
+The follow-up `scenario-and-document-authoring-ux` task closed sixteen owner findings.
+Implemented and automatically verified (SQLite 1276 passed/61 skipped; PostgreSQL console/
+documents/ingestion/releases/evaluations/gateway 648 passed/2 skipped; frontend tsc/53 vitest/
+build; ruff and mypy on 468 files clean); the browser gate remains open, so it is **not
+`Verified`**. **No migration; no new dependency.**
+**A stub answer may be evaluated but never served** — `_assert_release_gate` (shared by promote
+and canary) refuses a workflow containing `generate`/`agent_loop` when `RUNTIME_MODEL_PROVIDER`
+is unset, with `MODEL_PROVIDER_NOT_CONFIGURED` audited as a denial. This is a *traffic* gate,
+not a release-quality gate: the same release is legitimately evaluated against the deterministic
+stub in CI, so hermetic tests are unaffected.
+**Honest failures** — each `WorkflowRequestError` code now maps to its own safe gateway message
+and status (`RUN_RUNTIME_SUSPENDED` → 503, `WORKFLOW_STATE_TOO_LARGE` → 413) instead of every
+code answering "A bounded Idempotency-Key is required."; the generated `curl` examples carry
+`Idempotency-Key` (the sync one omitted it, so the console's own primary snippet could not
+succeed) and state the reuse/conflict rules.
+**Authoring** — "cevap şunu içermeli" takes one term per line and requires all of them, each term
+its own assertion so a failure names the missing term; the citation flag round-trips from the
+current `eval_suite` (it silently reset before); the scenario's steps 4 and 5 swap so the
+candidate exists before the questions that measure it; the last run's answers render beside the
+questions; the one-off question answers in place and stays re-askable.
+**Document sets** — `documents.services.branch_document_set_version` seeds a draft from any
+published version's exact membership without mutating it (v1 → v3 works), refusing while a draft
+is open; "Diğer sürümler" replaces a list that filed the newest version under history; chunking
+and retrieval profiles are authored through rendered fields whose choices and bounds are imported
+from `apps/artifacts/governed_dsl` (`apps/console/profile_fields.py`), with a reusable
+`console/field_info.html` help control; a profile is *named* and the server derives its immutable
+identity; the deprecated retrieval picker is gone (stored pins retained as data); and automatic
+staged preparation defaults on, because nothing happens between publishing a set version and
+preparing its index and the result is staged, never served.
+
 Review the final diff for scope, layering, compatibility, authorization, privacy, failure modes, concurrency, operability, and accidental files. Record every executed command and result in task verification. State checks that could not run and the risk this leaves; never infer success from an agent assertion.
 
 ## Recommended enforcement (not implemented)

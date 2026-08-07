@@ -272,3 +272,47 @@ def test_a_well_formed_but_invalid_body_keeps_its_own_message(
 
     assert response.status_code == 400
     assert response.json()["error"]["message"] != "Request body is not valid JSON."
+
+
+@pytest.mark.django_db
+def test_each_request_failure_says_what_actually_happened(scenario_fixture: Fixture) -> None:
+    """Every non-conflict code used to answer "A bounded Idempotency-Key is required.".
+
+    So a suspended runtime or an invalid execution context sent the caller to inspect a
+    header that was fine.
+    """
+
+    client = _client(scenario_fixture.raw_token)
+
+    missing = client.post(
+        "/v1/responses", {"model": scenario_fixture.alias, "input": "hello"}, format="json"
+    )
+
+    assert missing.status_code == 400
+    error = missing.json()["error"]
+    assert "Idempotency-Key" in error["message"]
+    assert error["message"] == "A bounded Idempotency-Key header is required."
+
+
+@pytest.mark.django_db
+def test_a_suspended_runtime_is_not_reported_as_a_header_problem(
+    scenario_fixture: Fixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from apps.workflows.services import WorkflowRequestError
+
+    def _suspended(**_kwargs: object) -> None:
+        raise WorkflowRequestError("RUN_RUNTIME_SUSPENDED")
+
+    monkeypatch.setattr("apps.gateway.views.request_unified_run", _suspended)
+
+    response = _client(scenario_fixture.raw_token).post(
+        "/v1/responses",
+        {"model": scenario_fixture.alias, "input": "hello"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="suspended-1",
+    )
+
+    assert response.status_code == 503
+    error = response.json()["error"]
+    assert "Idempotency-Key" not in error["message"]
+    assert error["message"] == "The runtime is suspended and is not accepting new runs."

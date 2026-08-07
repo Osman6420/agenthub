@@ -30,6 +30,70 @@ document.querySelectorAll("[data-document-profile-editor][data-current-profile-i
     if (select instanceof HTMLSelectElement) select.value = editor.dataset.currentProfileId ?? "";
   });
 
+/** Read the JSON written into a <script type="application/json"> block, or {} . */
+function embeddedJson(container, selector) {
+  const node = container.querySelector(selector);
+  if (!(node instanceof HTMLElement)) return {};
+  try {
+    const parsed = JSON.parse(node.textContent ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Populate a field form from its defaults and current values, and honour only_when. */
+function initProfileForm(form) {
+  const values = { ...embeddedJson(form, "[data-profile-form-defaults]"),
+                   ...embeddedJson(form, "[data-profile-form-values]") };
+  form.querySelectorAll("[data-profile-form-input]").forEach((input) => {
+    if (!(input instanceof HTMLInputElement) && !(input instanceof HTMLSelectElement)) return;
+    const name = input.dataset.profileFormInput ?? "";
+    if (name in values && values[name] !== null && values[name] !== undefined) {
+      input.value = String(values[name]);
+    }
+  });
+  const syncConditional = () => {
+    const modeInput = form.querySelector("[data-profile-form-input='mode']");
+    const mode = modeInput instanceof HTMLSelectElement ? modeInput.value : "";
+    form.querySelectorAll("[data-only-when-field]").forEach((field) => {
+      if (!(field instanceof HTMLElement)) return;
+      field.hidden = field.dataset.onlyWhenValue !== mode;
+    });
+  };
+  const modeInput = form.querySelector("[data-profile-form-input='mode']");
+  if (modeInput instanceof HTMLSelectElement) modeInput.addEventListener("change", syncConditional);
+  syncConditional();
+}
+
+/** Assemble a governed profile body from the rendered fields. */
+function profileFormBody(form) {
+  const body = { ...embeddedJson(form, "[data-profile-form-defaults]") };
+  form.querySelectorAll("[data-profile-form-input]").forEach((input) => {
+    if (!(input instanceof HTMLInputElement) && !(input instanceof HTMLSelectElement)) return;
+    const field = input.closest("[data-profile-form-field]");
+    // A hidden conditional field (weights outside hybrid) must not reach the body: the
+    // validator rejects them, and silently sending them would look like an unrelated error.
+    if (field instanceof HTMLElement && field.hidden) {
+      delete body[input.dataset.profileFormInput ?? ""];
+      return;
+    }
+    const name = input.dataset.profileFormInput ?? "";
+    const kind = input.dataset.fieldKind ?? "select";
+    if (kind === "int") body[name] = Number.parseInt(input.value, 10);
+    else if (kind === "float") body[name] = Number.parseFloat(input.value);
+    else body[name] = input.value;
+    if (kind !== "select" && !Number.isFinite(body[name])) {
+      throw new Error(`“${name}” alanına bir sayı girin.`);
+    }
+  });
+  return body;
+}
+
+document.querySelectorAll("[data-profile-form]").forEach((form) => {
+  if (form instanceof HTMLElement) initProfileForm(form);
+});
+
 function editorPayload(editor) {
   const artifactType = editor.dataset.artifactType ?? "";
   const versionDescription = editor.querySelector("[data-profile-version-description]");
@@ -39,12 +103,22 @@ function editorPayload(editor) {
   let body;
   const prompt = editor.querySelector("[data-profile-prompt]");
   const model = editor.querySelector("[data-profile-model]");
+  const fieldForm = editor.querySelector("[data-profile-form]");
+  const advancedJson = editor.querySelector("[data-profile-json-advanced]");
   const jsonBody = editor.querySelector("[data-profile-json]");
   if (prompt instanceof HTMLTextAreaElement) {
     body = { template: prompt.value };
   } else if (model instanceof HTMLSelectElement) {
     if (!model.value) throw new Error("Aktif bir platform model profili seçin.");
     body = { profile_id: model.value };
+  } else if (advancedJson instanceof HTMLTextAreaElement && advancedJson.value.trim()) {
+    try {
+      body = JSON.parse(advancedJson.value);
+    } catch {
+      throw new Error("Profil içeriği geçerli bir JSON nesnesi olmalıdır.");
+    }
+  } else if (fieldForm instanceof HTMLElement) {
+    body = profileFormBody(fieldForm);
   } else if (jsonBody instanceof HTMLTextAreaElement) {
     try {
       body = JSON.parse(jsonBody.value);
@@ -65,6 +139,16 @@ function editorPayload(editor) {
   const sourceId = Number(editor.dataset.sourceArtifactId ?? "0");
   if (Number.isSafeInteger(sourceId) && sourceId > 0) {
     payload.source_artifact_id = sourceId;
+  } else if (editor.dataset.deriveIdentity === "1") {
+    // The operator names the profile; the server derives its immutable identity, the way
+    // scenario and project creation already do. Asking for a logical ID, a permanent
+    // purpose *and* a first-version note to add one chunking profile was three ceremonies
+    // for one decision.
+    const displayName = editor.querySelector("[data-profile-display-name]");
+    if (!(displayName instanceof HTMLInputElement) || !displayName.value.trim()) {
+      throw new Error("Profile bir ad verin.");
+    }
+    payload.display_name = displayName.value.trim();
   } else {
     const logicalId = editor.querySelector("[data-profile-logical-id]");
     const logicalDescription = editor.querySelector("[data-profile-logical-description]");

@@ -115,6 +115,15 @@
     .error-box { background: #fdecec; border: 1px solid #f0bcbc; color: #8a1f1f; margin-top: 12px; }
     ul.compact { margin: 8px 0 0; padding-left: 18px; }
     ul.compact li { margin-top: 3px; }
+    /* Inline help for controls whose options are not visible on screen (JSON bodies, DSL
+       fields, profile pickers). Rendered by console/field_info.html. */
+    .field-info { margin: 6px 0 10px; }
+    .field-info > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+    .field-info-body { margin-top: 8px; padding: 10px 12px; border-left: 3px solid var(--line); }
+    .field-info-body dt { font-weight: 600; font-size: 13px; margin-top: 8px; }
+    .field-info-body dd { margin: 2px 0 0; font-size: 13px; }
+    [data-profile-form-field] { margin-top: 10px; }
+    [data-profile-form-field][hidden] { display: none; }
     .setup-steps { list-style: none; margin: 0 0 18px; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
     .setup-step { display: flex; gap: 14px; align-items: center; padding: 14px 16px; border-top: 1px solid var(--line); }
     .setup-step:first-child { border-top: 0; }

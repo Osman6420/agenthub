@@ -24,12 +24,14 @@ from apps.tenancy.models import Organization, OrganizationMembership
 User = get_user_model()
 pytestmark = pytest.mark.django_db
 
+# Preparing the candidate precedes the test questions: writing a question needs nothing,
+# but running one needs a release to run it against.
 STEP_TITLES = (
     "Temel bilgiler",
     "Bilgi kaynağı",
     "Akış",
+    "Aday sürüm hazırla",
     "Test soruları",
-    "Dene ve doğrula",
     "Yayına al",
 )
 

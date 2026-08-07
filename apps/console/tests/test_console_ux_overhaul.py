@@ -306,7 +306,9 @@ def test_document_set_detail_shows_current_version_and_history(client: Client) -
         reverse("console:document_set_detail_public", args=[document_set.public_id])
     ).content.decode()
     assert "Güncel set sürümü v2" in body  # latest version expanded
-    assert "Geçmiş sürümler (1)" in body  # older versions collapsed behind a control
+    # "Geçmiş sürümler" actually held every version except the selected one, so selecting v1
+    # filed the newest version under history. The list is now honestly named.
+    assert "Diğer sürümler (1)" in body
 
 
 # ----------------------------------------------------------------------------- G

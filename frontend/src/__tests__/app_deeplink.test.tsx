@@ -105,6 +105,37 @@ describe("builder deep link", () => {
     expect(screen.queryByText("Artifact taslakları")).not.toBeInTheDocument();
   });
 
+  it("offers a way back to the scenario it was opened from", async () => {
+    // Studio is a step inside the scenario journey, not a destination. Without this the
+    // only way back is the browser's back button.
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const value = String(url);
+      let payload: unknown = {};
+      if (value.includes("node-schema")) payload = {
+        organization: "org-b", can_write: true,
+        dsl: { api_version: "agenthub/v1", kind: "Workflow" },
+        limits: { max_nodes: 50, max_edges: 100 },
+        node_types: [], tool_binding_roles: [], custom_nodes: [], projects: [],
+      };
+      else if (value.endsWith("/drafts/")) payload = { drafts: [] };
+      return new Response(JSON.stringify(payload), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    render(<App apiBase="/console/api/builder/"
+      orgs={[{ slug: "org-b", name: "B", can_write: true }]}
+      initial={{ organization: "org-b", project_id: 4, project_name: "Project",
+        scenario_id: 17, scenario_name: "Support",
+        scenario_public_id: "7f1d2c34-0000-4000-8000-000000000001" }} />);
+
+    const back = await screen.findByText("← Senaryoya dön");
+    expect(back).toHaveAttribute(
+      "href",
+      "/console/scenarios/id/7f1d2c34-0000-4000-8000-000000000001/",
+    );
+  });
+
   it("selects the server-provided organization and opens its scoped draft", async () => {
     const calls: string[] = [];
     vi.stubGlobal(

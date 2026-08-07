@@ -37,6 +37,11 @@ from apps.releases.scenario_artifacts import scenario_artifact_logical_id
 MAX_ROWS = 50
 MAX_EXPECTED_CHARS = 500
 
+#: "Cevap şunu içermeli" accepts one term per line and requires **all** of them. Each term
+#: becomes its own assertion, so a failing run names the exact term that was missing instead
+#: of reporting one opaque failure for the whole row.
+MAX_TERMS_PER_ROW = 10
+
 #: How a row's expected answer is checked.
 MODE_CONTAINS = "contains"
 MODE_EXACT = "exact"
@@ -68,6 +73,15 @@ def _row_id(ordinal: int) -> str:
     return f"case-{ordinal + 1}"
 
 
+def expected_terms(expected: str) -> list[str]:
+    """Split an author's expected answer into the terms the answer must contain.
+
+    Only ``contains`` splits: an exact match is one literal and the referee reads prose.
+    """
+
+    return [line.strip() for line in expected.splitlines() if line.strip()]
+
+
 def normalize_rows(raw_rows: Any) -> list[dict[str, Any]]:
     """Validate author rows into a bounded, canonical shape."""
 
@@ -86,6 +100,13 @@ def normalize_rows(raw_rows: Any) -> list[dict[str, Any]]:
         expected = str(raw.get("expected", "")).strip()
         if not expected or len(expected) > MAX_EXPECTED_CHARS:
             raise ScenarioQuestionError("TEST_QUESTION_EXPECTED_INVALID")
+        if mode == MODE_CONTAINS:
+            terms = expected_terms(expected)
+            if not terms or len(terms) > MAX_TERMS_PER_ROW:
+                raise ScenarioQuestionError("TEST_QUESTION_TERM_COUNT_INVALID")
+            # Canonical form: one term per line, so the editor round-trips exactly what the
+            # assertions were built from.
+            expected = "\n".join(terms)
         rows.append(
             {
                 "question": question,
@@ -109,7 +130,7 @@ def build_eval_suite_body(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if row["mode"] not in DETERMINISTIC_MODES:
             continue
         assertions: list[dict[str, Any]] = [
-            {"type": "answer_contains", "value": row["expected"]},
+            {"type": "answer_contains", "value": term} for term in expected_terms(row["expected"])
         ]
         if row.get("require_citation"):
             assertions.append({"type": "citations_present"})
@@ -140,7 +161,10 @@ def build_question_cases(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if row["mode"] == MODE_EXACT:
             assertions.append({"type": "exact", "value": row["expected"]})
         elif row["mode"] == MODE_CONTAINS:
-            assertions.append({"type": "normalized_contains", "value": row["expected"]})
+            assertions.extend(
+                {"type": "normalized_contains", "value": term}
+                for term in expected_terms(row["expected"])
+            )
         judge = {"enabled": True, "required": True} if row["mode"] == MODE_JUDGE else {}
         cases.append(
             {
@@ -156,31 +180,68 @@ def build_question_cases(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalize_cases(cases)
 
 
+def _citation_rows(scenario: Scenario) -> set[str]:
+    """Return the case ids whose current eval suite requires a citation.
+
+    The citation requirement only exists in the ``eval_suite`` artifact — the question-set
+    vocabulary has no "has any citation" assertion — so the editor has to read it back from
+    there. Without this the checkbox reloaded unticked and the next save silently dropped
+    ``citations_present`` from the author's own promotion gate.
+    """
+
+    current = (
+        ArtifactVersion.objects.filter(
+            organization=scenario.organization,
+            type=ArtifactType.EVAL_SUITE,
+            logical_id=scenario_artifact_logical_id(scenario, ArtifactType.EVAL_SUITE),
+        )
+        .order_by("-version")
+        .first()
+    )
+    cases = (current.body or {}).get("cases") if current is not None else None
+    return {
+        str(case.get("id"))
+        for case in (cases if isinstance(cases, list) else [])
+        if isinstance(case, dict)
+        and any(
+            isinstance(item, dict) and item.get("type") == "citations_present"
+            for item in (case.get("assertions") or [])
+        )
+    }
+
+
 def load_rows(scenario: Scenario) -> list[dict[str, Any]]:
     """Return the editor rows for a scenario, from its question set when one exists."""
 
     question_set = QuestionSet.objects.filter(scenario=scenario).first()
     if question_set is None:
         return []
+    cited = _citation_rows(scenario)
     rows: list[dict[str, Any]] = []
-    for case in question_set.draft_cases:
+    for ordinal, case in enumerate(question_set.draft_cases):
         if not isinstance(case, dict):
             continue
         judge = case.get("judge") or {}
-        assertions = case.get("assertions") or []
+        assertions = [item for item in (case.get("assertions") or []) if isinstance(item, dict)]
         first = assertions[0] if assertions else {}
         if judge.get("enabled"):
             mode, expected = MODE_JUDGE, str(case.get("expected_answer", ""))
         elif first.get("type") == "exact":
             mode, expected = MODE_EXACT, str(first.get("value", ""))
         else:
-            mode, expected = MODE_CONTAINS, str(first.get("value", ""))
+            # Every term of a "contains" row is its own assertion; rebuild the author's list.
+            mode = MODE_CONTAINS
+            expected = "\n".join(
+                str(item.get("value", ""))
+                for item in assertions
+                if item.get("type") == "normalized_contains"
+            )
         rows.append(
             {
                 "question": str(case.get("question", "")),
                 "mode": mode,
                 "expected": expected,
-                "require_citation": False,
+                "require_citation": str(case.get("id") or _row_id(ordinal)) in cited,
             }
         )
     return rows

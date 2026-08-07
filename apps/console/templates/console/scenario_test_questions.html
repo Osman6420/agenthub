@@ -9,10 +9,10 @@
 
 <div class="page-heading">
   <div>
-    <p class="eyebrow">Adım 4</p>
+    <p class="eyebrow">Adım 5</p>
     <h1>Test soruları</h1>
     <p class="muted">Her satır bir soru ve cevabın nasıl değerlendirileceğidir. Kaydettiğinizde
-      senaryonun test seti güncellenir; sonucu görmek için senaryo sayfasında adım 5'i çalıştırın.</p>
+      senaryonun test seti güncellenir ve sonraki aday sürüm bunu kullanır.</p>
   </div>
   <a class="button secondary" href="{% url 'console:scenario_detail_public' scenario.public_id %}">Senaryoya dön</a>
 </div>
@@ -47,11 +47,36 @@
     </span>
   </form>
   {% else %}
-  <div class="warning-box">Ölçülecek bir sürüm yok. Senaryo sayfasında adım 5'i çalıştırıp aday üretin.</div>
+  <div class="warning-box">Ölçülecek bir sürüm yok. Senaryo sayfasında adım 4'ü çalıştırıp aday üretin.</div>
   {% endif %}
   {% endif %}
   {% endif %}
 </section>
+
+{% if last_run %}
+<section class="card">
+  <div class="section-heading"><div><p class="eyebrow">Son çalıştırma</p>
+    <h2>Senaryo bu sorulara ne cevap verdi</h2>
+    <p class="muted">{{ last_run.created_at|date:"j F Y, H:i" }} ·
+      {% if last_run.release_id %}ölçülen sürüm <a href="{% url 'console:release_detail' last_run.release_id %}">#{{ last_run.release_id }}</a> · {% endif %}
+      <strong>{{ last_run.passed_cases }}/{{ last_run.total_cases }}</strong> geçti</p></div>
+    <a class="button secondary" href="{% url 'console:question_evaluation_detail' last_run.public_id %}">Tam rapor</a></div>
+  {% for row in last_answers %}
+  <details class="relationship-card"{% if row.status != "passed" %} open{% endif %}>
+    <summary><span class="badge {{ row.status }}">{{ row.status }}</span> {{ row.question }}</summary>
+    {% if row.error_code %}<p class="warning-box">{{ row.error_code }}</p>{% endif %}
+    {% if row.answer %}<p>{{ row.answer }}</p>{% else %}<p class="muted">Cevap üretilmedi.</p>{% endif %}
+    {% for assertion in row.assertions %}
+    <p class="muted">{% if assertion.passed %}✓{% else %}✗{% endif %}
+      {% if assertion.value %}“{{ assertion.value }}” {% endif %}<span class="mono">{{ assertion.reason_code }}</span></p>
+    {% endfor %}
+    {% if row.judge.status %}<p class="muted">Hakem: <strong>{{ row.judge.verdict|default:row.judge.status }}</strong> <span class="mono">{{ row.judge.reason_code }}</span></p>{% endif %}
+  </details>
+  {% empty %}
+  <p class="muted">Cevapları görmek için bu senaryoda test yetkisi gerekir.</p>
+  {% endfor %}
+</section>
+{% endif %}
 
 <div class="notice">
   <strong>Neyin yayına çıkmayı engellediği:</strong> yalnızca <em>“{{ modes.0.label }}”</em>
@@ -65,7 +90,7 @@
   <div class="table-scroll">
     <table>
       <caption class="sr-only">Senaryonun test soruları</caption>
-      <thead><tr><th scope="col">Soru</th><th scope="col">Değerlendirme</th><th scope="col">Beklenen cevap</th><th scope="col">Kaynak</th></tr></thead>
+      <thead><tr><th scope="col">Soru</th><th scope="col">Değerlendirme</th><th scope="col">Beklenen cevap<br><span class="muted" style="font-weight:400;">“İçermeli” için her satıra bir terim; hepsi geçmeli</span></th><th scope="col">Kaynak</th></tr></thead>
       <tbody>
         {% for row in rows %}
         <tr>
@@ -76,7 +101,7 @@
               {% for mode in modes %}<option value="{{ mode.value }}" {% if row.mode == mode.value %}selected{% endif %}{% if mode.value == judge_mode and not judge_ready %} disabled{% endif %}>{{ mode.label }}</option>{% endfor %}
             </select></td>
           <td><label class="sr-only" for="expected-{{ forloop.counter0 }}">Beklenen cevap {{ forloop.counter }}</label>
-            <textarea id="expected-{{ forloop.counter0 }}" name="expected" rows="2" maxlength="500" {% if not can_write %}disabled{% endif %}>{{ row.expected }}</textarea></td>
+            <textarea id="expected-{{ forloop.counter0 }}" name="expected" rows="3" maxlength="{{ max_expected_chars }}" {% if not can_write %}disabled{% endif %}>{{ row.expected }}</textarea></td>
           <td><label><input type="checkbox" name="require_citation" value="{{ forloop.counter0 }}" {% if row.require_citation %}checked{% endif %} {% if not can_write %}disabled{% endif %}> Kaynak göstermeli</label></td>
         </tr>
         {% endfor %}
@@ -88,7 +113,7 @@
               {% for mode in modes %}<option value="{{ mode.value }}"{% if mode.value == judge_mode and not judge_ready %} disabled{% endif %}>{{ mode.label }}</option>{% endfor %}
             </select></td>
           <td><label class="sr-only" for="expected-new">Yeni satırın beklenen cevabı</label>
-            <textarea id="expected-new" name="expected" rows="2" maxlength="500" {% if not can_write %}disabled{% endif %}></textarea></td>
+            <textarea id="expected-new" name="expected" rows="3" maxlength="{{ max_expected_chars }}" {% if not can_write %}disabled{% endif %}></textarea></td>
           <td><label><input type="checkbox" name="require_citation" value="{{ rows|length }}" {% if not can_write %}disabled{% endif %}> Kaynak göstermeli</label></td>
         </tr>
       </tbody>

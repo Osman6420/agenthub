@@ -690,7 +690,13 @@ def evaluate_answer_assertions(
                 reason = "schema_valid"
             except jsonschema.ValidationError:
                 reason = "schema_invalid"
-        outcomes.append({"type": kind, "passed": passed, "reason_code": reason})
+        outcome: dict[str, Any] = {"type": kind, "passed": passed, "reason_code": reason}
+        # Carry the expected literal so a multi-term row names *which* term was missing
+        # rather than reporting one opaque failure. It is author content, so the report
+        # renders it only for a viewer who may already see questions and answers.
+        if kind in {"exact", "normalized_contains", "citation_source"}:
+            outcome["value"] = str(assertion.get("value", ""))
+        outcomes.append(outcome)
     return outcomes
 
 
@@ -780,23 +786,6 @@ def _retrieval_case(run: QuestionEvaluationRun, case: QuestionCase) -> QuestionE
     )
 
 
-def release_generates_text(release: ScenarioRelease) -> bool:
-    """Return whether the release's compiled workflow asks a model to produce an answer."""
-
-    from apps.workflows.services import resolve_release_workflow
-
-    try:
-        workflow = resolve_release_workflow(release)
-    except Exception:  # noqa: BLE001 - absence is reported by the caller's own checks
-        return False
-    nodes = workflow.compiled_graph.get("nodes", [])
-    if not isinstance(nodes, list):
-        return False
-    return any(
-        isinstance(node, dict) and node.get("type") in {"generate", "agent_loop"} for node in nodes
-    )
-
-
 def require_real_model_provider(release: ScenarioRelease) -> None:
     """Refuse an operator test that would return a deterministic placeholder as an answer.
 
@@ -806,6 +795,8 @@ def require_real_model_provider(release: ScenarioRelease) -> None:
     and misleading for a human asking the scenario a question, so this check is scoped to the
     operator one-off surface only.
     """
+
+    from apps.releases.lifecycle import release_generates_text
 
     if not getattr(settings, "RUNTIME_MODEL_PROVIDER", "") and release_generates_text(release):
         raise QuestionEvaluationError("MODEL_PROVIDER_NOT_CONFIGURED")

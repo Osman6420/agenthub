@@ -71,8 +71,14 @@
 <div class="card" id="versions">
   <div class="section-heading">
     <div><h2>İçerik ve indeks yaşam döngüsü</h2><p class="muted">Yükleme → taslak → yayımlanmış set → staged indeks → aktif indeks.</p></div>
-    {% if can_write %}<form method="post" action="{% url 'console:document_set_version_create_public' set.public_id %}">{% csrf_token %}<button class="button secondary" type="submit">Boş taslak aç</button></form>{% endif %}
+    {% if can_write and current_version and not current_version.is_draft %}
+    <form method="post" action="{% url 'console:document_set_version_branch' current_version.id %}">{% csrf_token %}<button class="button primary" type="submit">Bu sürümden yeni sürüm hazırla</button></form>
+    {% endif %}
   </div>
+  {% if can_write and current_version and not current_version.is_draft %}
+  <p class="muted">Yayımlanmış bir sürüm değişmez. “Bu sürümden yeni sürüm hazırla” dokümanlarını
+    kopyalayarak taslak açar; tek bir dokümanı veya ayarı değiştirip hemen yayımlayabilirsiniz.</p>
+  {% endif %}
 
   {% with v=current_version %}
   {% if v %}
@@ -106,13 +112,19 @@
         <form class="compact-form" method="post" action="{% url 'console:document_set_build_index' v.id %}">
           {% csrf_token %}
           <div class="profile-field" data-profile-field><label>Embedding profili</label>{{ build_form.embedding_profile }}{% include "console/document_profile_inspector.html" with label="Embedding profili" items=build_profile_details.embedding platform_managed=True platform_profile_manage_url=platform_profile_manage_url %}</div>
-          <div class="profile-field" data-profile-field data-artifact-type="chunking_profile"><label style="margin-top:8px;">Parçalama profili</label>{{ build_form.chunking_profile }}{% include "console/document_profile_inspector.html" with label="Parçalama profili" items=build_profile_details.chunking authorable=True artifact_type="chunking_profile" new_body_json=document_profile_new_bodies.chunking_profile %}</div>
-          {% if build_profile_details.retrieval %}<div class="profile-field" data-profile-field><label style="margin-top:8px;">Arama profili (kullanımdan kalktı)</label><p class="muted">Sorgu anındaki arama davranışı artık çalışan Retrieve node'unun bağından gelir. Bu seçim yalnız geçmiş kayıt olarak korunur ve düzenlenmez.</p>{{ build_form.retrieval_profile }}{% include "console/document_profile_inspector.html" with label="Arama profili" items=build_profile_details.retrieval %}</div>{% endif %}
+          <div class="profile-field" data-profile-field data-artifact-type="chunking_profile"><label style="margin-top:8px;">Parçalama profili</label>{{ build_form.chunking_profile }}{% include "console/document_profile_inspector.html" with label="Parçalama profili" items=build_profile_details.chunking authorable=True artifact_type="chunking_profile" new_body_json=document_profile_new_bodies.chunking_profile form_schema=profile_schemas.chunking_profile %}</div>
           <div class="profile-field" data-profile-field><label style="margin-top:8px;">OCR profili</label>{{ build_form.ocr_profile }}{% include "console/document_profile_inspector.html" with label="OCR profili" items=build_profile_details.ocr platform_managed=True platform_profile_manage_url=platform_profile_manage_url %}</div>
           <div class="profile-field" data-profile-field data-artifact-type="model_profile"><label style="margin-top:8px;">Özet model profili</label>{{ build_form.summary_model_profile }}{% include "console/document_profile_inspector.html" with label="Özet model profili" items=build_profile_details.summary_model authorable=True artifact_type="model_profile" %}</div>
           <div class="profile-field" data-profile-field data-artifact-type="prompt_template"><label style="margin-top:8px;">Özet prompt sözleşmesi</label>{{ build_form.summary_prompt_contract }}{% include "console/document_profile_inspector.html" with label="Özet prompt sözleşmesi" items=build_profile_details.summary_prompt authorable=True artifact_type="prompt_template" %}</div>
-          <label style="margin-top:8px;">{{ build_form.auto_prepare }} Sonraki yayımlanan sürümleri otomatik staged hazırla</label>
-          <button class="button secondary" type="submit" style="margin-top:10px;">Staged indeks oluştur</button>
+          <details style="margin-top:8px;"><summary class="muted">Gelişmiş</summary>
+            <label>{{ build_form.auto_prepare }} Sonraki sürümlerde indeksi otomatik hazırla</label>
+            <p class="muted">Açıkken, bu setin bundan sonra yayımladığınız her sürümü için aynı
+              profillerle staged indeks kendiliğinden hazırlanır ve düğmeye basmanız gerekmez.
+              Hazırlanan indeks <strong>servis edilmez</strong> — aktif etmek yine ayrı bir
+              karardır. Ücretli bir embedding profili kullanıyorsanız her yayımın maliyeti
+              olacağını unutmayın.</p>
+          </details>
+          <button class="button primary" type="submit" style="margin-top:10px;">Staged indeks oluştur</button>
         </form>
         {% elif v.is_draft %}<p class="notice">İndeks oluşturmak için önce taslağı yayımlayın.</p>{% endif %}
       </div>
@@ -121,10 +133,20 @@
   {% else %}<div class="empty">Henüz bir set sürümü yok. Toplu yükleme ilk taslağı otomatik açar.</div>{% endif %}
   {% endwith %}
 
-  {% if older_versions %}
+  {% if other_versions %}
+  <details class="version-history" open>
+    <summary><strong>Diğer sürümler ({{ other_versions|length }})</strong></summary>
+    <p class="muted">Bir sürüme tıklayınca o sürüm açılır: dokümanları, indeksleri ve o sürümün
+      kendi profil seçimleri gelir. Yayımlanmış bir sürüm değişmez; oradan
+      <em>“Bu sürümden yeni sürüm hazırla”</em> ile taslak açıp tek bir şeyi değiştirebilirsiniz.</p>
+    {% for v in other_versions %}<div class="access-row"><div><strong><a href="?version={{ v.id }}#set-version-{{ v.id }}">Set sürümü v{{ v.version }}</a></strong><p class="muted">{{ v.member_count }} doküman sürümü{% if v.is_latest %} · en yeni{% endif %}</p></div><span class="badge {{ v.status }}">{{ v.status }}</span>{% if can_write and v.status != "draft" %}<form method="post" action="{% url 'console:document_set_version_branch' v.id %}">{% csrf_token %}<button class="button ghost" type="submit">Bundan yeni sürüm</button></form>{% endif %}</div>{% endfor %}
+  </details>
+  {% endif %}
+  {% if can_write %}
   <details class="version-history">
-    <summary><strong>Geçmiş sürümler ({{ older_versions|length }})</strong></summary>
-    {% for v in older_versions %}<div class="access-row"><div><strong><a href="?version={{ v.id }}#set-version-{{ v.id }}">Set sürümü v{{ v.version }}</a></strong><p class="muted">{{ v.member_count }} doküman sürümü</p></div><span class="badge {{ v.status }}">{{ v.status }}</span></div>{% endfor %}
+    <summary class="muted">Gelişmiş</summary>
+    <form method="post" action="{% url 'console:document_set_version_create_public' set.public_id %}">{% csrf_token %}<button class="button ghost" type="submit">Boş taslak aç</button>
+      <span class="muted">Hiçbir doküman kopyalanmaz; setin içeriğini sıfırdan kurmak içindir.</span></form>
   </details>
   {% endif %}
 </div>

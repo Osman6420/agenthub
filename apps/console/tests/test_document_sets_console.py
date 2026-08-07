@@ -198,3 +198,80 @@ def test_build_job_actions_are_role_and_tenant_scoped(
         outcome="failure",
         resource_id=str(job.public_id),
     ).exists()
+
+
+@pytest.mark.django_db
+def test_a_published_version_can_seed_the_next_one(client: Client) -> None:
+    """Changing one document meant rebuilding the set from an empty draft."""
+
+    org = Organization.objects.create(slug="branch-org", name="Branch")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    draft = create_document_set_version(document_set=document_set, actor="seed")
+    for name in ("doc-1", "doc-2"):
+        upload_document(
+            organization=org,
+            logical_id=name,
+            title=name,
+            mime_type="text/plain",
+            data=name.encode(),
+            actor="seed",
+            document_set_version=draft,
+        )
+    client.force_login(_member("owner", org, Role.PROJECT_OWNER))
+    client.post(reverse("console:document_set_version_publish", args=[draft.id]))
+    draft.refresh_from_db()
+
+    response = client.post(reverse("console:document_set_version_branch", args=[draft.id]))
+
+    assert response.status_code == 302
+    branched = DocumentSetVersion.objects.exclude(pk=draft.pk).get(document_set=document_set)
+    assert branched.status == DocumentSetVersionStatus.DRAFT
+    assert branched.version == draft.version + 1
+    # The source snapshot is frozen; the change becomes a new version.
+    assert draft.status == DocumentSetVersionStatus.PROMOTABLE
+    assert sorted(m.document_version.document.logical_id for m in branched.memberships.all()) == [
+        "doc-1",
+        "doc-2",
+    ]
+    assert AuditEvent.objects.filter(action="documents.set_version.branch").exists()
+
+
+@pytest.mark.django_db
+def test_branching_refuses_while_a_draft_is_already_open(client: Client) -> None:
+    """Two half-finished versions would compete for the next publish."""
+
+    org = Organization.objects.create(slug="branch-org2", name="Branch2")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    published = create_document_set_version(document_set=document_set, actor="seed")
+    upload_document(
+        organization=org,
+        logical_id="doc-1",
+        title="Doc",
+        mime_type="text/plain",
+        data=b"x",
+        actor="seed",
+        document_set_version=published,
+    )
+    client.force_login(_member("owner", org, Role.PROJECT_OWNER))
+    client.post(reverse("console:document_set_version_publish", args=[published.id]))
+    client.post(reverse("console:document_set_version_branch", args=[published.id]))
+
+    response = client.post(
+        reverse("console:document_set_version_branch", args=[published.id]), follow=True
+    )
+
+    assert "Zaten açık bir taslak var" in response.content.decode()
+    assert document_set.versions.filter(status=DocumentSetVersionStatus.DRAFT).count() == 1
+
+
+@pytest.mark.django_db
+def test_another_tenant_cannot_branch_a_version(client: Client) -> None:
+    org = Organization.objects.create(slug="branch-home", name="Home")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    version = create_document_set_version(document_set=document_set, actor="seed")
+    away = Organization.objects.create(slug="branch-away", name="Away")
+    client.force_login(_member("outsider", away, Role.ORGANIZATION_ADMIN))
+
+    response = client.post(reverse("console:document_set_version_branch", args=[version.id]))
+
+    assert response.status_code == 404

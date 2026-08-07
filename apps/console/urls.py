@@ -380,6 +380,11 @@ urlpatterns = [
         name="document_set_version_create",
     ),
     path(
+        "document-set-versions/<int:version_pk>/branch/",
+        views.document_set_version_branch,
+        name="document_set_version_branch",
+    ),
+    path(
         "document-set-versions/<int:version_pk>/add-member/",
         views.document_set_add_member,
         name="document_set_add_member",

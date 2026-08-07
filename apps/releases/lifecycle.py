@@ -38,6 +38,41 @@ class LifecycleError(RuntimeError):
         super().__init__(code)
 
 
+def release_generates_text(release: ScenarioRelease) -> bool:
+    """Return whether the release's compiled workflow asks a model to produce an answer."""
+
+    from apps.workflows.services import resolve_release_workflow
+
+    try:
+        workflow = resolve_release_workflow(release)
+    except Exception:  # noqa: BLE001 - absence is reported by the caller's own checks
+        return False
+    nodes = workflow.compiled_graph.get("nodes", [])
+    if not isinstance(nodes, list):
+        return False
+    return any(
+        isinstance(node, dict) and node.get("type") in {"generate", "agent_loop"} for node in nodes
+    )
+
+
+def _assert_real_model_provider(release: ScenarioRelease) -> None:
+    """Refuse to expose a generating release that would answer from the deterministic stub.
+
+    ``RUNTIME_MODEL_PROVIDER`` is empty by default, so ``get_model_provider()`` returns
+    ``StubModelProvider`` and a generating workflow still answers — convincingly, with text
+    no model produced. That is correct for hermetic tests and for the governed evaluation
+    gate, but a consumer receiving it cannot tell, and the eval suite passes on it too. So
+    the check lives on the traffic gate: a stub may be evaluated, never served.
+    """
+
+    from django.conf import settings
+
+    if getattr(settings, "RUNTIME_MODEL_PROVIDER", ""):
+        return
+    if release_generates_text(release):
+        raise LifecycleError("MODEL_PROVIDER_NOT_CONFIGURED")
+
+
 def _audit(action: str, *, release: ScenarioRelease, actor: str, outcome: str, reason: str) -> None:
     record_event(
         actor_type="user",
@@ -94,6 +129,7 @@ def _assert_release_gate(release: ScenarioRelease, *, actor: str, action: str) -
         raise LifecycleError("EVAL_REQUIRED")
     try:
         _assert_indexes_ready(release)
+        _assert_real_model_provider(release)
     except LifecycleError as exc:
         _audit(action, release=release, actor=actor, outcome="deny", reason=exc.code)
         raise

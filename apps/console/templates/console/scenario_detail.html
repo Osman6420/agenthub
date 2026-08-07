@@ -96,9 +96,16 @@
 </section>
 
 {% if can_evaluate and active_release %}
-<section class="card form-card">
+<section class="card form-card" id="ask">
   <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>Senaryoya sor</h2><p class="muted">Exact aktif release üzerinden çalışır; soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>
-  <form method="post" action="{% url 'console:scenario_ask' scenario.public_id %}">{% csrf_token %}<label for="scenario-one-off-question">Soru</label><textarea id="scenario-one-off-question" name="question" rows="3" maxlength="4000" required></textarea><button type="submit">Sor</button></form>
+  {% if ask_result %}
+  <div class="relationship-card">
+    <div class="relationship-head"><div><strong>Cevap</strong><p class="muted">“{{ ask_result.question }}”</p></div></div>
+    <div class="relationship-body"><div>{% if ask_result.answer %}<p>{{ ask_result.answer }}</p>{% else %}<p class="muted">Cevap üretilmedi.</p>{% endif %}
+      {% for chunk in ask_result.chunks %}<p class="muted mono">#{{ forloop.counter }} {{ chunk.title }} · score={{ chunk.score }}</p>{% endfor %}</div></div>
+  </div>
+  {% endif %}
+  <form method="post" action="{% url 'console:scenario_ask' scenario.public_id %}">{% csrf_token %}<label for="scenario-one-off-question">Soru</label><textarea id="scenario-one-off-question" name="question" rows="3" maxlength="4000" required>{{ ask_result.question|default:"" }}</textarea><button type="submit">{% if ask_result %}Tekrar sor{% else %}Sor{% endif %}</button></form>
 </section>
 {% endif %}
 
@@ -106,6 +113,7 @@
   <div class="section-heading"><div><p class="eyebrow">Sunum yolları</p><h2>Senaryoyu çağırma</h2><p class="muted">Yetki istemci tokenı + protokol + senaryo alias bağı + capability üzerinden sunucuda doğrulanır.</p></div></div>
   {% if active_release %}<p>{% if has_output_contract %}<span class="access-ok">Output contract aktif release'e pinli ve runtime'da uygulanıyor.</span>{% else %}<span class="muted">Output contract seçilmemiş; adapter yalnız kendi response envelope sınırlarını uygular.</span>{% endif %}</p>{% else %}<div class="warning-box">Aktif release olmadan hiçbir sunum yolu çalışmaz.</div>{% endif %}
   {% if invocation_guidance.ready %}
+    <p class="notice">{{ invocation_guidance.idempotency_note }}</p>
     {% for example in invocation_guidance.examples %}
       <div class="relationship-card">
         <div><strong>{{ example.label }}</strong><p class="muted">{{ example.description }}</p></div>

@@ -259,6 +259,60 @@ def test_promotion_never_reaches_back_to_a_superseded_candidate(
     assert "Yayına alınabilecek yeni bir aday sürüm yok." in response.content.decode()
 
 
+def test_every_curl_example_carries_an_idempotency_key(
+    client: Client, setup: tuple[Organization, AIProject, Scenario, Any]
+) -> None:
+    """The sync example omitted it, and an empty key is refused with IDEMPOTENCY_KEY_REQUIRED.
+
+    So the console's own primary snippet could not succeed.
+    """
+
+    import re
+
+    _org, _project, scenario, _admin_user = setup
+    client.post(reverse("console:scenario_publish_and_verify", args=[scenario.public_id]))
+    client.post(reverse("console:scenario_promote", args=[scenario.public_id]))
+
+    body = client.get(
+        reverse("console:scenario_detail_public", args=[scenario.public_id])
+    ).content.decode()
+
+    commands = re.findall(r"curl -sS -X POST[^<]*", body)
+    assert commands, "the scenario page should offer at least one runnable curl example"
+    for command in commands:
+        assert "Idempotency-Key" in command
+    assert "IDEMPOTENCY_CONFLICT" in body, "the reuse rule should be stated once, not discovered"
+
+
+def test_a_one_off_answer_returns_to_the_page_that_asked(
+    client: Client, setup: tuple[Organization, AIProject, Scenario, Any]
+) -> None:
+    """A separate result page meant every follow-up question needed a trip back."""
+
+    _org, _project, scenario, _admin_user = setup
+    client.post(reverse("console:scenario_publish_and_verify", args=[scenario.public_id]))
+    client.post(reverse("console:scenario_promote", args=[scenario.public_id]))
+
+    response = client.post(
+        reverse("console:scenario_ask", args=[scenario.public_id]),
+        {"question": "Kargo ne zaman gelir?"},
+        follow=True,
+    )
+
+    body = response.content.decode()
+    assert response.redirect_chain[-1][0].endswith("#ask")
+    # The question stays in the box so it can be edited and asked again.
+    assert "Kargo ne zaman gelir?" in body
+    assert "Tekrar sor" in body
+    # One shot: a reload must not resurrect the answer beside a newer question.
+    assert (
+        "Tekrar sor"
+        not in client.get(
+            reverse("console:scenario_detail_public", args=[scenario.public_id])
+        ).content.decode()
+    )
+
+
 def test_another_tenant_cannot_reach_the_step_actions(
     client: Client, setup: tuple[Organization, AIProject, Scenario, Any]
 ) -> None:

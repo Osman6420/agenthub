@@ -1,4 +1,5 @@
 <div class="profile-inspector" data-profile-inspector aria-label="{{ label }} ayrıntıları">
+  {% if form_schema %}{% include "console/field_info.html" with info_title=label info_body=form_schema.summary info_items=form_schema.fields %}{% endif %}
   <p class="notice" data-profile-publish-status aria-live="polite" hidden></p>
   <p class="muted" data-profile-empty>İçeriğini görmek için bir profil seçin.</p>
   {% for item in items %}
@@ -59,10 +60,15 @@
   {% endfor %}
   {% if authorable %}
   <details class="relationship-card" data-document-profile-editor
-    data-artifact-type="{{ artifact_type }}">
+    data-artifact-type="{{ artifact_type }}"{% if form_schema %} data-derive-identity="1"{% endif %}>
     <summary><strong>Yeni {{ label|lower }} ekle</strong></summary>
+    <label>Adı</label><input maxlength="120" data-profile-display-name
+      placeholder="Örn. Uzun teknik dokümanlar">
+    {% if not form_schema %}
+    {# Types without a field description still need their raw identity fields. #}
     <label>Logical ID</label><input maxlength="128" data-profile-logical-id>
     <label>Kalıcı amaç</label><input maxlength="1000" data-profile-logical-description>
+    {% endif %}
     {% if artifact_type == "prompt_template" %}
       <label>Prompt metni</label><textarea rows="8" data-profile-prompt></textarea>
     {% elif artifact_type == "model_profile" %}
@@ -73,6 +79,12 @@
         {% endfor %}
       </select>
       <p class="muted">Yalnız güvenli UUID referansı kaydedilir; endpoint ve secret gösterilmez.</p>
+    {% elif form_schema %}
+      {% include "console/profile_field_form.html" with prefix=artifact_type values_json=form_schema.defaults_json %}
+      <details><summary class="muted">JSON olarak düzenle</summary>
+        <textarea class="mono" rows="10" data-profile-json-advanced>{{ new_body_json }}</textarea>
+        <p class="muted">Doldurulursa yukarıdaki alanların yerine bu gövde yayımlanır.</p>
+      </details>
     {% else %}
       <label>Profil içeriği</label>
       <textarea class="mono" rows="12" data-profile-json>{{ new_body_json }}</textarea>
