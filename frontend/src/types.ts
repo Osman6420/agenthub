@@ -172,7 +172,7 @@ export interface NodeFieldSchema {
     | "mapping";
   required?: boolean;
   help?: string;
-  options_ref?: "tool_binding_roles" | "custom_nodes";
+  options_ref?: "tool_binding_roles" | "custom_nodes" | "transform_profiles";
   options?: string[];
   min?: number;
   max?: number;
@@ -219,6 +219,8 @@ export interface NodeSchema {
   gates?: { composition_enabled: boolean; agent_loop_enabled?: boolean };
   tool_binding_roles: ToolBindingRole[];
   custom_nodes: { node_ref: string }[];
+  // Shared, reusable transform profiles: the manifest role is the artifact logical id.
+  transform_profiles?: { role: string }[];
   projects: { id: number; slug: string; name: string }[];
 }
 
@@ -355,4 +357,56 @@ export interface BuilderNodeData {
   compensation?: string;
   hasError?: boolean;
   [key: string]: unknown;
+}
+
+// Result of the single Studio "publish and verify" action. ``missing`` is author-facing
+// prose naming the step that still needs an artifact; ``evaluation.cases`` carries only
+// assertion types, booleans and stable reason codes — never answer or document text.
+export interface PublishAndVerifyResult {
+  ok: boolean;
+  published: { logical_id: string; version: number; checksum: string; revision: number };
+  missing: { role: string; artifact_type: string; node_ids: string[]; message: string }[];
+  diagnostics: ReleaseDiagnostic[];
+  release?: { id: number; status: string; artifact_manifest_sha256?: string };
+  evaluation?: {
+    level: "success" | "warning" | "error";
+    message: string;
+    status?: string;
+    passed_cases?: number;
+    total_cases?: number;
+    cases?: {
+      case_id: string;
+      passed: boolean;
+      assertions: { type: string; passed: boolean; reason_code: string }[];
+    }[];
+  };
+}
+
+// A node-owned artifact's own version history plus other logical artifacts of the same
+// type that can be copied. Copying takes the *body*; it never pins a foreign artifact.
+export interface NodeArtifactEntry {
+  artifact_version_id: number;
+  logical_id: string;
+  logical_description: string;
+  version: number;
+  version_description: string;
+  checksum: string;
+  created_at: string;
+  body_too_large: boolean;
+  body: Record<string, unknown> | null;
+}
+
+export interface NodeArtifactLibrary {
+  role: string;
+  versions: NodeArtifactEntry[];
+  library: NodeArtifactEntry[];
+}
+
+// The manifest the backend derives for a scenario's published workflow. Read-only: the
+// panel reports it, it never asks an operator to reassemble it by logical id.
+export interface DerivedManifest {
+  available: boolean;
+  ok?: boolean;
+  pins: { role: string; artifact_type: string; logical_id: string; version: number }[];
+  missing: { role: string; artifact_type: string; node_ids: string[]; message: string }[];
 }

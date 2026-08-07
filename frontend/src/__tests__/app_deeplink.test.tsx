@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../App";
@@ -63,12 +63,17 @@ describe("builder deep link", () => {
     expect(screen.getByText("AI authoring hazır")).toBeInTheDocument();
   });
 
-  it("locks scenario context and creates a scenario draft from whole workflow JSON", async () => {
-    const requests: { url: string; body?: Record<string, unknown> }[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+  it("opens the scenario's single workflow directly, with no draft list or create form", async () => {
+    const draftRow = {
+      id: 9, organization: "org-b", organization_id: 2, project_id: 4, scenario_id: 17,
+      name: "Support workflow", logical_id: "support_workflow", logical_description: "Purpose",
+      body: { api_version: "agenthub/v1", kind: "Workflow", metadata: { id: "support_workflow" },
+        spec: { input_node: "request", nodes: [{ id: "request", type: "input" },
+          { id: "done", type: "end" }], edges: [{ from: "request", to: "done" }] } },
+      last_published_version: 0, last_published_at: null, revision: 1, can_write: true,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const value = String(url);
-      const body = options?.body ? JSON.parse(String(options.body)) as Record<string, unknown> : undefined;
-      requests.push({ url: value, body });
       let payload: unknown = {};
       if (value.includes("node-schema")) payload = {
         organization: "org-b", can_write: true,
@@ -81,38 +86,23 @@ describe("builder deep link", () => {
         projects: [{ id: 4, slug: "project", name: "Project" }],
       };
       else if (value.endsWith("/artifact-drafts/")) payload = { drafts: [] };
-      else if (value.endsWith("/drafts/") && options?.method === "POST") payload = {
-        ...draft, project_id: 4, scenario_id: 17, can_write: true, body: body?.body,
-      };
-      else if (value.endsWith("/drafts/")) payload = { drafts: [] };
+      else if (value.endsWith(`/drafts/${draftRow.id}/`)) payload = draftRow;
+      else if (value.endsWith("/drafts/")) payload = { drafts: [draftRow] };
       return new Response(JSON.stringify(payload), {
-        status: options?.method === "POST" ? 201 : 200,
-        headers: { "Content-Type": "application/json" },
+        status: 200, headers: { "Content-Type": "application/json" },
       });
     }));
-    const workflow = draft.body;
+
     render(<App apiBase="/console/api/builder/"
       orgs={[{ slug: "org-b", name: "B", can_write: true }]}
       initial={{ organization: "org-b", project_id: 4, project_name: "Project",
         scenario_id: 17, scenario_name: "Support" }} />);
 
-    await screen.findByText("Scenario Studio · Support");
-    expect(screen.getByLabelText("organizasyon")).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("draft adı"), { target: { value: "Imported" } });
-    fireEvent.change(screen.getByLabelText("logical id"), { target: { value: "imported" } });
-    fireEvent.change(screen.getByLabelText("logical artifact açıklaması"), {
-      target: { value: "Imported workflow purpose" },
-    });
-    fireEvent.change(screen.getByLabelText("yeni workflow JSON"), {
-      target: { value: JSON.stringify(workflow) },
-    });
-    fireEvent.click(screen.getByText("Oluştur"));
-    await waitFor(() => expect(requests.some((request) => request.body?.scenario_id === 17)).toBe(true));
-    const create = requests.find((request) => request.body?.scenario_id === 17)?.body;
-    expect(create?.project_id).toBe(4);
-    expect(create?.body).toEqual(workflow);
+    // The editor is the landing surface: no intermediate list, no naming ceremony.
     await screen.findByText("Graph");
-    expect(screen.getByText("JSON")).toBeInTheDocument();
+    expect(screen.queryByText("Draft'lar")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("draft adı")).not.toBeInTheDocument();
+    expect(screen.queryByText("Artifact taslakları")).not.toBeInTheDocument();
   });
 
   it("selects the server-provided organization and opens its scoped draft", async () => {

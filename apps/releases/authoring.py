@@ -22,8 +22,13 @@ from apps.releases.compiler import (
     ArtifactRef,
     CompileError,
     compile_release,
+    workflow_manifest_requirements,
 )
 from apps.releases.models import ReleaseStatus, ScenarioRelease
+from apps.releases.scenario_artifacts import (
+    SCENARIO_SCOPED_ROLES,
+    scenario_artifact_logical_id,
+)
 from apps.workflows.compiler import WorkflowCompileError, compile_workflow
 from apps.workflows.models import CustomNodeDefinition, CustomNodeStatus
 
@@ -173,83 +178,7 @@ def analyze_workflow_requirements(
             artifact_type=ArtifactType.WORKFLOW_DEFINITION,
         ) from exc
 
-    requirements: dict[str, dict[str, Any]] = {}
-
-    def require(role: object, artifact_type: str, node_id: object = None) -> None:
-        if not isinstance(role, str) or not role:
-            return
-        current = requirements.get(role)
-        if current is not None and current["artifact_type"] != artifact_type:
-            raise CompileError(
-                f"manifest role '{role}' requires incompatible artifact types",
-                code="role_type_mismatch",
-                role=role,
-                artifact_type=artifact_type,
-            )
-        if current is None:
-            current = {
-                "role": role,
-                "artifact_type": artifact_type,
-                "node_ids": [],
-            }
-            requirements[role] = current
-        if isinstance(node_id, str) and node_id and node_id not in current["node_ids"]:
-            current["node_ids"].append(node_id)
-
-    require("workflow_definition", ArtifactType.WORKFLOW_DEFINITION)
-    nodes = compiled.graph.get("nodes", [])
-    if not isinstance(nodes, list):
-        raise CompileError(
-            "compiled workflow nodes are invalid",
-            code="compiled_workflow_invalid",
-        )
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        node_id = node.get("id")
-        node_type = node.get("type")
-        config = node.get("config")
-        if not isinstance(config, dict):
-            config = {}
-        if node_type == "transform":
-            require(
-                config.get("transform_profile_ref"),
-                ArtifactType.TRANSFORM_PROFILE,
-                node_id,
-            )
-        elif node_type == "tool":
-            require(config.get("binding_role"), ArtifactType.TOOL_BINDING, node_id)
-        elif node_type == "generate":
-            require(config.get("prompt_ref"), ArtifactType.PROMPT_TEMPLATE, node_id)
-            require(config.get("model_profile_ref"), ArtifactType.MODEL_PROFILE, node_id)
-        elif node_type == "retrieve":
-            require(
-                config.get("retrieval_profile_ref"),
-                ArtifactType.RETRIEVAL_PROFILE,
-                node_id,
-            )
-        elif node_type == "subworkflow":
-            child_role = config.get("workflow_role")
-            if isinstance(child_role, str):
-                require(
-                    f"child_workflow.{child_role}",
-                    ArtifactType.WORKFLOW_DEFINITION,
-                    node_id,
-                )
-        elif node_type == "agent_loop":
-            policy = config.get("policy")
-            if not isinstance(policy, dict):
-                continue
-            tools = policy.get("tools", [])
-            if isinstance(tools, list):
-                for role in tools:
-                    require(role, ArtifactType.TOOL_BINDING, node_id)
-            actions = policy.get("actions")
-            verify_roles = actions.get("verify_roles", []) if isinstance(actions, dict) else []
-            if isinstance(verify_roles, list):
-                for role in verify_roles:
-                    if role != "retrieval":
-                        require(role, ArtifactType.TOOL_BINDING, node_id)
+    requirements = workflow_manifest_requirements(compiled.graph)
 
     ordered = sorted(
         requirements.values(),
@@ -266,6 +195,138 @@ def analyze_workflow_requirements(
         },
         "requirements": ordered,
     }
+
+
+_MISSING_ROLE_LABELS: dict[str, str] = {
+    ArtifactType.PROMPT_TEMPLATE: "istem metni",
+    ArtifactType.MODEL_PROFILE: "model seçimi",
+    ArtifactType.RETRIEVAL_PROFILE: "arama profili",
+    ArtifactType.TRANSFORM_PROFILE: "dönüşüm profili",
+    ArtifactType.TOOL_BINDING: "araç bağlantısı",
+    ArtifactType.WORKFLOW_DEFINITION: "akış tanımı",
+    ArtifactType.INPUT_CONTRACT: "girdi sözleşmesi",
+    ArtifactType.OUTPUT_CONTRACT: "çıktı sözleşmesi",
+    ArtifactType.EVAL_SUITE: "test soruları",
+}
+
+
+@dataclass(frozen=True)
+class DerivedManifest:
+    """A manifest computed from the scenario and its workflow, with nothing to choose."""
+
+    refs: list[ArtifactRef]
+    missing: list[dict[str, Any]]
+
+    @property
+    def ok(self) -> bool:
+        return not self.missing
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "missing": self.missing,
+            "pins": [
+                {
+                    "role": ref.role,
+                    "artifact_type": ref.type,
+                    "logical_id": ref.logical_id,
+                    "version": ref.version,
+                }
+                for ref in self.refs
+            ],
+        }
+
+
+def _describe_missing(role: str, artifact_type: str, node_ids: list[str]) -> dict[str, Any]:
+    label = _MISSING_ROLE_LABELS.get(artifact_type, artifact_type)
+    if node_ids:
+        where = ", ".join(node_ids[:3])
+        message = f"'{where}' adımının {label} henüz yayımlanmamış."
+    else:
+        message = f"Senaryonun {label} henüz yayımlanmamış."
+    return {
+        "role": role,
+        "artifact_type": artifact_type,
+        "node_ids": node_ids,
+        "message": message,
+    }
+
+
+def derive_manifest(*, scenario: Scenario, workflow_artifact: ArtifactVersion) -> DerivedManifest:
+    """Compute the exact manifest for ``workflow_artifact`` without operator input.
+
+    Every pin a release needs is already determined by the scenario and the published
+    workflow, so asking an author to re-select them by logical id was pure ceremony that
+    silently produced wrong roles (a role defaulted to the *artifact type* name, so a
+    ``retrieve`` node looking up ``ret_<identity>_profile`` found nothing and failed closed
+    at request time).
+
+    Resolution is deterministic: node-derived roles, tool bindings and transform profiles
+    name their artifact's ``logical_id`` verbatim, and the scenario-owned contracts and
+    evaluation suite use :func:`scenario_artifact_logical_id`. Missing artifacts are
+    reported in author-facing language rather than raising, so a caller can render "what is
+    still needed" instead of a compiler diagnostic.
+    """
+
+    organization_id = scenario.organization_id
+    refs: list[ArtifactRef] = [
+        ArtifactRef(
+            role="workflow_definition",
+            type=ArtifactType.WORKFLOW_DEFINITION,
+            logical_id=workflow_artifact.logical_id,
+            version=workflow_artifact.version,
+        )
+    ]
+    missing: list[dict[str, Any]] = []
+
+    requirements = analyze_workflow_requirements(
+        scenario=scenario,
+        workflow_artifact_id=workflow_artifact.pk,
+    )["requirements"]
+
+    wanted: list[tuple[str, str, str, list[str]]] = []
+    for requirement in requirements:
+        role = str(requirement["role"])
+        if role == "workflow_definition":
+            continue
+        artifact_type = str(requirement["artifact_type"])
+        # Node-derived roles, tool binding roles and transform profile roles are the
+        # artifact's logical id verbatim; a child workflow strips its reserved prefix.
+        logical_id = role[len("child_workflow.") :] if role.startswith("child_workflow.") else role
+        wanted.append((role, artifact_type, logical_id, list(requirement["node_ids"])))
+
+    for artifact_type in SCENARIO_SCOPED_ROLES:
+        wanted.append(
+            (
+                artifact_type,
+                artifact_type,
+                scenario_artifact_logical_id(scenario, artifact_type),
+                [],
+            )
+        )
+
+    for role, artifact_type, logical_id, node_ids in wanted:
+        artifact = (
+            ArtifactVersion.objects.filter(
+                organization_id=organization_id,
+                type=artifact_type,
+                logical_id=logical_id,
+            )
+            .order_by("-version")
+            .first()
+        )
+        if artifact is None:
+            missing.append(_describe_missing(role, artifact_type, node_ids))
+            continue
+        refs.append(
+            ArtifactRef(
+                role=role,
+                type=artifact.type,
+                logical_id=artifact.logical_id,
+                version=artifact.version,
+            )
+        )
+    return DerivedManifest(refs=refs, missing=missing)
 
 
 def preflight_release(

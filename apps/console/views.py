@@ -105,6 +105,7 @@ from apps.documents.profile_authoring import (
 )
 from apps.documents.services import DocumentError, DocumentSetControlError
 from apps.documents.storage import StorageError
+from apps.evaluations import scenario_questions
 from apps.evaluations.forms import (
     EvaluationTargetForm,
     OneOffQuestionForm,
@@ -132,7 +133,7 @@ from apps.evaluations.question_services import (
     request_evaluation_cancellation,
     update_question_set_draft,
 )
-from apps.evaluations.services import EvalError, run_eval
+from apps.evaluations.services import EvalError, run_eval, summarize_eval_run
 from apps.evaluations.tasks import execute_question_evaluation_task
 from apps.identity.assignment_services import (
     AssignmentError,
@@ -1324,6 +1325,163 @@ def _scenario_preset_body(preset: str, *, logical_id: str) -> dict[str, Any]:
     raise ValueError("unknown scenario preset")
 
 
+def _pending_release(scenario: Scenario) -> ScenarioRelease | None:
+    """Return the candidate waiting to go live, or ``None`` when nothing is waiting.
+
+    Only the *newest* release counts. Picking the newest candidate regardless would promote
+    a superseded one: after #44 is promoted, the older candidates #39-#43 still carry the
+    candidate status, and "promote the newest candidate" would put stale work live.
+    """
+
+    newest = (
+        ScenarioRelease.objects.filter(scenario=scenario).order_by("-created_at", "-pk").first()
+    )
+    if newest is None or newest.status not in (ReleaseStatus.CANDIDATE, ReleaseStatus.CANARY):
+        return None
+    return newest
+
+
+def _scenario_setup_steps(
+    *,
+    scenario: Scenario,
+    studio_url: str,
+    contract_status: list[dict[str, Any]],
+    eval_suite_artifact: ArtifactVersion | None,
+    document_set_count: int,
+    drafts: list[WorkflowDraft],
+    latest_release: ScenarioRelease | None,
+    pending_release: ScenarioRelease | None,
+    active_release: ScenarioRelease | None,
+    can_write: bool,
+    can_release: bool,
+    author_reason: str,
+    release_reason: str,
+) -> list[dict[str, Any]]:
+    """Describe the scenario journey as ordered steps with an honest completion state.
+
+    The page previously presented eleven peer sections, so the order of work — and which
+    part was already done for you — had to be inferred. These rows say it outright, and
+    each one owns at most a single action.
+    """
+
+    published = [draft for draft in drafts if draft.last_published_version > 0]
+    contracts_ready = all(item["current"] is not None for item in contract_status)
+    steps: list[dict[str, Any]] = [
+        {
+            "number": 1,
+            "title": "Temel bilgiler",
+            "detail": (
+                "Kimlik, API adı ve giriş/çıkış sözleşmeleri senaryo oluşturulurken hazırlandı."
+                if contracts_ready
+                else "Sözleşmeler hazırlanmamış; aşağıdaki Gelişmiş bölümünden override edin."
+            ),
+            "state": "done" if contracts_ready else "todo",
+            "url": "",
+            "action": "",
+            "enabled": False,
+            "reason": "",
+        },
+        {
+            "number": 2,
+            "title": "Bilgi kaynağı",
+            "detail": (
+                f"{document_set_count} doküman seti bağlı."
+                if document_set_count
+                else "Doküman seti bağlanmadı. Yalnızca arama yapan akışlar için gereklidir."
+            ),
+            "state": "done" if document_set_count else "optional",
+            "url": "#documents",
+            "action": "Doküman setlerini yönet",
+            "enabled": can_write,
+            "reason": author_reason,
+        },
+        {
+            "number": 3,
+            "title": "Akış",
+            "detail": (
+                f"Yayımlanan sürüm: v{max(draft.last_published_version for draft in published)}."
+                if published
+                else "Akış henüz yayımlanmadı. Adımları, istemi ve modeli burada düzenlersiniz."
+            ),
+            "state": "done" if published else "todo",
+            "url": studio_url,
+            "action": "Akışı düzenle",
+            "enabled": can_write,
+            "reason": author_reason,
+        },
+        {
+            "number": 4,
+            "title": "Test soruları",
+            "detail": (
+                f"Hazır · v{eval_suite_artifact.version}"
+                if eval_suite_artifact is not None
+                else "Test soruları hazırlanmamış."
+            ),
+            "state": "done" if eval_suite_artifact is not None else "todo",
+            "url": reverse("console:scenario_test_questions", args=[scenario.public_id]),
+            "action": "Test sorularını düzenle",
+            "enabled": can_write,
+            "reason": author_reason,
+        },
+        {
+            "number": 5,
+            "title": "Dene ve doğrula",
+            "detail": (
+                f"Son aday: #{latest_release.pk} · {latest_release.get_status_display()}"
+                if latest_release is not None
+                else "Henüz aday sürüm hazırlanmadı. Akışı yayımladığınızda tek adımda üretilir."
+            ),
+            "state": "done" if latest_release is not None else "todo",
+            "url": reverse("console:scenario_publish_and_verify", args=[scenario.public_id]),
+            "post": True,
+            "action": "Yayımla ve test et",
+            "enabled": can_write,
+            "reason": author_reason,
+            "link": (
+                reverse("console:release_detail", args=[latest_release.pk])
+                if latest_release is not None
+                else ""
+            ),
+            "link_label": f"Aday #{latest_release.pk} ayrıntısı" if latest_release else "",
+        },
+        {
+            "number": 6,
+            "title": "Yayına al",
+            # A waiting candidate must not read as finished. Reporting "done" whenever *any*
+            # release was active told an operator who had just fixed and re-published their
+            # flow that step 6 was complete, so the fix stayed unpromoted and every live
+            # call kept using the old release.
+            "detail": (
+                f"Aday #{pending_release.pk} hazır ama yayında #{active_release.pk} var. "
+                "Yayına almadan canlı davranış değişmez."
+                if pending_release is not None and active_release is not None
+                else f"Aday #{pending_release.pk} hazır; senaryo henüz çağrı almıyor."
+                if pending_release is not None
+                else f"Aktif release #{active_release.pk}."
+                if active_release is not None
+                else "Yayında sürüm yok; senaryo çağrı almıyor."
+            ),
+            "state": ("todo" if pending_release is not None or active_release is None else "done"),
+            "url": reverse("console:scenario_promote", args=[scenario.public_id]),
+            "post": True,
+            "action": "Yayına al ve çağrılabilir yap",
+            "enabled": can_release and pending_release is not None,
+            "reason": (
+                release_reason
+                if not can_release
+                else "Yayına alınacak yeni bir aday yok; önce adım 5'i çalıştırın."
+            ),
+            "link": (
+                reverse("console:release_detail", args=[active_release.pk])
+                if active_release is not None
+                else ""
+            ),
+            "link_label": f"Aktif release #{active_release.pk}" if active_release else "",
+        },
+    ]
+    return steps
+
+
 def _invocation_guidance(
     active_release: ScenarioRelease | None, alias: str | None
 ) -> dict[str, object]:
@@ -1338,12 +1496,20 @@ def _invocation_guidance(
             {
                 "label": "Senkron Chat Completions",
                 "description": "Derlenen workflow senkron çalışmayı destekliyor.",
+                # The payload is built with json.dumps: an earlier hand-built version put
+                # a literal ``}}`` in a non-f-string continuation line, so the example
+                # anyone copied was malformed JSON and the gateway rejected it.
                 "command": (
                     'curl -sS -X POST "$AGENTHUB_BASE_URL/v1/chat/completions" '
                     '-H "Authorization: Bearer $AGENTHUB_TOKEN" '
                     '-H "Content-Type: application/json" '
-                    f'-d \'{{"model":"{alias}","messages":[{{"role":"user",'
-                    '"content":"Merhaba"}}]}\''
+                    "-d '"
+                    + json.dumps(
+                        {"model": alias, "messages": [{"role": "user", "content": "Merhaba"}]},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    + "'"
                 ),
             }
         )
@@ -1359,7 +1525,13 @@ def _invocation_guidance(
                     '-H "Authorization: Bearer $AGENTHUB_TOKEN" '
                     '-H "Content-Type: application/json" '
                     '-H "Idempotency-Key: replace-with-unique-key" '
-                    f'-d \'{{"model":"{alias}","input":"Merhaba","background":true}}\''
+                    "-d '"
+                    + json.dumps(
+                        {"model": alias, "input": "Merhaba", "background": True},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    + "'"
                 ),
             }
         )
@@ -1507,6 +1679,10 @@ def scenario_detail(
             if isinstance(artifact, ArtifactVersion) and artifact.type == "workflow_definition"
             else None
         )
+    latest_release: ScenarioRelease | None = (
+        ScenarioRelease.objects.filter(scenario=scenario).order_by("-created_at", "-pk").first()
+    )
+    pending_release = _pending_release(scenario)
     release_rows = [
         {
             "release": release,
@@ -1547,6 +1723,48 @@ def scenario_detail(
         }
         for artifact_type in (ArtifactType.INPUT_CONTRACT, ArtifactType.OUTPUT_CONTRACT)
     ]
+    eval_suite_artifact = next(
+        (
+            artifact
+            for artifact in governed_artifacts
+            if artifact.type == ArtifactType.EVAL_SUITE
+            and artifact.logical_id
+            == scenario_artifact_logical_id(scenario, ArtifactType.EVAL_SUITE)
+        ),
+        None,
+    )
+    can_write_scenario = can_author_scenarios(
+        request.user,
+        organization_id,
+        project=scenario.project,
+        scenario=scenario,
+    )
+    can_release_scenario = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.SCENARIO_RELEASE,
+        organization=scenario.organization,
+        project=scenario.project,
+        scenario=scenario,
+    ).allowed
+    studio_url = (
+        f"{reverse('console:builder')}?organization={scenario.organization.slug}"
+        f"&scenario={scenario.public_id}"
+    )
+    setup_steps = _scenario_setup_steps(
+        scenario=scenario,
+        studio_url=studio_url,
+        contract_status=contract_status,
+        eval_suite_artifact=eval_suite_artifact,
+        document_set_count=len(relationship_rows),
+        drafts=project_drafts,
+        latest_release=latest_release,
+        pending_release=pending_release,
+        active_release=active_release,
+        can_write=can_write_scenario,
+        can_release=can_release_scenario,
+        author_reason=_AUTHOR_REASON,
+        release_reason=_RELEASE_AUTHORITY_REASON,
+    )
     runtime_controls = applicable_runtime_controls(
         organization_id,
         project_id=scenario.project_id,
@@ -1572,6 +1790,8 @@ def scenario_detail(
             "release_rows": release_rows,
             "governed_artifacts": governed_artifacts,
             "contract_status": contract_status,
+            "setup_steps": setup_steps,
+            "studio_url": studio_url,
             "artifact_type_descriptions": ARTIFACT_TYPE_DESCRIPTIONS,
             "invocation_guidance": _invocation_guidance(
                 active_release, aliases[0].alias if aliases else None
@@ -1652,6 +1872,257 @@ def scenario_lifecycle_change(request: HttpRequest, public_id: object) -> HttpRe
         if exc.code == "SCENARIO_LIFECYCLE_FORBIDDEN":
             raise PermissionDenied from exc
         messages.error(request, f"Senaryo işlemi reddedildi: {exc.code}")
+    return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def scenario_test_questions(request: HttpRequest, public_id: object) -> HttpResponse:
+    """Step 4: write the scenario's test questions as rows, not as canonical JSON.
+
+    The rows feed both governed consumers — see
+    :mod:`apps.evaluations.scenario_questions` for why the promotion gate only receives the
+    deterministic subset.
+    """
+
+    scenario = _scoped_scenario(request.user, public_id=public_id)
+    can_write = can_author_scenarios(
+        request.user,
+        scenario.organization_id,
+        project=scenario.project,
+        scenario=scenario,
+    )
+    rows = scenario_questions.load_rows(scenario)
+    if request.method == "POST":
+        if not can_write:
+            raise PermissionDenied
+        action = request.POST.get("action", "save")
+        if action == "set_judge_model":
+            try:
+                scenario_questions.set_judge_model(
+                    scenario=scenario,
+                    actor=request.user.get_username(),
+                    profile_public_id=request.POST.get("judge_model_profile", ""),
+                )
+            except scenario_questions.ScenarioQuestionError as exc:
+                messages.error(request, _TEST_QUESTION_MESSAGES.get(exc.code, exc.code))
+            else:
+                messages.success(request, "Hakem modeli kaydedildi.")
+            return redirect("console:scenario_test_questions", public_id=scenario.public_id)
+        if action == "run_judge":
+            try:
+                run = scenario_questions.start_judged_evaluation(
+                    scenario=scenario,
+                    actor=request.user.get_username(),
+                    actor_id=str(request.user.pk),
+                    user=request.user,
+                    request_id=_request_id(request),
+                )
+            except (scenario_questions.ScenarioQuestionError, QuestionEvaluationError) as exc:
+                messages.error(request, _TEST_QUESTION_MESSAGES.get(exc.code, exc.code))
+                return redirect("console:scenario_test_questions", public_id=scenario.public_id)
+            _dispatch_question_evaluation(run)
+            return redirect("console:question_evaluation_detail", public_id=run.public_id)
+        submitted = [
+            {
+                "question": question,
+                "mode": mode,
+                "expected": expected,
+                "require_citation": str(ordinal) in request.POST.getlist("require_citation"),
+            }
+            for ordinal, (question, mode, expected) in enumerate(
+                zip(
+                    request.POST.getlist("question"),
+                    request.POST.getlist("mode"),
+                    request.POST.getlist("expected"),
+                    strict=False,
+                )
+            )
+            if question.strip()
+        ]
+        try:
+            result = scenario_questions.save_scenario_test_questions(
+                scenario=scenario,
+                actor=request.user.get_username(),
+                rows=submitted,
+                request_id=_request_id(request),
+            )
+        except (scenario_questions.ScenarioQuestionError, QuestionEvaluationError) as exc:
+            messages.error(request, _TEST_QUESTION_MESSAGES.get(exc.code, exc.code))
+            rows = submitted or rows
+        else:
+            rows = result["rows"]
+            if result["eval_suite_changed"]:
+                messages.success(
+                    request,
+                    f"Test soruları kaydedildi (eval suite v{result['eval_suite'].version}). "
+                    "Yeni bir aday hazırlamak için adım 5'i çalıştırın.",
+                )
+            else:
+                messages.info(request, "Test soruları kaydedildi; eval suite değişmedi.")
+    # Honest readiness: the setting gate, the pinned model and the pinned prompt are each a
+    # distinct ``_judge_case`` failure mode, so "an active profile exists" is not the answer.
+    judge = scenario_questions.judge_readiness(scenario)
+    judge_model, _judge_prompt = scenario_questions.get_judge_artifacts(scenario)
+    selected_judge_profile = (judge_model.body or {}).get("profile_id", "") if judge_model else ""
+    judge_profiles = [
+        {"public_id": str(profile.public_id), "label": f"{profile.logical_id} · {profile.model}"}
+        for profile in ModelProfile.objects.filter(status=ModelProfileStatus.ACTIVE).order_by(
+            "logical_id"
+        )
+    ]
+    # Which release the referee measures is not a detail: the whole point is to judge the
+    # candidate before it is promoted, so the page names it instead of leaving it implicit.
+    target_release = scenario_questions.judge_target_release(scenario)
+    return render(
+        request,
+        "console/scenario_test_questions.html",
+        {
+            "title": f"{scenario.name} · Test soruları",
+            "scenario": scenario,
+            "target_release": target_release,
+            "target_is_candidate": target_release is not None
+            and target_release.status != ReleaseStatus.ACTIVE,
+            "rows": rows or [{"question": "", "mode": "contains", "expected": ""}],
+            "modes": [
+                {"value": value, "label": scenario_questions.MODE_LABELS[value]}
+                for value in scenario_questions.MODES
+            ],
+            "judge_mode": scenario_questions.MODE_JUDGE,
+            "judge_ready": judge["ready"],
+            "judge_reason": judge["reason"],
+            "judge_profiles": judge_profiles,
+            "selected_judge_profile": selected_judge_profile,
+            "can_write": can_write,
+            "author_reason": _AUTHOR_REASON,
+            "max_rows": scenario_questions.MAX_ROWS,
+        },
+    )
+
+
+_TEST_QUESTION_MESSAGES = {
+    "TEST_QUESTION_COUNT_INVALID": "En az 1, en çok 50 soru girin.",
+    "TEST_QUESTION_TEXT_INVALID": "Her satırda bir soru metni olmalıdır.",
+    "TEST_QUESTION_MODE_INVALID": "Geçersiz değerlendirme türü.",
+    "TEST_QUESTION_EXPECTED_INVALID": "Her satırda beklenen cevap doldurulmalıdır.",
+    "TEST_QUESTION_SET_ARCHIVED": "Bu senaryonun soru seti arşivlenmiş.",
+    "JUDGE_MODEL_UNAVAILABLE": "Seçilen hakem modeli aktif değil.",
+    "JUDGE_NOT_READY": "Hakem hazır değil; yukarıdaki gerekçeye bakın.",
+    "RELEASE_REQUIRED": "Ölçülecek bir sürüm yok. Önce adım 5'i çalıştırıp aday üretin.",
+    "JUDGE_DISABLED": "LLM hakem bu kurulumda kapalı.",
+    "JUDGE_PROVENANCE_INCOMPLETE": "Hakem modeli ve yönergesi birlikte pinlenmelidir.",
+}
+
+
+@login_required
+@require_POST
+def scenario_publish_and_verify(request: HttpRequest, public_id: object) -> HttpResponse:
+    """Step 5, run from the scenario page: publish the flow and prove it works.
+
+    Calls the same service as the Studio button, so the sequence and its audit trail are
+    identical. Previously this step only linked to Studio, where the operator had to find
+    the action, and then hunt for the resulting candidate on the releases list.
+    """
+
+    scenario = _scoped_scenario(request.user, public_id=public_id)
+    if not can_author_scenarios(
+        request.user,
+        scenario.organization_id,
+        project=scenario.project,
+        scenario=scenario,
+    ):
+        raise PermissionDenied
+    drafts = list(WorkflowDraft.objects.filter(scenario=scenario).order_by("-updated_at")[:2])
+    if len(drafts) != 1:
+        messages.error(
+            request,
+            "Bu senaryonun tek bir akışı olmalı; akışı Scenario Studio'da düzenleyin."
+            if drafts
+            else "Bu senaryoya bağlı bir akış yok.",
+        )
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    draft = drafts[0]
+    try:
+        result = builder_services.publish_and_verify(
+            draft,
+            actor=request.user.get_username(),
+            expected_revision=draft.revision,
+            version_description=request.POST.get("version_description", "").strip()
+            or "Senaryo sayfasından yayımlandı",
+            request_id=_request_id(request),
+        )
+    except BuilderError as exc:
+        messages.error(request, f"Yayımlanamadı: {exc.code}")
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+
+    messages.success(request, f"Akış v{result.published.version} yayımlandı.")
+    for entry in result.missing:
+        messages.warning(request, f"Aday hazırlanamadı: {entry['message']}")
+    for diagnostic in result.diagnostics:
+        messages.error(request, f"{diagnostic['code']}: {diagnostic['message']}")
+    if result.release is not None:
+        messages.info(request, f"Aday sürüm #{result.release.pk} hazırlandı.")
+    if result.eval_run is not None:
+        report_eval_outcome(request, result.eval_run)
+    return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+
+
+_ACTIVATION_BLOCKED_REASONS = {
+    "ACTIVE_ALIAS_REQUIRED": (
+        "Release yayına alındı ancak senaryo çağrı alamıyor: aktif bir API adı (alias) yok."
+    ),
+    "ACTIVE_RELEASE_REQUIRED": (
+        "Release yayına alındı ancak senaryo çağrı alamıyor: aktif release bulunamadı."
+    ),
+    "RELEASE_INDEX_PINS_INVALID": (
+        "Release yayına alındı ancak senaryo çağrı alamıyor: pinlenen indeks geçersiz."
+    ),
+    "SCENARIO_NOT_ACTIVATABLE": (
+        "Release yayına alındı; senaryo zaten bu durumdan etkinleştirilemez."
+    ),
+}
+
+
+@login_required
+@require_POST
+def scenario_promote(request: HttpRequest, public_id: object) -> HttpResponse:
+    """Step 6, run from the scenario page: put the candidate live and make it callable.
+
+    Promotion and scenario activation remain two governed transitions with their own
+    preconditions and their own audit events (``activate_scenario`` still enforces active
+    release, active alias and served indexes). This only stops making the operator perform
+    them on two different pages, one of which was hidden under "Gelişmiş".
+    """
+
+    scenario = _scoped_scenario(request.user, public_id=public_id)
+    if not can_manage_scenario_releases(request.user, scenario.organization_id, scenario=scenario):
+        raise PermissionDenied
+    release = _pending_release(scenario)
+    if release is None:
+        messages.error(request, "Yayına alınabilecek yeni bir aday sürüm yok.")
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    try:
+        promote(release=release, actor=request.user.get_username())
+    except LifecycleError as exc:
+        messages.error(request, f"Yayına alınamadı: {exc.code}")
+        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    messages.success(request, f"Release #{release.pk} yayına alındı.")
+
+    try:
+        activate_scenario(scenario, actor=request.user, request_id=_request_id(request))
+    except ScenarioLifecycleError as exc:
+        if exc.code == "SCENARIO_LIFECYCLE_FORBIDDEN":
+            raise PermissionDenied from exc
+        # Promotion succeeded; say exactly why the scenario still is not callable rather
+        # than leaving the operator to infer it from a status badge.
+        messages.warning(
+            request,
+            _ACTIVATION_BLOCKED_REASONS.get(
+                exc.code, f"Senaryo çağrılabilir yapılamadı: {exc.code}"
+            ),
+        )
+    else:
+        messages.success(request, "Senaryo çağrılabilir duruma getirildi.")
     return redirect("console:scenario_detail_public", public_id=scenario.public_id)
 
 
@@ -2944,6 +3415,12 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
     missing_release_inputs = [
         label for role, label in required_release_roles.items() if role not in resolved_roles
     ]
+    latest_eval = EvalRun.objects.filter(release=release).order_by("-created_at").first()
+    # Case results carry only an assertion type, a boolean and a stable reason code, so
+    # rendering them exposes no answer text or retrieved content.
+    latest_eval_cases = (
+        list(latest_eval.case_results.order_by("pk")[:100]) if latest_eval is not None else []
+    )
     return render(
         request,
         "console/release_detail.html",
@@ -2962,7 +3439,8 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
             "can_start_canary": can_manage and pre_active,
             "can_rollback": can_manage and release.status == ReleaseStatus.SUPERSEDED,
             "can_author_artifacts": can_author_artifacts,
-            "latest_eval": EvalRun.objects.filter(release=release).order_by("-created_at").first(),
+            "latest_eval": latest_eval,
+            "latest_eval_cases": latest_eval_cases,
             "is_disabled": release.organization.status == OrganizationStatus.DISABLED,
         },
     )
@@ -3004,17 +3482,25 @@ def _evaluable_release(user: UserLike, release_id: int) -> ScenarioRelease:
     return release
 
 
+def report_eval_outcome(request: HttpRequest, run: EvalRun) -> None:
+    """Surface an eval result at the severity it actually has."""
+
+    level, message = summarize_eval_run(run)
+    {"error": messages.error, "warning": messages.warning}.get(level, messages.success)(
+        request, message
+    )
+
+
 @login_required
 @require_POST
 def release_run_eval(request: HttpRequest, release_id: int) -> HttpResponse:
     release = _evaluable_release(request.user, release_id)
     try:
         run = run_eval(release=release, created_by=request.user.get_username())
-        messages.success(
-            request, f"Eval {run.status}: {run.passed_cases}/{run.total_cases} vaka geçti."
-        )
     except EvalError as exc:
         messages.error(request, f"Eval başlatılamadı: {exc.code}")
+        return redirect("console:release_detail", release_id=release.pk)
+    report_eval_outcome(request, run)
     return redirect("console:release_detail", release_id=release.pk)
 
 
@@ -6570,6 +7056,9 @@ def question_evaluation_detail(request: HttpRequest, public_id: uuid.UUID) -> Ht
         {
             "title": "Değerlendirme sonucu",
             "run": run,
+            # A scenario-owned run belongs to its scenario, not to the organization-wide
+            # question-set list the breadcrumb used to send every operator back to.
+            "scenario": run.question_set_version.question_set.scenario,
             "evidence_rows": evidence_rows,
             "can_view_content": can_view_content,
             "evidence_status": evidence_status,
@@ -6651,6 +7140,15 @@ def scenario_ask(request: HttpRequest, public_id: object) -> HttpResponse:
             question=form.cleaned_data["question"],
         )
     except QuestionEvaluationError as exc:
+        if exc.code == "MODEL_PROVIDER_NOT_CONFIGURED":
+            # A generating workflow with no real provider would answer from the deterministic
+            # stub; showing that as the scenario's answer misrepresents what the system did.
+            messages.error(
+                request,
+                "Bu senaryo yanıtı bir modelden üretiyor ancak bağlı bir model sağlayıcısı yok. "
+                "Gerçek bir model profili bağlanana kadar tek seferlik soru çalıştırılamaz.",
+            )
+            return redirect("console:scenario_detail_public", public_id=scenario.public_id)
         raise Http404 from exc
     return render(
         request,

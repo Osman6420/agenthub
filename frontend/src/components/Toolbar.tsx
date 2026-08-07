@@ -14,12 +14,24 @@ export function Toolbar({
   builder: BuilderController;
   draftName: string;
   busy: boolean;
-  onAction: (action: "validate" | "save" | "publish", versionDescription?: string) => void;
+  onAction: (
+    action: "validate" | "save" | "publish" | "publishAndVerify",
+    versionDescription?: string,
+  ) => void;
 }) {
   const { readOnly, isDirty, diagnostics } = builder;
   const [versionDescription, setVersionDescription] = useState("");
   const [versionError, setVersionError] = useState("");
   const versionDescriptionRef = useRef<HTMLInputElement>(null);
+  function requireVersionDescription(): boolean {
+    if (!versionDescription.trim()) {
+      setVersionError("Bu sürümde nelerin değiştiğini yazın.");
+      versionDescriptionRef.current?.focus();
+      return false;
+    }
+    setVersionError("");
+    return true;
+  }
   return (
     <div style={{ borderBottom: "1px solid #262b36" }}>
       <div className="ah-builder-toolbar-row">
@@ -75,17 +87,24 @@ export function Toolbar({
           type="button"
           disabled={busy || readOnly}
           onClick={() => {
-            if (!versionDescription.trim()) {
-              setVersionError("Bu sürümde nelerin değiştiğini yazın.");
-              versionDescriptionRef.current?.focus();
-              return;
-            }
-            setVersionError("");
+            if (!requireVersionDescription()) return;
             onAction("publish", versionDescription);
+          }}
+          style={btn()}
+        >
+          Yalnızca yayımla
+        </button>
+        <button
+          type="button"
+          disabled={busy || readOnly}
+          title="Yayımlar, aday sürümü hazırlar ve test sorularını çalıştırır"
+          onClick={() => {
+            if (!requireVersionDescription()) return;
+            onAction("publishAndVerify", versionDescription);
           }}
           style={btn("#2563eb")}
         >
-          Yayımla
+          Yayımla ve test et
         </button>
       </div>
       {versionError && <div role="alert" style={{ padding: "0 14px 8px", color: "#fca5a5" }}>

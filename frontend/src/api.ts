@@ -21,6 +21,9 @@ import type {
   GenerateNodeBinding,
   RetrieveNodeBinding,
   NodeSchema,
+  NodeArtifactLibrary,
+  DerivedManifest,
+  PublishAndVerifyResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -154,6 +157,12 @@ export class BuilderApi {
       method: "POST",
       body: JSON.stringify({ items }),
     });
+  }
+
+  derivedManifest(scenarioPublicId: string): Promise<DerivedManifest> {
+    return request(this.url(
+      `/scenarios/${encodeURIComponent(scenarioPublicId)}/release-manifest/derived/`,
+    ));
   }
 
   manifestRequirements(
@@ -356,6 +365,23 @@ export class BuilderApi {
     revision: number;
   }> {
     return request(this.url(`/drafts/${id}/publish/`), {
+      method: "POST", body: JSON.stringify({ revision, version_description: versionDescription }),
+    });
+  }
+
+  nodeArtifactLibrary(
+    draftId: number, nodeId: string, kind: "prompt" | "model" | "retrieval",
+  ): Promise<NodeArtifactLibrary> {
+    const query = new URLSearchParams({ node_id: nodeId, kind });
+    return request(this.url(`/drafts/${draftId}/node-artifact-library/?${query.toString()}`));
+  }
+
+  // One backend round trip for the whole "is it working?" question: publish, derive the
+  // manifest, compile a candidate and evaluate it. The client chooses nothing.
+  publishAndVerify(
+    id: number, revision: number, versionDescription: string,
+  ): Promise<PublishAndVerifyResult> {
+    return request(this.url(`/drafts/${id}/publish-and-verify/`), {
       method: "POST", body: JSON.stringify({ revision, version_description: versionDescription }),
     });
   }

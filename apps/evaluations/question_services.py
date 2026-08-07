@@ -153,6 +153,7 @@ def normalize_cases(raw_cases: Any) -> list[dict[str, Any]]:
             "question",
             "input",
             "assertions",
+            "expected_answer",
             "expected_anchors",
             "judge",
         }:
@@ -171,6 +172,10 @@ def normalize_cases(raw_cases: Any) -> list[dict[str, Any]]:
         if not isinstance(raw_assertions, list) or len(raw_assertions) > MAX_ASSERTIONS:
             raise QuestionEvaluationError("QUESTION_ASSERTION_INVALID")
         assertions = [_normalize_assertion(item) for item in raw_assertions]
+        raw_expected = raw.get("expected_answer", "")
+        if not isinstance(raw_expected, str) or len(raw_expected) > MAX_QUESTION_CHARS:
+            raise QuestionEvaluationError("QUESTION_EXPECTED_ANSWER_INVALID")
+        expected_answer = raw_expected.strip()
         raw_anchors = raw.get("expected_anchors", [])
         if not isinstance(raw_anchors, list) or len(raw_anchors) > MAX_ANCHORS:
             raise QuestionEvaluationError("QUESTION_ANCHOR_INVALID")
@@ -190,6 +195,7 @@ def normalize_cases(raw_cases: Any) -> list[dict[str, Any]]:
                 "question": question,
                 "input": input_payload,
                 "assertions": assertions,
+                "expected_answer": expected_answer,
                 "expected_anchors": anchors,
                 "judge": judge_policy,
             }
@@ -301,7 +307,34 @@ def publish_question_set(
     expected_revision: int,
     request_id: str = "",
 ) -> QuestionSetVersion:
+    """Publish an organization-wide question set. Requires organization administration."""
+
     _require_question_set_author(user, question_set.organization)
+    return publish_question_set_version(
+        question_set=question_set,
+        published_by=user.get_username(),
+        actor_id=str(user.pk),
+        expected_revision=expected_revision,
+        request_id=request_id,
+    )
+
+
+def publish_question_set_version(
+    *,
+    question_set: QuestionSet,
+    published_by: str,
+    actor_id: str,
+    expected_revision: int,
+    request_id: str = "",
+) -> QuestionSetVersion:
+    """Freeze the draft into an immutable version.
+
+    Authorization is the caller's: an organization-wide set is guarded by
+    :func:`publish_question_set`, while a scenario-owned set is guarded by scenario-editor
+    authority in the console. The version-and-case writing itself lives here once so the two
+    surfaces cannot drift.
+    """
+
     locked = QuestionSet.objects.select_for_update().get(pk=question_set.pk)
     if locked.status != QuestionSetStatus.ACTIVE:
         raise QuestionEvaluationError("QUESTION_SET_ARCHIVED")
@@ -319,7 +352,7 @@ def publish_question_set(
         version=next_version,
         checksum=checksum,
         case_count=len(cases),
-        published_by=user.get_username(),
+        published_by=published_by,
         published_at=timezone.now(),
     )
     version.full_clean()
@@ -334,6 +367,7 @@ def publish_question_set(
                 question=case["question"],
                 input_payload=case["input"],
                 assertions=case["assertions"],
+                expected_answer=case.get("expected_answer", ""),
                 expected_anchors=case["expected_anchors"],
                 judge_policy=case["judge"],
             )
@@ -342,7 +376,7 @@ def publish_question_set(
     )
     record_event(
         actor_type="user",
-        actor_id=str(user.pk),
+        actor_id=actor_id,
         action="evaluation.question_set.published",
         outcome="success",
         organization_id=locked.organization_id,
@@ -673,11 +707,12 @@ def _judge_case(
     prompt = run.judge_prompt_contract.body.get("template")
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20_000:
         return {"status": "unscored", "reason_code": "JUDGE_PROMPT_INVALID"}
-    context_value = json.dumps(
-        {"question": case.question, "answer": answer},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    # The expected answer is the author's intent, not a literal to match; the pinned judge
+    # prompt decides how to weigh it. Absent when the author did not supply one.
+    judge_context: dict[str, str] = {"question": case.question, "answer": answer}
+    if case.expected_answer:
+        judge_context["expected_answer"] = case.expected_answer
+    context_value = json.dumps(judge_context, ensure_ascii=False, separators=(",", ":"))
     if len(context_value) > 20_000:
         return {"status": "unscored", "reason_code": "JUDGE_INPUT_LIMIT"}
     try:
@@ -745,11 +780,57 @@ def _retrieval_case(run: QuestionEvaluationRun, case: QuestionCase) -> QuestionE
     )
 
 
+def release_generates_text(release: ScenarioRelease) -> bool:
+    """Return whether the release's compiled workflow asks a model to produce an answer."""
+
+    from apps.workflows.services import resolve_release_workflow
+
+    try:
+        workflow = resolve_release_workflow(release)
+    except Exception:  # noqa: BLE001 - absence is reported by the caller's own checks
+        return False
+    nodes = workflow.compiled_graph.get("nodes", [])
+    if not isinstance(nodes, list):
+        return False
+    return any(
+        isinstance(node, dict) and node.get("type") in {"generate", "agent_loop"} for node in nodes
+    )
+
+
+def require_real_model_provider(release: ScenarioRelease) -> None:
+    """Refuse an operator test that would return a deterministic placeholder as an answer.
+
+    ``RUNTIME_MODEL_PROVIDER`` is empty by default, so ``get_model_provider()`` returns the
+    deterministic stub and a generating workflow still answers — convincingly, but with text
+    no model produced. That is fine for hermetic tests and for the governed evaluation gate,
+    and misleading for a human asking the scenario a question, so this check is scoped to the
+    operator one-off surface only.
+    """
+
+    if not getattr(settings, "RUNTIME_MODEL_PROVIDER", "") and release_generates_text(release):
+        raise QuestionEvaluationError("MODEL_PROVIDER_NOT_CONFIGURED")
+
+
+def scenario_question_payload(question: str, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build the runtime input envelope for one operator question.
+
+    The canonical scenario input contract is ``{"query": ...}`` with no additional
+    properties (``apps.console.scenario_defaults``), and the workflow reads exactly
+    ``input["query"]`` (``apps.workflows.runtime._workflow_query``). Sending ``question``
+    instead silently produced an empty query, so every answer came back generic.
+
+    An explicit case ``input`` wins, so a question set can still shape its own envelope.
+    """
+
+    payload = dict(base or {})
+    payload.setdefault("query", question)
+    return payload
+
+
 def _answer_case(run: QuestionEvaluationRun, case: QuestionCase) -> QuestionEvaluationEvidence:
     if run.release is None:
         raise QuestionEvaluationError("ANSWER_PROVENANCE_INCOMPLETE")
-    payload = dict(case.input_payload)
-    payload.setdefault("question", case.question)
+    payload = scenario_question_payload(case.question, case.input_payload)
     result = execute_release_input(
         release=run.release,
         input_payload=payload,
@@ -790,7 +871,12 @@ def _answer_case(run: QuestionEvaluationRun, case: QuestionCase) -> QuestionEval
 
 
 def _aggregate_run(run: QuestionEvaluationRun) -> None:
-    evidence = list(run.case_evidence.all())
+    # Query the table, not ``run.case_evidence``: the worker loads the run with
+    # ``prefetch_related("case_evidence")`` *before* any case has run, so the related
+    # manager's cache is an empty list captured at load time. Reading it here made every
+    # completed run report 0 passed / 0 completed with null metrics, no matter what the
+    # evidence rows actually said.
+    evidence = list(QuestionEvaluationEvidence.objects.filter(run=run).order_by("ordinal"))
     run.completed_cases = len(evidence)
     run.passed_cases = sum(
         item.status == QuestionEvaluationEvidenceStatus.PASSED for item in evidence
@@ -991,9 +1077,10 @@ def ask_scenario_once(*, user: Any, release: ScenarioRelease, question: str) -> 
     if not decision.allowed:
         raise QuestionEvaluationError("ANSWER_EVALUATION_AUTHORIZATION_DENIED")
     query = _bounded_string(question, maximum=MAX_QUESTION_CHARS, code="QUESTION_TEXT_INVALID")
+    require_real_model_provider(release)
     result = execute_release_input(
         release=release,
-        input_payload={"question": query},
+        input_payload=scenario_question_payload(query),
         request_key=f"one-off:{release.pk}:{hashlib.sha256(query.encode()).hexdigest()[:24]}",
     )
     answer = _answer_text(result.output)

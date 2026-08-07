@@ -39,6 +39,9 @@ _PUBLIC_DIAGNOSTIC_MESSAGES = {
     "workflow_role_invalid": "Ana workflow canonical workflow_definition rolünü kullanmalıdır.",
     "workflow_compile_failed": "Workflow canonical compiler tarafından reddedildi.",
     "transform_profile_unpinned": "Transform node için exact transform profile pini eksik.",
+    "workflow_role_unpinned": (
+        "Workflow node'unun gerektirdiği exact artifact pini manifestte eksik veya yanlış türde."
+    ),
     "child_workflow_invalid": "Child workflow pini eksik, belirsiz veya geçersiz.",
     "workflow_missing": "Candidate manifest bir canonical workflow_definition pini içermelidir.",
     "compiled_workflow_invalid": "Derlenen workflow graph yapısı geçersiz.",
@@ -295,6 +298,11 @@ def compile_release(
                 code="child_workflow_invalid",
             ) from exc
 
+        # Every remaining node-derived role must resolve to an exact pin of the right type.
+        # Runs last so the specific assertions above keep owning their diagnostics, and so
+        # composition child pins added just now are already present in the manifest.
+        _assert_workflow_roles_pinned(compiled_workflow_graph, artifacts_manifest)
+
     # Deny-by-default document-ACL pins (P4.2): compile the scenario's mandatory
     # ``ScenarioDocumentSetBinding``s to published document-set-version ids. A scenario with no
     # binding pins nothing and therefore retrieves nothing. The resolver expands each to its active
@@ -358,6 +366,117 @@ def promote_release(release: ScenarioRelease) -> ScenarioRelease:
     release.promoted_at = timezone.now()
     release.save(update_fields=["status", "promoted_at"])
     return release
+
+
+def workflow_manifest_requirements(graph: dict[str, object]) -> dict[str, dict[str, Any]]:
+    """Extract the exact manifest roles a compiled workflow graph requires.
+
+    This is the single canonical answer to "which artifacts must this release pin?". Both
+    the Studio requirement preflight and :func:`_assert_workflow_roles_pinned` read it, so
+    the advice shown to an author and the rule enforced at compile time cannot drift.
+
+    Roles are author-visible identifiers already present in the compiled graph; the node
+    types below are exactly those whose runtime resolves an artifact *by manifest role*.
+    """
+
+    requirements: dict[str, dict[str, Any]] = {}
+
+    def require(role: object, artifact_type: str, node_id: object = None) -> None:
+        if not isinstance(role, str) or not role:
+            return
+        current = requirements.get(role)
+        if current is not None and current["artifact_type"] != artifact_type:
+            raise CompileError(
+                f"manifest role '{role}' requires incompatible artifact types",
+                code="role_type_mismatch",
+                role=role,
+                artifact_type=artifact_type,
+            )
+        if current is None:
+            current = {"role": role, "artifact_type": artifact_type, "node_ids": []}
+            requirements[role] = current
+        if isinstance(node_id, str) and node_id and node_id not in current["node_ids"]:
+            current["node_ids"].append(node_id)
+
+    require("workflow_definition", ArtifactType.WORKFLOW_DEFINITION)
+    nodes = graph.get("nodes", [])
+    if not isinstance(nodes, list):
+        raise CompileError(
+            "compiled workflow nodes are invalid",
+            code="compiled_workflow_invalid",
+        )
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        node_type = node.get("type")
+        config = node.get("config")
+        if not isinstance(config, dict):
+            config = {}
+        if node_type == "transform":
+            require(config.get("transform_profile_ref"), ArtifactType.TRANSFORM_PROFILE, node_id)
+        elif node_type == "tool":
+            require(config.get("binding_role"), ArtifactType.TOOL_BINDING, node_id)
+        elif node_type == "generate":
+            require(config.get("prompt_ref"), ArtifactType.PROMPT_TEMPLATE, node_id)
+            require(config.get("model_profile_ref"), ArtifactType.MODEL_PROFILE, node_id)
+        elif node_type == "retrieve":
+            require(config.get("retrieval_profile_ref"), ArtifactType.RETRIEVAL_PROFILE, node_id)
+        elif node_type == "subworkflow":
+            child_role = config.get("workflow_role")
+            if isinstance(child_role, str):
+                require(
+                    f"child_workflow.{child_role}",
+                    ArtifactType.WORKFLOW_DEFINITION,
+                    node_id,
+                )
+        elif node_type == "agent_loop":
+            policy = config.get("policy")
+            if not isinstance(policy, dict):
+                continue
+            tools = policy.get("tools", [])
+            if isinstance(tools, list):
+                for role in tools:
+                    require(role, ArtifactType.TOOL_BINDING, node_id)
+            actions = policy.get("actions")
+            verify_roles = actions.get("verify_roles", []) if isinstance(actions, dict) else []
+            if isinstance(verify_roles, list):
+                for role in verify_roles:
+                    if role != "retrieval":
+                        require(role, ArtifactType.TOOL_BINDING, node_id)
+    for item in requirements.values():
+        item["node_ids"].sort()
+    return requirements
+
+
+def _assert_workflow_roles_pinned(
+    graph: dict[str, object], manifest: dict[str, dict[str, object]]
+) -> None:
+    """Fail closed when a node's required artifact role is absent or of the wrong type.
+
+    Without this the compiler accepted a manifest that pinned the right artifacts under
+    generic type-named roles (``retrieval_profile``) while the nodes referenced their
+    derived roles (``ret_<identity>_profile``). Compilation succeeded, preflight reported
+    success, and the release only failed at request time inside
+    ``apps.workflows.runtime`` with ``WORKFLOW_RETRIEVAL_BINDING_INVALID``.
+
+    Roles the graph does not require are left alone: release-level fallbacks and the
+    scenario contracts are legitimate additional pins.
+    """
+
+    for requirement in workflow_manifest_requirements(graph).values():
+        role = str(requirement["role"])
+        entry = manifest.get(role)
+        if isinstance(entry, dict) and entry.get("type") == requirement["artifact_type"]:
+            continue
+        node_ids = requirement["node_ids"]
+        raise CompileError(
+            f"workflow requires an exact {requirement['artifact_type']} pinned as role {role!r}",
+            code="workflow_role_unpinned",
+            role=role,
+            artifact_type=str(requirement["artifact_type"]),
+            node_id=str(node_ids[0]) if node_ids else None,
+        )
 
 
 def _assert_transform_profiles_pinned(

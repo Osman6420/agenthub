@@ -10,11 +10,87 @@ import type {
   GenerateNodeBinding,
   RetrieveNodeBinding,
   MappingEntry,
+  NodeArtifactEntry,
   NodeConfig,
   NodeFieldSchema,
   NodeSchema,
   RetryPolicy,
 } from "../types";
+
+// Version history and "start from an existing one" for a node-owned artifact. Reverting
+// republishes an old body *forward* (immutability is preserved), and copying takes a body
+// from another logical artifact without pinning it — neither needs a raw logical id.
+function ArtifactReuse({
+  api,
+  draftId,
+  nodeId,
+  kind,
+  disabled,
+  onUse,
+}: {
+  api: BuilderApi;
+  draftId: number;
+  nodeId: string;
+  kind: "prompt" | "model" | "retrieval";
+  disabled: boolean;
+  onUse: (body: Record<string, unknown>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [versions, setVersions] = useState<NodeArtifactEntry[]>([]);
+  const [library, setLibrary] = useState<NodeArtifactEntry[]>([]);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    if (!open || draftId === 0) return;
+    let active = true;
+    void api.nodeArtifactLibrary(draftId, nodeId, kind).then((result) => {
+      if (!active) return;
+      setVersions(result.versions);
+      setLibrary(result.library);
+    }).catch((error: unknown) => {
+      if (active) {
+        setStatus(error instanceof ApiError ? `${error.code}: ${error.message}` : String(error));
+      }
+    });
+    return () => { active = false; };
+  }, [api, draftId, kind, nodeId, open]);
+
+  function useEntry(entry: NodeArtifactEntry, label: string) {
+    if (entry.body_too_large || entry.body === null) {
+      setStatus("İçerik güvenli önizleme sınırını aşıyor.");
+      return;
+    }
+    onUse(entry.body);
+    setStatus(`${label} yüklendi. Kaydettiğinizde yeni bir sürüm olarak yayımlanır.`);
+  }
+
+  return <div style={{ marginTop: 8 }}>
+    <button type="button" onClick={() => setOpen((value) => !value)}>
+      {open ? "Geçmişi gizle" : "Geçmiş ve hazır profiller"}
+    </button>
+    {open && <div style={{ marginTop: 6 }}>
+      <strong style={helpStyle}>Bu adımın sürümleri</strong>
+      {versions.length === 0 && <div style={helpStyle}>Henüz yayımlanmış sürüm yok.</div>}
+      <ul style={{ listStyle: "none", padding: 0, margin: "4px 0 0" }}>
+        {versions.map((entry) => <li key={entry.artifact_version_id} style={{ marginTop: 4 }}>
+          v{entry.version} · {entry.version_description || "açıklama yok"}
+          {!disabled && <button type="button" style={{ marginLeft: 6 }}
+            onClick={() => useEntry(entry, `v${entry.version}`)}>Bu sürüme dön</button>}
+        </li>)}
+      </ul>
+      <strong style={helpStyle}>Mevcut bir profilden kopyala</strong>
+      {library.length === 0 && <div style={helpStyle}>Kopyalanabilir başka profil yok.</div>}
+      <ul style={{ listStyle: "none", padding: 0, margin: "4px 0 0" }}>
+        {library.map((entry) => <li key={entry.artifact_version_id} style={{ marginTop: 4 }}>
+          {entry.logical_description || entry.logical_id} · v{entry.version}
+          {!disabled && <button type="button" style={{ marginLeft: 6 }}
+            onClick={() => useEntry(entry, "Kopya")}>Kopyala</button>}
+        </li>)}
+      </ul>
+      {status && <div role="status" style={helpStyle}>{status}</div>}
+    </div>}
+  </div>;
+}
 
 // Renders a config form for the selected node, generated entirely from the backend
 // node-schema. Enum fields (tool binding_role, custom node_ref) are populated from the
@@ -242,6 +318,9 @@ function RetrieveBindingEditor({
         setStatus(error instanceof ApiError ? `${error.code}: ${error.message}` : String(error));
       }).finally(() => setLoading(false));
     }}>Arama profilini kaydet</button>}
+    <ArtifactReuse api={api} draftId={draft.id} nodeId={nodeId} kind="retrieval"
+      disabled={disabled || loading}
+      onUse={(body) => setProfileBody(body)} />
     {status && <div role="status" style={helpStyle}>{status}</div>}
     <span style={helpStyle}>Artifact rolü sistem tarafından yönetilir; workflow JSON'unda gizli ref olarak tutulur.</span>
   </fieldset>;
@@ -325,6 +404,9 @@ function GenerateBindingEditor({
         setStatus(error instanceof ApiError ? `${error.code}: ${error.message}` : String(error));
       }).finally(() => setLoading(false));
     }}>Prompt ve modeli kaydet</button>}
+    <ArtifactReuse api={api} draftId={draft.id} nodeId={nodeId} kind="prompt"
+      disabled={disabled || loading}
+      onUse={(body) => setPromptText(typeof body.template === "string" ? body.template : "")} />
     {status && <div role="status" style={helpStyle}>{status}</div>}
     <span style={helpStyle}>Artifact rolleri sistem tarafından yönetilir; workflow JSON'unda gizli ref olarak tutulur.</span>
   </fieldset>;

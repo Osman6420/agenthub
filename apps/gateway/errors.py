@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 from rest_framework import status as http_status
+from rest_framework.exceptions import ParseError
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 
@@ -90,6 +91,20 @@ def exception_handler(exc: Exception, context: dict) -> Response | None:
 
     if isinstance(exc, ApiError):
         return error_response(exc, request_id)
+
+    if isinstance(exc, ParseError):
+        # A malformed body and a body that fails the contract are different mistakes for the
+        # caller to fix. Naming the class of failure leaks nothing: the client sent the bytes.
+        return Response(
+            error_body(
+                ErrorCode.VALIDATION_ERROR,
+                "Request body is not valid JSON.",
+                request_id,
+                False,
+                [],
+            ),
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
 
     # Let DRF classify auth/throttle/validation, then normalize the body.
     response = drf_exception_handler(exc, context)

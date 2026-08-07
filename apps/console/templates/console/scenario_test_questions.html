@@ -1,0 +1,101 @@
+{% extends "console/base.html" %}
+{% block title %}{{ scenario.name }} · Test soruları · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu">
+  <a href="{% url 'console:project_detail_public' scenario.project.public_id %}">{{ scenario.project.name }}</a><span>›</span>
+  <a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a><span>›</span>
+  <span aria-current="page">Test soruları</span>
+</nav>
+
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">Adım 4</p>
+    <h1>Test soruları</h1>
+    <p class="muted">Her satır bir soru ve cevabın nasıl değerlendirileceğidir. Kaydettiğinizde
+      senaryonun test seti güncellenir; sonucu görmek için senaryo sayfasında adım 5'i çalıştırın.</p>
+  </div>
+  <a class="button secondary" href="{% url 'console:scenario_detail_public' scenario.public_id %}">Senaryoya dön</a>
+</div>
+
+<section class="card">
+  <div class="section-heading"><div><p class="eyebrow">Hakem</p><h2>LLM hakem</h2>
+    <p class="muted">Hakem, akışın kendi modelinden ayrı seçilir: bir modelin kendi cevabını
+      not vermesi zayıf bir kontroldür. Yönerge kanonik olarak hazırlanır; yazmanız gerekmez.</p></div></div>
+  {% if judge_ready %}<p class="access-ok">Hakem hazır.</p>
+  {% else %}<div class="warning-box">{{ judge_reason }}</div>{% endif %}
+  {% if can_write %}
+  <form method="post" class="compact-form">{% csrf_token %}
+    <input type="hidden" name="action" value="set_judge_model">
+    <label for="judge-model">Hakem modeli</label>
+    <div class="field-row">
+      <select id="judge-model" name="judge_model_profile" required>
+        <option value="">Model seçin</option>
+        {% for profile in judge_profiles %}<option value="{{ profile.public_id }}" {% if profile.public_id == selected_judge_profile %}selected{% endif %}>{{ profile.label }}</option>{% endfor %}
+      </select>
+      <button class="button secondary" type="submit">Hakem modelini kaydet</button>
+    </div>
+  </form>
+  {% if judge_ready %}
+  {% if target_release %}
+  <form method="post" class="inline">{% csrf_token %}
+    <input type="hidden" name="action" value="run_judge">
+    <button class="button" type="submit">Hakemle değerlendir</button>
+    <span class="muted">
+      {% if target_is_candidate %}<strong>Aday #{{ target_release.pk }}</strong> üzerinde çalışır — yayına almadan önce ölçmek için.
+      {% else %}<strong>Aktif #{{ target_release.pk }}</strong> üzerinde çalışır; bekleyen aday yok.{% endif %}
+      Test sorularını dondurup rapor üretir.
+    </span>
+  </form>
+  {% else %}
+  <div class="warning-box">Ölçülecek bir sürüm yok. Senaryo sayfasında adım 5'i çalıştırıp aday üretin.</div>
+  {% endif %}
+  {% endif %}
+  {% endif %}
+</section>
+
+<div class="notice">
+  <strong>Neyin yayına çıkmayı engellediği:</strong> yalnızca <em>“{{ modes.0.label }}”</em>
+  satırları release yayına alma kapısında çalışır — o kapı deterministik ve modelden bağımsız
+  kalmalıdır. Birebir ve LLM hakem satırları senaryonun soru setinde tutulur ve talep üzerine
+  değerlendirilir.
+</div>
+
+<form method="post" class="card form-card">
+  {% csrf_token %}
+  <div class="table-scroll">
+    <table>
+      <caption class="sr-only">Senaryonun test soruları</caption>
+      <thead><tr><th scope="col">Soru</th><th scope="col">Değerlendirme</th><th scope="col">Beklenen cevap</th><th scope="col">Kaynak</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td><label class="sr-only" for="question-{{ forloop.counter0 }}">Soru {{ forloop.counter }}</label>
+            <textarea id="question-{{ forloop.counter0 }}" name="question" rows="2" maxlength="4000" {% if not can_write %}disabled{% endif %}>{{ row.question }}</textarea></td>
+          <td><label class="sr-only" for="mode-{{ forloop.counter0 }}">Değerlendirme {{ forloop.counter }}</label>
+            <select id="mode-{{ forloop.counter0 }}" name="mode" {% if not can_write %}disabled{% endif %}>
+              {% for mode in modes %}<option value="{{ mode.value }}" {% if row.mode == mode.value %}selected{% endif %}{% if mode.value == judge_mode and not judge_ready %} disabled{% endif %}>{{ mode.label }}</option>{% endfor %}
+            </select></td>
+          <td><label class="sr-only" for="expected-{{ forloop.counter0 }}">Beklenen cevap {{ forloop.counter }}</label>
+            <textarea id="expected-{{ forloop.counter0 }}" name="expected" rows="2" maxlength="500" {% if not can_write %}disabled{% endif %}>{{ row.expected }}</textarea></td>
+          <td><label><input type="checkbox" name="require_citation" value="{{ forloop.counter0 }}" {% if row.require_citation %}checked{% endif %} {% if not can_write %}disabled{% endif %}> Kaynak göstermeli</label></td>
+        </tr>
+        {% endfor %}
+        <tr>
+          <td><label class="sr-only" for="question-new">Yeni soru</label>
+            <textarea id="question-new" name="question" rows="2" maxlength="4000" placeholder="Yeni soru ekleyin" {% if not can_write %}disabled{% endif %}></textarea></td>
+          <td><label class="sr-only" for="mode-new">Yeni satırın değerlendirmesi</label>
+            <select id="mode-new" name="mode" {% if not can_write %}disabled{% endif %}>
+              {% for mode in modes %}<option value="{{ mode.value }}"{% if mode.value == judge_mode and not judge_ready %} disabled{% endif %}>{{ mode.label }}</option>{% endfor %}
+            </select></td>
+          <td><label class="sr-only" for="expected-new">Yeni satırın beklenen cevabı</label>
+            <textarea id="expected-new" name="expected" rows="2" maxlength="500" {% if not can_write %}disabled{% endif %}></textarea></td>
+          <td><label><input type="checkbox" name="require_citation" value="{{ rows|length }}" {% if not can_write %}disabled{% endif %}> Kaynak göstermeli</label></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">En çok {{ max_rows }} soru. Bir satırı silmek için sorusunu boşaltıp kaydedin.</p>
+  {% if can_write %}<button class="button primary" type="submit">Test sorularını kaydet</button>
+  {% else %}<button type="button" class="button" disabled aria-disabled="true" title="{{ author_reason }}">Test sorularını kaydet</button>{% endif %}
+</form>
+{% endblock %}

@@ -21,6 +21,11 @@ urlpatterns = [
         name="release_manifest_preflight",
     ),
     path(
+        "scenarios/<uuid:public_id>/release-manifest/derived/",
+        api.release_manifest_derived,
+        name="release_manifest_derived",
+    ),
+    path(
         "scenarios/<uuid:public_id>/release-manifest/requirements/",
         api.release_manifest_requirements,
         name="release_manifest_requirements",
@@ -65,4 +70,14 @@ urlpatterns = [
         name="retrieve_node_binding",
     ),
     path("drafts/<int:pk>/publish/", api.draft_publish, name="draft_publish"),
+    path(
+        "drafts/<int:pk>/publish-and-verify/",
+        api.draft_publish_and_verify,
+        name="draft_publish_and_verify",
+    ),
+    path(
+        "drafts/<int:pk>/node-artifact-library/",
+        api.node_artifact_library,
+        name="node_artifact_library",
+    ),
 ]

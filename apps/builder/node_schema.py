@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.types import ArtifactType
 from apps.tools.models import ToolBinding, ToolStatus
 from apps.workflows.compiler import (
     MAX_CHILD_DEPTH,
@@ -129,8 +131,9 @@ _BUILTIN_NODES: list[dict[str, Any]] = [
         "fields": [
             {
                 "name": "transform_profile_ref",
-                "kind": "identifier",
+                "kind": "enum",
                 "required": True,
+                "options_ref": "transform_profiles",
                 "help": (
                     "Release rolü olarak sabitlenmiş governed transform profili; "
                     "input_mapping ve output_mapping zorunludur."
@@ -408,6 +411,19 @@ def build_node_schema(*, organization_id: int) -> dict[str, Any]:
         .values_list("logical_id", flat=True)
         .distinct()
     ]
+    # Transform profiles are shared, reusable artifacts whose manifest role *is* their
+    # logical id. Offering the exact set that can be pinned keeps the field from being a
+    # free-text identifier that only fails at compile time.
+    transform_profiles = [
+        {"role": logical_id}
+        for logical_id in ArtifactVersion.objects.filter(
+            organization_id=organization_id,
+            type=ArtifactType.TRANSFORM_PROFILE,
+        )
+        .order_by("logical_id")
+        .values_list("logical_id", flat=True)
+        .distinct()
+    ]
     composition_enabled = True
     agent_loop_enabled = True
     return {
@@ -425,5 +441,6 @@ def build_node_schema(*, organization_id: int) -> dict[str, Any]:
             "agent_loop_enabled": agent_loop_enabled,
         },
         "tool_binding_roles": tool_binding_roles,
+        "transform_profiles": transform_profiles,
         "custom_nodes": custom_nodes,
     }

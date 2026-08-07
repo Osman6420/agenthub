@@ -65,6 +65,9 @@ export function App({
   const org = orgs.find((o) => o.slug === orgSlug);
   const canAuthorScenario = !!initial?.scenario_id && initial.can_author_scenario === true;
   const canWrite = canAuthorScenario || !!org?.can_write;
+  // Arriving from a scenario means there is exactly one workflow to work on, so the
+  // browsing surfaces (draft lists, loose artifact drafts, "new draft") are suppressed.
+  const scenarioMode = !!initial?.scenario_id;
 
   const reload = useCallback(async () => {
     if (!orgSlug) return;
@@ -298,9 +301,19 @@ export function App({
         </div>
       )}
       {initial?.scenario_id && <section style={{ padding: 12, marginBottom: 16, border: "1px solid #334155", borderRadius: 8 }}>
-        <strong>Scenario Studio · {initial.scenario_name}</strong>
+        <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+          <strong>Adım 3 · Akış · {initial.scenario_name}</strong>
+          <div style={{ flex: 1 }} />
+          {initial.scenario_public_id && <a href={`/console/scenarios/id/${initial.scenario_public_id}/`}>
+            ← Senaryoya dön
+          </a>}
+        </div>
         <div style={{ color: "#8b95a7" }}>Proje: {initial.project_name} · Organizasyon: {org?.name}</div>
-        <div style={{ fontSize: 13 }}>Bu sayfadaki workflow taslakları yalnız bu senaryoya aittir.</div>
+        <div style={{ fontSize: 13 }}>
+          Adımları sürükleyip bağlayın; her adımın istemi, modeli ve arama ayarı adımın kendi
+          panelindedir. Bitince <strong>Yayımla ve test et</strong>’e basın — aday sürüm ve test
+          sonucu otomatik üretilir.
+        </div>
       </section>}
       <div className="ah-builder-org-row">
         <label style={{ color: "#8b95a7", fontSize: 13 }}>
@@ -322,29 +335,36 @@ export function App({
         {!canWrite && <span style={{ color: "#fcd34d", fontSize: 12 }}>salt okunur</span>}
       </div>
 
-      <h2 style={{ margin: "8px 0" }}>Draft'lar</h2>
-      {drafts.length === 0 && <div style={{ color: "#8b95a7" }}>Henüz draft yok.</div>}
-      <ul style={{ listStyle: "none", padding: 0 }}>
-        {drafts.map((d) => (
-          <li key={d.id} className="ah-builder-draft-row" style={draftRow}>
-            <span>
-              <strong>{d.name}</strong>{" "}
-              <span style={{ color: "#8b95a7" }}>({d.logical_id})</span>
-              {d.logical_description && <div style={{ color: "#8b95a7", fontSize: 13 }}>
-                {d.logical_description}
-              </div>}
-              {d.last_published_version > 0 && (
-                <span style={{ color: "#86efac", marginLeft: 8 }}>
-                  v{d.last_published_version} yayımlandı
-                </span>
-              )}
-            </span>
-            <button type="button" onClick={() => void open(d.id)} style={openBtn}>
-              Aç
-            </button>
-          </li>
-        ))}
-      </ul>
+      {/* In a scenario the draft list is noise: creating a scenario already creates its one
+          workflow draft, and the effect above opens it. Only the org-wide view lists them. */}
+      {!scenarioMode && <>
+        <h2 style={{ margin: "8px 0" }}>Draft'lar</h2>
+        {drafts.length === 0 && <div style={{ color: "#8b95a7" }}>Henüz draft yok.</div>}
+        <ul style={{ listStyle: "none", padding: 0 }}>
+          {drafts.map((d) => (
+            <li key={d.id} className="ah-builder-draft-row" style={draftRow}>
+              <span>
+                <strong>{d.name}</strong>{" "}
+                <span style={{ color: "#8b95a7" }}>({d.logical_id})</span>
+                {d.logical_description && <div style={{ color: "#8b95a7", fontSize: 13 }}>
+                  {d.logical_description}
+                </div>}
+                {d.last_published_version > 0 && (
+                  <span style={{ color: "#86efac", marginLeft: 8 }}>
+                    v{d.last_published_version} yayımlandı
+                  </span>
+                )}
+              </span>
+              <button type="button" onClick={() => void open(d.id)} style={openBtn}>
+                Aç
+              </button>
+            </li>
+          ))}
+        </ul>
+      </>}
+      {scenarioMode && drafts.length > 0 && <div role="status" style={{ color: "#8b95a7" }}>
+        Akış açılıyor…
+      </div>}
 
       {initial?.scenario_id && initial.active_workflow && drafts.length === 0 && <section
         style={{ padding: 12, margin: "16px 0", border: "1px solid #334155", borderRadius: 8 }}>
@@ -355,7 +375,8 @@ export function App({
           style={{ ...openBtn, marginLeft: 8 }}>Yeni taslak olarak düzenle</button>}
       </section>}
 
-      {(initial?.can_author_scenario || initial?.can_compile_release) &&
+      {/* Candidate content is reported on the scenario page now; Studio is for the flow. */}
+      {!scenarioMode && (initial?.can_author_scenario || initial?.can_compile_release) &&
         initial.scenario_public_id &&
         initial.artifact_options_url && <ScenarioManifestPanel
           api={api}
@@ -368,25 +389,29 @@ export function App({
           refreshArtifact={publishedArtifact}
         />}
 
-      <h2 style={{ margin: "20px 0 8px" }}>Artifact taslakları</h2>
-      {artifactDrafts.length === 0 && <div style={{ color: "#8b95a7" }}>
-        Henüz artifact taslağı yok.
-      </div>}
-      <ul style={{ listStyle: "none", padding: 0 }}>
-        {artifactDrafts.map((draft) => <li key={draft.id} className="ah-builder-draft-row"
-          style={draftRow}>
-          <span><strong>{draft.name}</strong>{" "}<span style={{ color: "#8b95a7" }}>
-            ({draft.artifact_type === "input_contract" ? "girdi" :
-              draft.artifact_type === "output_contract" ? "çıktı" :
-                draft.artifact_type === "retrieval_profile" ? "arama" :
-                  draft.artifact_type === "model_profile" ? "model referansı" :
-                    "prompt"}; {draft.logical_id})
-          </span></span>
-          <button type="button" onClick={() => void openArtifact(draft.id)} style={openBtn}>Aç</button>
-        </li>)}
-      </ul>
+      {/* Node-owned prompts, models and retrieval profiles are edited inside their node, so
+          listing them here as loose logical ids only invites editing the wrong copy. */}
+      {!scenarioMode && <>
+        <h2 style={{ margin: "20px 0 8px" }}>Artifact taslakları</h2>
+        {artifactDrafts.length === 0 && <div style={{ color: "#8b95a7" }}>
+          Henüz artifact taslağı yok.
+        </div>}
+        <ul style={{ listStyle: "none", padding: 0 }}>
+          {artifactDrafts.map((draft) => <li key={draft.id} className="ah-builder-draft-row"
+            style={draftRow}>
+            <span><strong>{draft.name}</strong>{" "}<span style={{ color: "#8b95a7" }}>
+              ({draft.artifact_type === "input_contract" ? "girdi" :
+                draft.artifact_type === "output_contract" ? "çıktı" :
+                  draft.artifact_type === "retrieval_profile" ? "arama" :
+                    draft.artifact_type === "model_profile" ? "model referansı" :
+                      "prompt"}; {draft.logical_id})
+            </span></span>
+            <button type="button" onClick={() => void openArtifact(draft.id)} style={openBtn}>Aç</button>
+          </li>)}
+        </ul>
+      </>}
 
-      {canAuthorScenario && <section style={{ marginTop: 16, padding: 12,
+      {canAuthorScenario && !scenarioMode && <section style={{ marginTop: 16, padding: 12,
         border: "1px solid #334155", borderRadius: 8 }}>
         <h3>Yeni prompt</h3>
         <label>Ad<input aria-label="yeni prompt adı" value={promptName}
@@ -411,7 +436,9 @@ export function App({
             setActiveArtifact(draft);
           }} />}
 
-      {canAuthorScenario && schema && schema.projects.length > 0 && <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
+      {canAuthorScenario && schema && schema.projects.length > 0 && <details style={{ marginTop: 16 }}>
+        <summary style={{ cursor: "pointer" }}><strong>AI ile taslak oluştur</strong></summary>
+        <AiAuthoringPanel api={api} organization={orgSlug} projects={schema.projects}
         lockedProjectId={initial?.project_id} scenarioId={initial?.scenario_id}
         availability={initial?.ai_authoring}
         onCapabilityMissing={openCapabilityScaffold}
@@ -425,7 +452,8 @@ export function App({
             logical_id: "transient-ai-candidate", body: result.candidate,
             last_published_version: 0, last_published_at: null, revision: 1, can_write: true,
           });
-        }} />}
+        }} />
+      </details>}
 
       {capabilityScaffold && <section aria-label="Python node geçici taslağı"
         style={{ marginTop: 16, padding: 12, border: "1px solid #a16207", borderRadius: 8 }}>
@@ -448,7 +476,7 @@ export function App({
         <button type="button" onClick={() => setCapabilityScaffold(null)}>Öneriyi kapat</button>
       </section>}
 
-      {canWrite && (
+      {canWrite && !scenarioMode && (
         <div className="ah-builder-create" style={{ marginTop: 20, borderTop: "1px solid #262b36", paddingTop: 16 }}>
           <h2 style={{ margin: "0 0 8px" }}>Yeni draft</h2>
           <input

@@ -9,7 +9,13 @@ import { Toolbar } from "./components/Toolbar";
 import { WorkflowNode } from "./components/WorkflowNode";
 import { ApiError, type BuilderApi } from "./api";
 import { useBuilder } from "./useBuilder";
-import type { AiCandidateResult, DiagnosticsResult, Draft, NodeSchema } from "./types";
+import type {
+  AiCandidateResult,
+  DiagnosticsResult,
+  Draft,
+  NodeSchema,
+  PublishAndVerifyResult,
+} from "./types";
 
 import "@xyflow/react/dist/style.css";
 
@@ -40,6 +46,7 @@ export function Editor({
   const [transientName, setTransientName] = useState(draft.name);
   const [repairInstruction, setRepairInstruction] = useState("");
   const [repairSummary, setRepairSummary] = useState("");
+  const [verifyResult, setVerifyResult] = useState<PublishAndVerifyResult | null>(null);
   const wrapper = useRef<HTMLDivElement>(null);
   const jsonDirty = view === "json" && jsonText !== JSON.stringify(builder.body, null, 2);
 
@@ -116,12 +123,16 @@ export function Editor({
   );
 
   const runAction = useCallback(
-    async (action: "validate" | "save" | "publish", versionDescription = "") => {
+    async (
+      action: "validate" | "save" | "publish" | "publishAndVerify",
+      versionDescription = "",
+    ) => {
       setBusy(true);
       try {
         if (action === "validate") await builder.runDiagnostics();
         else if (action === "save") await builder.save();
-        else await builder.publish(versionDescription);
+        else if (action === "publish") await builder.publish(versionDescription);
+        else setVerifyResult(await builder.publishAndVerify(versionDescription));
       } catch (err) {
         const message = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
         builder.setStatusError(message);
@@ -188,6 +199,7 @@ export function Editor({
           </div>}
         </div>
         : <Toolbar builder={builder} draftName={draft.name} busy={busy || jsonDirty} onAction={runAction} />}
+      {verifyResult && <VerifyResultPanel result={verifyResult} onDismiss={() => setVerifyResult(null)} />}
       <div style={{ display: "flex", gap: 8, padding: "8px 0" }}>
         <button type="button" aria-pressed={view === "graph"} onClick={() => {
           if (view === "json" && !builder.readOnly && jsonDirty) void applyJson();
@@ -262,5 +274,71 @@ export function Editor({
         )}
       </div>}
     </div>
+  );
+}
+
+// The whole outcome of "does it work?" in one place: what got published, what is still
+// missing, and how the evaluation actually went. An `error` evaluation is not a score.
+function VerifyResultPanel({
+  result,
+  onDismiss,
+}: {
+  result: PublishAndVerifyResult;
+  onDismiss: () => void;
+}) {
+  const level = result.evaluation?.level ?? (result.ok ? "success" : "error");
+  const tone = level === "success"
+    ? { bg: "#12281c", fg: "#86efac", border: "#166534" }
+    : level === "warning"
+      ? { bg: "#33250f", fg: "#fde68a", border: "#a16207" }
+      : { bg: "#3a2226", fg: "#fca5a5", border: "#7f1d1d" };
+  return (
+    <section
+      aria-label="Yayımlama ve test sonucu"
+      role={level === "success" ? "status" : "alert"}
+      style={{
+        margin: "10px 14px",
+        padding: 12,
+        borderRadius: 8,
+        background: tone.bg,
+        color: tone.fg,
+        border: `1px solid ${tone.border}`,
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+        <strong>
+          v{result.published.version} yayımlandı
+          {result.release ? ` · aday #${result.release.id} hazır` : ""}
+        </strong>
+        <div style={{ flex: 1 }} />
+        <button type="button" onClick={onDismiss}>Kapat</button>
+      </div>
+      {result.evaluation && <p style={{ margin: "6px 0 0" }}>{result.evaluation.message}</p>}
+      {result.missing.length > 0 && <>
+        <p style={{ margin: "6px 0 0" }}>Aday hazırlanamadı, şunlar eksik:</p>
+        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+          {result.missing.map((entry) => <li key={entry.role}>{entry.message}</li>)}
+        </ul>
+      </>}
+      {result.diagnostics.map((entry) => (
+        <div key={`${entry.code}-${entry.role ?? ""}`} style={{ marginTop: 6 }}>
+          <code>{entry.code}</code>: {entry.message}
+          {entry.node_id && <> · adım <code>{entry.node_id}</code></>}
+        </div>
+      ))}
+      {result.evaluation?.cases && result.evaluation.cases.length > 0 && (
+        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+          {result.evaluation.cases.map((testCase) => (
+            <li key={testCase.case_id}>
+              {testCase.case_id} — {testCase.passed ? "geçti" : "kaldı"}
+              {testCase.assertions.map((assertion, index) => (
+                <span key={index}> · {assertion.type}: <code>{assertion.reason_code}</code></span>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

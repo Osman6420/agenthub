@@ -105,6 +105,15 @@ class QuestionSet(TimeStampedModel):
         Organization, on_delete=models.CASCADE, related_name="question_sets"
     )
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # A scenario owns the question set edited from its "Test soruları" step. Organization-wide
+    # sets created before this (and any deliberately shared set) keep ``scenario=NULL``.
+    scenario = models.ForeignKey(
+        "catalog.Scenario",
+        on_delete=models.CASCADE,
+        related_name="question_sets",
+        null=True,
+        blank=True,
+    )
     name = models.CharField(max_length=200)
     description = models.CharField(max_length=1000, blank=True)
     status = models.CharField(
@@ -178,6 +187,10 @@ class QuestionCase(TimeStampedModel):
     question = models.CharField(max_length=4000)
     input_payload = models.JSONField(default=dict)
     assertions = models.JSONField(default=list)
+    # The answer an author expects, in their own words. It is judge input, never an
+    # assertion: deterministic scoring uses ``assertions``, and this only reaches the
+    # referee so it can decide whether the produced answer matches the intent.
+    expected_answer = models.CharField(max_length=4000, blank=True)
     expected_anchors = models.JSONField(default=list)
     judge_policy = models.JSONField(default=dict)
 

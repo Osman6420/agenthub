@@ -1,14 +1,26 @@
 {% extends "console/base.html" %}
 {% block title %}Değerlendirme · AgentHub{% endblock %}
 {% block content %}
-<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:question_sets' %}">Soru setleri</a><span>›</span><a href="{% url 'console:question_set_detail' run.question_set_version.question_set.public_id %}">{{ run.question_set_version.question_set.name }}</a><span>›</span><span>Değerlendirme</span></nav>
-<div class="page-heading"><div><p class="eyebrow">Exact provenance</p><h1>{{ run.get_kind_display }} değerlendirmesi</h1><p class="muted">Soru seti v{{ run.question_set_version.version }} · <span class="mono">{{ run.question_set_version.checksum|slice:":12" }}</span></p></div><span class="badge {{ run.status }}">{{ run.get_status_display }}</span></div>
+<nav class="breadcrumbs" aria-label="İçerik yolu">
+  {% if scenario %}<a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a><span>›</span><a href="{% url 'console:scenario_test_questions' scenario.public_id %}">Test soruları</a>
+  {% else %}<a href="{% url 'console:question_sets' %}">Soru setleri</a><span>›</span><a href="{% url 'console:question_set_detail' run.question_set_version.question_set.public_id %}">{{ run.question_set_version.question_set.name }}</a>{% endif %}
+  <span>›</span><span aria-current="page">Değerlendirme</span>
+</nav>
+{# Two consecutive runs used to render identically: nothing on the page said which run this
+   was, when it ran, or what it measured, so a fresh measurement looked like a stale one. #}
+<div class="page-heading"><div><p class="eyebrow">Exact provenance</p><h1>{{ run.get_kind_display }} değerlendirmesi</h1>
+  <p class="muted"><strong>{{ run.created_at|date:"j F Y, H:i:s" }}</strong> ·
+    çalıştırma <span class="mono">{{ run.public_id|slice:":8" }}</span>
+    {% if run.release %} · ölçülen sürüm <a href="{% url 'console:release_detail' run.release_id %}">#{{ run.release_id }}</a> ({{ run.release.get_status_display }}){% endif %}</p>
+  <p class="muted">Soru seti v{{ run.question_set_version.version }} · <span class="mono">{{ run.question_set_version.checksum|slice:":12" }}</span></p></div><span class="badge {{ run.status }}">{{ run.get_status_display }}</span></div>
 
 <div class="summary-grid">
   <div class="summary-card"><span>İlerleme</span><strong>{{ run.completed_cases }}/{{ run.total_cases }}</strong></div>
-  <div class="summary-card"><span>Passed</span><strong>{{ run.passed_cases }}</strong></div>
+  <div class="summary-card"><span>Geçen</span><strong>{{ run.passed_cases }}</strong></div>
   <div class="summary-card"><span>Unscored / error</span><strong>{{ run.unscored_cases }} / {{ run.error_cases }}</strong></div>
 </div>
+
+{% if scenario %}<p class="actions"><a class="button secondary" href="{% url 'console:scenario_test_questions' scenario.public_id %}">Test sorularına dön</a></p>{% endif %}
 
 {% if run.status == "queued" or run.status == "running" %}<form method="post" action="{% url 'console:question_evaluation_cancel' run.public_id %}" class="actions">{% csrf_token %}<button class="button danger" type="submit">İptal iste</button></form>{% endif %}
 

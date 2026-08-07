@@ -6,6 +6,7 @@ import { GovernedProfileEditor } from "./GovernedProfileEditor";
 import { ModelProfileSelect } from "./ModelProfileSelect";
 import type {
   ArtifactVersionPreview,
+  DerivedManifest,
   ManifestLogicalOption,
   ManifestPresetOption,
   ManifestRequirement,
@@ -56,6 +57,7 @@ export function ScenarioManifestPanel({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [promptText, setPromptText] = useState("");
   const [artifactBody, setArtifactBody] = useState<Record<string, unknown>>({});
+  const [derived, setDerived] = useState<DerivedManifest | null>(null);
   const [versionDescription, setVersionDescription] = useState("");
   const versionDescriptionRef = useRef<HTMLInputElement>(null);
   const deepLinkAppliedRef = useRef(false);
@@ -71,6 +73,15 @@ export function ScenarioManifestPanel({
     });
     return () => { active = false; };
   }, [api, optionsUrl]);
+
+  useEffect(() => {
+    if (!canCompileRelease) return;
+    let active = true;
+    void api.derivedManifest(scenarioPublicId).then((result) => {
+      if (active) setDerived(result);
+    }).catch(() => { /* the manual path below remains available */ });
+    return () => { active = false; };
+  }, [api, canCompileRelease, scenarioPublicId]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -419,6 +430,36 @@ export function ScenarioManifestPanel({
     }
   }
 
+  // Once the workflow is published the manifest is derived, so the panel reports what will
+  // be pinned instead of asking for it back. The manual assembly path below stays only for
+  // a scenario with no published workflow yet; it can no longer produce a broken release
+  // because the compiler now rejects a manifest that misses a node's required role.
+  if (canCompileRelease && derived?.available) {
+    return <section aria-labelledby="manifest-heading" style={panel}>
+      <div style={{ color: "#8b95a7", fontSize: 12, textTransform: "uppercase" }}>Aday içeriği</div>
+      <h2 id="manifest-heading">Bu senaryonun aday sürümü</h2>
+      <p style={{ color: "#8b95a7" }}>
+        Aşağıdakiler akıştan ve senaryodan otomatik belirlenir. Seçim yapmanız gerekmez;
+        “Yayımla ve test et” bunları sabitleyerek adayı üretir.
+      </p>
+      {derived.missing.length > 0 && <div role="alert" style={errorBox}>
+        <strong>Şunlar eksik:</strong>
+        <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+          {derived.missing.map((entry) => <li key={entry.role}>{entry.message}</li>)}
+        </ul>
+      </div>}
+      <ul aria-label="Sabitlenecek içerik" style={{ listStyle: "none", padding: 0 }}>
+        {derived.pins.map((pin) => <li key={pin.role} style={selectedRow}>
+          <div>
+            <strong>{pinLabel(pin.role, pin.artifact_type)}</strong>
+            <div style={{ color: "#8b95a7", fontSize: 12 }}>v{pin.version}</div>
+          </div>
+        </li>)}
+      </ul>
+      {status && <span role="status">{status}</span>}
+    </section>;
+  }
+
   return <section aria-labelledby="manifest-heading" style={panel}>
     <div>
       <div style={{ color: "#8b95a7", fontSize: 12, textTransform: "uppercase" }}>
@@ -634,6 +675,24 @@ export function ScenarioManifestPanel({
       {releaseId && <a href={`/console/releases/${releaseId}/`}>Candidate #{releaseId} aç</a>}
     </div>
   </section>;
+}
+
+// Human labels for derived roles: an author recognises the step, not ``ret_<hash>_profile``.
+function pinLabel(role: string, artifactType: string): string {
+  const typeLabels: Record<string, string> = {
+    workflow_definition: "Akış tanımı",
+    prompt_template: "İstem metni",
+    model_profile: "Model seçimi",
+    retrieval_profile: "Arama profili",
+    transform_profile: "Dönüşüm profili",
+    tool_binding: "Araç bağlantısı",
+    input_contract: "Girdi sözleşmesi",
+    output_contract: "Çıktı sözleşmesi",
+    eval_suite: "Test soruları",
+  };
+  const label = typeLabels[artifactType] ?? artifactType;
+  if (role === artifactType || role === "workflow_definition") return label;
+  return `${label} · adım bağlantılı`;
 }
 
 function formatError(error: unknown): string {

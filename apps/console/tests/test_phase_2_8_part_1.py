@@ -324,7 +324,9 @@ def test_scenario_breadcrumb_and_task_tabs_preserve_project_context(client: Clie
     assert reverse("console:dashboard") in body
     assert reverse("console:project_detail_public", args=[project.public_id]) in body
     assert 'role="tablist"' in body
-    for label in ("Genel", "Dokümanlar", "Yapılandırma", "Release’ler"):
+    # The scenario page leads with its ordered steps; the remaining operator surfaces stay
+    # reachable by anchor. "Release'ler" moved inside the collapsed advanced block.
+    for label in ("Adımlar", "Dokümanlar", "Erişim", "Gelişmiş"):
         assert label in body
 
 

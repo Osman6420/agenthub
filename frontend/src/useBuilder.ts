@@ -18,6 +18,7 @@ import type {
   RetrieveNodeBinding,
   NodeConfig,
   NodeSchema,
+  PublishAndVerifyResult,
   WorkflowDsl,
 } from "./types";
 
@@ -59,6 +60,7 @@ export interface BuilderController {
     nodeId: string, profileBody: Record<string, unknown>,
   ) => Promise<RetrieveNodeBinding>;
   publish: (versionDescription?: string) => Promise<void>;
+  publishAndVerify: (versionDescription?: string) => Promise<PublishAndVerifyResult | null>;
   applyJsonCandidate: (body: unknown, allowInvalid?: boolean) => Promise<boolean>;
 }
 
@@ -329,6 +331,22 @@ export function useBuilder(
     setStatus(`Yayımlandı: ${result.logical_id} v${result.version}`);
   }, [api, draft.id, isDirty, readOnly, revision, save]);
 
+  // Saves if needed, then hands the whole publish → candidate → evaluate sequence to the
+  // backend in one call. The client decides nothing about which artifacts get pinned.
+  const publishAndVerify = useCallback(async (versionDescription = "Published workflow version") => {
+    if (readOnly) return null;
+    const publishRevision = isDirty ? await save() : revision;
+    if (publishRevision === undefined) return null;
+    const result = await api.publishAndVerify(draft.id, publishRevision, versionDescription);
+    setRevision(result.published.revision);
+    setStatus(
+      result.ok
+        ? `Yayımlandı ve test edildi: v${result.published.version}`
+        : `Yayımlandı: v${result.published.version} · aday hazırlanamadı`,
+    );
+    return result;
+  }, [api, draft.id, isDirty, readOnly, revision, save]);
+
   const applyJsonCandidate = useCallback(async (candidate: unknown, allowInvalid = false) => {
     if (readOnly || !candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
       setStatus("Geçerli bir JSON nesnesi girin");
@@ -393,6 +411,7 @@ export function useBuilder(
     saveGenerateBinding,
     saveRetrieveBinding,
     publish,
+    publishAndVerify,
     applyJsonCandidate,
   };
 }

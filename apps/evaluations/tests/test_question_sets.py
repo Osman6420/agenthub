@@ -477,6 +477,54 @@ def test_answer_evaluation_pins_release_and_keeps_answer_metrics_independent() -
     assert run.case_evidence.get().generated_answer == "14 gün"
 
 
+def test_the_worker_load_path_still_aggregates_the_evidence_it_just_wrote() -> None:
+    """``tasks.execute_question_evaluation_task`` prefetches ``case_evidence`` before any
+    case runs, so the related manager caches an empty list. Aggregating through that cache
+    reported 0 passed / 0 completed with null metrics on every run the worker executed —
+    while the evidence rows themselves said ``passed``.
+    """
+
+    from apps.evaluations.models import QuestionEvaluationEvidenceStatus, QuestionEvaluationRun
+
+    organization = Organization.objects.create(slug="worker-eval", name="Worker Eval")
+    user = _admin(organization)
+    question_set = create_question_set(
+        organization=organization,
+        user=user,
+        name="Worker path",
+        description="",
+        cases=_cases(with_anchor=False),
+    )
+    version = publish_question_set(
+        question_set=question_set,
+        user=user,
+        expected_revision=question_set.draft_revision,
+    )
+    release = _release(organization)
+    _grant_scenario_tester(user, release)
+    created_run, _ = create_answer_evaluation(
+        user=user,
+        question_set_version=version,
+        release=release,
+        idempotency_key="worker-1",
+    )
+
+    # Load it exactly the way the Celery task does.
+    run = QuestionEvaluationRun.objects.prefetch_related(
+        "question_set_version__cases", "case_evidence"
+    ).get(pk=created_run.pk)
+    execute_question_evaluation(run=run)
+
+    run.refresh_from_db()
+    assert run.completed_cases == 1
+    assert run.passed_cases == 1
+    assert run.metrics["answer_denominator"] == 1
+    assert run.metrics["answer_pass_rate"] == 1.0
+    assert [item.status for item in run.case_evidence.all()] == [
+        QuestionEvaluationEvidenceStatus.PASSED
+    ]
+
+
 def test_output_schema_and_citation_assertions_are_closed_and_deterministic() -> None:
     outcomes = evaluate_answer_assertions(
         [

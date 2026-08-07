@@ -15,6 +15,9 @@ export function fieldOptions(schema: NodeSchema, field: NodeFieldSchema): string
   if (field.options_ref === "custom_nodes") {
     return schema.custom_nodes.map((c) => c.node_ref);
   }
+  if (field.options_ref === "transform_profiles") {
+    return (schema.transform_profiles ?? []).map((p) => p.role);
+  }
   if (Array.isArray(field.options)) return field.options;
   return [];
 }

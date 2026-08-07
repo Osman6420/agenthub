@@ -61,6 +61,24 @@ def _finalize(run: EvalRun, status: str, passed_cases: int, *, error_code: str =
     return run
 
 
+def summarize_eval_run(run: EvalRun) -> tuple[str, str]:
+    """Return ``(level, message)`` describing one finished eval run.
+
+    ``run_eval`` never raises for a runtime failure; it returns a run whose status is
+    ``error``. Callers therefore have to branch on the status, and an ``error`` run is not a
+    "0/N passed" result at all — no case was evaluated, so reporting a pass ratio invites
+    the reader to debug their assertions instead of the failure that actually happened.
+    """
+
+    if run.status == EvalStatus.ERROR:
+        reason = run.error_code or "EVALUATION_RUN_FAILED"
+        return "error", f"Eval çalıştırılamadı ({reason}). Hiçbir test sorusu değerlendirilemedi."
+    ratio = f"{run.passed_cases}/{run.total_cases}"
+    if run.status == EvalStatus.PASSED:
+        return "success", f"Eval geçti: {ratio} test sorusu başarılı."
+    return "warning", f"Eval başarısız: {ratio} test sorusu geçti."
+
+
 def _evaluation_consumer(release: ScenarioRelease) -> Consumer:
     consumer, _ = Consumer.objects.get_or_create(
         organization_id=release.scenario.project.organization_id,

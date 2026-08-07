@@ -8,7 +8,7 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.catalog.models import AIProject, Scenario
 from apps.evaluations.models import EvalCaseResult, EvalStatus
-from apps.evaluations.services import EvalError, run_eval
+from apps.evaluations.services import EvalError, run_eval, summarize_eval_run
 from apps.releases.compiler import ArtifactRef, compile_release
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization
@@ -133,6 +133,47 @@ def test_runtime_failure_marks_eval_error_but_preserves_run_evidence(
     assert evaluation.status == EvalStatus.ERROR
     assert evaluation.error_code == "UnifiedExecutorError"
     assert Run.objects.filter(release=release).exists()
+
+
+@pytest.mark.django_db
+def test_error_run_is_not_reported_as_a_pass_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ``error`` run evaluated nothing, so "0/1 passed" would misdirect the reader.
+
+    ``run_eval`` returns rather than raises on a runtime failure, so a caller that only
+    catches ``EvalError`` reports every failure as a success.
+    """
+
+    release = _release_with_suite(_suite([{"type": "workflow_completed"}]))
+
+    def _fail(**_kwargs: object) -> None:
+        raise UnifiedExecutorError("RUN_EXECUTOR_TEST_FAILURE")
+
+    monkeypatch.setattr("apps.evaluations.services.execute_sync_run", _fail)
+    level, message = summarize_eval_run(run_eval(release=release, created_by="alice"))
+
+    assert level == "error"
+    assert "UnifiedExecutorError" in message
+    assert "0/1" not in message
+
+
+@pytest.mark.django_db
+def test_passed_run_is_reported_as_success() -> None:
+    release = _release_with_suite(_suite([{"type": "workflow_completed"}]))
+
+    level, message = summarize_eval_run(run_eval(release=release, created_by="alice"))
+
+    assert level == "success"
+    assert "1/1" in message
+
+
+@pytest.mark.django_db
+def test_failed_run_is_reported_as_a_warning_not_a_success() -> None:
+    release = _release_with_suite(_suite([{"type": "answer_contains", "value": "kesinlikle-yok"}]))
+
+    level, message = summarize_eval_run(run_eval(release=release, created_by="alice"))
+
+    assert level == "warning"
+    assert "0/1" in message
 
 
 @pytest.mark.django_db

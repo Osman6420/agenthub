@@ -11,6 +11,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 from django.urls import reverse
 
+from apps.artifacts.eval_suite import validate_eval_suite_body
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
@@ -29,6 +30,7 @@ from apps.identity.models import (
     ScenarioResponsibility,
     ScenarioResponsibilityAssignment,
 )
+from apps.releases.scenario_artifacts import SCENARIO_SCOPED_ROLES
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
@@ -83,7 +85,7 @@ def test_scenario_creation_prepares_exact_contract_defaults(client: Client, pres
 
     assert response.status_code == 302
     scenario = Scenario.objects.get(project=project)
-    for artifact_type in (ArtifactType.INPUT_CONTRACT, ArtifactType.OUTPUT_CONTRACT):
+    for artifact_type in SCENARIO_SCOPED_ROLES:
         artifact = ArtifactVersion.objects.get(
             organization=org,
             type=artifact_type,
@@ -91,12 +93,9 @@ def test_scenario_creation_prepares_exact_contract_defaults(client: Client, pres
         )
         assert artifact.version == 1
         assert artifact.body == default_contract_body(artifact_type)
-    assert (
-        AuditEvent.objects.filter(
-            organization_id=org.pk, action="console.scenario.contract_default.prepare"
-        ).count()
-        == 2
-    )
+    assert AuditEvent.objects.filter(
+        organization_id=org.pk, action="console.scenario.contract_default.prepare"
+    ).count() == len(SCENARIO_SCOPED_ROLES)
 
 
 def test_default_contracts_accept_the_canonical_envelope_and_reject_drift() -> None:
@@ -134,15 +133,26 @@ def test_preparing_defaults_twice_never_creates_a_surprise_version() -> None:
     first = prepare_scenario_contract_defaults(scenario=scenario, actor="author")
     second = prepare_scenario_contract_defaults(scenario=scenario, actor="author")
 
-    assert len(first) == 2
+    assert [artifact.type for artifact in first] == list(SCENARIO_SCOPED_ROLES)
     assert second == []
-    assert (
-        ArtifactVersion.objects.filter(
-            organization=org,
-            type__in=(ArtifactType.INPUT_CONTRACT, ArtifactType.OUTPUT_CONTRACT),
-        ).count()
-        == 2
+    assert ArtifactVersion.objects.filter(
+        organization=org,
+        type__in=SCENARIO_SCOPED_ROLES,
+    ).count() == len(SCENARIO_SCOPED_ROLES)
+
+
+def test_default_eval_suite_is_runnable_without_any_authoring() -> None:
+    """The first candidate must be evaluable; that is what removes the return trip."""
+
+    body = default_contract_body(ArtifactType.EVAL_SUITE)
+
+    validate_eval_suite_body(body)
+    jsonschema.validate(
+        body["cases"][0]["input"], default_contract_body(ArtifactType.INPUT_CONTRACT)
     )
+    assert [assertion["type"] for assertion in body["cases"][0]["assertions"]] == [
+        "workflow_completed"
+    ]
 
 
 def test_scenario_page_shows_contract_status_and_no_creation_panel(client: Client) -> None:

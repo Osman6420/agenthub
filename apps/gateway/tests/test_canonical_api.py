@@ -234,3 +234,41 @@ def test_removed_routes_and_delete_cancellation_are_absent(scenario_fixture: Fix
     assert client.post("/v1/" + "query", {}, format="json").status_code == 404
     assert client.post("/v1/" + "invoke", {}, format="json").status_code == 404
     assert client.delete("/v1/runs/00000000-0000-0000-0000-000000000001").status_code == 405
+
+
+@pytest.mark.django_db(transaction=True)
+def test_malformed_json_is_named_as_such_not_as_a_contract_failure(
+    scenario_fixture: Fixture,
+) -> None:
+    """A syntax mistake and a body that fails the contract are different things to fix.
+
+    Both used to return the generic "The request is invalid.", which sent callers hunting
+    through their payload semantics for what was actually a stray brace.
+    """
+
+    response = _client(scenario_fixture.raw_token).post(
+        "/v1/chat/completions",
+        data='{"model":"x","messages":[{"role":"user","content":"Merhaba"}}]}',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    # The OpenAI-compatible surface keeps its own envelope shape (type/param, no retryable).
+    body = response.json()["error"]
+    assert body["code"] == "VALIDATION_ERROR"
+    assert body["type"] == "invalid_request_error"
+    assert body["message"] == "Request body is not valid JSON."
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_well_formed_but_invalid_body_keeps_its_own_message(
+    scenario_fixture: Fixture,
+) -> None:
+    response = _client(scenario_fixture.raw_token).post(
+        "/v1/chat/completions",
+        {"model": scenario_fixture.alias, "messages": []},
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] != "Request body is not valid JSON."

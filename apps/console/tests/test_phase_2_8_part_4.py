@@ -316,7 +316,8 @@ def test_scenario_page_uses_dependent_selector_and_compiler_mode_curl(client: Cl
     assert "1. Artifact type" not in body
     assert "2. Logical artifact" not in body
     assert "3. Exact version" not in body
-    assert "Scenario Studio release panelindedir" in body
+    # Candidate preparation is reached from the ordered setup steps, not a manifest panel.
+    assert "Yayımla ve test et" in body
     assert f"scenario={scenario.public_id}" in body
     assert 'name="role_' not in body
     assert "/v1/chat/completions" in body

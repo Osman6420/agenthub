@@ -46,6 +46,21 @@ urlpatterns = [
         name="scenario_lifecycle_change",
     ),
     path(
+        "scenarios/id/<uuid:public_id>/test-questions/",
+        views.scenario_test_questions,
+        name="scenario_test_questions",
+    ),
+    path(
+        "scenarios/id/<uuid:public_id>/publish-and-verify/",
+        views.scenario_publish_and_verify,
+        name="scenario_publish_and_verify",
+    ),
+    path(
+        "scenarios/id/<uuid:public_id>/promote/",
+        views.scenario_promote,
+        name="scenario_promote",
+    ),
+    path(
         "scenarios/id/<uuid:public_id>/ask/",
         views.scenario_ask,
         name="scenario_ask",

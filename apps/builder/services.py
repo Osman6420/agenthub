@@ -14,6 +14,7 @@ import copy
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from django.db import transaction
@@ -1029,4 +1030,128 @@ def _audit(actor: str, verb: str, draft: WorkflowDraft, *, request_id: str) -> N
         resource_type="workflow_draft",
         resource_id=draft.logical_id,
         request_id=request_id,
+    )
+
+
+@dataclass(frozen=True)
+class PublishAndVerifyResult:
+    """Outcome of one operator action: publish, derive, compile, evaluate.
+
+    ``missing`` names what the scenario still needs in author language; ``diagnostics``
+    carries a canonical compiler rejection. Both are empty on success. The draft is always
+    published — only candidate creation and evaluation are withheld.
+    """
+
+    published: ArtifactVersion
+    draft_revision: int
+    missing: list[dict[str, Any]]
+    diagnostics: list[dict[str, Any]]
+    release: Any | None = None
+    eval_run: Any | None = None
+
+    @property
+    def ok(self) -> bool:
+        return not self.missing and not self.diagnostics and self.release is not None
+
+
+def publish_and_verify(
+    draft: WorkflowDraft,
+    *,
+    actor: str,
+    expected_revision: Any,
+    version_description: str = "",
+    request_id: str = "",
+    trace_id: str = "",
+) -> PublishAndVerifyResult:
+    """Take a draft all the way to an evaluated candidate in one operator action.
+
+    Both the Studio API and the scenario console page call this, so the sequence, its audit
+    trail and its failure semantics cannot drift between the two surfaces. Authorization is
+    the caller's responsibility: this is candidate preparation, which an exact Scenario
+    Editor may perform, and it never promotes or changes live traffic.
+    """
+
+    from apps.evaluations.services import EvalError, run_eval
+    from apps.releases import authoring as release_authoring
+    from apps.releases.compiler import CompileError, compile_release
+
+    scenario = draft.scenario
+    if scenario is None:
+        raise BuilderError("draft_not_bound_to_scenario")
+
+    artifact = publish_draft(
+        draft,
+        actor=actor,
+        expected_revision=expected_revision,
+        version_description=version_description,
+        request_id=request_id,
+    )
+    draft.refresh_from_db(fields=["revision"])
+
+    derived = release_authoring.derive_manifest(scenario=scenario, workflow_artifact=artifact)
+    if not derived.ok:
+        return PublishAndVerifyResult(
+            published=artifact,
+            draft_revision=draft.revision,
+            missing=derived.missing,
+            diagnostics=[],
+        )
+
+    try:
+        with transaction.atomic():
+            release = compile_release(
+                scenario=scenario,
+                refs=derived.refs,
+                runtime_version=release_authoring.candidate_runtime_version(scenario),
+                created_by=actor,
+            )
+            record_event(
+                actor_type="user",
+                actor_id=actor,
+                action="console.scenario.release.compile",
+                outcome="success",
+                organization_id=scenario.organization_id,
+                resource_type="scenario_release",
+                resource_id=str(release.pk),
+                reason=release.artifact_manifest_sha256,
+                request_id=request_id,
+                trace_id=trace_id,
+            )
+    except CompileError as exc:
+        record_event(
+            actor_type="user",
+            actor_id=actor,
+            action="console.scenario.release.compile",
+            outcome="failure",
+            organization_id=scenario.organization_id,
+            resource_type="scenario",
+            resource_id=str(scenario.pk),
+            reason=exc.code,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        return PublishAndVerifyResult(
+            published=artifact,
+            draft_revision=draft.revision,
+            missing=[],
+            diagnostics=[exc.as_diagnostic()],
+        )
+
+    try:
+        eval_run = run_eval(release=release, created_by=actor)
+    except EvalError as exc:
+        return PublishAndVerifyResult(
+            published=artifact,
+            draft_revision=draft.revision,
+            missing=[],
+            diagnostics=[{"code": exc.code, "message": f"Eval başlatılamadı: {exc.code}"}],
+            release=release,
+        )
+    return PublishAndVerifyResult(
+        published=artifact,
+        draft_revision=draft.revision,
+        missing=[],
+        diagnostics=[],
+        release=release,
+        eval_run=eval_run,
     )

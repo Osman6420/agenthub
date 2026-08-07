@@ -32,6 +32,7 @@ from apps.builder import authoring, services
 from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.builder.node_schema import build_node_schema
 from apps.catalog.models import AIProject, Scenario
+from apps.evaluations.services import summarize_eval_run
 from apps.identity.authorization import Capability, authorize
 from apps.orchestration.models import ModelProfile, ModelProfileStatus
 from apps.releases import authoring as release_authoring
@@ -328,6 +329,39 @@ def release_manifest_requirements(request: HttpRequest, public_id: UUID) -> Http
 
 
 @operator_api
+@require_http_methods(["GET"])
+def release_manifest_derived(request: HttpRequest, public_id: UUID) -> HttpResponse:
+    """Return the manifest that would be pinned for this scenario's published workflow.
+
+    Read-only: it shows what the candidate *will* contain and what is still missing, so the
+    panel can report the manifest instead of asking an operator to reassemble it.
+    """
+
+    scenario = _candidate_scenario(request, public_id)
+    logical_ids = list(
+        WorkflowDraft.objects.filter(scenario=scenario)
+        .order_by("logical_id")
+        .values_list("logical_id", flat=True)
+        .distinct()[:2]
+    )
+    workflow = (
+        ArtifactVersion.objects.filter(
+            organization_id=scenario.organization_id,
+            type=ArtifactType.WORKFLOW_DEFINITION,
+            logical_id=logical_ids[0],
+        )
+        .order_by("-version")
+        .first()
+        if len(logical_ids) == 1
+        else None
+    )
+    if workflow is None:
+        return JsonResponse({"ok": False, "available": False, "missing": [], "pins": []})
+    derived = release_authoring.derive_manifest(scenario=scenario, workflow_artifact=workflow)
+    return JsonResponse({"available": True, **derived.as_dict()})
+
+
+@operator_api
 @require_http_methods(["POST"])
 def release_manifest_compile(request: HttpRequest, public_id: UUID) -> HttpResponse:
     """Create one audited candidate or return a safe canonical diagnostic."""
@@ -388,6 +422,152 @@ def release_manifest_compile(request: HttpRequest, public_id: UUID) -> HttpRespo
         },
         status=201,
     )
+
+
+_NODE_ARTIFACT_KINDS = {
+    "prompt": ArtifactType.PROMPT_TEMPLATE,
+    "model": ArtifactType.MODEL_PROFILE,
+    "retrieval": ArtifactType.RETRIEVAL_PROFILE,
+}
+MAX_LIBRARY_BODY_BYTES = 32 * 1024
+MAX_LIBRARY_ENTRIES = 25
+
+
+def _library_entry(artifact: ArtifactVersion) -> dict[str, Any]:
+    encoded = json.dumps(artifact.body, ensure_ascii=False).encode("utf-8")
+    too_large = len(encoded) > MAX_LIBRARY_BODY_BYTES
+    return {
+        "artifact_version_id": artifact.pk,
+        "logical_id": artifact.logical_id,
+        "logical_description": artifact.logical_description,
+        "version": artifact.version,
+        "version_description": artifact.version_description,
+        "checksum": artifact.checksum,
+        "created_at": artifact.created_at.isoformat(),
+        "body_too_large": too_large,
+        "body": None if too_large else artifact.body,
+    }
+
+
+@operator_api
+@require_http_methods(["GET"])
+def node_artifact_library(request: HttpRequest, pk: int) -> HttpResponse:
+    """Return a node's own artifact history plus reusable bodies of the same type.
+
+    Node-owned artifacts are immutable and private to their node, so "go back to v3" is
+    served by reading an older body and republishing it forward, and "start from an
+    existing profile" is a body *copy* — neither pins a foreign artifact into this node.
+    Both were previously only reachable by picking raw logical ids in the manifest panel.
+    """
+
+    draft = _scoped_draft(request, pk)
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    kind = request.GET.get("kind", "")
+    node_id = request.GET.get("node_id", "")
+    artifact_type = _NODE_ARTIFACT_KINDS.get(kind)
+    if artifact_type is None or not node_id:
+        raise services.BuilderError("node_artifact_kind_invalid")
+    if kind == "retrieval":
+        role = services.retrieve_node_role(draft, node_id)
+    else:
+        role = services.generate_node_roles(draft, node_id)[
+            "prompt_ref" if kind == "prompt" else "model_profile_ref"
+        ]
+
+    scoped = ArtifactVersion.objects.filter(
+        organization_id=draft.organization_id, type=artifact_type
+    )
+    versions = [
+        _library_entry(artifact)
+        for artifact in scoped.filter(logical_id=role).order_by("-version")[:MAX_LIBRARY_ENTRIES]
+    ]
+    # One row per other logical artifact of this type, newest version, for copying.
+    library: list[dict[str, Any]] = []
+    for logical_id in (
+        scoped.exclude(logical_id=role)
+        .order_by("logical_id")
+        .values_list("logical_id", flat=True)
+        .distinct()[:MAX_LIBRARY_ENTRIES]
+    ):
+        latest = scoped.filter(logical_id=logical_id).order_by("-version").first()
+        if latest is not None:
+            library.append(_library_entry(latest))
+    return JsonResponse({"role": role, "versions": versions, "library": library})
+
+
+@operator_api
+@require_http_methods(["POST"])
+def draft_publish_and_verify(request: HttpRequest, pk: int) -> HttpResponse:
+    """Publish a draft, derive its manifest, compile a candidate and evaluate it.
+
+    This replaces a journey that spanned four screens and two returns: publish in Studio,
+    re-select every artifact by logical id in the manifest panel, compile, leave to author
+    an evaluation suite, come back, compile a *second* candidate, then run the evaluation
+    from the release page. Every step here is already determined by the draft and the
+    scenario, so none of it needs an operator decision.
+
+    Authority is unchanged: this is candidate preparation, which an exact Scenario Editor
+    may perform. Promotion, rollback and canary remain release-manager-only and are not
+    reachable from here.
+    """
+
+    draft = _scoped_draft(request, pk)
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    payload = _json_body(request)
+    _reject_unknown_fields(payload, {"revision", "version_description"})
+
+    result = services.publish_and_verify(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        version_description=payload.get("version_description", ""),
+        request_id=_request_id(request),
+        trace_id=_trace_id(request),
+    )
+    body: dict[str, Any] = {
+        "ok": result.ok,
+        "published": {
+            "logical_id": result.published.logical_id,
+            "version": result.published.version,
+            "checksum": result.published.checksum,
+            "revision": result.draft_revision,
+        },
+        "missing": result.missing,
+        "diagnostics": result.diagnostics,
+    }
+    if result.release is not None:
+        body["release"] = {
+            "id": result.release.pk,
+            "status": result.release.status,
+            "artifact_manifest_sha256": result.release.artifact_manifest_sha256,
+        }
+    if result.eval_run is not None:
+        level, message = summarize_eval_run(result.eval_run)
+        body["evaluation"] = {
+            "level": level,
+            "message": message,
+            "status": result.eval_run.status,
+            "passed_cases": result.eval_run.passed_cases,
+            "total_cases": result.eval_run.total_cases,
+            # Reason codes only: assertion type, boolean and a stable code, never text.
+            "cases": [
+                {"case_id": c.case_id, "passed": c.passed, "assertions": c.assertions}
+                for c in result.eval_run.case_results.order_by("pk")[:100]
+            ],
+        }
+    elif result.diagnostics and result.release is not None:
+        body["evaluation"] = {"level": "error", "message": result.diagnostics[0]["message"]}
+    return JsonResponse(body, status=201 if result.ok else 200)
 
 
 def _json_body(request: HttpRequest, *, max_bytes: int | None = None) -> dict[str, Any]:
