@@ -367,6 +367,40 @@ evaluation; promotion, rollback, canary and scenario activation remain release-m
 denied server-side. Deleting a workflow draft now also removes its node-owned artifact drafts,
 audited, leaving published versions untouched.
 
+The `scenario-publishing-ux-realignment` task made publishing and evaluation follow the author's
+actual journey. Implemented and automatically verified (SQLite 1254 passed/61 skipped; PostgreSQL
+evaluations/console/releases/builder 498 passed; frontend tsc/52 vitest/build; ruff and mypy on 466
+files clean); the mandatory browser gate remains open, so it is **not `Verified`**. Additive
+migrations `evaluations.0004`/`0005`; no new dependency.
+**Derived manifest** — `derive_manifest` builds the release manifest from the published workflow and
+`_assert_workflow_roles_pinned` re-checks it at compile time, both reading one shared
+`workflow_manifest_requirements`, so preflight advice can no longer promise what the compiler
+rejects. A node-derived role that is missing or type-named now fails compilation with
+`workflow_role_unpinned` instead of failing at request time. Extra pins remain allowed and no active
+release is re-validated. `prepare_scenario_contract_defaults` also prepares an `eval_suite`, so a
+first candidate is evaluable.
+**One operator action** — `apps/builder/services.publish_and_verify` owns publish → derive → compile
+→ evaluate and is called by both the Studio button and the console step. The scenario page leads
+with six ordered steps; step 6 promotes **and** activates (both were already release-manager
+transitions, so authority is unchanged) and stays open while a candidate waits. Promotion only ever
+considers the newest release, never a superseded candidate.
+**Scenario-owned evaluation** — `apps/evaluations/scenario_questions.py` edits rows of "question +
+how it is judged". Deterministic rows feed the `eval_suite` that gates promotion, which stays
+hermetic; exact-match and referee rows feed the scenario's `QuestionSet` (`QuestionSet.scenario` is
+nullable, so organization-wide sets are untouched). Evaluation measures the newest release the
+author is working on — a waiting candidate first — via `execute_release_input`, which runs an exact
+release without serving it; a finished run never stands in for a new measurement. The LLM referee is
+reachable for the first time: a canonical server-owned judge prompt, a separately selectable judge
+model, and honest readiness. `EVALUATION_LLM_JUDGE_ENABLED` defaults to `false` because a referee
+run makes billable model calls. Fixed alongside: `_aggregate_run` read a related-manager cache the
+worker had prefetched before any case ran, so every worker-executed `QuestionEvaluationRun` was
+written back as 0 passed with null metrics; and console questions reached the workflow as
+`{"question": …}` while the runtime reads `input["query"]`.
+**Known gap, not fixed:** every non-2xx provider response collapses to `UPSTREAM_STATUS` and then
+`WORKFLOW_GENERATION_FAILED`, which is in `_TRANSIENT_NODE_ERRORS` — so a permanent
+misconfiguration is retried as transient and quota exhaustion is indistinguishable from a bad
+credential. Changing it touches error-code and retry contracts and needs approval.
+
 Review the final diff for scope, layering, compatibility, authorization, privacy, failure modes, concurrency, operability, and accidental files. Record every executed command and result in task verification. State checks that could not run and the risk this leaves; never infer success from an agent assertion.
 
 ## Recommended enforcement (not implemented)
