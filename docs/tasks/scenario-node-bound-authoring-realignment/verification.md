@@ -214,11 +214,10 @@ the Part 7 cleanup slice.
   human UX assessment — discoverability, click count, feedback, error recovery, keyboard use,
   responsive layout at 390/900/1440 px and browser console/network review — has **not** been done
   and remains outstanding for the Retrieve node panel.
-- Repository-wide `mypy apps` still reports **3 pre-existing errors** in
-  `apps/builder/tests/test_api.py` (unmodified by this slice, present at commit `88e4e18`), and
-  repository-wide `ruff format --check apps` still reports pre-existing drift in
-  `apps/retrieval/providers.py`. Both are outside the approved Part 4 scope and are reported, not
-  worked around.
+- Repository-wide `mypy apps` reported **3 pre-existing errors** in
+  `apps/builder/tests/test_api.py` and `ruff format --check apps` reported pre-existing drift in
+  `apps/retrieval/providers.py`, both present at commit `88e4e18` and outside the approved Part 4
+  scope. Both were cleared later in the task; see "Static gate closure" at the end of this record.
 - Known limitation: a bound Retrieve node cannot be returned to release-level fallback from the UI.
 
 ## Part 5 — document-set inline authoring (Studio handoff retirement)
@@ -449,3 +448,35 @@ The migration was applied to the running Compose PostgreSQL:
 - The rendered UX pass across the reshaped document-set, scenario and release pages. This is the
   last open row of the mandatory browser gate for the whole task.
 - Frontend gates were not re-run for this slice because it changed no frontend file.
+
+## Static gate closure
+
+Two gate failures that predated this task at commit `88e4e18` are now cleared, so every
+repository-verified check passes.
+
+- `apps/retrieval/providers.py` carried `ruff format` drift: a three-line wrapped assignment that
+  fits in the 100-character limit. A repository-wide `ruff format apps` collapsed it to one line.
+  Formatting only, no behavior change.
+- `apps/builder/tests/test_api.py` produced 3 `mypy` errors from one heterogeneous dict literal.
+  `query` mixed `str` and `int` values, so mypy inferred `dict[str, object]`; `Mapping` is covariant
+  in its value type, so `object` cannot satisfy django-stubs' `Mapping[str, str | bytes | int | …]`
+  on `Client.get`. The runtime values were always valid, so this was an inference gap, not a defect.
+  Annotating `query: dict[str, str | int]` resolves all three reports at the single root cause.
+
+### Final gate run
+
+| Gate | Result |
+| --- | --- |
+| `ruff format --check apps` | 458 files already formatted |
+| `ruff check apps` | All checks passed |
+| `mypy apps` | **Success: no issues found in 458 source files** |
+| `manage.py check` | no issues (0 silenced) |
+| `makemigrations --check --dry-run` | No changes detected |
+| `compileall apps config` | exit 0 |
+| `pytest` (SQLite) | **1187 passed, 61 skipped** |
+| `npm run typecheck` | passed |
+| `npm test` | 12 files / **50 passed** |
+| `npm run build` | bundle produced |
+
+The mandatory browser gate's rendered UX rows remain the only outstanding verification for this
+task.

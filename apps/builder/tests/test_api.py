@@ -731,7 +731,7 @@ def test_model_profile_options_and_uuid_only_draft_are_author_scoped_and_redacte
         created_by="platform-admin",
     )
     options_url = reverse("builder_api:model_profile_options")
-    query = {
+    query: dict[str, str | int] = {
         "organization": bf.org.slug,
         "project_id": bf.project.pk,
         "scenario_id": bf.scenario.pk,
