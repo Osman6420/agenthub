@@ -431,6 +431,35 @@ identity; the deprecated retrieval picker is gone (stored pins retained as data)
 staged preparation defaults on, because nothing happens between publishing a set version and
 preparing its index and the result is staged, never served.
 
+The `retrieval-diagnostics-and-scenario-evidence` task closed the fallout of moving query-time
+retrieval to the scenario's `retrieve` node. Implemented and automatically verified (SQLite 1298
+passed/61 skipped; PostgreSQL evaluations/console/orchestration/retrieval/ingestion 579 passed/2
+skipped; ruff and mypy on 471 files clean); the browser gate remains open, so it is **not
+`Verified`**. **No migration; no new dependency; no frontend change.**
+**Index diagnostics, not retrieval configuration** — a document set no longer owns a retrieval
+profile, so the two surfaces that still run a query take fixed settings the server owns:
+`apps/console/retrieval_diagnostics.py` reads them from the authoring form's own defaults
+(`profile_defaults(RETRIEVAL_PROFILE)` — hybrid, top_k 5), so the two cannot drift. The transient
+one-off probe takes a `profile_body` and persists nothing; the persisted batch evaluation pins a
+per-tenant immutable `sys_diag_retrieval` artifact, resolved by checksum when a run starts and
+reused rather than republished. Both surfaces state the fixed settings on screen. Three couplings
+were removed: the probe's mandatory `built_index_version.retrieval_profile`, the target list's
+`retrieval_profile__isnull=False` filter (which silently hid every newly built index and emptied
+the control with no reason — the list now states why it is empty and the target value carries no
+artifact primary key), and `create_retrieval_evaluation`'s requirement that the profile be the one
+pinned on the index (retrieval settings apply at query time and never shaped the build; tenant and
+type are still enforced and the run's provenance still records the exact ref and checksum).
+**Scenario retrieval evidence** — `execute_release_input` now returns `metadata["retrieval"]`,
+numeric-only chunk pointers projected by `rag_steps.retrieval_pointers_from_state` (ints/floats
+only, `bool` rejected), and `ask_scenario_once` pairs them with `output["sources"]` by position,
+dropping the pointers when the lengths disagree rather than guessing. Chunk **text** is gated
+twice: `SCENARIO_TEST` to ask, `DOCUMENT_SET_CONTENT_READ` on the owning set to see text, resolved
+by `resolve_chunk_text` from the vector store and never reaching it when the capability is absent.
+Text is never stored in the session or the run projection — only pointers are, and text is
+resolved at render time against the authorization held then. The gateway contract is unchanged:
+document text still never leaves through the API. Both one-off probes are now audited with actor,
+target, decision and chunk **count** only.
+
 Review the final diff for scope, layering, compatibility, authorization, privacy, failure modes, concurrency, operability, and accidental files. Record every executed command and result in task verification. State checks that could not run and the risk this leaves; never infer success from an agent assertion.
 
 ## Recommended enforcement (not implemented)

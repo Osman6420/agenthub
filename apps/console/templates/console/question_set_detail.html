@@ -30,8 +30,8 @@
 {% if versions %}
 <div class="relationship-grid">
   <section class="card form-card">
-    <h2>Retrieval değerlendirmesi</h2><p class="muted">Exact document-set version, index ve retrieval profile üzerinde hit@k, recall@k ve MRR üretir.</p>
-    {% if retrieval_targets_available %}<form method="post" action="{% url 'console:question_set_start_retrieval' question_set.public_id %}">{% csrf_token %}{{ retrieval_form.as_p }}<button type="submit">Batch başlat</button></form>{% else %}<p class="warning-box">Yetkili, hazır exact retrieval hedefi yok.</p>{% endif %}
+    <h2>Retrieval değerlendirmesi</h2><p class="muted">Exact doküman seti sürümü ve indeksi üzerinde hit@k, recall@k ve MRR üretir. Sabit tanı ayarıyla çalışır (hibrit, en iyi 5) ve bu ayar koşuya değişmez bir artifact olarak pinlenir; senaryolar kendi arama profillerini kullanır.</p>
+    {% if retrieval_targets_available %}<form method="post" action="{% url 'console:question_set_start_retrieval' question_set.public_id %}">{% csrf_token %}{{ retrieval_form.as_p }}<button type="submit">Batch başlat</button></form>{% else %}<p class="warning-box">{{ retrieval_targets_reason }}</p>{% endif %}
   </section>
   <section class="card form-card">
     <h2>Cevap değerlendirmesi</h2><p class="muted">Exact candidate/active release üzerinde deterministik assertion'ları çalıştırır.</p>

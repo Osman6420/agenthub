@@ -402,7 +402,7 @@ def test_one_off_retrieval_never_mutates_question_or_aggregate_data(
         user=user,
         document_set_version=set_version,
         index_version=index,
-        retrieval_profile=profile,
+        profile_body=profile.body,
         question="What is the policy?",
     )
     assert result.chunks[0].text == "Private answer"

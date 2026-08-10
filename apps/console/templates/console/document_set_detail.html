@@ -41,7 +41,7 @@
 
 {% if can_evaluate and active_index %}
 <section class="card form-card">
-  <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>Retrieval'a sor</h2><p class="muted">Exact aktif set/index/profile üzerinde çalışır; soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>
+  <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>İndeksi dene</h2><p class="muted">Aktif sürümün indeksinin çalışıp çalışmadığını gösterir: sabit tanı ayarıyla (hibrit, en iyi 5) sorgular. Senaryonuz kendi arama profilini kullanır, dolayısıyla bu sonuç senaryonun davranışı değildir. Soru seti veya aggregate metrik oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>
   <form method="post" action="{% url 'console:document_set_ask' set.public_id %}">{% csrf_token %}<label for="document-one-off-question">Soru</label><textarea id="document-one-off-question" name="question" rows="3" maxlength="4000" required></textarea><button type="submit">Retrieval çalıştır</button></form>
 </section>
 {% endif %}

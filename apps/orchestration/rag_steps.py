@@ -26,6 +26,43 @@ DEFAULT_FALLBACK_ANSWER = (
 
 CITATION_FIELDS = ("source_id", "source_uri", "title", "score")
 
+#: Numeric-only chunk provenance. An operator console can resolve a chunk's text from the
+#: vector store with these, under its own document-content authorization -- so they must stay
+#: free of any field that could carry text. Every value is validated as a number below.
+POINTER_FIELDS = (
+    "document_version_id",
+    "document_set_version_id",
+    "index_version_id",
+    "ordinal",
+    "score",
+    "vector_score",
+    "keyword_score",
+    "fused_score",
+)
+
+
+def retrieval_pointers_from_state(state: dict[str, Any]) -> list[dict[str, float | int]]:
+    """Project retrieved chunks down to numeric evidence pointers.
+
+    Strings in a persisted run state are already redacted, and none are carried here anyway:
+    a pointer says *which* chunk was used, never what it said.
+    """
+
+    retrieval = state.get("retrieval") if isinstance(state, dict) else None
+    raw = retrieval.get("chunks") if isinstance(retrieval, dict) else None
+    pointers: list[dict[str, float | int]] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        pointer: dict[str, float | int] = {}
+        for field in POINTER_FIELDS:
+            value = item.get(field)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            pointer[field] = value
+        pointers.append(pointer)
+    return pointers
+
 
 def citations_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Project retrieved chunks down to citation provenance.

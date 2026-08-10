@@ -81,6 +81,46 @@ def test_citations_tolerate_missing_or_malformed_state() -> None:
     assert rag_steps.citations_from_state({"retrieval": {"chunks": ["nope"]}}) == []
 
 
+# --- evidence pointers ---------------------------------------------------------------------
+
+
+def test_pointers_carry_numbers_only() -> None:
+    """An operator console resolves chunk text from these; they must carry no text to leak."""
+
+    state = {
+        "retrieval": {
+            "chunks": [
+                {
+                    "text": "confidential contract clause",
+                    "source_uri": "u1",
+                    "document_version_id": 3,
+                    "index_version_id": 7,
+                    "ordinal": 2,
+                    "score": 0.9,
+                }
+            ]
+        }
+    }
+    assert rag_steps.retrieval_pointers_from_state(state) == [
+        {"document_version_id": 3, "index_version_id": 7, "ordinal": 2, "score": 0.9}
+    ]
+
+
+def test_pointers_reject_non_numeric_and_boolean_values() -> None:
+    state = {
+        "retrieval": {
+            "chunks": [{"document_version_id": "3", "ordinal": True, "index_version_id": None}]
+        }
+    }
+    assert rag_steps.retrieval_pointers_from_state(state) == [{}]
+
+
+def test_pointers_tolerate_missing_or_malformed_state() -> None:
+    assert rag_steps.retrieval_pointers_from_state({}) == []
+    assert rag_steps.retrieval_pointers_from_state({"retrieval": {"chunks": "nope"}}) == []
+    assert rag_steps.retrieval_pointers_from_state({"retrieval": {"chunks": ["nope"]}}) == []
+
+
 # --- grounding gate ------------------------------------------------------------------------
 
 

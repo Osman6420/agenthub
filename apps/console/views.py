@@ -79,6 +79,10 @@ from apps.console.forms import (
     RestSourceForm,
     ScenarioForm,
 )
+from apps.console.retrieval_diagnostics import (
+    diagnostic_retrieval_body,
+    diagnostic_retrieval_profile,
+)
 from apps.console.scenario_defaults import (
     default_contract_body,
     prepare_scenario_contract_defaults,
@@ -131,6 +135,7 @@ from apps.evaluations.question_services import (
     create_retrieval_evaluation,
     publish_question_set,
     request_evaluation_cancellation,
+    resolve_chunk_text,
     update_question_set_draft,
 )
 from apps.evaluations.services import EvalError, run_eval, summarize_eval_run
@@ -1597,6 +1602,37 @@ def _ai_authoring_preflight() -> dict[str, object]:
     }
 
 
+def _resolved_ask_chunks(
+    request: HttpRequest, scenario: Scenario, stored: object
+) -> list[dict[str, object]]:
+    """Attach chunk text to stored evidence pointers, when this operator may read it.
+
+    The pointers were stored; the text was not. Resolving here means the text is governed by
+    the authorization held at render time, and a stale session can never hand out content the
+    operator has since lost the right to see.
+    """
+
+    rows: list[dict[str, object]] = []
+    for item in stored if isinstance(stored, list) else []:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "title": item.get("title", ""),
+                "score": item.get("score", 0),
+                "source_uri": item.get("source_uri", ""),
+                "text": resolve_chunk_text(
+                    user=request.user,
+                    organization_id=scenario.organization_id,
+                    index_version_id=item.get("index_version_id"),
+                    document_version_id=item.get("document_version_id"),
+                    ordinal=item.get("ordinal"),
+                ),
+            }
+        )
+    return rows
+
+
 @login_required
 def scenario_detail(
     request: HttpRequest, pk: int | None = None, public_id: object = None
@@ -1710,6 +1746,8 @@ def scenario_detail(
         if isinstance(stored_ask, dict) and stored_ask.get("scenario") == str(scenario.public_id)
         else None
     )
+    if ask_result is not None:
+        ask_result["chunks"] = _resolved_ask_chunks(request, scenario, ask_result.get("chunks"))
     release_rows = [
         {
             "release": release,
@@ -6849,11 +6887,13 @@ def _question_version_choices(question_set: QuestionSet) -> list[tuple[str, str]
 def _retrieval_target_choices(
     request: HttpRequest, organization: Organization
 ) -> list[tuple[str, str]]:
+    # A ready index is the only requirement. Filtering on ``retrieval_profile`` used to hide
+    # every index built after query-time retrieval moved to the scenario's Retrieve node, which
+    # emptied this list with no explanation. The diagnostic profile is resolved server-side when
+    # the run starts, so the artifact's primary key never travels through the client.
     choices: list[tuple[str, str]] = []
     indexes = (
-        IndexVersion.objects.select_related(
-            "document_set_version__document_set", "retrieval_profile"
-        )
+        IndexVersion.objects.select_related("document_set_version__document_set")
         .filter(
             organization=organization,
             document_set_version__status__in=[
@@ -6862,14 +6902,12 @@ def _retrieval_target_choices(
             ],
             status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
             store_ready=True,
-            retrieval_profile__isnull=False,
         )
         .order_by("document_set_version__document_set__name", "-version")[:100]
     )
     for index in indexes:
         set_version = index.document_set_version
-        profile = index.retrieval_profile
-        if set_version is None or profile is None:
+        if set_version is None:
             continue
         if not authorize_operator(
             user=request.user,
@@ -6880,14 +6918,37 @@ def _retrieval_target_choices(
             continue
         choices.append(
             (
-                f"{set_version.pk}:{index.pk}:{profile.pk}",
+                f"{set_version.pk}:{index.pk}",
                 (
                     f"{set_version.document_set.name} · set v{set_version.version} · "
-                    f"index v{index.version} ({index.status}) · {profile.ref}"
+                    f"index v{index.version} ({index.status})"
                 ),
             )
         )
     return choices
+
+
+def _retrieval_target_absence_reason(organization: Organization) -> str:
+    """Say why the target list is empty. An absent control has to explain itself."""
+
+    ready = IndexVersion.objects.filter(
+        organization=organization,
+        document_set_version__status__in=[
+            DocumentSetVersionStatus.PROMOTABLE,
+            DocumentSetVersionStatus.ACTIVE,
+        ],
+        status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
+        store_ready=True,
+    ).exists()
+    if ready:
+        return (
+            "Bu organizasyonda hazır indeks var, ancak hiçbiri işlem yetkiniz olan bir "
+            "doküman setine ait değil."
+        )
+    return (
+        "Henüz hazır bir indeks yok. Bir doküman seti sürümü yayımlayıp staged indeksini "
+        "hazırlayın."
+    )
 
 
 def _answer_target_choices(
@@ -7010,6 +7071,11 @@ def question_set_detail(request: HttpRequest, public_id: uuid.UUID) -> HttpRespo
             ),
             "can_write": can_manage_question_sets(request.user, question_set.organization),
             "retrieval_targets_available": bool(retrieval_choices),
+            "retrieval_targets_reason": (
+                ""
+                if retrieval_choices
+                else _retrieval_target_absence_reason(question_set.organization)
+            ),
             "answer_targets_available": bool(answer_choices),
             "runs": QuestionEvaluationRun.objects.filter(
                 organization=question_set.organization,
@@ -7087,9 +7153,7 @@ def question_set_start_retrieval(request: HttpRequest, public_id: uuid.UUID) -> 
         messages.error(request, "Retrieval değerlendirme hedefi geçerli değil.")
         return redirect("console:question_set_detail", public_id=question_set.public_id)
     try:
-        set_version_id, index_id, profile_id = (
-            int(value) for value in form.cleaned_data["target"].split(":")
-        )
+        set_version_id, index_id = (int(value) for value in form.cleaned_data["target"].split(":"))
         version = QuestionSetVersion.objects.get(
             public_id=form.cleaned_data["question_set_version"],
             question_set=question_set,
@@ -7099,7 +7163,11 @@ def question_set_start_retrieval(request: HttpRequest, public_id: uuid.UUID) -> 
             pk=set_version_id, organization=question_set.organization
         )
         index = IndexVersion.objects.get(pk=index_id, organization=question_set.organization)
-        profile = ArtifactVersion.objects.get(pk=profile_id, organization=question_set.organization)
+        # A persisted report must point at a checksummed body, so the diagnostic settings are
+        # pinned as an immutable artifact rather than read from code at scoring time.
+        profile = diagnostic_retrieval_profile(
+            organization=question_set.organization, actor=str(request.user.pk)
+        )
         run, created = create_retrieval_evaluation(
             user=request.user,
             question_set_version=version,
@@ -7114,7 +7182,6 @@ def question_set_start_retrieval(request: HttpRequest, public_id: uuid.UUID) -> 
         QuestionSetVersion.DoesNotExist,
         DocumentSetVersion.DoesNotExist,
         IndexVersion.DoesNotExist,
-        ArtifactVersion.DoesNotExist,
         QuestionEvaluationError,
     ) as exc:
         raise Http404 from exc
@@ -7273,23 +7340,32 @@ def document_set_ask(request: HttpRequest, public_id: object) -> HttpResponse:
         messages.error(request, "Soru geçerli değil.")
         return redirect("console:document_set_detail_public", public_id=document_set.public_id)
     set_version = (
-        document_set.versions.select_related("built_index_version__retrieval_profile")
+        document_set.versions.select_related("built_index_version")
         .filter(status=DocumentSetVersionStatus.ACTIVE)
         .order_by("-version")
         .first()
     )
     index = set_version.built_index_version if set_version else None
-    profile = index.retrieval_profile if index else None
-    if set_version is None or index is None or profile is None:
-        messages.error(request, "Aktif exact index/retrieval profili bulunamadı.")
+    # The probe no longer needs a retrieval profile: query-time retrieval belongs to the
+    # scenario's Retrieve node, and this asks whether the *index* works. What remains are the
+    # two real preconditions, each named so the operator knows which one to fix.
+    if set_version is None:
+        messages.error(request, "Bu doküman setinin aktif bir sürümü yok.")
+        return redirect("console:document_set_detail_public", public_id=document_set.public_id)
+    if index is None or not index.store_ready:
+        messages.error(
+            request,
+            "Aktif sürümün hazır bir indeksi yok. Önce staged indeks oluşturup yayına alın.",
+        )
         return redirect("console:document_set_detail_public", public_id=document_set.public_id)
     try:
         result = ask_document_set_once(
             user=request.user,
             document_set_version=set_version,
             index_version=index,
-            retrieval_profile=profile,
+            profile_body=diagnostic_retrieval_body(),
             question=form.cleaned_data["question"],
+            request_id=_request_id(request),
         )
     except QuestionEvaluationError as exc:
         raise Http404 from exc
@@ -7324,6 +7400,7 @@ def scenario_ask(request: HttpRequest, public_id: object) -> HttpResponse:
             user=request.user,
             release=release,
             question=form.cleaned_data["question"],
+            request_id=_request_id(request),
         )
     except QuestionEvaluationError as exc:
         if exc.code == "MODEL_PROVIDER_NOT_CONFIGURED":
@@ -7342,6 +7419,19 @@ def scenario_ask(request: HttpRequest, public_id: object) -> HttpResponse:
         "scenario": str(scenario.public_id),
         "question": form.cleaned_data["question"],
         "answer": result.answer,
-        "chunks": [{"title": chunk.title, "score": chunk.score} for chunk in (result.chunks or [])],
+        # Provenance and numeric pointers only. Chunk text is resolved when the answer is
+        # rendered, against the authorization the operator holds *then* -- a session must not
+        # become a second, unexpiring copy of document content.
+        "chunks": [
+            {
+                "title": chunk.title,
+                "score": chunk.score,
+                "source_uri": chunk.source_uri,
+                "index_version_id": chunk.index_version_id,
+                "document_version_id": chunk.document_version_id,
+                "ordinal": chunk.ordinal,
+            }
+            for chunk in (result.chunks or [])
+        ],
     }
     return redirect(f"{reverse('console:scenario_detail_public', args=[scenario.public_id])}#ask")

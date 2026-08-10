@@ -14,6 +14,7 @@ from apps.evaluations.models import EvalCaseResult, EvalRun, EvalStatus
 from apps.gateway.execution_context import issue_execution_context
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer, ConsumerProtocol
+from apps.orchestration.rag_steps import retrieval_pointers_from_state
 from apps.orchestration.runtime import RunResult
 from apps.releases.models import ScenarioRelease
 from apps.releases.services import get_artifact_body_for_role, get_manifest_role
@@ -113,6 +114,9 @@ def _result_from_run(run: Run) -> RunResult:
             "decisions": list(agent_meta.get("decisions", [])),
             "steps": run.step_count,
             "escalation": agent_meta.get("escalation"),
+            # Numeric-only chunk provenance, so an operator surface can show *what the run
+            # retrieved* next to the answer it produced. No chunk text travels here.
+            "retrieval": retrieval_pointers_from_state(run.redacted_state),
         },
     )
 

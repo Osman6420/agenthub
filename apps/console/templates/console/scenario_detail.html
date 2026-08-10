@@ -102,7 +102,17 @@
   <div class="relationship-card">
     <div class="relationship-head"><div><strong>Cevap</strong><p class="muted">“{{ ask_result.question }}”</p></div></div>
     <div class="relationship-body"><div>{% if ask_result.answer %}<p>{{ ask_result.answer }}</p>{% else %}<p class="muted">Cevap üretilmedi.</p>{% endif %}
-      {% for chunk in ask_result.chunks %}<p class="muted mono">#{{ forloop.counter }} {{ chunk.title }} · score={{ chunk.score }}</p>{% endfor %}</div></div>
+      {% if ask_result.chunks %}
+      <details><summary>Bu cevap neye dayandı? ({{ ask_result.chunks|length }} parça)</summary>
+        {% for chunk in ask_result.chunks %}
+        <div class="relationship-card">
+          <div class="relationship-head"><strong>#{{ forloop.counter }} {{ chunk.title|default:"(başlıksız)" }}</strong><span class="mono">score={{ chunk.score }}</span></div>
+          {% if chunk.source_uri %}<p class="muted mono">{{ chunk.source_uri }}</p>{% endif %}
+          {% if chunk.text %}<p>{{ chunk.text }}</p>{% else %}<p class="muted">Parça içeriğini görmek için doküman içeriği okuma yetkisi gerekir.</p>{% endif %}
+        </div>
+        {% endfor %}
+      </details>
+      {% elif ask_result.answer %}<p class="muted">Bu cevap için hiçbir kaynak getirilmedi.</p>{% endif %}</div></div>
   </div>
   {% endif %}
   <form method="post" action="{% url 'console:scenario_ask' scenario.public_id %}">{% csrf_token %}<label for="scenario-one-off-question">Soru</label><textarea id="scenario-one-off-question" name="question" rows="3" maxlength="4000" required>{{ ask_result.question|default:"" }}</textarea><button type="submit">{% if ask_result %}Tekrar sor{% else %}Sor{% endif %}</button></form>

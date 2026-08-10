@@ -34,6 +34,7 @@ from apps.evaluations.models import (
 from apps.evaluations.services import EvalError, execute_release_input
 from apps.identity.authorization import Capability, authorize
 from apps.ingestion.models import IndexStatus, IndexVersion
+from apps.ingestion.vector_store import VectorStoreError, exact_chunk_text
 from apps.observability.metrics import (
     QUESTION_EVAL_CASES,
     QUESTION_EVAL_DURATION,
@@ -427,10 +428,14 @@ def create_retrieval_evaluation(
         or not index_version.store_ready
     ):
         raise QuestionEvaluationError("INDEX_VERSION_NOT_EVALUABLE")
+    # Tenant and type are the safety checks. The profile no longer has to be the one pinned on
+    # the index: retrieval settings are applied at query time and never shaped the build, so
+    # requiring a match only tied this to an ownership model the Retrieve node has taken over.
+    # The exact profile ref and checksum are still recorded in the run's provenance below, so a
+    # report always states what it measured with.
     if (
         retrieval_profile.organization_id != organization.pk
         or retrieval_profile.type != ArtifactType.RETRIEVAL_PROFILE
-        or index_version.retrieval_profile_id != retrieval_profile.pk
     ):
         raise QuestionEvaluationError("RETRIEVAL_PROFILE_NOT_EVALUABLE")
     key = _bounded_string(idempotency_key, maximum=128, code="EVALUATION_IDEMPOTENCY_KEY_INVALID")
@@ -1029,14 +1034,60 @@ def request_evaluation_cancellation(
     return locked
 
 
+def _audit_probe(
+    *,
+    action: str,
+    organization_id: int,
+    actor_id: str,
+    resource_type: str,
+    resource_id: str,
+    allowed: bool,
+    request_id: str,
+    chunk_count: int | None = None,
+    index_version_id: int | None = None,
+) -> None:
+    """Record an operator probe.
+
+    A probe can surface document chunks to its caller, so who asked, against what, and whether
+    it was allowed belong in the audit trail. The question, the answer and the chunk contents do
+    not: the count is enough to see that content was exposed.
+    """
+
+    after: dict[str, Any] = {}
+    if chunk_count is not None:
+        after["chunk_count"] = chunk_count
+    if index_version_id is not None:
+        after["index_version_id"] = index_version_id
+    record_event(
+        actor_type="user",
+        actor_id=actor_id,
+        action=action,
+        outcome="success" if allowed else "deny",
+        organization_id=organization_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        reason="allowed" if allowed else "authorization_denied",
+        request_id=request_id,
+        after=after or None,
+    )
+
+
 def ask_document_set_once(
     *,
     user: Any,
     document_set_version: DocumentSetVersion,
     index_version: IndexVersion,
-    retrieval_profile: ArtifactVersion,
+    profile_body: dict[str, Any],
     question: str,
+    request_id: str = "",
 ) -> OneOffResult:
+    """Probe one index with a query. The caller owns the settings; nothing is persisted.
+
+    Takes a body rather than an artifact because the provider was only ever given a body, and
+    because a document set no longer owns a retrieval profile -- query-time retrieval belongs
+    to the scenario's ``retrieve`` node. This probe answers whether the *index* works.
+    """
+
     decision = authorize(
         user=user,
         capability=Capability.DOCUMENT_SET_OPERATIONS_MANAGE,
@@ -1044,20 +1095,132 @@ def ask_document_set_once(
         document_set=document_set_version.document_set,
     )
     if not decision.allowed:
+        _audit_probe(
+            action="evaluation.document_set.probe",
+            organization_id=document_set_version.organization_id,
+            actor_id=str(user.pk),
+            resource_type="document_set_version",
+            resource_id=str(document_set_version.pk),
+            allowed=False,
+            request_id=request_id,
+        )
         raise QuestionEvaluationError("RETRIEVAL_EVALUATION_AUTHORIZATION_DENIED")
     query = _bounded_string(question, maximum=MAX_QUESTION_CHARS, code="QUESTION_TEXT_INVALID")
     chunks = get_retrieval_provider().retrieve(
         query=query,
-        profile=retrieval_profile.body,
+        profile=profile_body,
         organization_id=document_set_version.organization_id,
         index_versions=[index_version.pk],
         document_set_version_ids=[document_set_version.pk],
         operator_test=True,
     )
+    _audit_probe(
+        action="evaluation.document_set.probe",
+        organization_id=document_set_version.organization_id,
+        actor_id=str(user.pk),
+        resource_type="document_set_version",
+        resource_id=str(document_set_version.pk),
+        allowed=True,
+        request_id=request_id,
+        chunk_count=len(chunks),
+        index_version_id=index_version.pk,
+    )
     return OneOffResult(answer="", chunks=chunks)
 
 
-def ask_scenario_once(*, user: Any, release: ScenarioRelease, question: str) -> OneOffResult:
+def scenario_retrieval_evidence(*, result: Any) -> list[RetrievedChunk]:
+    """Pair a run's citations with its numeric chunk pointers. Carries no document text.
+
+    ``sources`` and the state's chunk list are produced one-to-one by the same projection, so
+    they align by position. If they ever do not, the pointers are dropped rather than guessed:
+    attributing the wrong chunk to a source would be worse than showing no pointer at all.
+    """
+
+    sources = _sources(result.output)
+    raw = result.metadata.get("retrieval") if isinstance(result.metadata, dict) else None
+    pointers = raw if isinstance(raw, list) else []
+    if not sources:
+        return []
+    aligned: list[Any] = pointers if len(pointers) == len(sources) else [{}] * len(sources)
+    chunks: list[RetrievedChunk] = []
+    for source, pointer in zip(sources[:MAX_EVIDENCE_CHUNKS], aligned, strict=False):
+        if not isinstance(source, dict):
+            continue
+        safe = pointer if isinstance(pointer, dict) else {}
+        chunks.append(
+            RetrievedChunk(
+                text="",
+                source_id=str(source.get("source_id") or ""),
+                source_uri=str(source.get("source_uri") or ""),
+                title=str(source.get("title") or ""),
+                score=_as_float(source.get("score")),
+                document_version_id=_as_int(safe.get("document_version_id")),
+                index_version_id=_as_int(safe.get("index_version_id")),
+                ordinal=_as_int(safe.get("ordinal")),
+            )
+        )
+    return chunks
+
+
+def resolve_chunk_text(
+    *,
+    user: Any,
+    organization_id: int,
+    index_version_id: Any,
+    document_version_id: Any,
+    ordinal: Any,
+) -> str:
+    """Resolve one chunk's text, or "" when the operator may not read document content.
+
+    Asking a scenario a question needs ``SCENARIO_TEST``. Reading what a document actually said
+    is a document-plane right, checked separately against the set that owns the index, so a
+    scenario editor without it sees where an answer came from and not what the source said.
+
+    Text is never carried in a session or a run projection; it is resolved here, against the
+    live authorization, each time it is displayed.
+    """
+
+    index_pk = _as_int(index_version_id)
+    document_pk = _as_int(document_version_id)
+    chunk_ordinal = _as_int(ordinal)
+    if index_pk is None or document_pk is None or chunk_ordinal is None:
+        return ""
+    index_version = (
+        IndexVersion.objects.select_related("document_set_version__document_set")
+        .filter(pk=index_pk, organization_id=organization_id)
+        .first()
+    )
+    set_version = index_version.document_set_version if index_version else None
+    if index_version is None or set_version is None:
+        return ""
+    if not authorize(
+        user=user,
+        capability=Capability.DOCUMENT_SET_CONTENT_READ,
+        organization=index_version.organization,
+        document_set=set_version.document_set,
+    ).allowed:
+        return ""
+    try:
+        return exact_chunk_text(index_version, document_pk, chunk_ordinal) or ""
+    except VectorStoreError:
+        return ""
+
+
+def _as_float(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def ask_scenario_once(
+    *, user: Any, release: ScenarioRelease, question: str, request_id: str = ""
+) -> OneOffResult:
     decision = authorize(
         user=user,
         capability=Capability.SCENARIO_TEST,
@@ -1066,6 +1229,15 @@ def ask_scenario_once(*, user: Any, release: ScenarioRelease, question: str) -> 
         scenario=release.scenario,
     )
     if not decision.allowed:
+        _audit_probe(
+            action="evaluation.scenario.probe",
+            organization_id=release.organization_id,
+            actor_id=str(user.pk),
+            resource_type="scenario_release",
+            resource_id=str(release.pk),
+            allowed=False,
+            request_id=request_id,
+        )
         raise QuestionEvaluationError("ANSWER_EVALUATION_AUTHORIZATION_DENIED")
     query = _bounded_string(question, maximum=MAX_QUESTION_CHARS, code="QUESTION_TEXT_INVALID")
     require_real_model_provider(release)
@@ -1077,7 +1249,18 @@ def ask_scenario_once(*, user: Any, release: ScenarioRelease, question: str) -> 
     answer = _answer_text(result.output)
     if len(answer) > MAX_ANSWER_CHARS:
         raise QuestionEvaluationError("ANSWER_LIMIT_EXCEEDED")
-    return OneOffResult(answer=answer, chunks=[])
+    chunks = scenario_retrieval_evidence(result=result)
+    _audit_probe(
+        action="evaluation.scenario.probe",
+        organization_id=release.organization_id,
+        actor_id=str(user.pk),
+        resource_type="scenario_release",
+        resource_id=str(release.pk),
+        allowed=True,
+        request_id=request_id,
+        chunk_count=len(chunks),
+    )
+    return OneOffResult(answer=answer, chunks=chunks)
 
 
 @transaction.atomic
