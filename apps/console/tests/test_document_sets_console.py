@@ -275,3 +275,95 @@ def test_another_tenant_cannot_branch_a_version(client: Client) -> None:
     response = client.post(reverse("console:document_set_version_branch", args=[version.id]))
 
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_no_jump_link_impersonates_the_action_it_scrolls_to(client: Client) -> None:
+    """Step 5 offered an anchor labelled exactly like the submit button below it.
+
+    Pressing it scrolled to a form that was already on screen, so nothing moved and the
+    control read as broken — which is how a working build button was reported dead twice.
+    """
+
+    import re
+
+    org = Organization.objects.create(slug="jump-org", name="Jump")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    version = create_document_set_version(document_set=document_set, actor="seed")
+    upload_document(
+        organization=org,
+        logical_id="doc-1",
+        title="Doc",
+        mime_type="text/plain",
+        data=b"x",
+        actor="seed",
+        document_set_version=version,
+    )
+    client.force_login(_member("owner", org, Role.PROJECT_OWNER))
+    client.post(reverse("console:document_set_version_publish", args=[version.id]))
+
+    body = client.get(
+        reverse("console:document_set_detail_public", args=[document_set.public_id])
+    ).content.decode()
+
+    submit_labels = {
+        re.sub(r"<[^>]+>", "", match).strip()
+        for match in re.findall(r'<button[^>]*type="submit"[^>]*>(.*?)</button>', body, re.S)
+    }
+    jump_labels = {
+        re.sub(r"<[^>]+>", "", match).replace("↓", "").strip()
+        for match in re.findall(r'<a[^>]*href="#[^"]*"[^>]*>(.*?)</a>', body, re.S)
+    }
+
+    assert "Staged indeks oluştur" in submit_labels, "the real action must still be a submit"
+    assert not (submit_labels & jump_labels), (
+        f"a jump link reuses an action label: {sorted(submit_labels & jump_labels)}"
+    )
+
+
+@pytest.mark.django_db
+def test_the_build_form_holds_no_control_that_can_block_its_own_submit(client: Client) -> None:
+    """The staged-index button did nothing at all, twice, and sent no request.
+
+    The profile editors are included *inside* the build form. Their controls carry no
+    ``name`` — document-profiles.js reads them and posts JSON separately — so they can never
+    take part in a submission. Four of them were ``required``. An empty required control
+    fails HTML5 constraint validation, and because they sit inside a collapsed <details> the
+    browser cannot focus one to report it: submission is refused silently, leaving only
+    "An invalid form control with name='' is not focusable" in the console.
+    """
+
+    import re
+
+    org = Organization.objects.create(slug="submit-org", name="Submit")
+    document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    version = create_document_set_version(document_set=document_set, actor="seed")
+    upload_document(
+        organization=org,
+        logical_id="doc-1",
+        title="Doc",
+        mime_type="text/plain",
+        data=b"x",
+        actor="seed",
+        document_set_version=version,
+    )
+    client.force_login(_member("owner", org, Role.PROJECT_OWNER))
+    client.post(reverse("console:document_set_version_publish", args=[version.id]))
+
+    body = client.get(
+        reverse("console:document_set_detail_public", args=[document_set.public_id])
+    ).content.decode()
+
+    action = reverse("console:document_set_build_index", args=[version.id])
+    start = body.index(f'action="{action}"')
+    form_html = body[start : body.index("</form>", start)]
+    assert "Staged indeks oluştur" in form_html, "the build form should still carry its submit"
+
+    controls = re.findall(r"<(?:input|select|textarea)\b[^>]*>", form_html)
+    unsubmittable_required = [
+        control for control in controls if "required" in control and "name=" not in control
+    ]
+    assert not unsubmittable_required, (
+        "a control with no name can never be submitted, so it must never be required — "
+        f"these would block the build form: {unsubmittable_required}"
+    )

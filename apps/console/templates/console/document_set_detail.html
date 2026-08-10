@@ -53,7 +53,7 @@
 
 <div class="card" id="documents">
   <div class="section-heading"><div><h2>Uçtan uca yaşam döngüsü</h2><p class="muted">Her aşama mevcut durumu, engeli ve yetkiniz varsa yapılacak işlemi gösterir.</p></div></div>
-  {% for step in lifecycle_steps %}<div class="access-row"><div><strong>{{ forloop.counter }}. {{ step.label }}</strong><p class="muted">{{ step.detail }}</p></div>{% if step.complete %}<span class="access-ok">Hazır</span>{% else %}<span class="access-missing">Bekliyor</span>{% endif %}{% if step.action %}{% if step.action.type == 'post' %}<form class="inline" method="post" action="{{ step.action.url }}">{% csrf_token %}<button class="button primary" type="submit">{{ step.action.label }}</button></form>{% else %}<a class="button secondary" href="{{ step.action.href }}">{{ step.action.label }}</a>{% endif %}{% else %}<span></span>{% endif %}</div>{% endfor %}
+  {% for step in lifecycle_steps %}<div class="access-row"><div><strong>{{ forloop.counter }}. {{ step.label }}</strong><p class="muted">{{ step.detail }}</p></div>{% if step.complete %}<span class="access-ok">Hazır</span>{% else %}<span class="access-missing">Bekliyor</span>{% endif %}{% if step.action %}{% if step.action.type == 'post' %}<form class="inline" method="post" action="{{ step.action.url }}">{% csrf_token %}<button class="button primary" type="submit">{{ step.action.label }}</button></form>{% else %}<a class="step-jump" href="{{ step.action.href }}">{{ step.action.label }} ↓</a>{% endif %}{% else %}<span></span>{% endif %}</div>{% endfor %}
 </div>
 
 {% if can_write %}

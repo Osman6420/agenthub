@@ -4693,6 +4693,9 @@ def document_set_detail(
     # Each incomplete step the operator is authorized for carries an actionable control
     # (Scope F): a one-click POST where it is unambiguous (publish / promote), otherwise a
     # link to the on-page section that performs it (upload / build).
+    # An anchor is navigation, not the action. Labelling it like the submit button it
+    # scrolls to made an operator press it and see nothing happen — the page simply did not
+    # move, because the form was already in view. Anchor labels say where they go.
     _anchor = lambda href, label: {"type": "anchor", "href": href, "label": label}  # noqa: E731
     lifecycle_steps = [
         {
@@ -4701,7 +4704,7 @@ def document_set_detail(
             "detail": f"{len(latest_members)} doküman sürümü"
             if latest_members
             else "Henüz içerik yok",
-            "action": _anchor("#uploads", "Dosya yükle")
+            "action": _anchor("#uploads", "Yükleme bölümüne git")
             if can_write and not latest_members
             else None,
         },
@@ -4709,7 +4712,7 @@ def document_set_detail(
             "label": "Ayrıştırıldı / normalize edildi",
             "complete": parsed_complete,
             "detail": f"{parsed_count}/{len(latest_members)} hazır",
-            "action": _anchor("#build", "İndeks oluştur (ayrıştırmayı çalıştırır)")
+            "action": _anchor("#build", "İndeks ayarlarına git")
             if can_write and published_complete and not parsed_complete
             else None,
         },
@@ -4731,7 +4734,7 @@ def document_set_detail(
             "label": "Staged indeks hazır",
             "complete": staged_ready,
             "detail": "İndeks sürümü mevcut" if staged_ready else "Promotable indeks yok",
-            "action": _anchor("#build", "Staged indeks oluştur")
+            "action": _anchor("#build", "İndeks ayarlarına git")
             if can_write and published_complete and not staged_ready
             else None,
         },
@@ -4748,7 +4751,7 @@ def document_set_detail(
             "action": {"type": "post", "url": promote_url, "label": "Promotable indeksi aktif et"}
             if can_promote_index and current_active_index is None and promotable_index is not None
             else (
-                _anchor("#build", "Önce staged indeks oluştur")
+                _anchor("#build", "İndeks ayarlarına git")
                 if can_write
                 and published_complete
                 and current_active_index is None
