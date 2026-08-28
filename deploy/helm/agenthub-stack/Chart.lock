@@ -1,6 +1,6 @@
 dependencies:
 - name: agenthub
   repository: file://../agenthub
-  version: 0.1.0
-digest: sha256:59ea65a2434ec03a74a322c41bed45e88cb3b6a56d384c7499cae0d2d27a38f7
-generated: "2026-08-03T17:52:55.5649378+03:00"
+  version: 0.2.0
+digest: sha256:36529e7bb99eda0242e5ef190d60513d01b909c3e78ae91a49329743208f3dde
+generated: "2026-08-28T15:47:38.2526016+03:00"

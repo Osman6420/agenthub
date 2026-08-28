@@ -43,6 +43,10 @@ app.kubernetes.io/component: {{ .component | quote }}
 {{- printf "%s@%s" (required "images.static.repository is required" .Values.images.static.repository) (required "images.static.digest is required" .Values.images.static.digest) -}}
 {{- end -}}
 
+{{- define "agenthub.databaseProbeImage" -}}
+{{- printf "%s@%s" (required "databaseInitialization.probeImage.repository is required" .Values.databaseInitialization.probeImage.repository) (required "databaseInitialization.probeImage.digest is required" .Values.databaseInitialization.probeImage.digest) -}}
+{{- end -}}
+
 {{- define "agenthub.demoImage" -}}
 {{- printf "%s@%s" (required "externalDemo.image.repository is required when enabled" .Values.externalDemo.image.repository) (required "externalDemo.image.digest is required when enabled" .Values.externalDemo.image.digest) -}}
 {{- end -}}
@@ -126,4 +130,118 @@ TOOL_ADAPTER: deterministic
 - {name: METRICS_ENABLED, value: "true"}
 - {name: PYTHON_NODE_RUNTIME_ENABLED, value: "false"}
 - {name: TOOL_ADAPTER, value: deterministic}
+{{- end -}}
+
+{{- define "agenthub.waitForPostgresInit" -}}
+- name: wait-for-postgres
+  image: {{ include "agenthub.databaseProbeImage" .root | quote }}
+  imagePullPolicy: {{ .root.Values.databaseInitialization.probeImage.pullPolicy }}
+  command: ["/bin/sh", "-ec"]
+  args:
+    - |
+      export PGHOST="${DATABASE_HOST:?DATABASE_HOST is required}"
+      export PGPORT="${DATABASE_PORT:-5432}"
+      export PGUSER="${DATABASE_USER:?DATABASE_USER is required}"
+      export PGDATABASE="${DATABASE_NAME:?DATABASE_NAME is required}"
+      deadline=$(( $(date +%s) + {{ .root.Values.databaseInitialization.timeoutSeconds }} ))
+      until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"; do
+        echo "waiting for postgres"
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+          echo "timed out waiting for postgres" >&2
+          exit 1
+        fi
+        sleep 3
+      done
+  envFrom:
+    - secretRef: {name: {{ .secretName | quote }}}
+  env:
+    - {name: HOME, value: /tmp}
+  resources:
+    {{- toYaml .root.Values.hookResources.resources | nindent 4 }}
+  securityContext:
+    {{- include "agenthub.containerSecurityContext" .root | nindent 4 }}
+  volumeMounts: [{name: tmp, mountPath: /tmp}]
+{{- end -}}
+
+{{- define "agenthub.waitForMigrationsInit" -}}
+- name: wait-for-migrations
+  image: {{ include "agenthub.applicationImage" . | quote }}
+  imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+  command: ["/bin/sh", "-ec"]
+  args:
+    - |
+      deadline=$(( $(date +%s) + {{ .Values.databaseInitialization.timeoutSeconds }} ))
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        if python - <<'PY'
+      import os
+      os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
+      import django
+      django.setup()
+      from django.db import connection
+      from django.db.migrations.executor import MigrationExecutor
+      executor = MigrationExecutor(connection)
+      raise SystemExit(1 if executor.migration_plan(executor.loader.graph.leaf_nodes()) else 0)
+      PY
+        then
+          echo "database migrations are ready"
+          exit 0
+        fi
+        echo "waiting for database migrations"
+        sleep 5
+      done
+      echo "timed out waiting for database migrations" >&2
+      exit 1
+  envFrom:
+    - secretRef: {name: {{ .Values.existingSecrets.runtime | quote }}}
+  env:
+    {{- include "agenthub.hookCommonEnv" . | nindent 4 }}
+    - {name: HOME, value: /tmp}
+  resources:
+    {{- toYaml .Values.hookResources.resources | nindent 4 }}
+  securityContext:
+    {{- include "agenthub.containerSecurityContext" . | nindent 4 }}
+  volumeMounts: [{name: tmp, mountPath: /tmp}]
+{{- end -}}
+
+{{- define "agenthub.deploymentDatabaseGateInit" -}}
+- name: wait-for-database-bootstrap
+  image: {{ include "agenthub.applicationImage" .root | quote }}
+  imagePullPolicy: {{ .root.Values.images.application.pullPolicy }}
+  command: ["/bin/sh", "-ec"]
+  args:
+    - |
+      deadline=$(( $(date +%s) + {{ .root.Values.databaseInitialization.timeoutSeconds }} ))
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        set +e
+        output="$(python manage.py ensure_deployment_profiles --check-only 2>&1)"
+        status=$?
+        set -e
+        case "$status" in
+          0)
+            echo "$output"
+            exit 0
+            ;;
+          3)
+            echo "$output"
+            sleep 5
+            ;;
+          *)
+            echo "database bootstrap configuration is invalid: $output" >&2
+            exit "$status"
+            ;;
+        esac
+      done
+      echo "timed out waiting for database migrations/bootstrap" >&2
+      exit 1
+  envFrom:
+    - configMapRef: {name: {{ include "agenthub.fullname" .root }}-config}
+    - secretRef: {name: {{ .secretName | quote }}}
+  env:
+    {{- include "agenthub.providerEnv" .root | nindent 4 }}
+    - {name: HOME, value: /tmp}
+  resources:
+    {{- toYaml .root.Values.hookResources.resources | nindent 4 }}
+  securityContext:
+    {{- include "agenthub.containerSecurityContext" .root | nindent 4 }}
+  volumeMounts: [{name: tmp, mountPath: /tmp}]
 {{- end -}}

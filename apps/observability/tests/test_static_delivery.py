@@ -183,7 +183,8 @@ def test_static_container_contract_is_fail_closed_and_non_logging() -> None:
     assert "verify_static_assets.py" in dockerfile
     assert "COPY docs/architecture/workflow-dsl-llm-guide.md" in dockerfile
     assert 'ENV AGENTHUB_IMAGE_RELEASE_ID="${STATIC_RELEASE_ID}"' in dockerfile
-    assert "FROM nginxinc/nginx-unprivileged:1.28.1-alpine AS static-runtime" in dockerfile
+    assert "ARG NGINX_BASE_IMAGE=nginxinc/nginx-unprivileged:1.28.1-alpine" in dockerfile
+    assert "FROM ${NGINX_BASE_IMAGE} AS static-runtime" in dockerfile
     assert "USER 101" in dockerfile
     assert "$request_uri" not in nginx
     assert "$args" not in nginx
@@ -192,3 +193,57 @@ def test_static_container_contract_is_fail_closed_and_non_logging() -> None:
     assert 'add_header Cache-Control "public, max-age=31536000, immutable" always;' in nginx
     assert 'add_header X-Content-Type-Options "nosniff" always;' in nginx
     assert 'add_header Cross-Origin-Resource-Policy "same-origin" always;' in nginx
+
+
+def test_standalone_static_dockerfile_preserves_canonical_static_contract() -> None:
+    canonical = (ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
+    standalone = (ROOT / "deploy" / "static.Dockerfile").read_text(encoding="utf-8")
+    shared_fragments = (
+        "ARG NODE_BASE_IMAGE=node:20.20.0-bookworm-slim",
+        "ARG PYTHON_BASE_IMAGE=python:3.13-slim",
+        "ARG NGINX_BASE_IMAGE=nginxinc/nginx-unprivileged:1.28.1-alpine",
+        "npm --prefix frontend run typecheck",
+        "python manage.py collectstatic --noinput --clear",
+        "--manifest /app/staticfiles/asset-manifest.json",
+        "COPY deploy/static/nginx.conf /etc/nginx/nginx.conf",
+        "USER 101",
+    )
+    for fragment in shared_fragments:
+        assert fragment in canonical
+        assert fragment in standalone
+
+
+def test_production_health_probe_headers_avoid_host_rejection_and_https_redirect() -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "AGENTHUB_IMAGE_RELEASE_ID": "release-123",
+            "AGENTHUB_STATIC_RELEASE_ID": "release-123",
+            "DJANGO_ALLOWED_HOSTS": "agenthub-web",
+            "DJANGO_SECRET_KEY": "test-only-production-settings-secret",
+            "DJANGO_SETTINGS_MODULE": "config.settings.production",
+            "DJANGO_STATIC_URL": "/static/release-123/",
+        }
+    )
+    code = """
+import django
+django.setup()
+from django.test import Client
+response = Client().get(
+    "/v1/health/live",
+    HTTP_HOST="agenthub-web",
+    HTTP_X_FORWARDED_PROTO="https",
+)
+assert response.status_code == 200, response.status_code
+print("production health probe headers verified")
+"""
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "production health probe headers verified" in result.stdout

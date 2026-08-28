@@ -25,3 +25,4 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 | [0015](0015-responsibility-based-operator-authorization.md) | Accepted | Roleless membership, typed scope responsibilities, exact scenario approval and typed human/consumer identity. |
 | [0016](0016-explicit-scenario-and-atomic-served-index-lifecycle.md) | Accepted | Separate governed scenario callability plus one atomic document-set/index serving pointer. |
 | [0017](0017-bounded-halfvec-response-truncation.md) | Accepted | Refines ADR-0003 for explicit `halfvec(4000)` provider-response truncation. |
+| [0018](0018-portable-openshift-build-and-database-initialization.md) | Accepted | Portable mirror/Binary builds plus deadlock-free managed and bundled database initialization. |

@@ -46,7 +46,8 @@ chmod 600 openshift.env
 vi openshift.env
 ```
 
-Fill the namespace, runtime/migration database URLs, Redis URL, object-store credentials,
+Fill the namespace, runtime/migration database URLs and their matching non-secret host/port/name/user
+components, Redis URL, object-store credentials,
 `DJANGO_SECRET_KEY`, metrics token, bootstrap password, model API key and embedding API key. The
 provider host/path/name and image/Route fields in this file are used by the direct installer; Helm
 uses the corresponding non-secret fields from `agenthub-values.yaml`.
@@ -81,6 +82,10 @@ OpenAI-compatible HTTPS endpoints. `provider.*.host` contains no scheme; paths b
 Embedding dimensions must match stored geometry: `vector` supports up to 2,000 and `halfvec` up to
 4,000. Do not put credentials in the Helm values file: Helm release storage would retain them.
 
+Keep `databaseInitialization.mode: hooks`. Set `probeImage` to an approved, digest-pinned image that
+contains `pg_isready`; the init container receives only non-secret database connection components,
+not a password in its command line.
+
 For private registries, create an approved namespace pull Secret and set only its name:
 
 ```yaml
@@ -112,7 +117,10 @@ helm upgrade --install agenthub deploy/helm/agenthub \
 ```
 
 Hook order is deterministic: migration weight `-10`, bootstrap weight `-5`, then normal resources.
-Hooks do not mount service-account tokens. A failed hook blocks the release and remains available:
+Both hooks wait for PostgreSQL. Bootstrap creates missing profiles through the platform-admin service
+or rejects a disabled/configuration-mismatched existing revision. Workloads independently gate on
+applied migrations and those exact active profiles. Hooks do not mount service-account tokens. A
+failed hook blocks the release and remains available:
 
 ```sh
 oc get jobs -n agenthub-demo

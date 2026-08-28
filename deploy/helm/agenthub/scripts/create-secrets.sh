@@ -60,7 +60,8 @@ esac
 
 for name in \
     NAMESPACE DJANGO_SECRET_KEY METRICS_BEARER_TOKEN BOOTSTRAP_ADMIN_PASSWORD \
-    DATABASE_URL MIGRATION_DATABASE_URL REDIS_URL \
+    DATABASE_URL MIGRATION_DATABASE_URL DATABASE_HOST DATABASE_PORT DATABASE_NAME \
+    DATABASE_USER MIGRATION_DATABASE_USER REDIS_URL \
     AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY MODEL_API_KEY EMBEDDING_API_KEY
 do
     require_var "$name"
@@ -98,6 +99,10 @@ write_env_value "$web_env" AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY"
 
 write_env_value "$runtime_env" DJANGO_SECRET_KEY "$DJANGO_SECRET_KEY"
 write_env_value "$runtime_env" DATABASE_URL "$DATABASE_URL"
+write_env_value "$runtime_env" DATABASE_HOST "$DATABASE_HOST"
+write_env_value "$runtime_env" DATABASE_PORT "$DATABASE_PORT"
+write_env_value "$runtime_env" DATABASE_USER "$DATABASE_USER"
+write_env_value "$runtime_env" DATABASE_NAME "$DATABASE_NAME"
 write_env_value "$runtime_env" REDIS_URL "$REDIS_URL"
 write_env_value "$runtime_env" MODEL_SECRET_PRIMARY "$MODEL_API_KEY"
 
@@ -114,6 +119,10 @@ write_env_value "$beat_env" REDIS_URL "$REDIS_URL"
 
 write_env_value "$migration_env" DJANGO_SECRET_KEY "$DJANGO_SECRET_KEY"
 write_env_value "$migration_env" DATABASE_URL "$MIGRATION_DATABASE_URL"
+write_env_value "$migration_env" DATABASE_HOST "$DATABASE_HOST"
+write_env_value "$migration_env" DATABASE_PORT "$DATABASE_PORT"
+write_env_value "$migration_env" DATABASE_USER "$MIGRATION_DATABASE_USER"
+write_env_value "$migration_env" DATABASE_NAME "$DATABASE_NAME"
 write_env_value "$migration_env" REDIS_URL "$REDIS_URL"
 
 write_env_value "$bootstrap_env" BOOTSTRAP_ADMIN_PASSWORD "$BOOTSTRAP_ADMIN_PASSWORD"

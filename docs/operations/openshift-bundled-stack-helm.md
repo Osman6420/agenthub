@@ -50,6 +50,25 @@ skopeo inspect --format '{{.Digest}}' "docker://$REGISTRY/agenthub-postgresql:$R
 
 Repeat for Redis, MinIO and `mc`. Do not use `latest` in `stack-values.yaml`.
 
+If the OpenShift build nodes cannot reach upstream registries or the Docker strategy cannot select a
+multi-stage target, use the triggerless Binary Build template instead. Base-image parameters may
+point at an approved mirror; do not edit the canonical Dockerfiles for one environment:
+
+```sh
+oc process -f deploy/openshift/build/template.yaml \
+  -p RELEASE_ID="$RELEASE_ID" \
+  -p NODE_BASE_IMAGE=registry.example.com/mirror/node@sha256:REPLACE \
+  -p PYTHON_BASE_IMAGE=registry.example.com/mirror/python@sha256:REPLACE \
+  -p NGINX_BASE_IMAGE=registry.example.com/mirror/nginx-unprivileged@sha256:REPLACE \
+  -p PGVECTOR_BASE_IMAGE=registry.example.com/mirror/pgvector@sha256:REPLACE \
+  | oc apply -f -
+oc start-build agenthub-app --from-dir=. --follow
+oc start-build agenthub-static --from-dir=. --follow
+oc start-build agenthub-postgresql --from-dir=. --follow
+```
+
+Resolve the three resulting ImageStreamTags to digests before populating `stack-values.yaml`.
+
 ## 3. Configure credentials and provider endpoints
 
 ```sh
@@ -84,6 +103,9 @@ Replace all example repositories and all-zero digests. Enter the externally supp
 embedding host, port, path and model names. Hosts contain no scheme; HTTPS is used for these provider
 connections. Embedding dimensions must match the service output and stored vector geometry.
 
+Keep `agenthub.databaseInitialization.mode: jobs`. Its probe image reuses the digest-pinned bundled
+PostgreSQL image because that image contains `pg_isready`.
+
 Set the storage class if the namespace has no default. Review the three PVC sizes and all resource
 requests/limits against namespace quota and LimitRange. Credentials never belong in this file.
 
@@ -112,8 +134,11 @@ helm upgrade --install agenthub-stack deploy/helm/agenthub-stack \
 ```
 
 PostgreSQL first initialization creates separate admin, migration and runtime roles and enables the
-`vector` extension. AgentHub migration and bootstrap hooks run before application rollout; the MinIO
-bucket hook then creates the bucket and attaches a bucket-scoped policy to the AgentHub S3 identity.
+`vector` extension. Helm creates revision-named migration and bootstrap Jobs together with the
+StatefulSets. Migration waits for PostgreSQL; bootstrap waits for migrations; application workloads
+wait for exact active bootstrap profiles. This preserves `--atomic --wait --wait-for-jobs` without
+post-install hook deadlock. The MinIO bucket hook then creates the bucket and attaches a
+bucket-scoped policy to the AgentHub S3 identity.
 
 ## 7. Verify
 

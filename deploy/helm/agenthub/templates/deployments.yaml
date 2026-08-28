@@ -28,6 +28,8 @@ spec:
       securityContext:
         {{- include "agenthub.podSecurityContext" . | nindent 8 }}
       {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.web) | nindent 8 }}
       containers:
         - name: web
           image: {{ include "agenthub.applicationImage" . | quote }}
@@ -42,17 +44,32 @@ spec:
           ports:
             - {name: http, containerPort: 8000}
           startupProbe:
-            httpGet: {path: /v1/health/live, port: http}
+            httpGet:
+              path: /v1/health/live
+              port: http
+              httpHeaders:
+                - {name: Host, value: {{ printf "%s-web" (include "agenthub.fullname" .) | quote }}}
+                - {name: X-Forwarded-Proto, value: https}
             periodSeconds: 5
             failureThreshold: 24
             timeoutSeconds: 3
           readinessProbe:
-            httpGet: {path: /v1/health/ready, port: http}
+            httpGet:
+              path: /v1/health/ready
+              port: http
+              httpHeaders:
+                - {name: Host, value: {{ printf "%s-web" (include "agenthub.fullname" .) | quote }}}
+                - {name: X-Forwarded-Proto, value: https}
             periodSeconds: 10
             failureThreshold: 3
             timeoutSeconds: 3
           livenessProbe:
-            httpGet: {path: /v1/health/live, port: http}
+            httpGet:
+              path: /v1/health/live
+              port: http
+              httpHeaders:
+                - {name: Host, value: {{ printf "%s-web" (include "agenthub.fullname" .) | quote }}}
+                - {name: X-Forwarded-Proto, value: https}
             periodSeconds: 20
             failureThreshold: 3
             timeoutSeconds: 3
@@ -93,6 +110,8 @@ spec:
       securityContext:
         {{- include "agenthub.podSecurityContext" . | nindent 8 }}
       {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.runtime) | nindent 8 }}
       containers:
         - name: worker
           image: {{ include "agenthub.applicationImage" . | quote }}
@@ -139,6 +158,8 @@ spec:
       securityContext:
         {{- include "agenthub.podSecurityContext" . | nindent 8 }}
       {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.ingestion) | nindent 8 }}
       containers:
         - name: worker
           image: {{ include "agenthub.applicationImage" . | quote }}
@@ -185,6 +206,8 @@ spec:
       securityContext:
         {{- include "agenthub.podSecurityContext" . | nindent 8 }}
       {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.runtime) | nindent 8 }}
       containers:
         - name: worker
           image: {{ include "agenthub.applicationImage" . | quote }}
@@ -232,6 +255,8 @@ spec:
       securityContext:
         {{- include "agenthub.podSecurityContext" . | nindent 8 }}
       {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.beat) | nindent 8 }}
       containers:
         - name: beat
           image: {{ include "agenthub.applicationImage" . | quote }}

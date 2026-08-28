@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [OpenShift deploy portability hardening (offline verified 2026-08-28)](openshift-deploy-portability-hardening-2026-08-28/plan.md);
+  [verification](openshift-deploy-portability-hardening-2026-08-28/verification.md).
+
 - [OpenShift bundled stack Helm chart (offline verified 2026-08-03)](openshift-bundled-stack-helm-2026-08-03/plan.md);
   [verification](openshift-bundled-stack-helm-2026-08-03/verification.md).
 

@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 .eggs/
 build/
+!deploy/openshift/build/
+!deploy/openshift/build/template.yaml
 dist/
 
 # Virtual environments
@@ -48,6 +50,7 @@ Thumbs.db
 .codebase-memory/
 .worktrees/
 .tmp-cbm-install/
+/agenthub-transfer-*.zip
 
 # Frontend (React Flow workflow builder)
 frontend/node_modules/

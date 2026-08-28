@@ -4,6 +4,10 @@ imagePullSecrets: []
 
 agenthub:
   releaseId: ""
+  databaseInitialization:
+    mode: jobs
+    timeoutSeconds: 900
+    probeImage: {repository: "", digest: "", pullPolicy: IfNotPresent}
   images:
     application: {repository: "", digest: "", pullPolicy: IfNotPresent}
     static: {repository: "", digest: "", pullPolicy: IfNotPresent}

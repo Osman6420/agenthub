@@ -188,6 +188,10 @@ write_env_value "$web_env" AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY"
 
 write_env_value "$runtime_env" DJANGO_SECRET_KEY "$DJANGO_SECRET_KEY"
 write_env_value "$runtime_env" DATABASE_URL "$runtime_database_url"
+write_env_value "$runtime_env" DATABASE_HOST "$STACK_POSTGRES_HOST"
+write_env_value "$runtime_env" DATABASE_PORT 5432
+write_env_value "$runtime_env" DATABASE_USER "$STACK_POSTGRES_APPLICATION_USER"
+write_env_value "$runtime_env" DATABASE_NAME "$STACK_POSTGRES_DATABASE"
 write_env_value "$runtime_env" REDIS_URL "$redis_url"
 write_env_value "$runtime_env" MODEL_SECRET_PRIMARY "$MODEL_API_KEY"
 
@@ -204,6 +208,10 @@ write_env_value "$beat_env" REDIS_URL "$redis_url"
 
 write_env_value "$migration_env" DJANGO_SECRET_KEY "$DJANGO_SECRET_KEY"
 write_env_value "$migration_env" DATABASE_URL "$migration_database_url"
+write_env_value "$migration_env" DATABASE_HOST "$STACK_POSTGRES_HOST"
+write_env_value "$migration_env" DATABASE_PORT 5432
+write_env_value "$migration_env" DATABASE_USER "$STACK_POSTGRES_MIGRATION_USER"
+write_env_value "$migration_env" DATABASE_NAME "$STACK_POSTGRES_DATABASE"
 write_env_value "$migration_env" REDIS_URL "$redis_url"
 write_env_value "$bootstrap_env" BOOTSTRAP_ADMIN_PASSWORD "$BOOTSTRAP_ADMIN_PASSWORD"
 

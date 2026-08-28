@@ -74,6 +74,15 @@ while preserving arbitrary-UID restricted-SCC behavior, resource bounds, externa
 retained PVCs. It is explicitly not a production or high-availability topology. See the
 [archived task record](archive/openshift-bundled-stack-helm-2026-08-03/plan.md).
 
+OpenShift deployment portability is now hardened and offline verified: canonical Dockerfiles accept
+approved mirror overrides, a triggerless Binary Build template and standalone static image path
+support restricted builders, managed databases retain ordered pre-hooks, and the bundled stack uses
+revisioned Helm-managed initialization Jobs without disabling atomic/wait semantics. Workloads gate
+on applied migrations plus exact active provider profiles, and HTTP readiness uses an allowlisted
+virtual-host header. See [ADR-0018](../adr/0018-portable-openshift-build-and-database-initialization.md)
+and the [task record](archive/openshift-deploy-portability-hardening-2026-08-28/plan.md). Live cluster build,
+admission and rollout evidence remains environment-specific.
+
 Phase 2 closure P11 is implemented and offline/staging-equivalent verified: all nine formerly
 indirect tables now carry direct tenant lineage; 47 direct-tenant tables use canonical FORCE RLS;
 operator, gateway and worker paths install bounded transaction-local tenant scope; and reviewed

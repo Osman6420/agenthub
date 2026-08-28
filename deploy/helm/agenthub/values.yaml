@@ -5,6 +5,16 @@ rolloutNonce: ""
 
 imagePullSecrets: []
 
+databaseInitialization:
+  # hooks: managed/external database exists before Helm install.
+  # jobs: bundled database is created by the same release; Jobs are Helm-managed per revision.
+  mode: hooks
+  timeoutSeconds: 900
+  probeImage:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+
 images:
   application:
     repository: ""

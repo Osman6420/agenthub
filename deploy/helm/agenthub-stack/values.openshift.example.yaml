@@ -1,6 +1,13 @@
 # Non-production all-in-one example. Replace every host/name and all-zero digest.
 agenthub:
   releaseId: release-20260803-1
+  databaseInitialization:
+    mode: jobs
+    timeoutSeconds: 900
+    # Reuse the immutable bundled PostgreSQL image because it contains pg_isready.
+    probeImage:
+      repository: registry.example.com/team/agenthub-postgresql
+      digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
   images:
     application:
       repository: registry.example.com/team/agenthub

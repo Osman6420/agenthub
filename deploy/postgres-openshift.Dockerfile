@@ -2,7 +2,8 @@
 
 # Non-production bundled-stack database. Release automation must resolve the base and resulting
 # images by digest before promotion.
-FROM pgvector/pgvector:pg16
+ARG PGVECTOR_BASE_IMAGE=pgvector/pgvector:0.8.1-pg16-bookworm
+FROM ${PGVECTOR_BASE_IMAGE}
 
 USER root
 

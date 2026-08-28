@@ -33,3 +33,8 @@ helm upgrade --install agenthub-stack deploy/helm/agenthub-stack \
 
 Keep the release name `agenthub-stack` unless the service hostnames in `stack.env` and the MinIO
 endpoint in values are changed to match the resulting release-scoped names.
+
+The bundled values select `databaseInitialization.mode: jobs`. Migration and bootstrap are normal,
+Helm-managed Jobs named for the release revision, so PostgreSQL can be created by the same release
+without a `post-install`/`--wait` cycle. Do not change this stack to post-install hooks or remove
+`--wait-for-jobs`.

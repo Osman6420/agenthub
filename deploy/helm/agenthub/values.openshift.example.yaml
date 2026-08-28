@@ -1,6 +1,14 @@
 # Non-secret example. Replace every example host/name and every all-zero digest.
 releaseId: release-20260803-1
 
+databaseInitialization:
+  mode: hooks
+  timeoutSeconds: 900
+  # Must contain pg_isready and be promoted/pinned like every other runtime image.
+  probeImage:
+    repository: registry.example.com/team/postgresql-client
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+
 images:
   application:
     repository: registry.example.com/team/agenthub

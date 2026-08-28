@@ -2,7 +2,8 @@
 
 This chart is the preferred packaged installation path for OpenShift. It deploys AgentHub with
 restricted-SCC-compatible security contexts, mandatory resource bounds, immutable image digests,
-ordered migration/bootstrap hooks, Routes and scoped ingress NetworkPolicies.
+ordered database initialization, fail-closed workload gates, Routes and scoped ingress
+NetworkPolicies.
 
 The chart deliberately does **not** accept credential values. Helm stores supplied values in release
 metadata, so database, Redis, object-store, model and embedding credentials must exist in
@@ -12,7 +13,7 @@ namespace-scoped Secrets before `helm upgrade --install`.
 
 - an authenticated `oc` session and an existing target namespace;
 - Helm 3 or 4 compatible with the target Kubernetes/OpenShift version;
-- application and static images pushed and resolved to `sha256` digests;
+- application, static and PostgreSQL-client probe images pushed and resolved to `sha256` digests;
 - managed PostgreSQL with pgvector, Redis and S3-compatible storage;
 - OpenAI-compatible chat-completions and embedding HTTPS endpoints.
 
@@ -46,6 +47,10 @@ Replace the all-zero image digests, registry repositories, Route host, object-st
 host/path/name and embedding host/path/name/dimension. Never add API keys, passwords, database URLs
 or consumer tokens to this file or pass them with `--set`.
 
+Keep `databaseInitialization.mode: hooks` for this managed-service chart. Its digest-pinned probe
+image must contain `pg_isready`. The bundled chart sets `mode: jobs` because its PostgreSQL resource
+is created by the same Helm release.
+
 `objectStore.allowInsecureHttp` remains `false` for this primary chart. The separate bundled
 non-production stack is the only documented path that sets it to `true` for namespace-internal
 MinIO; do not use that exception with an external endpoint or production data.
@@ -75,8 +80,11 @@ helm upgrade --install agenthub deploy/helm/agenthub \
   --timeout 20m
 ```
 
-The pre-install hooks run migration first and bootstrap second. A hook failure blocks workload
-creation and leaves the failed Job available for diagnosis. Successful hook Jobs are removed.
+The pre-install hooks wait for PostgreSQL, run migration first and bootstrap second. Bootstrap
+creates missing profiles or rejects an existing disabled/mismatched immutable revision. Every
+application workload also performs a read-only migration/profile gate before starting. A hook
+failure blocks workload creation and leaves the failed Job available for diagnosis. Successful hook
+Jobs are removed.
 
 ```sh
 helm status agenthub --namespace agenthub-demo

@@ -16,6 +16,13 @@ These manifests are reviewable deployment drafts, not evidence of a live deploym
 Render and policy-test them in CI, then tailor namespaces, image digests, storage,
 resource sizing, routes, approved egress destinations, and platform labels before use.
 
+Clusters that accept only Binary BuildConfig sources can render the triggerless, parameterized
+OpenShift Template in [`build/template.yaml`](build/template.yaml). Supply one release ID and the
+four organization-approved base-image references, apply the rendered ImageStreams/BuildConfigs,
+then explicitly stream the repository with `oc start-build --from-dir=.`. Binary builds have no
+automatic trigger because their source exists only in the operator-uploaded stream. Canonical
+Dockerfiles retain upstream defaults; mirror references belong in these build parameters.
+
 Security invariants:
 
 - only `agenthub-web` and the public, content-free `agenthub-static` workload have Routes;

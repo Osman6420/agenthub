@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-# The default target is the application image. `static-runtime` is a second immutable target built
-# from the same source and release id for OpenShift static delivery.
+# Standalone static-runtime image for OpenShift Docker builders that cannot select a multi-stage
+# target. Keep this build contract aligned with deploy/Dockerfile; tests enforce the shared inputs.
 ARG NODE_BASE_IMAGE=node:20.20.0-bookworm-slim
 ARG PYTHON_BASE_IMAGE=python:3.13-slim
 ARG NGINX_BASE_IMAGE=nginxinc/nginx-unprivileged:1.28.1-alpine
@@ -29,35 +29,25 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps kept minimal; psycopg[binary] ships its own libpq.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install third-party dependencies in a layer keyed only by dependency metadata. Minimal package
-# placeholders let setuptools read the application metadata without coupling this expensive layer to
-# normal source edits. BuildKit retains downloaded wheels across legitimate dependency-layer rebuilds.
 COPY pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip mkdir -p config apps \
     && touch config/__init__.py apps/__init__.py \
     && pip install "setuptools>=68" \
     && pip install .
 
-# Install the real application without dependency resolution. Source-only changes now rebuild this
-# cheap layer and cannot download Python packages. The development bind mount still replaces these
-# files at runtime, while immutable builds contain the current application source.
 COPY config ./config
 COPY apps ./apps
 COPY docs/architecture/workflow-dsl-llm-guide.md ./docs/architecture/workflow-dsl-llm-guide.md
 COPY --from=frontend-build /build/apps/builder/static/builder ./apps/builder/static/builder
 RUN pip install --no-build-isolation --no-deps --force-reinstall .
 
-# Runtime entry points and static-artifact verifier.
 COPY manage.py ./
 COPY scripts/verify_static_assets.py ./scripts/verify_static_assets.py
 
-# The collector never becomes a runtime image. It fails the build if the locked frontend output or
-# collected tree is missing, unsafe, empty, or inconsistent with the release id.
 FROM base AS static-collector
 
 ARG STATIC_RELEASE_ID=development
@@ -70,9 +60,7 @@ RUN DJANGO_SETTINGS_MODULE=config.settings.base \
         --release-id "${STATIC_RELEASE_ID}" \
         --manifest /app/staticfiles/asset-manifest.json
 
-# Owner-approved production dependency: the upstream non-root Nginx image. Organization release
-# automation must resolve the base and resulting image by digest before promotion.
-FROM ${NGINX_BASE_IMAGE} AS static-runtime
+FROM ${NGINX_BASE_IMAGE}
 
 ARG STATIC_RELEASE_ID=development
 
@@ -97,27 +85,3 @@ LABEL org.opencontainers.image.title="AgentHub static assets" \
 USER 101
 
 EXPOSE 8080
-
-# Single immutable application image; the container command selects the role
-# (web / worker-runtime / worker-ingestion / worker-eval / beat / migrate).
-FROM base AS application
-
-ARG STATIC_RELEASE_ID=development
-
-ENV AGENTHUB_IMAGE_RELEASE_ID="${STATIC_RELEASE_ID}"
-
-RUN case "${STATIC_RELEASE_ID}" in \
-        ""|*[!A-Za-z0-9._-]*) echo "invalid STATIC_RELEASE_ID" >&2; exit 1 ;; \
-    esac \
-    && test "${#STATIC_RELEASE_ID}" -le 128 \
-    && useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app
-
-LABEL org.opencontainers.image.revision="${STATIC_RELEASE_ID}"
-
-USER appuser
-
-EXPOSE 8000
-
-# Default role: the ASGI web server. Compose/K8s override the command per role.
-CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
