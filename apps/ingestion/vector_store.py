@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 
 from apps.ingestion.models import (
     HALFVEC_MAX_DIMENSIONS,
@@ -30,12 +30,31 @@ from apps.tenancy.context import set_tenant_context
 
 # A store name is only ever ``chunk_iv_<int>``. Validated defensively before any interpolation.
 _STORE_NAME = re.compile(r"^chunk_iv_[0-9]+$")
+_DDL_ERROR_CODES = frozenset(
+    {
+        "INDEX_STORE_ACTIVE",
+        "INDEX_STORE_GEOMETRY_INVALID",
+        "INDEX_STORE_ID_INVALID",
+        "INDEX_STORE_NOT_BUILDING",
+        "INDEX_STORE_SCOPE_DENIED",
+    }
+)
 
 
 class VectorStoreError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _normalize_ddl_error(exc: DatabaseError) -> VectorStoreError:
+    """Project database detail to an allowlisted, content-free operational code."""
+
+    cause = exc.__cause__
+    diagnostic = getattr(cause, "diag", None)
+    primary = getattr(diagnostic, "message_primary", "")
+    code = primary if primary in _DDL_ERROR_CODES else "INDEX_STORE_DDL_FAILED"
+    return VectorStoreError(code)
 
 
 @dataclass(frozen=True)
@@ -106,43 +125,22 @@ def _vector_literal(values: list[float]) -> str:
 
 
 def provision_store(index_version: IndexVersion) -> str:
-    """Create the fixed-dimension store table and its HNSW cosine index (idempotent)."""
+    """Provision one authoritative building index through the migration-owned DDL seam."""
     _require_postgres()
     name = store_name(index_version)
-    column_type, opclass = _column_spec(index_version.index_type, index_version.dimensions)
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f'CREATE TABLE IF NOT EXISTS "{name}" ('
-            "id bigserial PRIMARY KEY, "
-            "organization_id bigint NOT NULL, "
-            "document_version_id bigint, "
-            "ordinal integer NOT NULL, "
-            "text text NOT NULL, "
-            "chunk_kind varchar(16) NOT NULL DEFAULT 'content', "
-            f"embedding {column_type} NOT NULL)"
-        )
-        cursor.execute(
-            f'ALTER TABLE "{name}" ADD COLUMN IF NOT EXISTS '
-            "chunk_kind varchar(16) NOT NULL DEFAULT 'content'"
-        )
-        cursor.execute(
-            f'CREATE INDEX IF NOT EXISTS "{name}_hnsw" ON "{name}" '
-            f"USING hnsw (embedding {opclass}) WITH (m = 16, ef_construction = 64)"
-        )
-        cursor.execute(
-            f'CREATE INDEX IF NOT EXISTS "{name}_fts" ON "{name}" '
-            "USING gin (to_tsvector('simple', text))"
-        )
-        # RLS backstop (ADR-0004): FORCE applies the policy even to the table owner, so a missing
-        # transaction-local tenant scope yields no rows regardless of the app predicate.
-        cursor.execute(f'ALTER TABLE "{name}" ENABLE ROW LEVEL SECURITY')
-        cursor.execute(f'ALTER TABLE "{name}" FORCE ROW LEVEL SECURITY')
-        cursor.execute(f'DROP POLICY IF EXISTS "{name}_tenant" ON "{name}"')
-        cursor.execute(
-            f'CREATE POLICY "{name}_tenant" ON "{name}" '
-            "USING (agenthub_tenant_scope_contains(organization_id)) "
-            "WITH CHECK (agenthub_tenant_scope_contains(organization_id))"
-        )
+    # The application role intentionally has no schema CREATE privilege. The SECURITY DEFINER
+    # function accepts only an IndexVersion integer and re-resolves its tenant/lifecycle/type under
+    # FORCE RLS before emitting fixed-template DDL as the migration owner.
+    try:
+        with transaction.atomic():
+            set_tenant_context(int(index_version.organization_id))
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT agenthub_provision_index_store(%s)", [index_version.pk])
+                provisioned = cursor.fetchone()[0]
+    except DatabaseError as exc:
+        raise _normalize_ddl_error(exc) from exc
+    if provisioned != name:
+        raise VectorStoreError("INDEX_STORE_PROVISION_MISMATCH")
     return name
 
 
@@ -442,8 +440,13 @@ def store_exists(index_version: IndexVersion) -> bool:
 
 
 def drop_store(index_version: IndexVersion) -> None:
-    """Drop a store's physical relation (retention/purge and rollback of a failed build)."""
+    """Drop a non-active store through the migration-owned, tenant-scoped DDL seam."""
     _require_postgres()
-    name = store_name(index_version)
-    with connection.cursor() as cursor:
-        cursor.execute(f'DROP TABLE IF EXISTS "{name}"')
+    store_name(index_version)
+    try:
+        with transaction.atomic():
+            set_tenant_context(int(index_version.organization_id))
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT agenthub_drop_index_store(%s)", [index_version.pk])
+    except DatabaseError as exc:
+        raise _normalize_ddl_error(exc) from exc

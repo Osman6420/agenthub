@@ -22,6 +22,14 @@ implemented and verified offline. P9.1–P9.5 and P10.1/P10.2 are also implement
 production-hardening/live-profile closure milestone remains Phase 2 work. Personal MCP identity/OBO,
 governed upload scanning and persistent server-side conversation history moved to Phase 3. Concrete
 live changes retain their explicit gates.
+On 2026-08-31 the durable staged-index worker's production-only transaction-local RLS scope defect
+was fixed and repository-verified under a real non-owner PostgreSQL role. Worker contract revision
+3 eagerly resolves pinned inputs inside the scoped claim and uses short scoped persistence phases;
+an additive least-privilege migration provides exact-ID per-index DDL without granting schema
+`CREATE` or `BYPASSRLS`. OpenShift rollout and one authenticated real-profile recovery build remain
+deployment gates. The [incident task](../tasks/staged-index-worker-rls-scope-fix/plan.md) owns the
+evidence; the [background entry-point follow-up](../tasks/background-rls-entrypoint-hardening/plan.md)
+owns the additional P0/P1 scope findings.
 The local development environment has governed Gemini chat and 3072-dimension `halfvec`
 embedding profiles registered and live-smoke-verified through the shared SSRF-safe provider seams;
 credentials remain environment-injected, and no active release or index was changed.
@@ -82,6 +90,12 @@ on applied migrations plus exact active provider profiles, and HTTP readiness us
 virtual-host header. See [ADR-0018](../adr/0018-portable-openshift-build-and-database-initialization.md)
 and the [task record](archive/openshift-deploy-portability-hardening-2026-08-28/plan.md). Live cluster build,
 admission and rollout evidence remains environment-specific.
+
+The repository now has a Git-derived source ZIP handoff workflow that bundles the application and
+canonical OpenShift installation guides while excluding local secrets, runtime data, dependencies,
+caches and Git history. Each package carries per-file SHA-256 checksums; the ZIP digest must be
+transferred out of band. This is source distribution tooling, not a signed release or container-image
+promotion mechanism. See the [packaging guide](../operations/source-zip-packaging.md).
 
 Phase 2 closure P11 is implemented and offline/staging-equivalent verified: all nine formerly
 indirect tables now carry direct tenant lineage; 47 direct-tenant tables use canonical FORCE RLS;

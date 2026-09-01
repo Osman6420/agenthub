@@ -132,6 +132,7 @@ authorized, non-self approval (30-minute expiry, request-checksum bound); a work
 - [Coding-agent handoff](docs/ai/agent-handoff.md)
 - [Local startup, health checks and manual testing](docs/manual-testing-guide.md)
 - [Single-command local stack runbook](docs/operations/local-development-stack.md)
+- [Source ZIP packaging](docs/operations/source-zip-packaging.md) — application source plus installation guides
 - [OpenShift installation with Helm](docs/operations/openshift-helm-installation.md) — preferred
 - [OpenShift bundled demo stack with Helm](docs/operations/openshift-bundled-stack-helm.md) — same-namespace PostgreSQL/Redis/MinIO
 - [OpenShift installation from Ubuntu](docs/operations/openshift-ubuntu-installation.md) — lower-level `oc` path

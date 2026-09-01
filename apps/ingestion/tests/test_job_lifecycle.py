@@ -6,6 +6,9 @@ import pytest
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
+from apps.artifacts.services import create_artifact_version
+from apps.artifacts.types import ArtifactType
+from apps.documents import storage
 from apps.documents.models import DocumentSetVersion
 from apps.ingestion.job_lifecycle import (
     BuildJobError,
@@ -29,7 +32,9 @@ from apps.ingestion.models import (
     StagedIndexBuildJob,
     StagedIndexBuildJobStatus,
 )
+from apps.ingestion.tasks import run_staged_index_build_job
 from apps.ingestion.tests.test_staged_build import _granted_profile, _published_set_version
+from apps.ingestion.vector_store import drop_store
 from apps.tenancy.models import Organization
 
 
@@ -334,3 +339,97 @@ def test_job_and_outbox_force_rls_under_non_owner(monkeypatch: pytest.MonkeyPatc
             "('ingestion_stagedindexbuildjob', 'ingestion_stagedindexbuildoutbox')"
         )
         assert all(row[1:] == (True, True) for row in cursor.fetchall())
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="PostgreSQL worker RLS proof")
+@pytest.mark.django_db(transaction=True)
+def test_durable_worker_builds_with_pinned_artifacts_as_non_owner(
+    monkeypatch: pytest.MonkeyPatch, settings: object
+) -> None:
+    """Exercise the real commit boundary that owner-backed/transactional tests can mask."""
+
+    monkeypatch.setattr("apps.ingestion.job_lifecycle.dispatch_outbox", lambda **kwargs: 0)
+    settings.DOCUMENTS_OBJECT_STORE_BACKEND = "memory"  # type: ignore[attr-defined]
+    storage.reset_in_memory_store()
+    org = Organization.objects.create(slug="worker-rls", name="Worker RLS")
+    version = _published_set_version(org, ["bounded text"])
+    profile = _granted_profile(org)
+    chunking = create_artifact_version(
+        organization=org,
+        artifact_type=ArtifactType.CHUNKING_PROFILE,
+        logical_id="worker-chunking",
+        body={
+            "api_version": "agenthub/chunking/v1",
+            "kind": "ChunkingProfile",
+            "strategy": "characters",
+            "size": 500,
+            "overlap": 50,
+            "max_chunks": 100,
+        },
+        created_by="owner",
+    )
+    job, _ = create_build_job(
+        document_set_version=version,
+        embedding_profile=profile,
+        ocr_profile=None,
+        chunking_profile=chunking,
+        actor="owner",
+    )
+    job.status = StagedIndexBuildJobStatus.QUEUED
+    job.save(update_fields=["status", "updated_at"])
+
+    role = "ingestion_worker_scope_probe"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'DO $$ BEGIN CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN; '
+            "EXCEPTION WHEN duplicate_object THEN NULL; END $$"  # noqa: S608
+        )
+        cursor.execute(
+            f'GRANT SELECT, UPDATE ON ingestion_stagedindexbuildjob TO "{role}"'  # noqa: S608
+        )
+        cursor.execute(f'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{role}"')  # noqa: S608
+        cursor.execute(
+            f'GRANT UPDATE ON documents_documentsetversion, documents_documentset TO "{role}"'  # noqa: S608
+        )
+        cursor.execute(
+            f'GRANT SELECT, INSERT, UPDATE ON ingestion_ingestionworkerheartbeat TO "{role}"'  # noqa: S608
+        )
+        cursor.execute(
+            f'GRANT INSERT, UPDATE ON ingestion_indexversion TO "{role}"'  # noqa: S608
+        )
+        cursor.execute(
+            f'GRANT UPDATE ON documents_documentversion TO "{role}"'  # noqa: S608
+        )
+        cursor.execute(f'GRANT INSERT ON audit_auditevent TO "{role}"')  # noqa: S608
+        cursor.execute(
+            f'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{role}"'  # noqa: S608
+        )
+        cursor.execute(
+            f"GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint), "
+            f"agenthub_provision_index_store(bigint), agenthub_drop_index_store(bigint) "
+            f'TO "{role}"'  # noqa: S608
+        )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET SESSION AUTHORIZATION "{role}"')  # noqa: S608
+        try:
+            run_staged_index_build_job.push_request(headers={"organization_id": org.pk})
+            try:
+                result = run_staged_index_build_job.run(str(job.public_id))
+            finally:
+                run_staged_index_build_job.pop_request()
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("RESET SESSION AUTHORIZATION")
+
+        job.refresh_from_db()
+        assert result.startswith("built:")
+        assert job.status == StagedIndexBuildJobStatus.SUCCEEDED
+        assert job.result_index_version is not None
+        assert job.result_index_version.chunking_profile_id == chunking.pk
+        drop_store(job.result_index_version)
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET SESSION AUTHORIZATION")
+            cursor.execute(f'DROP OWNED BY "{role}"')  # noqa: S608
+            cursor.execute(f'DROP ROLE "{role}"')  # noqa: S608

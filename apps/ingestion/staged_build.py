@@ -23,12 +23,13 @@ from collections.abc import Callable
 
 from django.db import connection, transaction
 from django.db.models import Max
+from django.utils import timezone
 
 from apps.artifacts.governed_dsl import GovernedDSLValidationError, chunk_with_profile
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.audit.services import record_event
-from apps.documents.models import DocumentSetVersion, DocumentSetVersionStatus
+from apps.documents.models import DocumentSetVersion, DocumentSetVersionStatus, DocumentVersion
 from apps.documents.summary_services import SummaryError, generate_document_summary
 from apps.ingestion.embedding import (
     EmbeddingError,
@@ -43,7 +44,7 @@ from apps.ingestion.models import (
     OcrProfile,
     TenantEmbeddingProfileGrant,
 )
-from apps.ingestion.ocr import AsyncMarkdownOcrClient, OcrError
+from apps.ingestion.ocr import AsyncMarkdownOcrClient, OcrError, OcrOutcomeUnknown
 from apps.ingestion.parsers import ParserError, parse_document
 from apps.ingestion.pipeline import CHUNKERS, PipelineError
 from apps.ingestion.vector_store import (
@@ -55,6 +56,7 @@ from apps.ingestion.vector_store import (
     provision_store,
     write_chunks,
 )
+from apps.tenancy.context import set_tenant_context
 
 # Bounds so one build cannot exhaust resources.
 _MAX_DOCUMENTS = 5_000
@@ -94,11 +96,14 @@ def build_staged_index(
         raise StagedBuildError("SET_VERSION_NOT_PUBLISHED")
     if embedding_profile.status != EmbeddingProfileStatus.ACTIVE:
         raise StagedBuildError("EMBEDDING_PROFILE_DISABLED")
-    # Deny-by-default: the tenant must be granted this platform profile.
-    if not TenantEmbeddingProfileGrant.objects.filter(
-        organization_id=organization_id, embedding_profile=embedding_profile
-    ).exists():
-        raise StagedBuildError("EMBEDDING_PROFILE_NOT_GRANTED")
+    # Deny-by-default: the tenant must be granted this platform profile. The short transaction is
+    # intentional; provider and object-store I/O below must not inherit a build-long transaction.
+    with transaction.atomic():
+        set_tenant_context(organization_id)
+        if not TenantEmbeddingProfileGrant.objects.filter(
+            organization_id=organization_id, embedding_profile=embedding_profile
+        ).exists():
+            raise StagedBuildError("EMBEDDING_PROFILE_NOT_GRANTED")
     _validate_artifact_profile(
         chunking_profile,
         organization_id=organization_id,
@@ -154,11 +159,8 @@ def build_staged_index(
     )
     try:
         provision_store(index_version)
-        member_ids = list(
-            document_set_version.memberships.order_by("ordinal", "id").values_list(
-                "document_version_id", flat=True
-            )
-        )
+        document_versions = _load_document_versions(document_set_version)
+        member_ids = [version.pk for version in document_versions]
         reused_counts = chunk_counts_by_document(parent, member_ids) if parent is not None else {}
         reusable_ids = sorted(reused_counts)
         reused_chunks = (
@@ -171,6 +173,7 @@ def build_staged_index(
             document_set_version,
             embedding_profile,
             chunk_fn,
+            document_versions=document_versions,
             chunking_profile=chunking_profile,
             summary_model_profile=summary_model_profile,
             summary_prompt_contract=summary_prompt_contract,
@@ -187,22 +190,27 @@ def build_staged_index(
         chunk_count = reused_chunks + embedded_chunks
         if document_count != len(member_ids):
             raise StagedBuildError("BUILD_DOCUMENT_COUNT_MISMATCH")
-    except (
-        StagedBuildError,
-        VectorStoreError,
-        EmbeddingError,
-        PipelineError,
-        OcrError,
-        SummaryError,
-        GovernedDSLValidationError,
-    ):
+    except (EmbeddingOutcomeUnknown, OcrOutcomeUnknown):
+        _fail(index_version, reason="provider_outcome_unknown")
+        raise
+    except StagedBuildError:
         _fail(index_version, reason="build_failed")
         raise
+    except (VectorStoreError, EmbeddingError, OcrError, SummaryError) as exc:
+        _fail(index_version, reason=exc.code)
+        raise StagedBuildError(exc.code) from exc
+    except PipelineError as exc:
+        _fail(index_version, reason="PIPELINE_FAILED")
+        raise StagedBuildError("PIPELINE_FAILED") from exc
+    except GovernedDSLValidationError as exc:
+        _fail(index_version, reason="GOVERNED_DSL_INVALID")
+        raise StagedBuildError("GOVERNED_DSL_INVALID") from exc
     except Exception:
         _fail(index_version, reason="internal_error")
         raise
 
     with transaction.atomic():
+        set_tenant_context(organization_id)
         locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
         locked.status = IndexStatus.PROMOTABLE
         locked.store_ready = True
@@ -250,8 +258,7 @@ def build_staged_index(
                 "reused_chunks": reused_chunks,
             },
         )
-    index_version.refresh_from_db()
-    return index_version
+    return locked
 
 
 def _create_index_version(
@@ -266,6 +273,7 @@ def _create_index_version(
     summary_prompt_contract: ArtifactVersion | None,
 ) -> IndexVersion:
     with transaction.atomic():
+        set_tenant_context(document_set_version.organization_id)
         latest = (
             IndexVersion.objects.select_for_update()
             .filter(document_set_version=document_set_version, embedding_profile=embedding_profile)
@@ -331,17 +339,44 @@ def pipeline_fingerprint(
 def _compatible_parent(
     *, document_set_version: DocumentSetVersion, pipeline_fingerprint: str
 ) -> IndexVersion | None:
-    return (
-        IndexVersion.objects.filter(
-            organization_id=document_set_version.organization_id,
-            document_set_version__document_set_id=document_set_version.document_set_id,
-            pipeline_fingerprint=pipeline_fingerprint,
-            store_ready=True,
-            status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE, IndexStatus.SUPERSEDED],
+    with transaction.atomic():
+        set_tenant_context(document_set_version.organization_id)
+        return (
+            IndexVersion.objects.select_related("document_set_version")
+            .filter(
+                organization_id=document_set_version.organization_id,
+                document_set_version__document_set_id=document_set_version.document_set_id,
+                pipeline_fingerprint=pipeline_fingerprint,
+                store_ready=True,
+                status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE, IndexStatus.SUPERSEDED],
+            )
+            .order_by("-created_at", "-id")
+            .first()
         )
-        .order_by("-created_at", "-id")
-        .first()
-    )
+
+
+def _load_document_versions(document_set_version: DocumentSetVersion) -> list[DocumentVersion]:
+    """Materialize exact immutable members under RLS before any external I/O begins."""
+
+    with transaction.atomic():
+        set_tenant_context(document_set_version.organization_id)
+        document_version_ids = list(
+            document_set_version.memberships.order_by("ordinal", "id").values_list(
+                "document_version_id", flat=True
+            )[: _MAX_DOCUMENTS + 1]
+        )
+        if len(document_version_ids) > _MAX_DOCUMENTS:
+            raise StagedBuildError("BUILD_TOO_LARGE")
+        versions_by_id = {
+            version.pk: version
+            for version in DocumentVersion.objects.select_related("document").filter(
+                pk__in=document_version_ids,
+                organization_id=document_set_version.organization_id,
+            )
+        }
+        if len(versions_by_id) != len(document_version_ids):
+            raise StagedBuildError("DOCUMENT_VERSION_LINEAGE_INVALID")
+    return [versions_by_id[version_id] for version_id in document_version_ids]
 
 
 def _embed_into_store(
@@ -350,6 +385,7 @@ def _embed_into_store(
     embedding_profile: EmbeddingProfile,
     chunk_fn: object,
     *,
+    document_versions: list[DocumentVersion],
     chunking_profile: ArtifactVersion | None,
     summary_model_profile: ArtifactVersion | None,
     summary_prompt_contract: ArtifactVersion | None,
@@ -372,10 +408,7 @@ def _embed_into_store(
 
     document_count = 0
     chunk_count = 0
-    for membership in document_set_version.memberships.select_related("document_version").order_by(
-        "ordinal", "id"
-    ):
-        version = membership.document_version
+    for version in document_versions:
         if only_document_version_ids is not None and version.pk not in only_document_version_ids:
             continue
         # Deny-by-default parse: only an allowlisted MIME parser runs; the document is untrusted
@@ -403,19 +436,23 @@ def _embed_into_store(
                 raise StagedBuildError("UNSUPPORTED_MIME_FOR_EMBEDDING") from exc
             else:
                 raise StagedBuildError("DOCUMENT_PARSE_FAILED") from exc
+        with transaction.atomic():
+            set_tenant_context(organization_id)
+            updated = DocumentVersion.objects.filter(
+                pk=version.pk, organization_id=organization_id
+            ).update(
+                parser=parsed.parser,
+                parse_status="parsed",
+                element_count=parsed.element_count,
+                page_count=parsed.page_count,
+                updated_at=timezone.now(),
+            )
+            if updated != 1:
+                raise StagedBuildError("DOCUMENT_VERSION_NOT_FOUND")
         version.parser = parsed.parser
         version.parse_status = "parsed"
         version.element_count = parsed.element_count
         version.page_count = parsed.page_count
-        version.save(
-            update_fields=[
-                "parser",
-                "parse_status",
-                "element_count",
-                "page_count",
-                "updated_at",
-            ]
-        )
         if chunking_profile is None:
             chunks = [("content", text) for text in chunk_fn(parsed.text)]  # type: ignore[operator]
         else:
@@ -516,6 +553,7 @@ def _fail(index_version: IndexVersion, *, reason: str) -> None:
     except VectorStoreError:
         pass
     with transaction.atomic():
+        set_tenant_context(index_version.organization_id)
         locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
         locked.status = IndexStatus.FAILED
         locked.store_ready = False

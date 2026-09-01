@@ -19,6 +19,18 @@ Rollout order:
    approved emergency change, draining connections, and running the rollback template. The role is
    disabled and grants are revoked but it is not dropped automatically.
 
+For staged-index worker contract revision 3, migration `ingestion.0015` installs the privileged
+per-index provision/drop functions. On an existing environment, rerun `provision-app-role.sql`
+after that migration so the runtime role receives only `EXECUTE` on those functions; do not grant
+schema `CREATE` or relation ownership. Verify `PUBLIC` cannot execute them, the runtime role is
+`NOSUPERUSER NOBYPASSRLS`, and exact-scope provisioning succeeds before starting revision-3
+ingestion workers. Drain all revision-2 ingestion workers first. After deployment, use the existing
+authorized retry action for failed jobs; do not delete or rewrite failed job/artifact lineage.
+
+Rollback order is the reverse: stop revision-3 ingestion workers, restore revision-2-compatible
+code only if its DDL privilege assumptions are satisfied, then reverse migration `0015`. Reversal
+removes the functions but deliberately leaves existing `chunk_iv_<id>` stores and data intact.
+
 The grant matrix is intentionally table-specific. Immutable and append-only rows receive no
 update/delete grant; platform profile catalogs are read-only; explicit draft/document lifecycle
 tables retain delete only where current services expose an authorized delete/purge operation.

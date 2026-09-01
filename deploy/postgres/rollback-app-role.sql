@@ -8,6 +8,8 @@ REVOKE CONNECT ON DATABASE :"database" FROM :"app_role";
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"app_role";
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"app_role";
 REVOKE EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) FROM :"app_role";
+REVOKE EXECUTE ON FUNCTION agenthub_provision_index_store(bigint) FROM :"app_role";
+REVOKE EXECUTE ON FUNCTION agenthub_drop_index_store(bigint) FROM :"app_role";
 REVOKE USAGE ON SCHEMA public FROM :"app_role";
 
 -- Do not DROP ROLE automatically. Drop is a separate destructive operation after session,

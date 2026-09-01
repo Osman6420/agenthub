@@ -31,6 +31,11 @@ state and the UI could not distinguish a compatible consumer from a reachable br
   lineage may reconcile a lost final job update; otherwise the job requires operator reconciliation.
 - A successful build remains merely promotable. Existing release-manager authorization is still
   required for activation.
+- Durable worker contract revision 3 claims and eager-loads every pinned build input inside one
+  exact tenant-scoped transaction. Every later protected read/write uses its own short
+  transaction-local scope; object-store and embedding/OCR/model calls run outside database
+  transactions. This prevents lazy protected-FK reads after scope expiry without holding a
+  build-long transaction.
 
 ## Security and data consequences
 
@@ -43,7 +48,8 @@ labels. Audit remains content-free and uses opaque job/index references.
 
 Compose and host mode share broker/object-store/revision inputs and the same preflight. Celery beat
 dispatches the reconciler every 30 seconds in bounded batches. Rollback may stop new dispatch but
-must retain job/outbox/audit evidence and run code compatible with in-flight contract revision 1.
+must retain job/outbox/audit evidence and run code compatible with the deployed worker contract.
+Revision-3 rollout drains revision-2 ingestion workers before retrying failed jobs.
 
 ## References
 

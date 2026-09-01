@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from django.db import connection
+from django.db import DatabaseError, connection, transaction
 
 from apps.ingestion import vector_store
 from apps.ingestion.models import IndexStatus, IndexVersion
 from apps.ingestion.pipeline import embed_deterministic
 from apps.ingestion.vector_store import VectorRow, VectorStoreError
+from apps.tenancy.context import set_tenant_context
 from apps.tenancy.models import Organization
 
 pg_only = pytest.mark.skipif(
@@ -65,6 +66,75 @@ def test_provision_write_search_roundtrip() -> None:
     assert hits[0].text == "iade policy"
     assert hits[0].score > 0.9
 
+    vector_store.drop_store(iv)
+    assert not vector_store.store_exists(iv)
+
+
+@pg_only
+@pytest.mark.django_db(transaction=True)
+def test_non_owner_ddl_functions_require_exact_scope_without_schema_create() -> None:
+    iv = _index_version(dimensions=4)
+    other = Organization.objects.create(slug="vs-other", name="VS Other")
+    role = "index_store_ddl_probe"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'DO $$ BEGIN CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN; '
+            "EXCEPTION WHEN duplicate_object THEN NULL; END $$"  # noqa: S608
+        )
+        cursor.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = %s", [role])
+        assert cursor.fetchone() == (False, False)
+        cursor.execute(
+            "SELECT has_function_privilege(%s, "
+            "'public.agenthub_provision_index_store(bigint)', 'EXECUTE')",
+            [role],
+        )
+        assert cursor.fetchone()[0] is False
+        cursor.execute(f'REVOKE CREATE ON SCHEMA public FROM "{role}"')  # noqa: S608
+        cursor.execute(f'GRANT SELECT ON ingestion_indexversion TO "{role}"')  # noqa: S608
+        cursor.execute(
+            f"GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint), "
+            f"agenthub_provision_index_store(bigint), agenthub_drop_index_store(bigint) "
+            f'TO "{role}"'  # noqa: S608
+        )
+        cursor.execute("SELECT has_schema_privilege(%s, 'public', 'CREATE')", [role])
+        assert cursor.fetchone()[0] is False
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET SESSION AUTHORIZATION "{role}"')  # noqa: S608
+        try:
+            with pytest.raises(DatabaseError, match="INDEX_STORE_SCOPE_DENIED"):
+                with transaction.atomic():
+                    set_tenant_context(other.pk)
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT agenthub_provision_index_store(%s)", [iv.pk])
+
+            vector_store.provision_store(iv)
+            assert vector_store.store_exists(iv)
+            vector_store.drop_store(iv)
+            assert not vector_store.store_exists(iv)
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("RESET SESSION AUTHORIZATION")
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET SESSION AUTHORIZATION")
+            cursor.execute(f'DROP OWNED BY "{role}"')  # noqa: S608
+            cursor.execute(f'DROP ROLE "{role}"')  # noqa: S608
+
+
+@pg_only
+@pytest.mark.django_db(transaction=True)
+def test_ddl_functions_enforce_store_lifecycle() -> None:
+    iv = _index_version(dimensions=4)
+    vector_store.provision_store(iv)
+    iv.status = IndexStatus.ACTIVE
+    iv.save(update_fields=["status", "updated_at"])
+
+    with pytest.raises(VectorStoreError, match="INDEX_STORE_ACTIVE"):
+        vector_store.drop_store(iv)
+
+    iv.status = IndexStatus.SUPERSEDED
+    iv.save(update_fields=["status", "updated_at"])
     vector_store.drop_store(iv)
     assert not vector_store.store_exists(iv)
 

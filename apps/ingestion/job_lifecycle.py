@@ -14,6 +14,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.types import ArtifactType
 from apps.audit.services import record_event
 from apps.documents.models import DocumentSetStatus
 from apps.ingestion.models import (
@@ -40,7 +41,7 @@ from apps.observability.metrics import (
 if TYPE_CHECKING:
     from apps.documents.models import DocumentSetVersion
 
-CONTRACT_REVISION = 2
+CONTRACT_REVISION = 3
 TERMINAL_STATES = frozenset(
     {
         StagedIndexBuildJobStatus.SUCCEEDED,
@@ -64,6 +65,35 @@ class BuildJobError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+_PINNED_ARTIFACT_TYPES = {
+    "chunking_profile": ArtifactType.CHUNKING_PROFILE,
+    "retrieval_profile": ArtifactType.RETRIEVAL_PROFILE,
+    "summary_model_profile": ArtifactType.MODEL_PROFILE,
+    "summary_prompt_contract": ArtifactType.PROMPT_TEMPLATE,
+}
+
+
+def _validate_claimed_inputs(job: StagedIndexBuildJob) -> None:
+    """Reject invisible or drifted immutable pins before the claim transaction commits."""
+
+    if (
+        job.document_set_version.organization_id != job.organization_id
+        or job.document_set_version.document_set.organization_id != job.organization_id
+    ):
+        raise BuildJobError("JOB_INPUT_LINEAGE_INVALID")
+    for field_name, expected_type in _PINNED_ARTIFACT_TYPES.items():
+        artifact_id = getattr(job, f"{field_name}_id")
+        artifact = getattr(job, field_name)
+        if artifact_id is None:
+            continue
+        if (
+            artifact is None
+            or artifact.organization_id != job.organization_id
+            or artifact.type != expected_type
+        ):
+            raise BuildJobError("JOB_INPUT_LINEAGE_INVALID")
 
 
 def _canonical_checksum(payload: dict[str, object]) -> str:
@@ -328,13 +358,22 @@ def claim_build_job(*, public_id: str, organization_id: int) -> StagedIndexBuild
     with transaction.atomic():
         set_tenant_context(organization_id)
         job = (
-            StagedIndexBuildJob.objects.select_for_update()
-            .select_related("document_set_version__document_set")
+            StagedIndexBuildJob.objects.select_for_update(of=("self",))
+            .select_related(
+                "document_set_version__document_set",
+                "embedding_profile",
+                "ocr_profile",
+                "chunking_profile",
+                "retrieval_profile",
+                "summary_model_profile",
+                "summary_prompt_contract",
+            )
             .filter(public_id=public_id, organization_id=organization_id)
             .first()
         )
         if job is None:
             raise BuildJobError("JOB_NOT_FOUND")
+        _validate_claimed_inputs(job)
         if job.status == StagedIndexBuildJobStatus.SUCCEEDED:
             return None
         if job.status in {StagedIndexBuildJobStatus.CANCELLED, StagedIndexBuildJobStatus.FAILED}:

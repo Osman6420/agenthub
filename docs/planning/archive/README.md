@@ -4,6 +4,9 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [Source ZIP packaging (completed 2026-09-01)](source-distribution-zip-2026-09-01/plan.md);
+  [verification](source-distribution-zip-2026-09-01/verification.md).
+
 - [OpenShift deploy portability hardening (offline verified 2026-08-28)](openshift-deploy-portability-hardening-2026-08-28/plan.md);
   [verification](openshift-deploy-portability-hardening-2026-08-28/verification.md).
 

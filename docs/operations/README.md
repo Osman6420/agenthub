@@ -2,6 +2,8 @@
 
 Deployment guides:
 
+- [Source ZIP packaging](source-zip-packaging.md) — Git-derived application source handoff with
+  installation guides, checksum manifest, and fail-closed local-secret/runtime-data exclusions.
 - [OpenShift bundled demo stack with Helm](openshift-bundled-stack-helm.md) — AgentHub plus
   single-replica PostgreSQL/pgvector, Redis and MinIO in one namespace for non-production demos.
 

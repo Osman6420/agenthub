@@ -11,6 +11,8 @@ ALTER ROLE :"app_role" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYP
 GRANT CONNECT ON DATABASE :"database" TO :"app_role";
 GRANT USAGE ON SCHEMA public TO :"app_role";
 GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) TO :"app_role";
+GRANT EXECUTE ON FUNCTION agenthub_provision_index_store(bigint) TO :"app_role";
+GRANT EXECUTE ON FUNCTION agenthub_drop_index_store(bigint) TO :"app_role";
 
 -- Identity/bootstrap and Django session/auth lookup. These tables are intentionally outside tenant
 -- RLS because identity is not yet known at lookup time; application authorization remains primary.

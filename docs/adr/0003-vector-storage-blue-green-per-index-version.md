@@ -67,6 +67,14 @@ provably pins one dimension.
   layer that only ever targets a system-generated store name resolved from an `IndexVersion` row
   (no string interpolation of external input). This DAL is the main implementation risk and is
   validated first in the WS1 M3 increment.
+- **Least-privilege DDL.** Runtime web/worker roles retain no schema `CREATE`, relation ownership,
+  migration-role, superuser, or `BYPASSRLS` privilege. Provision and retirement go through
+  migration-owner `SECURITY DEFINER` functions that accept only an integer `IndexVersion` ID,
+  pin `search_path` to `pg_catalog`, re-resolve the authoritative row under the caller's exact
+  transaction-local tenant scope, validate lifecycle/type/dimension bounds, and derive the only
+  permitted relation name from that integer. `PUBLIC` has no execute access; the application role
+  receives only function execution and the created store's required `SELECT`/`INSERT`/sequence
+  privileges.
 
 ## Security consequences
 
@@ -80,6 +88,9 @@ provably pins one dimension.
 - Many relations and build-time DDL; a store inventory + retention job are required. Promotion and
   rollback become O(1) metadata operations (fast, safe, auditable). SQLite cannot exercise this;
   it is a PostgreSQL-only path in tests, like the existing pgvector suite.
+- Rollout must apply the function migration with the migration-owner connection, reapply the
+  application-role grant template, and only then start workers that require this DDL contract.
+  Rollback stops those workers before removing the functions; physical stores remain intact.
 
 ## Data and privacy consequences
 

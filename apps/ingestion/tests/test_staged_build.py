@@ -126,6 +126,36 @@ def test_staged_build_is_promotable_and_searchable() -> None:
 
 
 @pg_only
+@pytest.mark.django_db(transaction=True)
+def test_embedding_provider_runs_outside_database_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org = Organization.objects.create(slug="provider-boundary", name="Provider Boundary")
+    profile = _granted_profile(org)
+    set_version = _published_set_version(org, ["bounded provider input"])
+    delegate = DeterministicEmbeddingProvider()
+    observed: list[bool] = []
+
+    class BoundaryProvider:
+        def embed(self, texts: list[str], *, profile_id: str | None = None) -> EmbeddingResult:
+            observed.append(connection.in_atomic_block)
+            return delegate.embed(texts, profile_id=profile_id)
+
+    monkeypatch.setattr(
+        "apps.ingestion.staged_build.get_embedding_provider", lambda: BoundaryProvider()
+    )
+    index = build_staged_index(
+        document_set_version=set_version,
+        embedding_profile=profile,
+        actor="owner",
+    )
+
+    assert index.status == IndexStatus.PROMOTABLE
+    assert observed and observed == [False]
+    vector_store.drop_store(index)
+
+
+@pg_only
 @pytest.mark.django_db
 def test_csv_document_parses_and_is_searchable() -> None:
     # Exercises the P7.1 parser seam end-to-end: a text/csv blob is parsed to normalized text,

@@ -31,8 +31,8 @@ def test_rls_is_fail_closed_under_non_superuser() -> None:
         dimensions=64,
         index_type="vector",
         version=1,
-        status=IndexStatus.PROMOTABLE,
-        store_ready=True,
+        status=IndexStatus.BUILDING,
+        store_ready=False,
     )
     vector_store.provision_store(index)
     vector_store.write_chunks(
