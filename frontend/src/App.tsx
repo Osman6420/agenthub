@@ -63,8 +63,14 @@ export function App({
   }, []);
 
   const org = orgs.find((o) => o.slug === orgSlug);
-  const canAuthorScenario = !!initial?.scenario_id && initial.can_author_scenario === true;
-  const canWrite = canAuthorScenario || !!org?.can_write;
+  const exactScenario = !!initial?.scenario_id && initial.organization === orgSlug;
+  // Legacy exact flags support a rolling UI update; an explicit actions response
+  // takes precedence. Organization membership/write never grants scenario work.
+  const canAuthorScenario = exactScenario && (initial.allowed_actions
+    ? initial.allowed_actions.edit === true : initial.can_author_scenario === true);
+  const canCompile = exactScenario && (initial.allowed_actions
+    ? initial.allowed_actions.compile === true : initial.can_compile_release === true);
+  const canWrite = canAuthorScenario;
   // Arriving from a scenario means there is exactly one workflow to work on, so the
   // browsing surfaces (draft lists, loose artifact drafts, "new draft") are suppressed.
   const scenarioMode = !!initial?.scenario_id;
@@ -266,7 +272,7 @@ export function App({
             await reload();
             setActive(saved);
           } : undefined} />
-        {(initial?.can_author_scenario || initial?.can_compile_release) &&
+        {canCompile && initial &&
           initial.scenario_public_id &&
           initial.artifact_options_url && <ScenarioManifestPanel
             api={api}
@@ -275,7 +281,7 @@ export function App({
             organization={orgSlug}
             projectId={initial.project_id}
             scenarioId={initial.scenario_id}
-            canCompileRelease={initial.can_compile_release === true}
+            canCompileRelease={canCompile}
             refreshArtifact={publishedArtifact}
           />}
       </div>
@@ -376,7 +382,7 @@ export function App({
       </section>}
 
       {/* Candidate content is reported on the scenario page now; Studio is for the flow. */}
-      {!scenarioMode && (initial?.can_author_scenario || initial?.can_compile_release) &&
+      {!scenarioMode && canCompile && initial &&
         initial.scenario_public_id &&
         initial.artifact_options_url && <ScenarioManifestPanel
           api={api}
@@ -385,7 +391,7 @@ export function App({
           organization={orgSlug}
           projectId={initial.project_id}
           scenarioId={initial.scenario_id}
-          canCompileRelease={initial.can_compile_release === true}
+          canCompileRelease={canCompile}
           refreshArtifact={publishedArtifact}
         />}
 

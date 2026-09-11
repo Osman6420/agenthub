@@ -74,7 +74,7 @@ npm --prefix frontend ci
 npm --prefix frontend run build
 
 $env:DJANGO_SETTINGS_MODULE = 'config.settings.local'
-$env:DATABASE_URL = 'postgres://agenthub:agenthub@localhost:5432/agenthub'
+$env:DATABASE_URL = 'postgres://agenthub:agenthub@localhost:5433/agenthub'
 $env:REDIS_URL    = 'redis://localhost:6379/0'
 $env:OBJECT_STORE_ENDPOINT = 'http://localhost:9000'
 $env:OBJECT_STORE_BUCKET = 'agenthub'

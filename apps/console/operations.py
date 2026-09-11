@@ -463,6 +463,7 @@ def project_operations(
         queryset = _with_status(
             StagedIndexBuildJob.objects.filter(
                 organization=organization,
+                kind="index_build",
                 created_at__gte=since,
             ),
             filters,
@@ -475,6 +476,8 @@ def project_operations(
                 document_set_version__document_set_id=filters.document_set_id
             )
         for job in _limited(queryset, prefix):
+            if job.document_set_version is None:
+                continue
             document_set = job.document_set_version.document_set
             rows.append(
                 _row(

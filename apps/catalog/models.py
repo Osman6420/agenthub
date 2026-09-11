@@ -43,6 +43,27 @@ class AliasStatus(models.TextChoices):
     REDIRECTED = "redirected", "Redirected"
 
 
+class ScenarioAccessMode(models.TextChoices):
+    LEGACY = "legacy", "Mevcut erişimi koru"
+    INHERIT = "inherit", "Projeden devral"
+    PRIVATE = "private", "Bu senaryoya özel erişim"
+
+
+class ScenarioDataAccessMode(models.TextChoices):
+    CONSUMER_SPECIFIC = "consumer_specific", "İstemciye özel veri"
+    SCENARIO_SHARED = "scenario_shared", "Senaryonun ortak verisi"
+
+
+class ScenarioExecutionContract(models.TextChoices):
+    LEGACY = "legacy", "Mevcut sürüm çözümleme"
+    SNAPSHOT = "scenario-revision/v1", "Tek senaryo sürümü"
+
+
+class ScenarioDataSelection(models.TextChoices):
+    LEGACY_PINNED = "legacy_pinned", "Yayında seçilen veri sürümleri"
+    ACTIVE_GENERATION = "active_generation", "Kullanıma hazır güncel veri"
+
+
 class AIProject(TimeStampedModel):
     """A product/business-unit container that owns scenarios."""
 
@@ -52,6 +73,8 @@ class AIProject(TimeStampedModel):
     )
     slug = models.SlugField(max_length=64)
     name = models.CharField(max_length=200)
+    access_revision = models.PositiveIntegerField(default=0, db_default=0)
+    access_change_id = models.CharField(max_length=64, blank=True, default="", db_default="")
     # Informational GitOps metadata only. Authorization is expressed by scoped
     # responsibility assignments, never by this label.
     owner = models.CharField(max_length=200, blank=True)
@@ -88,6 +111,32 @@ class Scenario(TimeStampedModel):
     project = models.ForeignKey(AIProject, on_delete=models.CASCADE, related_name="scenarios")
     slug = models.SlugField(max_length=64)
     name = models.CharField(max_length=200)
+    execution_contract = models.CharField(
+        max_length=32,
+        choices=ScenarioExecutionContract.choices,
+        default=ScenarioExecutionContract.LEGACY,
+        db_default=ScenarioExecutionContract.LEGACY,
+    )
+    data_access_mode = models.CharField(
+        max_length=24,
+        choices=ScenarioDataAccessMode.choices,
+        default=ScenarioDataAccessMode.CONSUMER_SPECIFIC,
+        db_default=ScenarioDataAccessMode.CONSUMER_SPECIFIC,
+    )
+    data_selection = models.CharField(
+        max_length=24,
+        choices=ScenarioDataSelection.choices,
+        default=ScenarioDataSelection.LEGACY_PINNED,
+        db_default=ScenarioDataSelection.LEGACY_PINNED,
+    )
+    access_mode = models.CharField(
+        max_length=16,
+        choices=ScenarioAccessMode.choices,
+        default=ScenarioAccessMode.LEGACY,
+        db_default=ScenarioAccessMode.LEGACY,
+    )
+    access_revision = models.PositiveIntegerField(default=0, db_default=0)
+    access_change_id = models.CharField(max_length=64, blank=True, default="", db_default="")
     visibility = models.CharField(
         max_length=16, choices=Visibility.choices, default=Visibility.INTERNAL
     )
@@ -100,7 +149,29 @@ class Scenario(TimeStampedModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["project", "slug"], name="uniq_scenario_project_slug")
+            models.UniqueConstraint(fields=["project", "slug"], name="uniq_scenario_project_slug"),
+            models.CheckConstraint(
+                condition=models.Q(execution_contract__in=ScenarioExecutionContract.values),
+                name="scenario_execution_contract_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(data_selection=ScenarioDataSelection.LEGACY_PINNED)
+                    | models.Q(
+                        data_selection=ScenarioDataSelection.ACTIVE_GENERATION,
+                        execution_contract=ScenarioExecutionContract.SNAPSHOT,
+                    )
+                ),
+                name="scenario_data_selection_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(access_mode__in=ScenarioAccessMode.values),
+                name="scenario_access_mode_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(data_access_mode__in=ScenarioDataAccessMode.values),
+                name="scenario_data_access_mode_valid",
+            ),
         ]
         ordering = ["project_id", "slug"]
 

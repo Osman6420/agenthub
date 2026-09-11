@@ -19,6 +19,8 @@ from apps.identity.models import (
     DocumentSetResponsibilityAssignment,
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
 )
 from apps.identity.roles import Role
 from apps.ingestion.models import (
@@ -110,6 +112,7 @@ def _rest_profile(logical_id: str = "knowledge-api") -> RestPullProfile:
         revision=1,
         host="rest.private.example",
         path_prefix="/api/v1",
+        auth_mode="bearer",
         secret_ref="secret:rest-reader",  # noqa: S106 -- opaque reference
         created_by="platform",
     )
@@ -394,6 +397,18 @@ def test_schedule_role_split_and_bound_promotion_target(client: Client) -> None:
     client.force_login(manager)
     assert client.post(url, promote_payload).status_code == 302
     schedule.refresh_from_db()
+    assert schedule.automation_mode == ScheduleAutomationMode.STAGE_ONLY
+    assert not schedule.promotion_targets.exists()
+    # Managing the data set does not authorize publication of its bound scenario.
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=org,
+        scenario=scenario,
+        membership=OrganizationMembership.objects.get(organization=org, user=manager),
+        responsibility=ScenarioResponsibility.MANAGER,
+        assigned_by=manager,
+    )
+    assert client.post(url, promote_payload).status_code == 302
+    schedule.refresh_from_db()
     assert schedule.automation_mode == ScheduleAutomationMode.PROMOTE_IF_SAFE
     assert list(schedule.promotion_targets.values_list("scenario_id", flat=True)) == [scenario.pk]
 
@@ -435,7 +450,8 @@ def test_source_detail_projects_safe_lifecycle_without_authority_values(client: 
     response = client.get(reverse("console:connector_source_detail", args=[source.pk]))
     body = response.content.decode()
     assert response.status_code == 200
-    assert "Kaynak → aktif indeks yolculuğu" in body
+    assert "Doküman setinin hazırlanma durumu" in body
+    assert "tüm bağlı kaynaklarla birlikte hazırlanır" in body
     assert "BROKER_UNAVAILABLE" in body
     assert "knowledge-api · r1" in body and "documents · r1" in body
     for denied in (
@@ -463,3 +479,113 @@ def test_source_detail_is_read_only_for_auditor_and_cross_tenant_fails_closed(
     assert (
         client.get(reverse("console:connector_source_detail", args=[source.pk])).status_code == 404
     )
+
+
+@pytest.mark.django_db
+def test_source_history_keeps_success_visible_after_a_later_failure(client):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    org = Organization.objects.create(slug="history", name="History")
+    docset = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    author = _member("history-author", org, Role.SCENARIO_EDITOR)
+    source = _rest_source(org, docset, author)
+    assert source.rest_profile is not None and source.rest_contract is not None
+    assert source.rest_profile_id is not None and source.rest_contract_id is not None
+    success = RestSyncRun.objects.create(
+        organization=org,
+        source=source,
+        rest_profile=source.rest_profile,
+        rest_contract=source.rest_contract,
+        status="succeeded",
+        snapshot_complete=True,
+        finished_at=timezone.now() - timedelta(days=1),
+    )
+    failure = RestSyncRun.objects.create(
+        organization=org,
+        source=source,
+        rest_profile=source.rest_profile,
+        rest_contract=source.rest_contract,
+        status="dead_letter",
+        error_code="BROKER_UNAVAILABLE",
+    )
+    client.force_login(author)
+    page = client.get(reverse("console:connector_source_detail", args=[source.pk]))
+    assert page.context["last_success"].pk == success.pk
+    assert page.context["last_failure"].pk == failure.pk
+    assert (
+        "Son başarılı yenileme:" in page.content.decode() and "Son hata:" in page.content.decode()
+    )
+    assert page.context["latest_run_label"] == "İnceleme gerekiyor"
+
+
+@pytest.mark.django_db
+def test_source_list_is_paginated_with_exact_set_scope(client):
+    org = Organization.objects.create(slug="paged", name="Paged")
+    docset = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    author = _member("paged-author", org, Role.SCENARIO_EDITOR)
+    source = _rest_source(org, docset, author)
+    assert source.rest_profile is not None and source.rest_contract is not None
+    assert source.rest_profile_id is not None and source.rest_contract_id is not None
+    for number in range(22):
+        create_rest_source(
+            actor=author,
+            organization=org,
+            document_set=docset,
+            rest_profile=source.rest_profile,
+            rest_contract=source.rest_contract,
+            name=f"Source {number:02}",
+            slug=f"source-{number}",
+            inputs={"dataset": "kb"},
+        )
+    client.force_login(author)
+    url = reverse("console:document_set_connectors_public", args=[docset.public_id])
+    first = client.get(url)
+    second = client.get(url, {"page": 2})
+    assert len(first.context["sources"]) == 20 and len(second.context["sources"]) == 3
+    assert first.context["source_page"].paginator.count == 23
+    assert "Sonraki sayfa" in first.content.decode()
+    assert "Önceki sayfa" in second.content.decode()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("blocker", ["grant", "profile", "contract", "source", "queued"])
+def test_rest_source_readiness_hides_unavailable_run_action_without_writes(client, blocker):
+    org = Organization.objects.create(slug="readiness", name="Readiness")
+    docset = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
+    author = _member("ready-author", org, Role.SCENARIO_EDITOR)
+    source = _rest_source(org, docset, author)
+    assert source.rest_profile is not None and source.rest_contract is not None
+    assert source.rest_profile_id is not None and source.rest_contract_id is not None
+    client.force_login(author)
+    detail_url = reverse("console:connector_source_detail", args=[source.pk])
+    list_url = reverse("console:document_set_connectors_public", args=[docset.public_id])
+    assert client.get(detail_url).context["run_ready"]
+    assert client.get(list_url).context["sources"][0]["can_run"]
+    if blocker == "grant":
+        TenantRestPullProfileGrant.objects.filter(document_set=docset).delete()
+    elif blocker == "profile":
+        RestPullProfile.objects.filter(pk=source.rest_profile_id).update(status="disabled")
+    elif blocker == "contract":
+        RestPullContract.objects.filter(pk=source.rest_contract_id).update(status="disabled")
+    elif blocker == "source":
+        Source.objects.filter(pk=source.pk).update(status="disabled")
+    else:
+        RestSyncRun.objects.create(
+            organization=org,
+            source=source,
+            rest_profile=source.rest_profile,
+            rest_contract=source.rest_contract,
+        )
+    runs_before = RestSyncRun.objects.count()
+    audits_before = AuditEvent.objects.count()
+    detail = client.get(detail_url)
+    listing = client.get(list_url)
+    assert detail.status_code == listing.status_code == 200
+    assert not detail.context["run_ready"]
+    assert detail.context["run_blocker"]
+    assert not listing.context["sources"][0]["can_run"]
+    assert "Şimdi çalıştır" not in detail.content.decode()
+    assert RestSyncRun.objects.count() == runs_before
+    assert AuditEvent.objects.count() == audits_before

@@ -209,6 +209,25 @@ def _embedding_payload() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [("model", _model_payload()), ("embedding", _embedding_payload())],
+)
+def test_profile_form_groups_fields_without_dropping_any(
+    client: Client, kind: str, payload: dict[str, object]
+) -> None:
+    """BUG-009: the form was regrouped into fieldsets for readability -- every field the form
+    actually has (and the registration flow actually accepts, per the payload fixtures above)
+    must still render, none silently dropped by the new grouping."""
+    admin = User.objects.create_superuser(f"profile-admin-{kind}", password=None)
+    client.force_login(admin)
+
+    body = client.get(reverse("console:platform_profile_create", args=[kind])).content.decode()
+
+    for field_name in payload:
+        assert f'name="{field_name}"' in body, f"{field_name} missing from {kind} profile form"
+
+
 def test_platform_setup_is_platform_only_and_redacts_registered_profile(client: Client) -> None:
     organization = Organization.objects.create(slug="platform-ui", name="Platform UI")
     member = User.objects.create_user("tenant-member")

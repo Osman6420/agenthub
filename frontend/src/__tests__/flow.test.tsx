@@ -208,6 +208,32 @@ describe("end-to-end builder flow", () => {
     expect(calls.some((c) => c.url.includes("/publish/") && c.method === "POST")).toBe(true);
   });
 
+  it("removes a selected edge without touching its nodes (BUG-006)", async () => {
+    mockFetch();
+    const api = new BuilderApi("/console/api/builder/");
+    const { result } = renderHook(() => useBuilder(api, schema, draftFixture()));
+
+    act(() => result.current.addNode("input"));
+    act(() => result.current.addNode("end"));
+    act(() =>
+      result.current.onConnect({
+        source: "input",
+        target: "end",
+        sourceHandle: null,
+        targetHandle: null,
+      }),
+    );
+    expect(result.current.edges).toHaveLength(1);
+    const edgeId = result.current.edges[0].id;
+
+    act(() => result.current.selectEdge(edgeId));
+    act(() => result.current.removeSelected());
+
+    expect(result.current.edges).toHaveLength(0);
+    expect(result.current.nodes.map((n) => n.id).sort()).toEqual(["end", "input"]);
+    expect(result.current.selectedEdgeId).toBeNull();
+  });
+
   it("read-only mode blocks graph edits and saves", async () => {
     mockFetch();
     const api = new BuilderApi("/console/api/builder/");

@@ -31,6 +31,9 @@ def register_ocr_profile(*, actor: UserLike, **fields: Any) -> OcrProfile:
     validate_ocr_profile_fields(**fields)
     with transaction.atomic():
         profile = OcrProfile.objects.create(created_by=actor_id, **fields)
+        from apps.ingestion.connections import materialize_connection
+
+        materialize_connection(profile=profile, actor=actor_id)
         record_event(
             actor_type=ActorType.USER,
             actor_id=actor_id,

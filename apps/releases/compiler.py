@@ -20,8 +20,11 @@ from django.utils import timezone
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import canonical_json, compute_checksum, validate_body
-from apps.catalog.models import Scenario
+from apps.catalog.models import Scenario, ScenarioDataSelection, ScenarioExecutionContract
 from apps.releases.models import ReleaseStatus, ScenarioRelease
+from apps.tenancy.context import set_tenant_context
+from apps.tenancy.models import Organization
+from apps.workflows.models import WorkflowVersion
 
 MAX_MANIFEST_ROLE_LENGTH = 128
 
@@ -162,7 +165,25 @@ def compile_release(
     runtime_version: str,
     created_by: str,
     index_versions: list[int] | None = None,
+    prepared_source_job=None,
 ) -> ScenarioRelease:
+    # New snapshot compositions take the same org -> scenario lock order as
+    # access transitions before creating any compiled workflow/version row.
+    execution_contract = Scenario.objects.values_list("execution_contract", flat=True).get(
+        pk=scenario.pk
+    )
+    if execution_contract not in ScenarioExecutionContract.values:
+        raise CompileError("unsupported execution contract", code="execution_contract_unsupported")
+    if execution_contract == ScenarioExecutionContract.SNAPSHOT:
+        set_tenant_context(scenario.organization_id)
+        Organization.objects.select_for_update().get(pk=scenario.organization_id)
+        scenario = Scenario.objects.select_for_update().get(
+            pk=scenario.pk,
+            organization_id=scenario.organization_id,
+            project__organization_id=scenario.organization_id,
+        )
+        execution_contract = scenario.execution_contract
+    scenario.execution_contract = execution_contract
     if not refs:
         raise CompileError(
             "a release must reference at least one artifact",
@@ -181,6 +202,7 @@ def compile_release(
 
     artifacts_manifest: dict[str, dict[str, object]] = {}
     workflow_checksum = ""
+    workflow_version: WorkflowVersion | None = None
     compiled_workflow_graph: dict[str, object] | None = None
     for ref in refs:
         if ref.role in artifacts_manifest:
@@ -309,7 +331,52 @@ def compile_release(
     # index version at request time (pointer flip), so promotion/rollback need no recompile.
     from apps.documents.services import pinned_document_set_version_ids
 
-    document_set_versions = pinned_document_set_version_ids(scenario)
+    document_set_versions: list[int] = []
+    document_set_ids: list[int] = []
+    if scenario.data_selection == ScenarioDataSelection.ACTIVE_GENERATION:
+        from apps.documents.models import ScenarioDocumentSetBinding
+
+        if execution_contract != ScenarioExecutionContract.SNAPSHOT or pinned_indexes:
+            raise CompileError("incompatible data selection", code="data_selection_invalid")
+        document_set_ids = list(
+            ScenarioDocumentSetBinding.objects.filter(
+                scenario=scenario,
+                organization_id=scenario.organization_id,
+                document_set__organization_id=scenario.organization_id,
+            )
+            .order_by("document_set_id")
+            .values_list("document_set_id", flat=True)[:201]
+        )
+        if len(document_set_ids) > 200:
+            raise CompileError("too many document sets", code="data_selection_limit")
+    elif scenario.data_selection == ScenarioDataSelection.LEGACY_PINNED:
+        document_set_versions = pinned_document_set_version_ids(scenario)
+    else:
+        raise CompileError("unsupported data selection", code="data_selection_invalid")
+
+    if prepared_source_job is not None:
+        from apps.documents.models import DocumentSetVersion, ScenarioDocumentSetBinding
+        from apps.evaluations.prepared import _source_proof
+
+        candidate, _ = _source_proof(prepared_source_job)
+        if (
+            candidate.organization_id != scenario.organization_id
+            or not ScenarioDocumentSetBinding.objects.filter(
+                scenario=scenario,
+                organization_id=scenario.organization_id,
+                document_set_id=candidate.document_set_id,
+            ).exists()
+        ):
+            raise CompileError("candidate outside scenario scope", code="data_selection_invalid")
+        if scenario.data_selection == ScenarioDataSelection.LEGACY_PINNED:
+            replaced = set(
+                DocumentSetVersion.objects.filter(
+                    pk__in=document_set_versions,
+                    document_set_id=candidate.document_set_id,
+                    organization_id=scenario.organization_id,
+                ).values_list("pk", flat=True)
+            )
+            document_set_versions = sorted((set(document_set_versions) - replaced) | {candidate.pk})
 
     manifest: dict[str, object] = {
         "scenario_id": scenario.id,
@@ -318,6 +385,9 @@ def compile_release(
     }
     if pinned_indexes:
         manifest["index_versions"] = pinned_indexes
+    if scenario.data_selection == ScenarioDataSelection.ACTIVE_GENERATION:
+        manifest["data_selection"] = str(scenario.data_selection)
+        manifest["document_set_ids"] = document_set_ids
     if document_set_versions:
         manifest["document_set_versions"] = document_set_versions
     if workflow_checksum:
@@ -335,14 +405,30 @@ def compile_release(
         )
     manifest_sha = compute_checksum(manifest)
 
-    return ScenarioRelease.objects.create(
+    release = ScenarioRelease.objects.create(
         scenario=scenario,
+        execution_contract=execution_contract,
         status=ReleaseStatus.CANDIDATE,
         runtime_version=runtime_version,
         manifest=manifest,
         artifact_manifest_sha256=manifest_sha,
         created_by=created_by,
     )
+    if execution_contract == ScenarioExecutionContract.SNAPSHOT:
+        from apps.releases.revision_schema import RevisionError
+        from apps.releases.revisions import _capture_compiled_revision
+
+        if workflow_version is None:
+            raise CompileError("workflow is missing", code="workflow_missing")
+        try:
+            _capture_compiled_revision(
+                release=release, workflow_version=workflow_version, created_by=created_by
+            )
+        except RevisionError as exc:
+            raise CompileError(
+                "execution snapshot could not be verified", code="revision_capture_failed"
+            ) from exc
+    return release
 
 
 @transaction.atomic
@@ -352,6 +438,7 @@ def promote_release(release: ScenarioRelease) -> ScenarioRelease:
     Minimal Sprint 2 promotion — the full gated promotion/canary/rollback path is
     Sprint 6. The DB constraint guarantees the single-active invariant.
     """
+    lock_release_scenario(release.scenario)
     previous = (
         ScenarioRelease.objects.select_for_update()
         .filter(scenario_id=release.scenario_id, status=ReleaseStatus.ACTIVE)
@@ -366,6 +453,15 @@ def promote_release(release: ScenarioRelease) -> ScenarioRelease:
     release.promoted_at = timezone.now()
     release.save(update_fields=["status", "promoted_at"])
     return release
+
+
+def lock_release_scenario(scenario: Scenario) -> None:
+    """Serialize live replacements with publication and access changes, in that order."""
+    set_tenant_context(scenario.organization_id)
+    Organization.objects.select_for_update(no_key=True).get(pk=scenario.organization_id)
+    Scenario.objects.select_for_update(no_key=True).get(
+        pk=scenario.pk, organization_id=scenario.organization_id
+    )
 
 
 def workflow_manifest_requirements(graph: dict[str, object]) -> dict[str, dict[str, Any]]:

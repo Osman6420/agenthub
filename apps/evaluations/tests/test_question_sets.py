@@ -477,6 +477,46 @@ def test_answer_evaluation_pins_release_and_keeps_answer_metrics_independent() -
     assert run.case_evidence.get().generated_answer == "14 gün"
 
 
+@pytest.mark.django_db(transaction=True)
+def test_cancellation_during_last_answer_is_visible_at_finalization(monkeypatch) -> None:
+    from apps.evaluations import question_services
+
+    organization = Organization.objects.create(slug="last-case-cancel", name="Cancellation")
+    user = _admin(organization)
+    question_set = create_question_set(
+        organization=organization,
+        user=user,
+        name="Last case",
+        description="",
+        cases=_cases(with_anchor=False),
+    )
+    version = publish_question_set(
+        question_set=question_set,
+        user=user,
+        expected_revision=question_set.draft_revision,
+    )
+    release = _release(organization)
+    _grant_scenario_tester(user, release)
+    run, _ = create_answer_evaluation(
+        user=user,
+        question_set_version=version,
+        release=release,
+        idempotency_key="cancel-last-answer",
+    )
+    execute = question_services.execute_release_input
+
+    def execute_then_cancel(**kwargs):
+        result = execute(**kwargs)
+        request_evaluation_cancellation(run=run, user=user)
+        return result
+
+    monkeypatch.setattr(question_services, "execute_release_input", execute_then_cancel)
+    execute_question_evaluation(run=run)
+    run.refresh_from_db()
+    assert run.status == QuestionEvaluationStatus.CANCELLED
+    assert run.completed_cases == 1 and run.case_evidence.count() == 1
+
+
 def test_the_worker_load_path_still_aggregates_the_evidence_it_just_wrote() -> None:
     """``tasks.execute_question_evaluation_task`` prefetches ``case_evidence`` before any
     case runs, so the related manager caches an empty list. Aggregating through that cache

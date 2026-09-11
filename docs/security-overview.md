@@ -93,6 +93,24 @@ field**:
   authorization. Forged, stale and revoked session values fall back without widening scope.
 - **Protected content stays explicit:** organization/global administration does not imply document
   content, scenario editing, release, runtime-control, or approval authority.
+- **Combined scenario management is explicit:** `scenario_manager` combines edit/test,
+  release and runtime actions only for its assigned scenario. It does not grant document
+  content, tool approval, organization administration or access to sibling scenarios.
+  Existing specialist assignments are not automatically converted.
+- **Access inheritance is explicit:** new basic project roles map only in `inherit` mode;
+  `private` uses direct scenario roles. Project access administration is separate from
+  private content visibility. Legacy rows keep their earlier semantics. Previewed changes
+  are signed, actor/target/baseline bound, stale-safe and audited atomically; ordinary last
+  permanent manager removal is refused, while organization offboarding remains available.
+  An old binary that ignores access modes is unsafe after mode adoption; retain the
+  mode-aware evaluator when rolling back application functionality.
+- **Shared scenario data requires data-owner consent:** `consumer_specific` is the
+  compatibility default. `scenario_shared` requires a live exact scenario/set grant,
+  separately recorded consent for current/future authorized consumers and an active
+  matching consumer binding. Each set is approved independently. Removing the base
+  grant clears shared consent; ordinary regrant cannot restore it. Retrieval and MCP
+  ingestion scope use the same live decision, with pinned versions, tenant predicates,
+  active indexes, tombstones and RLS retained. Human content access is unchanged.
 - **Membership invariants:** membership and responsibility changes are row-locked, cannot assign
   recovery superusers, cannot remove the last organization administrator, revoke dependent
   responsibilities atomically, and roll back if required audit persistence fails.
@@ -198,9 +216,15 @@ High-risk, side-effecting tools require a durable approval:
 - A **request-checksum binding** prevents swapping the input after approval.
 - **Scenario-scoped decision authority:** only an active `scenario_approver` assignment for the
   invocation's exact scenario may decide.
-- **Typed separation of duties:** self-approval is denied only when the verified human initiator
-  and verified human decision-maker are the same user. Consumer subjects and user identities are
-  never compared as if they were the same identity class.
+- **Typed separation of duties:** self-approval is denied when the verified human initiator and
+  verified human decision-maker are the same user. Consumer subjects and user identities are
+  never compared as if they were the same identity class. **Current scope:** the initiator side
+  of this check (`initiated_by_user` on `request_tool_invocation`) is populated only by tests
+  today -- the two real production callers (the workflow `tool` node and the agent-loop tool
+  step) both originate from a consumer-driven run, not a console user, so neither passes it. The
+  check activates automatically once a human-initiated tool-triggering surface exists and wires
+  that identity through; until then, treat it as implemented-but-dormant against real traffic,
+  not as an active control.
 - **30-minute expiry**, **idempotent resume that never double-executes**, and an
   **`outcome_unknown`** state for a dispatched-but-unconfirmed call that is **never retried**
   (no duplicated side effects).

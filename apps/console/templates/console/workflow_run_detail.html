@@ -1,13 +1,14 @@
 {% extends "console/base.html" %}
 {% block title %}{{ title }} · AgentHub Console{% endblock %}
 {% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:runs' %}">Çalıştırmalar</a><span>›</span><a href="{{ run.scenario_url }}">{{ run.scenario }}</a><span>›</span><span aria-current="page">Çalıştırma ayrıntısı</span></nav>
 <div class="card">
   <h1>Workflow çalıştırması <span class="muted">#{{ run.id }}</span></h1>
   <div class="table-scroll"><table>
     <caption class="sr-only">Çalıştırma özeti</caption>
     <tbody>
       <tr><th>Organizasyon</th><td>{{ run.org }}</td></tr>
-      <tr><th>Senaryo</th><td>{{ run.scenario }}</td></tr>
+      <tr><th>Senaryo</th><td><a href="{{ run.scenario_url }}">{{ run.scenario }}</a></td></tr>
       <tr><th>Durum</th><td><span class="badge">{{ run.status }}</span></td></tr>
       <tr><th>Hata</th><td>{{ run.error|default:"-" }}</td></tr>
       {% if run.awaiting_node %}<tr><th>Beklenen düğüm</th><td>{{ run.awaiting_node }}</td></tr>{% endif %}

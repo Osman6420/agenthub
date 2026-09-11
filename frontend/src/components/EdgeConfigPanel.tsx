@@ -14,11 +14,13 @@ export function EdgeConfigPanel({
   nodes,
   disabled,
   onChange,
+  onRemove,
 }: {
   edge: Edge | null;
   nodes: Node<BuilderNodeData>[];
   disabled: boolean;
   onChange: (id: string, selector: EdgeSelector) => void;
+  onRemove: () => void;
 }) {
   if (!edge) return null;
   const source = nodes.find((n) => n.id === edge.source);
@@ -101,6 +103,12 @@ export function EdgeConfigPanel({
         </select>
         <span style={helpStyle}>Bu hata sınıfında izlenecek telafi/kurtarma rotası.</span>
       </label>
+
+      {!disabled && (
+        <button type="button" onClick={onRemove} style={removeStyle}>
+          Kenarı kaldır
+        </button>
+      )}
     </aside>
   );
 }
@@ -123,3 +131,12 @@ const inputStyle: React.CSSProperties = {
   color: "#e6e6e6",
 };
 const helpStyle: React.CSSProperties = { display: "block", color: "#6b7280", marginTop: 3 };
+const removeStyle: React.CSSProperties = {
+  marginTop: 8,
+  padding: "6px 10px",
+  borderRadius: 6,
+  border: "1px solid #7f1d1d",
+  background: "#2a1417",
+  color: "#fca5a5",
+  cursor: "pointer",
+};

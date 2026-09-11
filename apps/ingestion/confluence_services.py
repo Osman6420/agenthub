@@ -16,6 +16,7 @@ from apps.ingestion.confluence_schema import (
     normalize_confluence_source_config,
     validate_confluence_profile_fields,
 )
+from apps.ingestion.connections import ConnectionError, materialize_connection
 from apps.ingestion.models import (
     ConfluenceProfile,
     ConfluenceProfileStatus,
@@ -66,6 +67,7 @@ def register_confluence_profile(
     with transaction.atomic():
         try:
             profile = ConfluenceProfile.objects.create(created_by=actor_id, **profile_fields)
+            materialize_connection(profile=profile, actor=actor_id)
         except IntegrityError as exc:
             raise ConfluenceServiceError("CONFLUENCE_PROFILE_CONFLICT") from exc
         record_event(
@@ -238,6 +240,19 @@ def create_confluence_source(
     )
     source.full_clean(validate_unique=False, validate_constraints=False)
     with transaction.atomic():
+        set_tenant_context(organization.id)
+        try:
+            source.connection = materialize_connection(
+                profile=confluence_profile, actor=actor_id, require_active=True
+            )
+        except ConnectionError as exc:
+            code = (
+                "CONFLUENCE_PROFILE_DISABLED"
+                if exc.code == "CONNECTION_PROFILE_DISABLED"
+                else "CONFLUENCE_PROFILE_INVALID"
+            )
+            raise ConfluenceServiceError(code) from None
+        source.full_clean(validate_unique=False, validate_constraints=False)
         try:
             source.save()
         except IntegrityError as exc:

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from django.conf import settings
+from django.db import transaction
 from django.utils.module_loading import import_string
 
 from apps.retrieval.types import RetrievedChunk
@@ -106,6 +107,121 @@ class DemoRetrievalProvider:
 class PgvectorRetrievalProvider:
     """Cosine retrieval constrained by signed-context tenant and pinned indexes."""
 
+    @transaction.atomic
+    def retrieve_prepared(
+        self,
+        *,
+        query,
+        profile,
+        organization_id,
+        scenario_id,
+        consumer_id,
+        release_id,
+        run_id,
+        selection_id=None,
+    ) -> list[RetrievedChunk]:
+        from apps.evaluations.prepared import prepared_run_generations
+        from apps.evaluations.services import EvalError
+        from apps.orchestration.resolver import resolve_bundle
+        from apps.tenancy.context import set_tenant_context
+        from apps.workflows.models import Run
+        from apps.workflows.retrieval_selection import read_active_selection
+
+        set_tenant_context(organization_id)
+        run = (
+            Run.objects.select_related("release")
+            .filter(
+                pk=run_id,
+                organization_id=organization_id,
+                scenario_id=scenario_id,
+                consumer_id=consumer_id,
+                release_id=release_id,
+                prepared_evaluation__isnull=False,
+            )
+            .first()
+        )
+        if run is None:
+            raise EvalError("PREPARED_EVALUATION_RUN_INVALID")
+        pins = prepared_run_generations(run)
+        version_ids = tuple(p.document_set_version_id for p in pins)
+        index_ids = tuple(p.index_version_id for p in pins)
+        if resolve_bundle(run.release).data_selection == "active_generation":
+            if selection_id is None:
+                raise EvalError("RETRIEVAL_SELECTION_REQUIRED")
+            selected = read_active_selection(
+                organization_id=organization_id,
+                run_id=run.pk,
+                release_id=release_id,
+                consumer_id=consumer_id,
+                selection_id=selection_id,
+                query=query,
+                profile=profile,
+            )
+            if set(
+                zip(selected.document_set_version_ids, selected.index_version_ids, strict=True)
+            ) != set(zip(version_ids, index_ids, strict=True)):
+                raise EvalError("PREPARED_EVALUATION_SELECTION_INVALID")
+        elif selection_id is not None:
+            raise EvalError("PREPARED_EVALUATION_SELECTION_INVALID")
+        return self._retrieve_acl(
+            query=query,
+            profile=profile,
+            organization_id=organization_id,
+            scenario_id=scenario_id,
+            consumer_id=consumer_id,
+            document_set_version_ids=list(version_ids),
+            selected_index_version_ids=index_ids,
+            prepared_run=run,
+        )
+
+    @transaction.atomic
+    def retrieve_selected(
+        self,
+        *,
+        query: str,
+        profile: dict[str, Any],
+        organization_id: int,
+        scenario_id: int,
+        consumer_id: int,
+        release_id: int,
+        run_id: Any,
+        selection_id: int,
+    ) -> list[RetrievedChunk]:
+        from apps.tenancy.context import set_tenant_context
+        from apps.workflows.models import Run
+        from apps.workflows.retrieval_selection import (
+            RetrievalSelectionError,
+            read_active_selection,
+        )
+
+        set_tenant_context(organization_id)
+        if not Run.objects.filter(
+            pk=run_id,
+            organization_id=organization_id,
+            scenario_id=scenario_id,
+            consumer_id=consumer_id,
+            release_id=release_id,
+        ).exists():
+            raise RetrievalSelectionError("RETRIEVAL_SELECTION_UNRESOLVED")
+        selected = read_active_selection(
+            organization_id=organization_id,
+            run_id=run_id,
+            release_id=release_id,
+            consumer_id=consumer_id,
+            selection_id=selection_id,
+            query=query,
+            profile=profile,
+        )
+        return self._retrieve_acl(
+            query=query,
+            profile=profile,
+            organization_id=organization_id,
+            scenario_id=scenario_id,
+            consumer_id=consumer_id,
+            document_set_version_ids=list(selected.document_set_version_ids),
+            selected_index_version_ids=selected.index_version_ids,
+        )
+
     def retrieve(
         self,
         *,
@@ -133,11 +249,31 @@ class PgvectorRetrievalProvider:
             )
         if not index_versions:
             return []
+        return self._retrieve_source_indexes(
+            query=query,
+            profile=profile,
+            organization_id=organization_id,
+            index_versions=index_versions,
+        )
+
+    @transaction.atomic
+    def _retrieve_source_indexes(
+        self,
+        *,
+        query: str,
+        profile: dict[str, Any],
+        organization_id: int,
+        index_versions: list[int],
+    ) -> list[RetrievedChunk]:
+        """Keep the legacy source contract while each generation transitions independently."""
         from pgvector.django import CosineDistance
 
-        from apps.ingestion.models import Chunk, IndexStatus
+        from apps.ingestion.models import Chunk, IndexedDocument, IndexStatus, IndexVersion
         from apps.ingestion.pipeline import embed_deterministic
+        from apps.ingestion.vector_store import search
+        from apps.tenancy.context import set_tenant_context
 
+        set_tenant_context(organization_id)
         top_k = min(max(int(profile.get("top_k", 5)), 1), 50)
         threshold = float(profile.get("score_threshold", 0.0)) if profile else 0.0
         query_vector = embed_deterministic(query)
@@ -146,12 +282,13 @@ class PgvectorRetrievalProvider:
                 organization_id=organization_id,
                 index_version_id__in=index_versions,
                 index_version__status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
+                index_version__storage_layout="legacy",
             )
             .select_related("document", "index_version__source")
             .annotate(distance=CosineDistance("embedding", query_vector))
             .order_by("distance")[:top_k]
         )
-        return [
+        results = [
             RetrievedChunk(
                 # This legacy path only serves source-scoped index versions; a P3 document-set
                 # index version writes to its own per-IndexVersion store, not this Chunk table.
@@ -164,6 +301,41 @@ class PgvectorRetrievalProvider:
             for row in rows
             if max(0.0, 1.0 - float(row.distance)) >= threshold
         ]
+        for index in IndexVersion.objects.filter(
+            organization_id=organization_id,
+            pk__in=index_versions,
+            source__isnull=False,
+            storage_layout="shared_v1",
+            storage_state="sealed",
+            store_ready=True,
+            status__in=[IndexStatus.PROMOTABLE, IndexStatus.ACTIVE],
+        ).select_related("source"):
+            hits = search(index, query_vector, organization_id=organization_id, top_k=top_k)
+            documents = {
+                document.pk: document
+                for document in IndexedDocument.objects.filter(
+                    organization_id=organization_id,
+                    index_version=index,
+                    pk__in=[hit.indexed_document_id for hit in hits if hit.indexed_document_id],
+                )
+            }
+            for hit in hits:
+                document = (
+                    documents.get(hit.indexed_document_id)
+                    if hit.indexed_document_id is not None
+                    else None
+                )
+                if document is not None and hit.score >= threshold:
+                    results.append(
+                        RetrievedChunk(
+                            text=hit.text,
+                            source_id=index.source.slug if index.source else "",
+                            source_uri=document.source_uri,
+                            title=document.title,
+                            score=hit.score,
+                        )
+                    )
+        return sorted(results, key=lambda item: item.score, reverse=True)[:top_k]
 
     def _retrieve_acl(
         self,
@@ -175,6 +347,8 @@ class PgvectorRetrievalProvider:
         document_set_version_ids: list[int],
         consumer_id: int | None,
         operator_test: bool = False,
+        selected_index_version_ids: tuple[int, ...] | None = None,
+        prepared_run=None,
     ) -> list[RetrievedChunk]:
         """Deny-by-default retrieval from pinned doc-set versions' active per-IndexVersion stores.
 
@@ -191,13 +365,29 @@ class PgvectorRetrievalProvider:
             DocumentSetVersion,
             DocumentVersion,
             GrantPrincipalType,
-            ScenarioDocumentSetGrant,
-            ScenarioDocumentSetGrantStatus,
         )
+        from apps.documents.retrieve_scope import live_consumer_scenario_grants
         from apps.identity.models import Consumer, ConsumerStatus
         from apps.ingestion import vector_store
         from apps.ingestion.embedding import get_embedding_provider
         from apps.ingestion.models import IndexStatus, IndexVersion
+
+        prepared_index_ids = ()
+        if prepared_run is not None:
+            from apps.evaluations.prepared import prepared_run_generations
+            from apps.evaluations.services import EvalError
+
+            pins = prepared_run_generations(prepared_run)
+            prepared_index_ids = tuple(p.index_version_id for p in pins)
+            if (
+                operator_test
+                or prepared_run.organization_id != organization_id
+                or prepared_run.scenario_id != scenario_id
+                or prepared_run.consumer_id != consumer_id
+                or set(prepared_index_ids) != set(selected_index_version_ids or ())
+                or {p.document_set_version_id for p in pins} != set(document_set_version_ids)
+            ):
+                raise EvalError("PREPARED_EVALUATION_SCOPE_INVALID")
 
         # The authenticated consumer id comes from the signed execution context (or the durable
         # run's immutable consumer FK). A caller-provided subject is never trusted. Grants store
@@ -213,14 +403,13 @@ class PgvectorRetrievalProvider:
                 ).values_list("document_set_id", flat=True)
             )
         else:
-            if (
-                consumer_id is None
-                or not Consumer.objects.filter(
-                    id=consumer_id,
-                    organization_id=organization_id,
-                    status=ConsumerStatus.ACTIVE,
-                ).exists()
-            ):
+            consumer = Consumer.objects.filter(
+                id=consumer_id or 0,
+                organization_id=organization_id,
+                status=ConsumerStatus.ACTIVE,
+                organization__status="active",
+            ).first()
+            if consumer is None:
                 return []
             authorized_set_ids = list(
                 DocumentSetGrant.objects.filter(
@@ -234,13 +423,9 @@ class PgvectorRetrievalProvider:
                 live_scenario_set_ids = authorized_set_ids
             else:
                 live_scenario_set_ids = list(
-                    ScenarioDocumentSetGrant.objects.filter(
-                        organization_id=organization_id,
-                        scenario_id=scenario_id,
-                        document_set_id__in=authorized_set_ids,
-                        permission="retrieve",
-                        status=ScenarioDocumentSetGrantStatus.GRANTED,
-                        revoked_at__isnull=True,
+                    live_consumer_scenario_grants(
+                        consumer=consumer,
+                        scenario_ids=[scenario_id],
                     ).values_list("document_set_id", flat=True)
                 )
         authorized_version_ids = list(
@@ -254,14 +439,24 @@ class PgvectorRetrievalProvider:
             return []
 
         top_k = min(max(int(profile.get("top_k", 5)), 1), 50) if profile else 5
-        active_indexes = list(
-            IndexVersion.objects.filter(
-                organization_id=organization_id,
-                document_set_version_id__in=authorized_version_ids,
-                status=IndexStatus.ACTIVE,
-                store_ready=True,
-            ).select_related("embedding_profile")
+        indexes = IndexVersion.objects.filter(
+            organization_id=organization_id,
+            document_set_version_id__in=authorized_version_ids,
+            store_ready=True,
         )
+        if selected_index_version_ids is None:
+            indexes = indexes.filter(status=IndexStatus.ACTIVE)
+        else:
+            from django.db.models import Q
+
+            indexes = indexes.filter(
+                pk__in=selected_index_version_ids,
+                status__in=[IndexStatus.ACTIVE, IndexStatus.SUPERSEDED]
+                + ([IndexStatus.PROMOTABLE] if prepared_index_ids else []),
+            ).filter(
+                Q(storage_layout="legacy") | Q(storage_layout="shared_v1", storage_state="sealed")
+            )
+        active_indexes = list(indexes.select_related("embedding_profile"))
         if not active_indexes:
             return []
         mode = str(profile.get("mode", "vector")) if profile else "vector"

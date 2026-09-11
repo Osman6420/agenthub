@@ -167,6 +167,9 @@ def run_staged_index_build_job(self: object, job_public_id: str) -> str:
     job = claim_build_job(public_id=job_public_id, organization_id=organization_id)
     if job is None:
         return "already_converged"
+    # claim_build_job validates the closed build target before committing ownership.
+    if job.document_set_version is None or job.embedding_profile is None:
+        raise ValueError("JOB_INPUT_LINEAGE_INVALID")
     try:
         index = build_staged_index(
             document_set_version=job.document_set_version,
@@ -177,20 +180,28 @@ def run_staged_index_build_job(self: object, job_public_id: str) -> str:
             summary_model_profile=job.summary_model_profile,
             summary_prompt_contract=job.summary_prompt_contract,
             actor=job.requested_by,
+            build_job=job,
             request_id=job.request_id,
             progress_callback=lambda documents, chunks: update_progress(
                 job_id=job.pk,
                 organization_id=organization_id,
+                expected_attempt=job.attempt,
                 documents=documents,
                 chunks=chunks,
             ),
         )
-        complete_build_job(job_id=job.pk, organization_id=organization_id, index=index)
+        complete_build_job(
+            job_id=job.pk,
+            organization_id=organization_id,
+            expected_attempt=job.attempt,
+            index=index,
+        )
     except (EmbeddingOutcomeUnknown, OcrOutcomeUnknown) as exc:
         fail_build_job(
             job_id=job.pk,
             organization_id=organization_id,
             error_code=str(getattr(exc, "code", "PROVIDER_OUTCOME_UNKNOWN")),
+            expected_attempt=job.attempt,
             ambiguous=True,
         )
         raise
@@ -199,6 +210,7 @@ def run_staged_index_build_job(self: object, job_public_id: str) -> str:
             job_id=job.pk,
             organization_id=organization_id,
             error_code=exc.code,
+            expected_attempt=job.attempt,
             ambiguous=False,
         )
         raise
@@ -207,6 +219,7 @@ def run_staged_index_build_job(self: object, job_public_id: str) -> str:
             job_id=job.pk,
             organization_id=organization_id,
             error_code="BUILD_INTERNAL_ERROR",
+            expected_attempt=job.attempt,
             ambiguous=False,
         )
         raise
@@ -215,10 +228,27 @@ def run_staged_index_build_job(self: object, job_public_id: str) -> str:
 
 @shared_task(queue="ingestion")
 def reconcile_staged_index_build_jobs() -> int:
+    from apps.ingestion.connector_jobs import reconcile_connector_jobs
     from apps.ingestion.job_lifecycle import reconcile_build_jobs, record_worker_heartbeat
 
     record_worker_heartbeat()
-    return reconcile_build_jobs()
+    return reconcile_build_jobs() + reconcile_connector_jobs()
+
+
+@shared_task(bind=True, queue="ingestion", acks_late=True)
+def run_connector_job(self: object, job_public_id: str) -> str:
+    from apps.ingestion.connector_jobs import dispatch_connector_completion, execute_connector_job
+    from apps.ingestion.job_lifecycle import record_worker_heartbeat
+
+    headers = getattr(getattr(self, "request", None), "headers", None) or {}
+    try:
+        organization_id = int(headers["organization_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("TENANT_CONTEXT_REQUIRED") from exc
+    record_worker_heartbeat()
+    status = execute_connector_job(public_id=job_public_id, organization_id=organization_id)
+    dispatch_connector_completion(organization_id=organization_id, public_id=job_public_id)
+    return status
 
 
 @shared_task(bind=True, queue="ingestion", max_retries=80)
@@ -231,6 +261,27 @@ def apply_connector_automation_task(
         claim_connector_automation,
         finish_connector_automation,
     )
+    from apps.ingestion.connector_preparation import (
+        continue_scheduled_publication,
+        preparation_result,
+        prepare_scheduled_candidate,
+    )
+
+    publication = continue_scheduled_publication(
+        schedule_id=schedule_id,
+        candidate_set_version_id=candidate_set_version_id,
+        organization_id=organization_id,
+    )
+    if publication is not None:
+        return publication
+
+    handled, preparation = prepare_scheduled_candidate(
+        schedule_id=schedule_id,
+        candidate_set_version_id=candidate_set_version_id,
+        organization_id=organization_id,
+    )
+    if handled:
+        return preparation_result(preparation)
 
     try:
         claimed = claim_connector_automation(

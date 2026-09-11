@@ -152,6 +152,84 @@ def test_scenario_editor_can_run_required_evaluation(
     assert EvalRun.objects.filter(release=release).exists()
 
 
+def test_editor_django_candidate_and_shared_ui_actions_match_builder(client, candidate):
+    scenario = candidate["scenario"]
+    workflow = candidate["workflow"]
+    client.force_login(candidate["editor"])
+    detail = client.get(reverse("console:scenario_detail_public", args=[scenario.public_id]))
+    actions = detail.context["allowed_actions"]
+    assert actions["edit"] and actions["compile"] and actions["test"]
+    assert not actions["release"] and not actions["runtime_pause"] and not actions["approve"]
+    assert (
+        reverse("console:scenario_lifecycle_change", args=[scenario.public_id])
+        not in detail.content.decode()
+    )
+    studio = client.get(
+        reverse("console:builder"),
+        {
+            "organization": candidate["org"].slug,
+            "scenario": scenario.public_id,
+        },
+    )
+    assert studio.context["builder_initial"]["allowed_actions"] == actions
+    assert (
+        client.get(
+            reverse("console:scenario_artifact_options", args=[scenario.public_id]),
+            {
+                "preset": "minimum",
+            },
+        ).status_code
+        == 200
+    )
+    before = ScenarioRelease.objects.filter(scenario=scenario).count()
+    response = client.post(
+        reverse("console:scenario_compile_candidate", args=[scenario.public_id]),
+        {
+            "artifact_ids": [workflow.pk],
+            f"role_{workflow.pk}": "workflow_definition",
+        },
+    )
+    assert response.status_code == 302
+    assert ScenarioRelease.objects.filter(scenario=scenario).count() == before + 1
+    assert not ScenarioRelease.objects.filter(
+        scenario=scenario, status=ReleaseStatus.ACTIVE
+    ).exists()
+
+
+def test_candidate_rechecks_revocation_after_http_precheck(client, candidate, monkeypatch):
+    from apps.audit.models import AuditEvent
+    from apps.releases.authoring import compile_operator_candidate
+
+    scenario = candidate["scenario"]
+    workflow = candidate["workflow"]
+    client.force_login(candidate["editor"])
+    before = ScenarioRelease.objects.count()
+
+    def revoked_before_lock(**kwargs):
+        from django.utils import timezone
+
+        ScenarioResponsibilityAssignment.objects.filter(
+            scenario=scenario,
+            membership__user=candidate["editor"],
+        ).update(status="revoked", revoked_at=timezone.now(), revoked_by=candidate["editor"])
+        return compile_operator_candidate(**kwargs)
+
+    monkeypatch.setattr("apps.console.views.compile_operator_candidate", revoked_before_lock)
+    response = client.post(
+        reverse("console:scenario_compile_candidate", args=[scenario.public_id]),
+        {
+            "artifact_ids": [workflow.pk],
+            f"role_{workflow.pk}": "workflow_definition",
+            "allowed_actions": '{"compile":true,"release":true}',
+        },
+    )
+    assert response.status_code == 403
+    assert ScenarioRelease.objects.count() == before
+    assert AuditEvent.objects.filter(
+        action="console.scenario.release.compile", outcome="deny"
+    ).exists()
+
+
 @pytest.mark.parametrize(
     "url_name",
     ["console:release_promote", "console:release_rollback"],

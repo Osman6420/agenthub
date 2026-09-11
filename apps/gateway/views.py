@@ -96,6 +96,13 @@ class _OpenAICompatibilityView(APIView):
     def _adapt_success(self, body: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def _adapt_failure(self, body: dict[str, Any]) -> Response:
+        """Default: the adapter's own body shape already carries the real status honestly
+        (BUG-001) -- OpenAI's Responses contract keeps this a 200 with ``status != "completed"``
+        and an ``error`` object. Override where the target contract has no such shape (see
+        ``ChatCompletionsView``, which has no non-terminal-success completion shape at all)."""
+        return Response(self._adapt_success(body), status=200)
+
     @transaction.atomic
     def _admit(self, request: Request) -> Response:
         started = time.monotonic()
@@ -372,6 +379,7 @@ class _OpenAICompatibilityView(APIView):
             "response_id": run.response_id,
             "run_id": str(run.id),
             "status": str(run.status),
+            "error_code": run.error_code,
             "output": run.redacted_state.get("output", {}),
             "usage": {
                 "input_tokens": run.input_token_count,
@@ -379,7 +387,13 @@ class _OpenAICompatibilityView(APIView):
             },
             "_http_status": 200,
         }
-        response = Response(self._adapt_success(body), status=200)
+        # BUG-001: a run that finished FAILED/TIMED_OUT/CANCELLED must not be reported as a
+        # successful completion -- route through the adapter's honest-failure shape instead of
+        # unconditionally calling `_adapt_success`.
+        if run.status == RunStatus.COMPLETED:
+            response = Response(self._adapt_success(body), status=200)
+        else:
+            response = self._adapt_failure(body)
         response["X-AgentHub-Run-Id"] = str(run.id)
         return response
 
@@ -431,6 +445,20 @@ class ChatCompletionsView(_OpenAICompatibilityView):
 
     def _adapt_success(self, body: dict[str, Any]) -> dict[str, Any]:
         return chat_response(body, self._requested_alias)
+
+    def _adapt_failure(self, body: dict[str, Any]) -> Response:
+        # BUG-001: OpenAI's chat.completion contract has no non-terminal-success shape -- a
+        # failed generation is reported as an HTTP error, never as a completion object with a
+        # fabricated `finish_reason: "stop"` and empty content.
+        payload = compatible_error(
+            {
+                "error": {
+                    "code": str(body.get("error_code") or "WORKFLOW_RUN_FAILED"),
+                    "message": "The run did not complete successfully.",
+                }
+            }
+        )
+        return Response(payload, status=502)
 
 
 class ResponsesView(_OpenAICompatibilityView):

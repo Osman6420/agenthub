@@ -23,12 +23,15 @@
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
     .sidebar { background: var(--nav); color: #e6f4f3; padding: 24px 16px; display: flex; flex-direction: column; min-height: 100vh; position: sticky; top: 0; height: 100vh; overflow-y: auto; overscroll-behavior: contain; }
-    .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 24px; font-size: 19px; font-weight: 750; letter-spacing: -.3px; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 24px; font-size: 19px; font-weight: 750; letter-spacing: -.3px; color: #e6f4f3; }
+    .mobile-nav-toggle { display: none; }
     .brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: #54d3c6; color: var(--nav); font-weight: 900; }
     .nav-label { margin: 18px 10px 7px; color: #88aaa8; text-transform: uppercase; font-size: 10px; font-weight: 800; letter-spacing: 1.2px; }
     .sidebar nav { display: grid; gap: 3px; }
     .sidebar nav a { color: #cbe1df; padding: 9px 11px; border-radius: 8px; font-size: 14px; font-weight: 570; }
     .sidebar nav a:hover { color: #fff; background: var(--nav-soft); text-decoration: none; }
+    .sidebar nav a[aria-current="page"] { color: #fff; background: var(--nav-soft); box-shadow: inset 3px 0 #54d3c6; }
+    .section-return { display: inline-flex; gap: 8px; align-items: center; margin-bottom: 18px; font-size: 13px; }
     .org-switch-box { margin: 4px 0 8px; padding: 0 10px; }
     .org-switch-label { margin: 0 0 5px; padding: 0; }
     .org-menu { position: relative; }
@@ -103,7 +106,7 @@
     .topbar-user button.link { padding-inline: 0; }
     form.inline { display: inline; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
-    .form-card input, .form-card select, .form-card textarea, .compact-form select { width: 100%; max-width: 760px; padding: 9px 10px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); }
+    .form-card input, .form-card select, .form-card textarea, .compact-form select, .compact-form input[type="search"] { width: 100%; min-width: 0; max-width: 760px; padding: 9px 10px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); }
     .form-card input, .form-card select, .form-card textarea { display: block; margin-top: 5px; }
     .form-card .code-field { max-width: none; resize: vertical; line-height: 1.5; }
     .form-card ul.errorlist { color: var(--danger); }
@@ -147,7 +150,7 @@
     .meta-line { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; color: var(--muted); }
     .task-tabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 18px; padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
     .task-tabs a { flex: 0 0 auto; padding: 9px 12px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 700; }
-    .task-tabs a:hover, .task-tabs a[aria-current="page"] { color: var(--brand-dark); background: #eaf7f5; text-decoration: none; }
+    .task-tabs a:hover, .task-tabs a[aria-current="location"] { color: var(--brand-dark); background: #eaf7f5; text-decoration: none; }
     .summary-grid[id], .card[id], section[id] { scroll-margin-top: 84px; }
     .empty { padding: 38px 20px; text-align: center; color: var(--muted); }
     .msg { padding: 11px 14px; border-radius: 9px; margin-bottom: 10px; border: 1px solid; }
@@ -160,13 +163,17 @@
       .app-shell { grid-template-columns: 1fr; }
       .sidebar { position: static; height: auto; min-height: 0; padding: 14px; }
       .brand { padding-bottom: 10px; }
-      .sidebar nav { display: flex; overflow-x: auto; padding-bottom: 5px; }
-      .sidebar nav a { white-space: nowrap; }
+      .sidebar nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding-top: 8px; }
+      .sidebar nav a { white-space: normal; }
+      .js-on .mobile-nav-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 10px; background: var(--nav-soft); color: #e6f4f3; border: 1px solid #315158; border-radius: 8px; font: inherit; cursor: pointer; }
+      .js-on .sidebar nav:not(.is-open) { display: none; }
       .nav-label { display: none; }
       .topbar { padding: 0 18px; }
       main { padding: 22px 16px; }
     }
     @media (max-width: 680px) {
+      .setup-step { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: start; gap: 10px 14px; }
+      .setup-step > form, .setup-step > button, .setup-step > a { grid-column: 2; justify-self: start; }
       .page-heading, .section-heading, .relationship-head, .relationship-body { align-items: stretch; flex-direction: column; }
       .summary-grid, .tiles, .relationship-grid { grid-template-columns: 1fr; }
       .status-stack { justify-content: flex-start; }
@@ -199,14 +206,18 @@
         {% endif %}
       </div>
       <div class="nav-label">Çalışma alanı</div>
-      <nav aria-label="Ana menü">
-        <a href="{% url 'console:dashboard' %}">Ana Sayfa</a>
-        {% if show_projects_navigation %}<a href="{% url 'console:projects' %}">Projeler</a>{% endif %}
-        {% if show_documents_navigation %}<a href="{% url 'console:documents' %}">Dokümanlar</a>{% endif %}
-        {% if show_consumers_navigation %}<a href="{% url 'console:consumers' %}">İstemciler</a>{% endif %}
-        {% if show_runs_navigation %}<a href="{% url 'console:runs' %}">Çalıştırmalar</a>{% endif %}
-        {% if can_manage_organization_members %}<a href="{% url 'console:organization_members' %}">Kullanıcılar ve yetkiler</a>{% endif %}
-        {% if is_platform_admin %}<a href="{% url 'console:platform_setup' %}">Platform kurulumu</a>{% endif %}
+      <button class="mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation">Menü · {{ navigation_label }} <span aria-hidden="true">☰</span></button>
+      <nav id="primary-navigation" aria-label="Ana menü">
+        <a href="{% url 'console:dashboard' %}"{% if navigation_section == 'dashboard' %} aria-current="page"{% endif %}>Ana Sayfa</a>
+        {% if show_projects_navigation %}<a href="{% url 'console:projects' %}"{% if navigation_section == 'projects' %} aria-current="page"{% endif %}>Projeler</a>{% endif %}
+        {% if show_scenarios_navigation %}<a href="{% url 'console:scenarios' %}"{% if navigation_section == 'scenarios' %} aria-current="page"{% endif %}>Senaryolar</a>{% endif %}
+        {% if show_documents_navigation %}<a href="{% url 'console:documents' %}"{% if navigation_section == 'documents' %} aria-current="page"{% endif %}>Dokümanlar</a>{% endif %}
+        {% if show_questions_navigation %}<a href="{% url 'console:question_sets' %}"{% if navigation_section == 'questions' %} aria-current="page"{% endif %}>Testler</a>{% endif %}
+        {% if show_consumers_navigation %}<a href="{% url 'console:consumers' %}"{% if navigation_section == 'consumers' %} aria-current="page"{% endif %}>İstemciler</a>{% endif %}
+        {% if show_runs_navigation %}<a href="{% url 'console:runs' %}"{% if navigation_section == 'runs' %} aria-current="page"{% endif %}>Çalıştırmalar</a>{% endif %}
+        {% if show_approvals_navigation %}<a href="{% url 'console:tool_approvals' %}"{% if navigation_section == 'approvals' %} aria-current="page"{% endif %}>Onaylar</a>{% endif %}
+        {% if can_manage_organization_members %}<a href="{% url 'console:organization_members' %}"{% if navigation_section == 'members' %} aria-current="page"{% endif %}>Kullanıcılar ve yetkiler</a>{% endif %}
+        {% if is_platform_admin %}<a href="{% url 'console:platform_setup' %}"{% if navigation_section == 'platform' %} aria-current="page"{% endif %}>Platform kurulumu</a>{% endif %}
       </nav>
     </aside>
     <div class="workspace">
@@ -216,12 +227,13 @@
       <main id="main-content" tabindex="-1">
   {% endif %}
         {% if messages %}{% for m in messages %}<div class="msg {{ m.tags }}" role="{% if 'error' in m.tags %}alert{% else %}status{% endif %}">{{ m }}</div>{% endfor %}{% endif %}
+        {% if user.is_authenticated and navigation_is_child %}<a class="section-return" href="{{ navigation_url }}"><span aria-hidden="true">←</span> {{ navigation_label }} bölümüne dön</a>{% endif %}
         {% block content %}{% endblock %}
       </main>
   {% if user.is_authenticated %}
     </div>
   </div>
-  <script src="{% static 'console/console.js' %}?v=phase-2-9-part-6" defer></script>
+  <script src="{% static 'console/console.js' %}?v=console-2026-09-11" defer></script>
   {% endif %}
 </body>
 </html>

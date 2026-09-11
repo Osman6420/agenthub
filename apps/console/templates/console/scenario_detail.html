@@ -3,9 +3,9 @@
 {% block title %}{{ scenario.name }} · AgentHub{% endblock %}
 {% block content %}
 <nav class="breadcrumbs" aria-label="İçerik yolu">
-  <a href="{% url 'console:dashboard' %}">{{ scenario.project.organization.name }}</a><span>›</span>
+  <a href="{% url 'console:scenarios' %}">Senaryolar</a><span>›</span>
   <a href="{% url 'console:project_detail_public' scenario.project.public_id %}">{{ scenario.project.name }}</a><span>›</span>
-  <span aria-current="page">{{ scenario.name }}</span>
+  <span aria-current="location">{{ scenario.name }}</span>
 </nav>
 
 <div class="page-heading">
@@ -13,25 +13,36 @@
     <p class="eyebrow">Senaryo · {{ scenario.get_type_display }}</p>
     <h1>{{ scenario.name }}</h1>
     <div class="meta-line">
-      <span class="badge {{ scenario.status }}">{{ scenario.get_status_display }}</span>
+      <span class="badge {{ scenario.status }}">{% if scenario.status == 'active' %}Etkin{% elif scenario.status == 'draft' %}Taslak{% elif scenario.status == 'disabled' %}Devre dışı{% else %}{{ scenario.get_status_display }}{% endif %}</span>
       <span class="mono">{{ scenario.slug }}</span>
       {% for alias in aliases %}<span class="chip">API: {{ alias.alias }}</span>{% endfor %}
     </div>
   </div>
-  {# Studio is reachable by both roles: candidate preparation allows an exact Scenario
-     Editor alongside a release manager (see ``_candidate_scenario``). #}
+  {# Studio is reachable by both roles: candidate preparation allows an exact Scenario Editor alongside a release manager (see ``_candidate_scenario``). #}
   {% if can_write or can_compile_release %}<a class="button secondary" href="{{ studio_url }}">Scenario Studio'yu aç</a>{% else %}<button type="button" class="button secondary" disabled aria-disabled="true" title="{{ author_reason }}">Scenario Studio'yu aç</button>{% endif %}
 </div>
 
-<nav class="task-tabs" role="tablist" aria-label="Senaryo bölümleri">
-  <a role="tab" href="#overview" aria-current="page">Adımlar</a>
-  <a role="tab" href="#documents">Dokümanlar</a>
-  <a role="tab" href="#access">Erişim</a>
-  <a role="tab" href="#configuration">Gelişmiş</a>
+<nav class="task-tabs" aria-label="Senaryo bölümleri">
+  <a href="#overview" aria-current="location">{% if active_release %}Genel{% else %}Adımlar{% endif %}</a>
+  <a href="#documents">Dokümanlar</a>
+  <a href="#access">Erişim</a>
+  <a href="#configuration">Gelişmiş</a>
 </nav>
 
-<ol class="setup-steps" id="overview" aria-label="Senaryo kurulum adımları">
-  {% for step in setup_steps %}
+{% if active_release %}
+<section class="card" id="overview" aria-labelledby="current-publication-title">
+  <div class="section-heading"><div><p class="eyebrow">Mevcut yayın</p><h2 id="current-publication-title">Yayındaki sürüm #{{ active_release.pk }}</h2>
+    {% if effective_runtime_controls %}<p class="warning-box">Çalıştırmalar duraklatılmış. Yayındaki sürüm korunuyor.</p>
+    {% elif scenario.status != 'active' %}<p class="warning-box">Yeni çağrılar kapalı. Yayındaki sürüm korunuyor.</p>
+    {% else %}<p class="muted">İzinli istemciler bu sürümü kullanır. Yeni düzenlemeler, başarıyla yayına alınana kadar mevcut sürümü değiştirmez.</p>{% endif %}
+  </div><a class="button secondary" href="{% url 'console:release_detail' active_release.pk %}">Yayın ayrıntıları</a></div>
+  <div class="actions"><a href="#configuration">Test ve operasyon</a><a href="#documents">Bilgi kaynakları</a></div>
+</section>
+<details class="card" id="next-publication-preparation"><summary><strong>Sonraki yayın için hazırlıklar</strong></summary>
+<p class="muted">Aşağıdaki adımlar yeni değişiklikleri hazırlamak içindir; mevcut yayının durumunu göstermez.</p>
+{% endif %}
+<ol class="setup-steps" id="{% if active_release %}preparation-steps{% else %}overview{% endif %}" aria-label="Senaryo kurulum adımları">
+  {% for step in primary_setup_steps %}
   <li class="setup-step {{ step.state }}">
     <span class="setup-step-mark" aria-hidden="true">{% if step.state == 'done' %}✓{% else %}{{ step.number }}{% endif %}</span>
     <div class="setup-step-body">
@@ -47,14 +58,30 @@
   </li>
   {% endfor %}
 </ol>
+{% if active_release %}</details>{% endif %}
+
+{% include "console/scenario_publication.html" %}
 
 <details class="card" id="configuration">
 <summary><strong>Gelişmiş</strong> · yaşam döngüsü, sözleşmeler, çalışma zamanı, release geçmişi, erişim</summary>
+{% if can_write and can_compile_release %}<p><a href="{% url 'console:scenario_runtime_transition' scenario.public_id %}">Veri yenileme ayarını gözden geçir</a></p>{% endif %}
+
+<section class="card" aria-labelledby="advanced-publication-title">
+  <h2 id="advanced-publication-title">Yayın adımlarını ayrı yönet</h2>
+  <p class="muted">Adayı ayrıca incelemek veya daha önce hazırlanmış bir sürümü seçmek için kullanın.</p>
+  {% for step in advanced_publication_steps %}
+  <div class="access-row">
+    <div><strong>{{ step.title }}</strong><p class="muted">{{ step.detail }}{% if step.link %} · <a href="{{ step.link }}">{{ step.link_label }}</a>{% endif %}</p></div>
+    {% if step.enabled %}<form method="post" action="{{ step.url }}">{% csrf_token %}<button class="button secondary" type="submit">{{ step.action }}</button></form>
+    {% else %}<button type="button" disabled aria-disabled="true" title="{{ step.reason }}">{{ step.action }}</button>{% endif %}
+  </div>
+  {% endfor %}
+</section>
 
 <section class="card">
   <div class="section-heading">
-    <div><p class="eyebrow">Çağrılabilirlik</p><h2>Senaryo yaşam döngüsü</h2><p class="muted">Etkinleştirme adım 6'nın (“Yayına al ve çağrılabilir yap”) parçasıdır. Buradaki kontrol yalnızca çağrıları durdurmak veya durdurulmuş bir senaryoyu geri açmak içindir.</p></div>
-    {% if can_compile_release %}
+    <div><p class="eyebrow">Çağrılabilirlik</p><h2>Senaryo yaşam döngüsü</h2><p class="muted">“Yayına al” senaryoyu çağrılabilir hale getirir. Buradaki kontrol çağrıları durdurmak veya durdurulmuş bir senaryoyu geri açmak içindir.</p></div>
+    {% if allowed_actions.release %}
       <form method="post" action="{% url 'console:scenario_lifecycle_change' scenario.public_id %}">{% csrf_token %}
         {% if scenario.status == 'active' %}<button class="button danger" type="submit" name="action" value="disable">Çağrıları durdur</button>{% else %}<button type="submit" name="action" value="activate">Çağrıları yeniden aç</button>{% endif %}
       </form>
@@ -62,7 +89,7 @@
       <button type="button" disabled aria-disabled="true" title="{{ release_reason }}">Yaşam döngüsünü değiştir</button>
     {% endif %}
   </div>
-  {% if scenario.status != 'active' %}<div class="warning-box">Senaryo şu anda çağrılabilir değil. Adım 6'yı çalıştırın; aktif release ve aktif alias gerekir.</div>{% else %}<p class="access-ok">Aktif istemci bağları ve capability kontrolleri geçerse senaryo çağrılabilir.</p>{% endif %}
+  {% if scenario.status != 'active' %}<div class="warning-box">Senaryo şu anda çağrılabilir değil. Yayına alma işlemini tamamlayın; etkin sürüm ve API adı gerekir.</div>{% else %}<p class="access-ok">Aktif istemci bağları ve capability kontrolleri geçerse senaryo çağrılabilir.</p>{% endif %}
 </section>
 
 <section class="card" aria-labelledby="scenario-runtime-title">
@@ -105,11 +132,19 @@
       {% if ask_result.chunks %}
       <details><summary>Bu cevap neye dayandı? ({{ ask_result.chunks|length }} parça)</summary>
         {% for chunk in ask_result.chunks %}
+        {% if chunk.chunk_kind == "unattributed" %}
+        <div class="relationship-card">
+          <div class="relationship-head"><strong>#{{ forloop.counter }} Getirildi, alıntıya eşlenemedi</strong></div>
+          <p class="muted">Model bu parçayı adlandırılmış bir kaynak olarak alıntılamadı; yanlış eşleme riski nedeniyle bir kaynağa bağlanmadı.</p>
+          {% if chunk.text %}<p>{{ chunk.text }}</p>{% else %}<p class="muted">Parça içeriğini görmek için doküman içeriği okuma yetkisi gerekir.</p>{% endif %}
+        </div>
+        {% else %}
         <div class="relationship-card">
           <div class="relationship-head"><strong>#{{ forloop.counter }} {{ chunk.title|default:"(başlıksız)" }}</strong><span class="mono">score={{ chunk.score }}</span></div>
           {% if chunk.source_uri %}<p class="muted mono">{{ chunk.source_uri }}</p>{% endif %}
           {% if chunk.text %}<p>{{ chunk.text }}</p>{% else %}<p class="muted">Parça içeriğini görmek için doküman içeriği okuma yetkisi gerekir.</p>{% endif %}
         </div>
+        {% endif %}
         {% endfor %}
       </details>
       {% elif ask_result.answer %}<p class="muted">Bu cevap için hiçbir kaynak getirilmedi.</p>{% endif %}</div></div>
@@ -168,11 +203,15 @@
 </details>
 
 <section class="card" id="access">
-  <div class="section-heading"><div><h2>Senaryo erişimi</h2><p class="muted">Senaryo editörlüğü operasyon veya ham doküman içeriği yetkisi vermez.</p></div>{% if can_manage_access %}<a class="button secondary" href="{% url 'console:organization_members' %}">Erişimi yönet</a>{% endif %}</div>
-  {% for assignment in editor_assignments %}<div class="access-row"><strong>{{ assignment.membership.user.get_username }}</strong><span class="badge">{{ assignment.get_responsibility_display }}</span></div>{% empty %}<p class="muted">Atanmış senaryo sorumluluğu yok.</p>{% endfor %}
+  <div class="section-heading"><div><h2>Senaryo erişimi</h2><p class="muted">Temel erişim: {{ scenario.get_access_mode_display }}. Doküman içeriği ve araç onayı ayrıca yetkilendirilir.</p></div>{% if can_manage_scenario_access %}<a class="button secondary" href="{% url 'console:scenario_access' scenario.public_id %}">Erişimi düzenle</a>{% endif %}</div>
+  {% if scenario.access_mode == 'inherit' %}<p class="notice">Temel roller projeden devralınır. Doğrudan temel atamalar bu düzende etkin değildir.</p>
+  <h3>Projeden gelen erişim</h3>{% for assignment in inherited_assignments %}<div class="access-row"><strong>{{ assignment.membership.user.get_username }}</strong><span class="badge">{{ assignment.get_responsibility_display }}</span></div>{% empty %}<p class="muted">Etkin temel proje ataması yok.</p>{% endfor %}<h3>Bağımsız senaryo görevleri</h3>{% endif %}
+  {% if can_manage_access %}<p><a href="{% url 'console:organization_members' %}">Gelişmiş sorumluluk atamaları</a></p>{% endif %}
+  {% for assignment in editor_assignments %}<div class="access-row"><strong>{{ assignment.membership.user.get_username }}</strong><span class="badge">{% if assignment.responsibility == 'scenario_viewer' %}Senaryo izleyicisi{% else %}{{ assignment.get_responsibility_display }}{% endif %}</span></div>{% empty %}<p class="muted">Atanmış senaryo sorumluluğu yok.</p>{% endfor %}
 </section>
 
 <section class="card" id="documents">
+  <p>Veri erişimi: <strong>{{ scenario.get_data_access_mode_display }}</strong> · <a href="{% url 'console:scenario_data_access' scenario.public_id %}">Veri erişimini incele</a></p>
   <div class="section-heading">
     <div><p class="eyebrow">Erişim haritası</p><h2>Doküman setleri ve istemci erişimi</h2></div>
     {% if can_write and candidate_document_sets %}
@@ -183,9 +222,17 @@
         {% for set in candidate_document_sets %}<option value="{{ set.id }}">{{ set.name }} · {{ set.logical_id }}</option>{% endfor %}
       </select><button class="button primary" type="submit">Bağla</button></div>
     </form>
+    {% elif can_write %}
+      {% if document_set_bind_empty_reason == "NO_DOCUMENT_SETS" %}
+      <p class="muted">Bu organizasyonda henüz doküman seti yok. <a href="{% url 'console:documents' %}">Yeni doküman seti oluştur</a></p>
+      {% elif document_set_bind_empty_reason == "NO_DOCUMENT_SET_AUTHORITY" %}
+      <p class="muted">Bu organizasyonda doküman seti var, ama bir senaryoya bağlamak için ayrıca en az bir doküman seti üzerinde yöneticilik yetkiniz olması gerekiyor. <a href="{% url 'console:documents' %}">Doküman setlerini görüntüle</a></p>
+      {% else %}
+      <p class="muted">Erişebildiğiniz tüm doküman setleri zaten bu senaryoya bağlı.</p>
+      {% endif %}
     {% endif %}
   </div>
-  <div class="notice"><strong>Nasıl çalışır?</strong> Senaryo yalnızca bağlı setleri kullanabilir. Bir istemci ayrıca ilgili set için erişim almalıdır. Set bağı release derlemesinde sabitlenir; istemci erişimi retrieval sırasında uygulanır ve doküman seti seviyesindedir.</div>
+  <div class="notice"><strong>Nasıl çalışır?</strong> Senaryo yalnızca bağlı doküman setlerini kullanır. {% if scenario.data_access_mode == 'scenario_shared' %}Ortak kullanım için her setin veri yöneticisi onay vermelidir.{% else %}Çağrı yapan her istemcinin ilgili doküman setine ayrıca erişim izni olmalıdır.{% endif %} Set ekledikten veya kaldırdıktan sonra değişikliğin kullanıma girmesi için senaryoyu yeniden yayınlayın. İstemci izinleri her aramada yeniden kontrol edilir.</div>
 
   {% for row in relationship_rows %}
   <article class="relationship-card">
@@ -196,7 +243,7 @@
       </div>
       <div class="status-stack">
         {% if row.latest_version %}<span class="badge">Yayınlanan set v{{ row.latest_version.version }} · {{ row.latest_version.get_status_display }}</span>{% else %}<span class="badge warning">Yayınlanmış set sürümü yok</span>{% endif %}
-        {% if active_release %}{% if row.release_version %}<span class="badge active">Aktif release: set v{{ row.release_version.version }}</span>{% else %}<span class="badge warning">Aktif release bu seti içermiyor</span>{% endif %}{% else %}<span class="badge warning">Aktif release yok</span>{% endif %}
+        {% if active_release %}{% if row.follows_active_generation %}<span class="badge active">Yayında · kullanılabilir güncel veriyi takip eder</span>{% elif row.release_version %}<span class="badge active">Aktif release: set v{{ row.release_version.version }}</span>{% else %}<span class="badge warning">Aktif release bu seti içermiyor</span>{% endif %}{% else %}<span class="badge warning">Aktif release yok</span>{% endif %}
         {% if row.index %}<span class="badge {{ row.index.status }}">Release indeksi v{{ row.index.version }} · {{ row.index.get_status_display }}</span>{% elif row.release_version %}<span class="badge warning">Release sürümü indekslenmedi</span>{% endif %}
       </div>
     </div>
@@ -206,7 +253,9 @@
         {% for item in row.consumer_rows %}
         <div class="access-row">
           <div><strong><a href="{% url 'console:consumer_detail_public' item.binding.consumer.public_id %}">{{ item.binding.consumer.name }}</a></strong><br><span class="muted mono">{{ item.binding.consumer.subject }}</span></div>
-          {% if item.grant %}
+          {% if scenario.data_access_mode == 'scenario_shared' %}
+            {% if row.shared_consent and item.can_use_shared %}<span class="access-ok">Ortak veri kullanım izni var</span>{% else %}<span class="access-missing">Ortak kullanım onayı veya istemci erişimi eksik</span>{% endif %}
+          {% elif item.grant %}
             <span class="access-ok">Doküman erişimi var</span>
             {% if can_write %}<form method="post" action="{% url 'console:scenario_revoke_consumer_public' scenario.public_id item.grant.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Erişimi kaldır</button></form>{% endif %}
           {% else %}
@@ -220,7 +269,7 @@
       <div>{% if row.scenario_count > 1 %}<div class="warning-box">Bu doküman seti {{ row.scenario_count }} senaryoya bağlıdır. İstemci izni değişikliği seti kullanan diğer senaryoları da etkileyebilir.</div>{% endif %}{% if can_write %}<form method="post" action="{% url 'console:scenario_unbind_document_set_public' scenario.public_id row.binding.id %}">{% csrf_token %}<button class="button danger ghost" type="submit">Set bağını kaldır</button></form>{% endif %}</div>
     </div>
   </article>
-  {% empty %}<div class="empty"><h3>Doküman seti bağlı değil</h3><p>Retrieval varsayılan olarak kapalıdır. Bu senaryonun kullanacağı ilk doküman setini bağlayın.</p></div>{% endfor %}
+  {% empty %}<div class="empty"><h3>Doküman seti bağlı değil</h3><p>Senaryonun belgelerde arama yapması için ilk doküman setini bağlayın.</p></div>{% endfor %}
 </section>
 
 <section class="card">

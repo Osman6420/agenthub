@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from django.db.models import Q, QuerySet
+from django.db.models import Exists, OuterRef, Q, QuerySet
 from django.utils import timezone
 
+from apps.catalog.models import Scenario, ScenarioAccessMode
 from apps.identity.models import (
     DocumentSetResponsibility,
     DocumentSetResponsibilityAssignment,
@@ -45,6 +46,8 @@ class Capability(StrEnum):
     AUDIT_VIEW = "audit.view"
     PROJECT_VIEW = "project.view"
     PROJECT_MANAGE = "project.manage"
+    PROJECT_ACCESS_MANAGE = "project.access.manage"
+    SCENARIO_ACCESS_MANAGE = "scenario.access.manage"
     SCENARIO_CREATE = "scenario.create"
     SCENARIO_VIEW = "scenario.view"
     SCENARIO_EDIT = "scenario.edit"
@@ -92,6 +95,8 @@ _GLOBAL_ADMIN_CAPABILITIES = frozenset(
         Capability.AUDIT_VIEW,
         Capability.PROJECT_VIEW,
         Capability.PROJECT_MANAGE,
+        Capability.PROJECT_ACCESS_MANAGE,
+        Capability.SCENARIO_ACCESS_MANAGE,
         Capability.SCENARIO_VIEW,
         Capability.DOCUMENT_SET_METADATA_READ,
         Capability.RUNTIME_VIEW,
@@ -113,7 +118,20 @@ _ORGANIZATION_AUDITOR_CAPABILITIES = frozenset(
     }
 )
 
-_PROJECT_RESPONSIBILITY_CAPABILITIES = {
+_PROJECT_RESPONSIBILITY_CAPABILITIES: dict[str, frozenset[Capability]] = {
+    ProjectResponsibility.EDITOR: frozenset(
+        {Capability.PROJECT_VIEW, Capability.SCENARIO_VIEW, Capability.SCENARIO_CREATE}
+    ),
+    ProjectResponsibility.MANAGER: frozenset(
+        {
+            Capability.PROJECT_VIEW,
+            Capability.PROJECT_MANAGE,
+            Capability.PROJECT_ACCESS_MANAGE,
+            Capability.SCENARIO_ACCESS_MANAGE,
+            Capability.SCENARIO_VIEW,
+            Capability.SCENARIO_CREATE,
+        }
+    ),
     ProjectResponsibility.VIEWER: frozenset(
         {
             Capability.PROJECT_VIEW,
@@ -131,8 +149,21 @@ _PROJECT_RESPONSIBILITY_CAPABILITIES = {
     ),
 }
 
-_SCENARIO_RESPONSIBILITY_CAPABILITIES = {
+_SCENARIO_RESPONSIBILITY_CAPABILITIES: dict[str, frozenset[Capability]] = {
     ScenarioResponsibility.VIEWER: frozenset({Capability.SCENARIO_VIEW}),
+    ScenarioResponsibility.MANAGER: frozenset(
+        {
+            Capability.SCENARIO_ACCESS_MANAGE,
+            Capability.SCENARIO_VIEW,
+            Capability.SCENARIO_EDIT,
+            Capability.SCENARIO_TEST,
+            Capability.SCENARIO_RELEASE,
+            Capability.RUNTIME_VIEW,
+            Capability.RUNTIME_CANCEL,
+            Capability.RUNTIME_PAUSE,
+            Capability.RUNTIME_RESUME,
+        }
+    ),
     ScenarioResponsibility.EDITOR: frozenset(
         {
             Capability.SCENARIO_VIEW,
@@ -163,6 +194,30 @@ _SCENARIO_RESPONSIBILITY_CAPABILITIES = {
         }
     ),
 }
+
+_INHERITED_SCENARIO_ROLES: dict[str, str] = {
+    ProjectResponsibility.VIEWER: ScenarioResponsibility.VIEWER,
+    ProjectResponsibility.EDITOR: ScenarioResponsibility.EDITOR,
+    ProjectResponsibility.MANAGER: ScenarioResponsibility.MANAGER,
+}
+_BASIC_SCENARIO_ROLES = frozenset(_INHERITED_SCENARIO_ROLES.values())
+
+
+def _project_capabilities(role: str, mode: str | None) -> frozenset[Capability]:
+    capabilities = _PROJECT_RESPONSIBILITY_CAPABILITIES.get(role, frozenset())
+    if mode == ScenarioAccessMode.PRIVATE:
+        return capabilities - {Capability.SCENARIO_VIEW}
+    if mode == ScenarioAccessMode.INHERIT:
+        inherited_role = _INHERITED_SCENARIO_ROLES.get(role, "")
+        return capabilities | _SCENARIO_RESPONSIBILITY_CAPABILITIES.get(inherited_role, frozenset())
+    return capabilities
+
+
+def _scenario_capabilities(role: str, mode: str) -> frozenset[Capability]:
+    if mode == ScenarioAccessMode.INHERIT and role in _BASIC_SCENARIO_ROLES:
+        return frozenset()
+    return _SCENARIO_RESPONSIBILITY_CAPABILITIES.get(role, frozenset())
+
 
 _DOCUMENT_SET_RESPONSIBILITY_CAPABILITIES = {
     DocumentSetResponsibility.METADATA_VIEWER: frozenset({Capability.DOCUMENT_SET_METADATA_READ}),
@@ -243,6 +298,8 @@ def authorize(
         return AuthorizationDecision(False, AuthoritySource.NONE, "TARGET_SCOPE_MISMATCH")
     if project is not None and scenario is not None and scenario.project_id != project.pk:
         return AuthorizationDecision(False, AuthoritySource.NONE, "TARGET_SCOPE_MISMATCH")
+    if scenario is not None and scenario.access_mode not in ScenarioAccessMode.values:
+        return AuthorizationDecision(False, AuthoritySource.NONE, "SCENARIO_ACCESS_MODE_INVALID")
 
     if getattr(user, "is_superuser", False):
         return AuthorizationDecision(
@@ -318,8 +375,8 @@ def authorize(
             )
         )
         for assignment in project_assignments:
-            if capability in _PROJECT_RESPONSIBILITY_CAPABILITIES.get(
-                assignment.responsibility, frozenset()
+            if capability in _project_capabilities(
+                assignment.responsibility, scenario.access_mode if scenario is not None else None
             ):
                 return _allow(
                     AuthoritySource.PROJECT_RESPONSIBILITY,
@@ -336,8 +393,8 @@ def authorize(
             )
         )
         for assignment in scenario_assignments:
-            if capability in _SCENARIO_RESPONSIBILITY_CAPABILITIES.get(
-                assignment.responsibility, frozenset()
+            if capability in _scenario_capabilities(
+                assignment.responsibility, scenario.access_mode
             ):
                 return _allow(
                     AuthoritySource.SCENARIO_RESPONSIBILITY,
@@ -363,4 +420,88 @@ def authorize(
                     assignment.responsibility.upper(),
                 )
 
+    if (
+        capability == Capability.PROJECT_VIEW
+        and scenario is None
+        and effective_project is not None
+        and authorized_scenarios(user, Capability.SCENARIO_VIEW)
+        .filter(project_id=effective_project.pk)
+        .exists()
+    ):
+        return AuthorizationDecision(
+            True, AuthoritySource.SCENARIO_RESPONSIBILITY, "SCENARIO_PARENT_SHELL"
+        )
+
     return AuthorizationDecision(False, AuthoritySource.NONE, "CAPABILITY_NOT_GRANTED")
+
+
+def authorized_scenarios(user: Any, capability: Capability) -> QuerySet[Scenario]:
+    """SQL scope equivalent to the exact evaluator, using the same closed role matrix.
+
+    Correlated assignments also prove membership/target tenant equality. The caller
+    may narrow this queryset but must still reauthorize each mutation against live state.
+    """
+    queryset = Scenario.objects.select_related("organization", "project", "project__organization")
+    if not getattr(user, "is_authenticated", False) or not getattr(user, "is_active", False):
+        return queryset.none()
+    queryset = queryset.filter(access_mode__in=ScenarioAccessMode.values)
+    if user.is_superuser:
+        return queryset
+    platform = PlatformResponsibilityAssignment.objects.filter(
+        user_id=user.pk,
+        status=ResponsibilityStatus.ACTIVE,
+        responsibility=PlatformResponsibility.GLOBAL_ADMINISTRATOR,
+    ).exists()
+    if platform and capability in _GLOBAL_ADMIN_CAPABILITIES:
+        return queryset
+    if capability not in _INACTIVE_ORGANIZATION_READ_CAPABILITIES:
+        queryset = queryset.filter(organization__status=OrganizationStatus.ACTIVE)
+    common = {
+        "membership__user_id": user.pk,
+        "membership__organization_id": OuterRef("organization_id"),
+        "organization_id": OuterRef("organization_id"),
+    }
+    if capability == Capability.ORGANIZATION_VIEW:
+        return queryset.filter(
+            Exists(
+                OrganizationMembership.objects.filter(
+                    organization_id=OuterRef("organization_id"),
+                    user_id=user.pk,
+                    status=MembershipStatus.ACTIVE,
+                )
+            )
+        )
+    org_roles = []
+    if capability in _ORGANIZATION_ADMIN_CAPABILITIES:
+        org_roles.append(OrganizationResponsibility.ADMINISTRATOR)
+    if capability in _ORGANIZATION_AUDITOR_CAPABILITIES:
+        org_roles.append(OrganizationResponsibility.AUDITOR)
+    organization_assignment = _active_assignments(
+        OrganizationResponsibilityAssignment.objects.filter(**common, responsibility__in=org_roles)
+    )
+    condition = Q(Exists(organization_assignment))
+    for mode in ScenarioAccessMode.values:
+        project_roles = [
+            role
+            for role in ProjectResponsibility.values
+            if capability in _project_capabilities(role, mode)
+        ]
+        scenario_roles = [
+            role
+            for role in ScenarioResponsibility.values
+            if capability in _scenario_capabilities(role, mode)
+        ]
+        project_assignment = _active_assignments(
+            ProjectResponsibilityAssignment.objects.filter(
+                **common, project_id=OuterRef("project_id"), responsibility__in=project_roles
+            )
+        )
+        scenario_assignment = _active_assignments(
+            ScenarioResponsibilityAssignment.objects.filter(
+                **common, scenario_id=OuterRef("pk"), responsibility__in=scenario_roles
+            )
+        )
+        condition |= Q(access_mode=mode) & (
+            Q(Exists(project_assignment)) | Q(Exists(scenario_assignment))
+        )
+    return queryset.filter(condition)

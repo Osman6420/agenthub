@@ -490,7 +490,7 @@ def test_minimum_manifest_preset_is_scenario_owned_latest_and_recommendation_onl
 
 
 @pytest.mark.django_db
-def test_capability_preset_requires_exact_reviewed_allowlist() -> None:
+def test_consumer_packages_reject_legacy_raw_capability_submission() -> None:
     organization = Organization.objects.create(slug="binding-org", name="Binding org")
     project = AIProject.objects.create(organization=organization, slug="p", name="Project")
     scenario = Scenario.objects.create(project=project, slug="s", name="Scenario")
@@ -512,8 +512,8 @@ def test_capability_preset_requires_exact_reviewed_allowlist() -> None:
             "consumer": consumer.pk,
             "scenario": scenario.pk,
             "status": "active",
-            "capability_preset": "rag_debug_reader",
-            "capabilities": [Capability.WORKFLOW_RUN, Capability.RETRIEVE_DEBUG],
+            "run_scenario": True,
+            "retrieve_debug": True,
         },
         user=admin,
     )
@@ -534,4 +534,4 @@ def test_capability_preset_requires_exact_reviewed_allowlist() -> None:
         user=admin,
     )
     assert not forged.is_valid()
-    assert "Özel seçim" in forged.errors["capabilities"][0]
+    assert "Teknik izin listesi kabul edilmez" in forged.non_field_errors()[0]

@@ -1,0 +1,49 @@
+{% extends "console/base.html" %}
+{% block title %}{% if editing_source %}Kaynak ayarlarını düzenle{% else %}REST kaynağı ekle{% endif %} · AgentHub{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{{ cancel_url }}">{{ set.name }} kaynakları</a><span>›</span><span>{% if editing_source %}Kaynak ayarlarını düzenle{% else %}REST kaynağı ekle{% endif %}</span></div>
+<div class="page-heading"><div><h1>{% if editing_source %}Kaynak ayarlarını düzenle{% else %}REST kaynağı ekle{% endif %}</h1><p class="muted">Belgeleri bir kez alın; bu doküman setini birden fazla senaryoda kullanın.</p></div></div>
+<p aria-label="Kurulum adımı">Adım {{ step }} / 4 · {% if step == 1 %}Bağlantı{% elif step == 2 %}Belge alanları{% elif step == 3 %}Yenileme ve hazırlama{% else %}Kontrol ve kayıt{% endif %}</p>
+{% if editing_source %}<p class="notice">Mevcut kaynak çalışmaya devam eder. Yeni ayarlarla belgeleri alıp hazırladıktan sonra kaynak ekranından geçiş yapabilirsiniz. Periyodik plan yeni ayarlara geçildiğinde başlar.</p>{% endif %}
+<div class="card form-card"><form method="post">{% csrf_token %}<input type="hidden" name="submission" value="{{ submission }}">
+{% if error or form.errors %}<div class="notice" role="alert" tabindex="-1" data-form-error-summary><strong>Bu adım tamamlanamadı.</strong><p>{{ error }}</p>{{ form.non_field_errors }}{% if form.errors %}<p>İşaretlenen alanları kontrol edin.</p>{% endif %}</div>{% endif %}
+{% if step == 1 %}
+  <h2>Kaynağı tanımlayın</h2>{{ form.as_p }}
+  <p class="muted">Yalnız bu doküman setine izin verilen bağlantılar gösterilir. Sunucu ve kimlik bilgilerini platform yöneticisi tanımlar. Henüz izin yoksa kaynak adını girip kurulumu kaydedebilirsiniz; izin verildiğinde kaynaklar ekranından devam edin.</p>
+{% elif step == 2 %}
+  <h2>Belgelerin alanlarını eşleyin</h2><p>Bağlantı: {{ profile_label }}</p>
+  {% if mode == 'advanced' %}{{ form.as_p }}{% else %}
+  <p class="muted">Alan yollarını /items veya /content gibi yazın. Boş yol yanıtın ya da belgenin kendisini seçer. İstek yolu onaylı bağlantının köküne eklenir.</p>
+  {% for field in form %}
+    {% if field.name == 'revision_enabled' %}<details{% if form.errors %} open{% endif %}><summary>Sürüm, silinme ve ayrı içerik isteği</summary>{% endif %}
+    {% if field.name == 'pagination' %}</details><h3>Sayfalama</h3>{% endif %}
+    {% if field.name == 'query_enabled' %}<details{% if form.errors %} open{% endif %}><summary>Sorgu, istek gövdesi ve değişken tanımları</summary><p class="muted">Bu alanlara kimlik bilgisi, başlık veya sunucu adresi yazmayın.</p>{% endif %}
+    <p>{{ field.label_tag }}{{ field }}{{ field.errors }}</p>
+    {% if field.name == 'inputs_schema' %}</details>{% endif %}
+  {% endfor %}
+  {% endif %}
+  <p><button class="button secondary" name="action" value="{% if mode == 'advanced' %}visual{% else %}advanced{% endif %}">{% if mode == 'advanced' %}Alan görünümüne geç{% else %}JSON görünümüne geç{% endif %}</button></p>
+  <details><summary>Örnek yanıtla eşlemeyi kontrol et</summary><p class="muted">Gerçek belge veya kimlik bilgisi içermeyen, en çok 20 belgeli bir JSON örneği kullanın. Örnek saklanmaz ve ağ isteği yapılmaz.</p><p><label for="id_sample">Sentetik yanıt</label><textarea id="id_sample" name="sample" maxlength="100000" rows="5"></textarea></p><button class="button secondary" name="action" value="preview">Örnek eşlemeyi kontrol et</button></details>
+  {% if preview_count != None %}<p class="notice success" role="status">Örnekteki {{ preview_count }} belgenin alanları eşlemeyle uyumlu. İçerik kaydedilmedi; ağ isteği yapılmadı.</p>{% endif %}
+{% elif step == 3 %}
+  <h2>Yenileme, hazırlama ve kaynak değişkenleri</h2>
+  {% if form.fields %}{{ form.as_p }}{% else %}<p>Bu eşleme için ek değişken gerekmiyor.</p>{% endif %}
+  <p class="muted">Periyodik yenilemenin ilk çalışması seçtiğiniz aralık sonunda planlanır. Aramaya hazırlama seçilirse belgeler alındıktan sonra setin ayarlarıyla işleme alınır. Bu işlem model kullanımına yol açabilir. Kullanıma alma ayrı yönetilir.</p>
+  {% if preparation_policy %}{% include "console/rest_setup_preparation_summary.html" %}{% else %}<p class="notice">{{ preparation_error }}</p>{% endif %}
+  <p><button class="button secondary" name="action" value="configure_preparation" formnovalidate>Değişkenleri kaydet ve hazırlama ayarlarını aç</button></p>
+  <p class="muted">Hazırlama ayarlarından döndüğünüzde yenilemeden sonra yapılacak işlemi yeniden seçin.</p>
+{% else %}
+  <h2>Kaynağı kontrol edin</h2>
+  {% if editing_source %}<h3>Değişen ayarlar</h3>{% for item in configuration_diff %}<details><summary>{{ item.field }}</summary><p>Önceki değer</p><pre>{{ item.before }}</pre><p>Yeni değer</p><pre>{{ item.after }}</pre></details>{% empty %}<p>Ayarlar aynı. Kayıt yeni bir deneme sürümü oluşturur.</p>{% endfor %}{% endif %}
+  <dl><dt>Kaynak</dt><dd>{{ source_name }}</dd><dt>Doküman seti</dt><dd>{{ set.name }}</dd><dt>Bağlantı</dt><dd>{{ profile_label }}</dd><dt>Değişken sayısı</dt><dd>{{ input_count }}</dd><dt>Yenileme</dt><dd>{% if schedule_interval == 900 %}15 dakikada bir{% elif schedule_interval == 3600 %}Saatte bir{% elif schedule_interval == 21600 %}6 saatte bir{% elif schedule_interval == 86400 %}Günde bir{% elif schedule_interval == 604800 %}Haftada bir{% else %}Elle başlatılır{% endif %}</dd></dl>
+  {% if preparation_selected %}<p><strong>Yenilemeden sonra:</strong> {% if publication_selected %}Belgeler hazırlanır; testler geçerse mevcut onaylı senaryolarda yayınlanır. Başarısızlıkta eski yayın korunur.{% else %}Aramaya hazırlanır; kullanıma alma ayrıca yapılır.{% endif %} Model kullanımı oluşabilir.</p>{% if preparation_error %}<p class="notice" role="alert">{{ preparation_error }}</p>{% else %}{% include "console/rest_setup_preparation_summary.html" %}{% endif %}{% else %}<p><strong>Yenilemeden sonra:</strong> Belgeler taslakta tutulur.</p>{% endif %}
+  <p>{% if editing_source %}Yeni ayarlar denemek üzere kaydedilir. Belgeleri alma ve hazırlama adımlarını sonraki ekrandan başlatın; tamamlanınca geçiş yapabilirsiniz.{% else %}Kaydettiğinizde kaynak, belge eşlemesi ve seçtiğiniz yenileme planı birlikte oluşturulur. {% if schedule_interval %}İlk belge alma işlemi seçilen aralık sonunda planlanır.{% else %}Belgeleri alma işlemini sonraki ekrandan başlatabilirsiniz.{% endif %}{% endif %} Aktif belgeler otomatik olarak değiştirilmez.</p>
+  <details><summary>Kaydetmeden bağlantıyı kontrol et</summary><p>Onaylı sunucuya tek istek gönderilir. Yalnız ilk yanıtın belge eşlemesi kontrol edilir; belgeler kaydedilmez. Yanıt büyükse bu sınırlı kontrol tamamlanamayabilir.</p><button class="button secondary" formaction="{{ probe_url }}">Bağlantıyı kontrol et</button></details>
+{% endif %}
+<div class="button-row">
+{% if step == 4 %}<button name="action" value="save">{% if editing_source %}Yeni ayarları kaydet{% else %}Kaynağı kaydet{% endif %}</button>{% else %}<button name="action" value="next">Devam et</button>{% endif %}
+{% if step > 1 %}<button class="button secondary" name="action" value="back" formnovalidate>Önceki adım</button>{% endif %}
+<button class="button secondary" name="action" value="save_draft" formnovalidate>Kaydet ve daha sonra devam et</button>
+<a class="button secondary" href="{{ cancel_url }}">Vazgeç</a>
+</div><p class="muted">Kaydedilen kurulum yalnız size görünür ve 30 gün boyunca yeniden açılabilir. Kaydetmek bağlantı izni vermez veya belge alma işi başlatmaz.</p></form></div>
+{% endblock %}

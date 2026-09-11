@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from apps.artifacts.types import ArtifactType
+from apps.releases.services import get_manifest_role
 
 
 class CompositionCompileError(ValueError):
@@ -73,7 +74,7 @@ def _resolve_child_release_pin(
         .select_related("scenario")
         .iterator()
     ):
-        pinned = release.manifest.get("artifacts", {}).get("workflow_definition")
+        pinned = get_manifest_role(release, "workflow_definition")
         if (
             isinstance(pinned, dict)
             and pinned.get("ref") == ref

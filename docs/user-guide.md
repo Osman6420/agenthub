@@ -32,8 +32,10 @@ exact-scope responsibility assignments. The UI never grants access the backend w
 | Platform / global administrator | Manage platform and organization shells; recovery superuser remains separate |
 | Organization / administrator | Manage members, responsibilities, consumers and safe metadata; does not implicitly edit, release, approve, or read protected document content |
 | Organization / auditor | Read safe organization metadata and audit records |
-| Project / viewer or administrator | View one project; an administrator manages its structure and may delegate scenario viewer/editor responsibility |
+| Project / viewer, editor or manager | View one project; editors create scenarios; managers also manage settings and basic access. Inheriting scenarios receive the corresponding basic role |
+| Project / legacy administrator | Preserves earlier structural administration; not automatically upgraded to the combined manager |
 | Scenario / viewer or editor | View one scenario, or edit/test that exact scenario |
+| Scenario / manager | Edit/test, publish/rollback and operate that exact scenario; document content and tool approval remain separately assigned |
 | Scenario / release manager | Compile/promote/rollback releases for that exact scenario |
 | Scenario / runtime operator | View and control runs for that exact scenario |
 | Scenario / approver | View and decide approvals for that exact scenario |
@@ -41,6 +43,29 @@ exact-scope responsibility assignments. The UI never grants access the backend w
 
 Organization membership only establishes tenant affiliation and makes the organization shell
 visible. It grants no project, scenario, approval, release, runtime, or protected-content access.
+
+Project **Erişimi yönet** and scenario **Erişimi düzenle** show who gains or loses
+actions before applying an access change. Project managers delegate basic roles in their
+project; scenario managers delegate them only in their scenario. Existing specialist
+roles remain separate. Previews expire after ten minutes and must be repeated if access
+changes meanwhile. Expiry, revocation and membership are checked on subsequent requests.
+
+New scenarios choose **Projeden devral** or **Bu senaryoya özel erişim**. Inheritance
+requires a permanent project manager. Private access requires an explicitly selected
+initial manager; the creator receives no automatic private role. Project managers can
+manage private access and explicitly add themselves, so private access does not promise
+absolute secrecy from project administration. Existing scenarios retain their previous
+access until an explicit previewed transition. A single-scenario user sees only its
+parent project navigation shell. Document reading and tool approval stay separately granted.
+
+Scenario **Veri erişimini incele** selects client-specific or shared scenario data.
+Client-specific access still needs both the live scenario/set grant and the client's
+set grant. Shared mode uses only sets explicitly approved by their data manager for
+current and future authorized scenario clients. The document-set **Senaryoların ortak
+veri kullanımını yönet** screen records that separate consent. A scenario role or a
+new set binding cannot grant it. Missing approvals are listed per set; withdrawing
+consent affects the next retrieval, and restoring an ordinary grant does not restore
+shared consent. Protected document reading by humans remains separate.
 
 ---
 
@@ -55,9 +80,12 @@ one workspace and changes presentation only; there is no cross-organization cons
 | --- | --- |
 | **Ana Sayfa** | Seçili organizasyonun özeti, dikkat gerektiren sağlık kayıtları ve son işler |
 | **Projeler** | Organizasyon içindeki AI projeleri |
+| **Senaryolar** | Seçili organizasyonun erişilebilir senaryoları; arama, proje/durum filtresi ve sayfalama |
 | **Dokümanlar** | Doküman setleri; set ayrıntısında içerik, sürüm, indeks ve kaynak görevleri |
+| **Testler** | Organizasyon yöneticileri için soru setleri ve değerlendirmeler; senaryoya özel testler senaryo altında kalır |
 | **İstemciler** | API istemcileri, protokol bilgileri, kimlik bilgileri ve senaryo erişim bağları |
 | **Çalıştırmalar** | Mevcut agent, workflow ve recovery yüzeylerine tenant-scoped giriş |
+| **Onaylar** | Yalnız exact senaryo onay sorumluluğu olan kullanıcıların bekleyen kararları |
 | **Kullanıcılar ve yetkiler** | Rol içermeyen üyelik ve ayrı, tam kapsamlı sorumluluk yönetimi; son organizasyon yöneticisi kaldırılamaz |
 
 Platform yöneticisi **Yeni organizasyon** ile organizasyonu, ilk üyeliği ve zorunlu
@@ -65,8 +93,32 @@ organizasyon-yöneticisi sorumluluğunu atomik oluşturur. Yeni proje, doküman 
 organizasyondan; yeni senaryo ise açıldığı proje URL'sinden türetilir. Bu formlarda parent tenant
 seçicisi bulunmaz ve gönderilen ek parent alanları dikkate alınmaz.
 
-Senaryolar yalnız sahip oldukları proje altında listelenir. **Projeler** içinden projeyi, ardından
-senaryoyu açarak organization/project path, aliases, active release, bound document
+Senaryolar **Senaryolar** bölümünden doğrudan veya **Projeler** içindeki proje ayrıntısından
+açılır. Senaryo listesi seçili organizasyona ve mevcut nesne yetkilerine göre daraltılır;
+arama ve proje/durum filtreleri erişimi genişletmez. Listeler 25 kayıtlık sayfalara ayrılır.
+Proje seçicisinde ilk 200 proje gösterilir; diğer projeler Projeler bölümünden açılabilir.
+Yeni senaryo oluşturma seçilen projenin mevcut yetki kontrolünü kullanır.
+Yayında sürümü olan senaryoda mevcut yayın en üstte gösterilir; sonraki yayın
+hazırlıkları açılabilir ayrı bir bölümde kalır. Yeni düzenlemeler başarılı yayına
+kadar çalışan sürümü değiştirmez. **Test ve operasyon** bağlantısı ilgili kapalı
+bölümü de açar.
+
+Doküman setinde seçili sürümün belgeleri 25, indeksleri 10, diğer sürümleri 20
+kayıtlık sayfalara ayrılır. Arama sonucu toplam belge sayısını değiştirmez.
+Mevcut belge ekleme araması yalnız okuyabildiğiniz belgeleri gösterir. Set bilgisi
+görüntüleyicisi başlıkları görebilir; içerik erişimi yoksa belge ayrıntısına bağlantı
+gösterilmez. Ham içerik izni ayrıca denetlenir.
+Set sayfasından senaryoya bağlama veya bağı kaldırma için hem set yönetimi hem
+ilgili senaryoyu düzenleme yetkisi gerekir. Veri sahibinin belge arama iznini
+iptal etmesi ayrı bir işlemdir. Güncel veriyi takip eden yayınlarda senaryo sayfası
+sabit set sürümü yerine **Yayında · kullanılabilir güncel veriyi takip eder** gösterir.
+Proje ayrıntısındaki **Bu projenin senaryolarında ara** bağlantısı, proje filtresi seçilmiş
+Senaryolar listesini açar. Sözleşme formunun sonundaki **Vazgeç** senaryonun Sözleşmeler
+bölümüne; profil ve profil erişim formlarındaki **Vazgeç** Platform kurulumuna döner.
+Aktif bölüm sol menüde işaretlenir; alt sayfalarda üst bölüme dönüş, oluşturma formlarında
+vazgeçme bağlantıları vardır. Dar ekranlarda menü düğmeyle açılır ve Escape ile kapanır.
+Sayfa içi bölüm bağlantıları URL parçasını ve tarayıcı geri/ileri geçmişini izler.
+The scenario detail shows the organization/project path, aliases, active release, bound document
 sets, latest index readiness and consumer access in one page. An authorized author can bind/unbind
 sets and grant/revoke retrieval there. These are two distinct gates: a consumer must be bound to
 the scenario, and it must separately have retrieval access to each document set. Set-binding
@@ -109,8 +161,15 @@ biçiminde ve dahili ID yerine senaryo alias'ıyla üretilir.
 en yeni immutable sürümlerini tarayıcıdaki geçici seçime koyar. Bu öneri yetki vermez, candidate
 oluşturmaz ve kanonik ön kontrolü atlamaz. Kaydedilmemiş seçim için **Candidate olarak kaydet**,
 **Seçimi sil** ve **Düzenlemeye devam et** seçenekleri görünür; candidate başarıyla oluşana kadar
-sayfadan ayrılma uyarısı da korunur. İstemci bağındaki capability başlangıç önerileri de yalnız
-checkbox'ları doldurur; sunucu gönderilen exact allowlist ile presetin birebir eşleşmesini doğrular.
+sayfadan ayrılma uyarısı da korunur.
+
+Yeni istemci erişiminde istemciyi ve senaryoyu seçip **Senaryoyu çalıştır** seçeneğini
+kaydetmek yeterlidir. **Gelişmiş erişim seçenekleri** altında araç çağırma, değişiklik yapan
+araçlar, veri arama denemesi ve veri hazırlama durumunu okuma ayrı ayrı seçilir. Değişiklik
+yapan araçlar için araç çağırma da seçilmelidir; insan onayı gereken işlemler onaya tabidir.
+Sunucu bu seçenekleri kapalı izin paketlerine çevirir; formdan keyfi teknik izin listesi
+kabul etmez. Mevcut istemci izinleri otomatik değiştirilmez. Ortak senaryo verisi kullanımı
+ayrıca veri yöneticisinin her veri kümesi için verdiği açık onaya bağlıdır.
 
 Klavye kullanıcıları sayfanın başındaki **Ana içeriğe geç** bağlantısıyla navigasyonu atlayabilir.
 Odak göstergesi tüm link/form kontrollerinde görünürdür; geniş tablolar dar ekranda yatay kaydırılır.
@@ -190,30 +249,144 @@ release yaşam döngüsü exact scenario release-manager sorumluluğunda kalır.
 önkoşullardan hesaplayarak ayrı gösterir. Exact preparation seçimi sonraki yayımlanan sürümler için
 otomatik staged hazırlığı açabilir; bu otomasyon aktif indeks pointer'ını değiştirmez. Set, belge ve
 indeks geçmiş sürümleri deep link olarak açılabilir. Manuel veya otomatik hazırlık hiçbir zaman
-otomatik promotion yapmaz.
+tek başına otomatik promotion yapmaz. Ayrı olarak onaylanmış “kontroller geçince
+kullanıma al” planı varsa, hazırlık sonrası bütün hedef senaryolar değerlendirilir;
+hepsi başarılı olursa belgeler ve senaryo yayınları birlikte kullanıma alınır.
+
+Otomatik hazırlık açıksa yayın ile hazırlama işinin kaydı birlikte tamamlanır.
+İş kaydedilemezse sürüm taslak kalır; geçici kuyruk bağlantı sorunu ise kalıcı iş
+kaydının sonradan yeniden gönderilmesine engel olmaz.
 
 ### Connector kaynakları ve periyodik güncelleme
 
-Doküman seti çalışma alanındaki **Kaynakları yönet** bağlantısı Confluence ve generic REST
-kaynaklarını aynı set altında gösterir. Ekran yalnız güvenli profil/contract kimliğini, son run
-durumunu ve değişen/değişmeyen sayaçlarını gösterir; hedef host, credential/secret, REST input
-değerleri ve doküman içeriği gösterilmez.
+Doküman seti, bir veya daha fazla senaryonun kullanabildiği belge grubudur.
+**Kaynakları yönet** ekranı bu gruba belge getiren Confluence, REST ve etkinleştirilmişse
+MCP kaynaklarını gösterir. Kaynaklar 20 kayıtlık sayfalarda listelenir. Son başarılı yenileme,
+son kayıtlı hata ve planlanan yenileme zamanı ayrı gösterilir. Kaynak kimliği ve belge eşlemesi
+ayrıntılardadır; sunucu adresi, kimlik bilgileri, kaynak değişkenleri ve belge içeriği gösterilmez.
 
-Author, platform yöneticisinin exact document-set grant verdiği Confluence/REST profilini seçerek
-kaynak oluşturabilir. REST için kapalı JSON mapping sözleşmesi immutable revizyon olarak oluşturulur;
-isteğe bağlı sentetik response preview ağ isteği yapmadan pointer/metadata eşleşmesini doğrular ve
-içeriği response'a yansıtmaz. Kaynak **Şimdi çalıştır** ile ingestion kuyruğuna alınabilir veya 15
-dakika–7 gün aralığında periyodik çalıştırılabilir. Değişiklik sonrası `draft_only` ve `stage_only`
-author seçenekleridir; `promote_if_safe` yalnız release manager tarafından, sete zaten bağlı exact
-senaryolar için seçilebilir.
+Doküman setinin yöneticisi, platform yöneticisinin o sete izin verdiği bağlantıyı seçerek kaynak
+ekleyebilir. Ortak yenileme işleri etkinse (`INGESTION_DURABLE_CONNECTOR_JOBS`),
+Dokümanlar ekranındaki **REST belgelerini bağla** ile yönettiğiniz mevcut bir seti
+seçebilirsiniz. Setler adla aranır ve en çok 100 eşleşme gösterilir. Organizasyon
+yöneticisi yeni set oluşturabilir; bu akışta yalnız yeni setin yöneticiliğini açıkça
+üstlenir. Set ve size özel kaynak kurulum kaydı birlikte saklanır. Platform bağlantı
+izni henüz yoksa yeni oturumda da bu kayda dönüp devam edebilirsiniz. Mevcut seti
+görme yetkisi, o sete kaynak ekleme yetkisi sağlamaz.
+
+**REST kaynağını adım adım ekle** dört adım sunar: bağlantı, belge alanları, yenileme ve
+hazırlama, kontrol ve kayıt. Görsel alanlar ile gelişmiş JSON görünümü aynı eşlemeyi kullanır;
+kayıpsız çevrilemeyen bir eşleme gelişmiş görünümde kalır. Açık form oturumu bir saat sürer;
+bağlantı izni her adımda yeniden kontrol edilir. **Kaydet ve daha sonra devam et**, kurulumu
+oturumdan bağımsız olarak saklar. Kaynaklar ekranındaki **Kaydettiğiniz kurulumlar** bölümünden
+30 gün içinde yeniden açabilirsiniz. Her organizasyonda kullanıcı başına en çok beş açık
+kurulum saklanır; yalnız kaydeden kullanıcı, doküman setini yönetme yetkisi sürüyorsa açabilir.
+Henüz bağlantı izni yoksa kaynak adıyla başlayabilirsiniz. Seçili bağlantının izni kaldırılırsa
+girilen eşleme ve değişkenler korunur; izin geri verildiğinde aynı adımdan devam edilir.
+Taslak kaydı kaynak veya yenileme planı oluşturmaz, dış sisteme bağlanmaz. Kaynağı son adımda
+kaydettiğinizde kurulum taslağındaki eşleme ve değişken kopyası temizlenir.
+30 günü dolan, tamamlanmamış kurulumlar yeniden açılamaz. Yetkili bakım işlemi bu
+taslakların adını ve özel içeriğini temizler; işlem geçmişini korur. Tamamlanmış
+kaynaklar ve süresi dolmamış kurulumlar bu temizlikten etkilenmez.
+
+Örnek yanıtla kontrol dış sisteme bağlanmaz ve örneği saklamaz. Son adımdaki ayrı
+**Bağlantıyı kontrol et** eylemi onaylı sunucuya tek, sınırlı istek gönderir; ilk yanıtın
+eşlemesini doğrular ve belge kaydetmez. Kaynak kaydı, belge eşlemesi ve seçilen plan birlikte
+oluşur. Yeni sihirbazda elle veya 15 dakika–7 gün aralığında yenileme seçilir; periyodik planın
+ilk çalışması seçilen aralık sonunda beklenir. Periyodik yenileme için belgeleri taslakta
+tutabilir veya **Doküman setinin ayarlarıyla aramaya hazırla** seçeneğini kullanabilirsiniz.
+Hazırlama seçeneği setin mevcut model, parçalama, metin okuma ve özetleme ayarlarını kullanır.
+İlk ayarlar için belge eklemeniz gerekmez: set ekranındaki **Hazırlama ayarlarını düzenle**
+ile arama modeli, isteğe bağlı metin okuma ve parçalamayı seçebilirsiniz. **Standart
+parçalama** seçeneği 1000 karakterlik parçalar, 100 karakter ortak alan ve belge başına
+1000 parça sınırı kullanır. Ayarları kaydetmek belge alma veya hazırlama işi başlatmaz.
+Otomatik hazırlama ayrıca açılırsa sonraki belge yayınları model maliyeti oluşturabilir.
+REST üçüncü adımındaki **Değişkenleri kaydet ve hazırlama ayarlarını aç**, girdilerinizi
+özel kurulum kaydına saklar; ayarlar kaydedilince aynı adıma dönersiniz. Yenilemeden
+sonra hazırlanmasını istiyorsanız bu seçimi yeniden yapın. İncelenen ayarlar veya izinler kayıt öncesinde değişirse
+önceki adıma dönüp seçimi yeniden kontrol etmek gerekir. Hazırlama model kullanımına yol
+açabilir; başarılı hazırlama belgeleri otomatik olarak kullanıma almaz. Bu seçenek periyodik
+çalışmalar içindir. Elle başlatılan yenileme tamamlanınca kaynak ayrıntısındaki
+**Aramaya hazırla** ile mevcut set ayarlarını kullanabilirsiniz. Ayarlar önce
+incelenir; işlem model maliyeti oluşturabilir. Aynı yenileme aynı hazırlama işine
+bağlanır; tekrar tıklamak yeni iş veya otomatik yeniden deneme başlatmaz.
+Bu eylem REST, Confluence ve MCP kaynaklarında kullanılabilir; tamamlanmış,
+hazırlanabilecek belgeler içeren bir yenileme ve güncel bağlantı/model izinleri gerekir.
+Kaynak yenilemesine ait belge sürümünün içeriği sonradan elle değiştirilmez.
+
+REST, Confluence ve MCP kaynağında **Kaynak ayarlarını düzenle**, mevcut değerlerle açılır. Son adımda
+değişen ayarlar karşılaştırılır; yarım kalan düzenleme de size özel kurulum kaydına
+saklanabilir. **Yeni ayarları kaydet** bir deneme sürümü oluşturur. Kullanılan kaynak
+ve yenileme planı çalışmaya devam eder. Deneme sürümünde belgeleri alıp hazırladıktan
+sonra **Bu ayarları ve belgeleri kullan** ile geçiş yapılır. Güncel izinler, hazırlama
+sonucu ve diğer kaynakların belgeleri yeniden kontrol edilir. Bu sırada diğer kaynaklar
+değişmişse belgeleri yeniden alıp hazırlamanız gerekir.
+
+**Ayar geçmişi** eski sürümleri korur. Hazırlaması uygun olan eski sürüme aynı işlemle
+dönülebilir. Geçişte o sürüm kaydedilirken seçilen plan uygulanır; sonradan yapılan
+plan değişiklikleri ayrıca korunmuş eski kayıtlarda kalır. Uygulanacak plan ekranda
+gösterilir. Henüz ortak akışa taşınmamış otomatik kullanıma alma planı açıkken kaynak
+ayarlarını sürümleyerek düzenleme kullanılamaz. Confluence/MCP formunda önce değişiklikler
+incelenir, sonra yeni sürüm kaydedilir. Yalnız o doküman setine izin verilmiş bağlantılar
+seçilebilir. Eski bağlantı kaydı henüz ortak kataloğa taşınmamışsa önce geçiş hazırlığı
+gerekir. Kaydetmek belge alımını veya yayını başlatmaz. Sonraki yenilemede yeni belge bulunmaması, önceki hazırlama
+sonucunu kaynak listesi veya ayrıntısından kaldırmaz.
+
+**Şimdi çalıştır** belge alma işini kuyruğa verir. Devam eden bir iş veya kullanılamayan bağlantı
+varsa düğme gösterilmez; her işlem sunucuda yeniden yetkilendirilir. MCP kaynaklarında
+**Yenileme planını düzenle** ile 15 dakika, 1 saat, 6 saat, 24 saat veya 7 günlük
+periyodik yenileme seçilebilir. Belgeler taslakta tutulabilir veya doküman setinin
+güncel hazırlama ayarlarıyla aramaya hazırlanabilir. **Hazırla, dene ve kontroller
+geçerse yayınla** seçeneği, yetkili olduğunuz hedef senaryoları birlikte değerlendirir.
+Hazırlama ve değerlendirme model maliyeti oluşturabilir. Plan kapatıldığında yeni yenilemeler
+durur; başlamış işler kaynak sayfasından ayrıca iptal edilir. Bağlantı izni kaldırılmış
+olsa da plan kapatılabilir. Kaçırılan yenilemeler topluca çalıştırılmaz, devam eden
+yenileme varken ikinci iş açılmaz.
+Ortak işin iptal ve yeniden deneme eylemleri uygun durumlarda görünür.
+Kaynak ayrıntısındaki doküman seti hazırlığı tüm bağlı kaynakların ortak durumudur;
+belge almak ve arama için hazırlayıp kullanıma almak ayrı aşamalardır.
+
+Elle hazırlama başlatıldığında veya ortak işlere bağlı REST/Confluence/MCP planında
+**arama için hazırlama** seçiliyse, kaynak
+ayrıntısındaki **Bu yenilemenin hazırlanması** bölümü alınan belgelerin bağlı hazırlama
+işini gösterir. Belge alma tamamlandığında hazırlama hâlâ sırada veya başarısız olabilir.
+Yetkili doküman seti yöneticisi buradan hazırlamayı iptal edebilir ya da uygun durumdaki
+aynı işi yeniden deneyebilir. Planın model/metin okuma seçimi doküman setinin hazırlama
+ayarlarıyla çelişirse hazırlama başlamaz; ekrandaki uyarı hangi ayarın kontrol edileceğini
+gösterir. Hazırlamanın tamamlanması belgeleri kendiliğinden kullanıma almaz.
+
+Mevcut gelişmiş yenileme planı, belge taslağı oluşturma ve arama için hazırlama seçeneklerini
+korur. Otomatik kullanıma alma, doküman setinde operasyon yetkisi ve bağlı senaryolardaki
+test ve yayın yetkileri ile mevcut yayın kontrollerini gerektirir. Ortak kaynak işi
+hazırlandıktan sonra hedeflerin tamamı değerlendirilir. Kontroller geçmezse veya
+onay/ayarlar değişirse eski belgeler ve yayınlar korunur. Yeni REST sihirbazı bu
+gelişmiş seçeneği sunmaz. Ortak kaynak işi olmayan eski otomatik yayın mesajları
+kullanıma alma yapmadan durur.
 
 ---
 
 ## 3. The end-to-end scenario lifecycle
 
-A scenario goes from authoring to a served release along one governed path. The visual
-builder plugs into the **authoring** step for workflows; everything downstream is
-unchanged.
+New scenarios created in the console follow the latest ready data from their bound
+document sets. Existing scenarios can review this choice under **Gelişmiş → Veri
+yenileme ayarını gözden geçir**. Enabling it affects future publications only; publish
+the scenario through its normal tests to activate the change. Running work retains
+its release and the data already selected for a retried step. Current edit, test and
+publication permissions are required, and a stale review must be opened again.
+
+A scenario goes from authoring to a served release along one governed path. Save its
+workflow and test questions, then select **Yayına al** on the scenario page. The action
+prepares the exact candidate, runs its pinned tests, and activates it only after the
+current permission, configuration and readiness checks pass. Existing traffic remains
+on the previous release if the action fails. Separate candidate and promotion controls
+remain under **Gelişmiş → Yayın adımlarını ayrı yönet** for specialist workflows.
+
+If a publication is interrupted, **Yayını sürdür** continues the same candidate and
+evaluation without rerunning completed cases. This action belongs to its initiating
+operator and still requires current scenario permissions. Changed settings or a different
+live release require a new reviewed attempt; a failed evaluation is never automatically
+restarted. **Son yayın işlemleri** shows the last ten attempts with links to their exact
+release and test results. The visual builder remains the workflow authoring surface.
 
 ```
  Author artifacts            Compile           Evaluate         Release
@@ -238,8 +411,9 @@ unchanged.
    pinned suite and ready, tenant-owned indexes. Or run a **consumer-scoped, time-bounded
    canary**. The release detail page is the contextual surface for eval, canary, promotion, stop,
    and rollback; every action is reauthorized against the exact scenario.
-7. **Activate the scenario explicitly** from its scenario page after the active release, alias,
-   and release-pinned served indexes are ready. Promotion never activates a draft as a side effect.
+7. **Activate the scenario** after the release, alias, and release-pinned indexes are ready.
+   The scenario page's single publication action includes this in the same final transaction;
+   the standalone release promotion service retains its explicit activation requirement.
 8. **Serve**: an authorized consumer calls `POST /v1/responses`,
    `POST /v1/chat/completions`, or `GET /v1/runs/{uuid}`. The gateway issues a signed
    short-lived execution context and the
@@ -395,7 +569,7 @@ npm --prefix frontend run build   # writes apps/builder/static/builder/
 
 # 2. Apply migrations to the local database
 $env:DJANGO_SETTINGS_MODULE = 'config.settings.local'
-$env:DATABASE_URL = 'postgres://agenthub:agenthub@localhost:5432/agenthub'
+$env:DATABASE_URL = 'postgres://agenthub:agenthub@localhost:5433/agenthub'
 $env:REDIS_URL = 'redis://localhost:6379/0'
 .venv\Scripts\python.exe manage.py migrate
 

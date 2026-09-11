@@ -109,6 +109,24 @@ def responses_response(body: dict[str, Any], alias: str) -> dict[str, Any]:
             "output": [],
             "metadata": {"run_id": str(body["run_id"])},
         }
+    status = str(body.get("status") or "completed")
+    if status != "completed":
+        # BUG-001: a failed/timed-out/cancelled run must be reported as such, not silently
+        # reshaped into a fake "completed" response with meaningless output text.
+        return {
+            "id": response_id,
+            "object": "response",
+            "created_at": _created(),
+            "status": status,
+            "model": alias,
+            "background": False,
+            "output": [],
+            "error": {
+                "code": str(body.get("error_code") or "WORKFLOW_RUN_FAILED"),
+                "message": "The run did not complete successfully.",
+            },
+            "usage": _responses_usage(body.get("usage")),
+        }
     text = _output_text(body.get("output"))
     return {
         "id": response_id,

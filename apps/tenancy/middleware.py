@@ -4,16 +4,21 @@ from collections.abc import Callable
 
 from django.db import connection, transaction
 from django.http import HttpRequest, HttpResponse
+from django.urls import Resolver404, resolve
 
-from apps.tenancy.context import set_tenant_scope
-from apps.tenancy.models import Organization
-from apps.tenancy.services import allowed_organization_ids
+from apps.tenancy.context import operator_transaction
 
 _DURABLE_API_PREFIXES = (
     "/v1/chat/completions",
     "/v1/responses",
     "/v1/runs/",
 )
+
+
+def durable_operator_view(view: Callable[..., HttpResponse]) -> Callable[..., HttpResponse]:
+    """Mark a view which owns its short operator transactions around durable execution."""
+    view.agenthub_durable_operator = True  # type: ignore[attr-defined]
+    return view
 
 
 class TenantContextMiddleware:
@@ -30,14 +35,13 @@ class TenantContextMiddleware:
             or path.startswith(_DURABLE_API_PREFIXES)
         ):
             return self.get_response(request)
-        with transaction.atomic():
-            set_tenant_scope(())
-            user = getattr(request, "user", None)
-            if user is not None and getattr(user, "is_authenticated", False):
-                allowed = allowed_organization_ids(user)
-                if allowed is None:
-                    allowed = set(Organization.objects.values_list("id", flat=True))
-                set_tenant_scope(allowed)
+        try:
+            match = resolve(path, urlconf=getattr(request, "urlconf", None))
+        except Resolver404:
+            match = None
+        if match is not None and getattr(match.func, "agenthub_durable_operator", False):
+            return self.get_response(request)
+        with operator_transaction(getattr(request, "user", None)):
             response = self.get_response(request)
             if response.status_code >= 500:
                 transaction.set_rollback(True)

@@ -20,6 +20,7 @@ from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.audit.services import record_event
 from apps.documents.models import DocumentSetVersion, DocumentSetVersionStatus
+from apps.evaluations.execution_lock import question_evaluation_lock
 from apps.evaluations.models import (
     QuestionCase,
     QuestionEvaluationEvidence,
@@ -44,6 +45,7 @@ from apps.orchestration.providers import ModelProviderError, get_model_provider
 from apps.releases.models import ScenarioRelease
 from apps.retrieval.providers import get_retrieval_provider
 from apps.retrieval.types import RetrievedChunk
+from apps.tenancy.context import operator_transaction, set_tenant_context
 
 MAX_CASES = 200
 MAX_QUESTION_CHARS = 4000
@@ -421,6 +423,17 @@ def create_retrieval_evaluation(
         DocumentSetVersionStatus.ACTIVE,
     }:
         raise QuestionEvaluationError("DOCUMENT_SET_VERSION_NOT_EVALUABLE")
+    current_index = (
+        IndexVersion.objects.select_for_update()
+        .filter(
+            pk=index_version.pk,
+            organization_id=organization.pk,
+        )
+        .first()
+    )
+    if current_index is None:
+        raise QuestionEvaluationError("INDEX_VERSION_NOT_EVALUABLE")
+    index_version = current_index
     if (
         index_version.organization_id != organization.pk
         or index_version.document_set_version_id != document_set_version.pk
@@ -753,7 +766,9 @@ def _judge_case(
     }
 
 
+@transaction.atomic
 def _retrieval_case(run: QuestionEvaluationRun, case: QuestionCase) -> QuestionEvaluationEvidence:
+    set_tenant_context(run.organization_id)
     if (
         run.document_set_version is None
         or run.index_version is None
@@ -824,14 +839,25 @@ def scenario_question_payload(question: str, base: dict[str, Any] | None = None)
 
 
 def _answer_case(run: QuestionEvaluationRun, case: QuestionCase) -> QuestionEvaluationEvidence:
-    if run.release is None:
-        raise QuestionEvaluationError("ANSWER_PROVENANCE_INCOMPLETE")
+    with transaction.atomic():
+        set_tenant_context(run.organization_id)
+        release = run.release
+        if release is None:
+            raise QuestionEvaluationError("ANSWER_PROVENANCE_INCOMPLETE")
     payload = scenario_question_payload(case.question, case.input_payload)
     result = execute_release_input(
-        release=run.release,
+        release=release,
         input_payload=payload,
         request_key=f"question-eval:{run.pk}:{case.ordinal}",
     )
+    return _record_answer_case(run, case, result)
+
+
+@transaction.atomic
+def _record_answer_case(
+    run: QuestionEvaluationRun, case: QuestionCase, result: Any
+) -> QuestionEvaluationEvidence:
+    set_tenant_context(run.organization_id)
     answer = _answer_text(result.output)
     if len(answer) > MAX_ANSWER_CHARS:
         raise QuestionEvaluationError("ANSWER_LIMIT_EXCEEDED")
@@ -919,79 +945,108 @@ def _aggregate_run(run: QuestionEvaluationRun) -> None:
 
 
 def execute_question_evaluation(*, run: QuestionEvaluationRun) -> QuestionEvaluationRun:
-    """Execute a queued run. Caller must establish the tenant transaction scope."""
+    """Own one delivery while each execution and evidence transaction commits independently."""
+    with question_evaluation_lock(run.organization_id, run.pk) as acquired:
+        if not acquired:
+            return run
+        return _execute_question_evaluation(run=run)
 
-    if run.status in {
-        QuestionEvaluationStatus.COMPLETED,
-        QuestionEvaluationStatus.FAILED,
-        QuestionEvaluationStatus.CANCELLED,
-    }:
-        return run
-    run.status = QuestionEvaluationStatus.RUNNING
-    run.error_code = ""
-    run.save(update_fields=["status", "error_code", "updated_at"])
-    for case in run.question_set_version.cases.all():
-        run.refresh_from_db(fields=["cancel_requested_at"])
-        if run.cancel_requested_at is not None:
-            run.status = QuestionEvaluationStatus.CANCELLED
-            break
-        if run.case_evidence.filter(question_case=case).exists():
-            continue
+
+def _execute_question_evaluation(*, run: QuestionEvaluationRun) -> QuestionEvaluationRun:
+    with transaction.atomic():
+        set_tenant_context(run.organization_id)
+        run.refresh_from_db()
+        if run.status in {
+            QuestionEvaluationStatus.COMPLETED,
+            QuestionEvaluationStatus.FAILED,
+            QuestionEvaluationStatus.CANCELLED,
+        }:
+            return run
+        run.status = QuestionEvaluationStatus.RUNNING
+        run.error_code = ""
+        run.save(update_fields=["status", "error_code", "updated_at"])
+        cases = list(run.question_set_version.cases.order_by("ordinal")[: MAX_CASES + 1])
+        if len(cases) > MAX_CASES:
+            raise QuestionEvaluationError("QUESTION_CASE_LIMIT_EXCEEDED")
+    for case in cases:
+        with transaction.atomic():
+            set_tenant_context(run.organization_id)
+            run.refresh_from_db(fields=["cancel_requested_at"])
+            if run.cancel_requested_at is not None:
+                run.status = QuestionEvaluationStatus.CANCELLED
+                break
+            if run.case_evidence.filter(question_case=case).exists():
+                continue
         try:
             if run.kind == QuestionEvaluationKind.RETRIEVAL:
                 evidence = _retrieval_case(run, case)
             else:
                 evidence = _answer_case(run, case)
         except (QuestionEvaluationError, EvalError) as exc:
-            code = exc.code
-            evidence = QuestionEvaluationEvidence.objects.create(
-                organization_id=run.organization_id,
-                run=run,
-                question_case=case,
-                ordinal=case.ordinal,
-                status=QuestionEvaluationEvidenceStatus.ERROR,
-                passed=None,
-                error_code=code,
-            )
+            with transaction.atomic():
+                set_tenant_context(run.organization_id)
+                code = exc.code
+                evidence = QuestionEvaluationEvidence.objects.create(
+                    organization_id=run.organization_id,
+                    run=run,
+                    question_case=case,
+                    ordinal=case.ordinal,
+                    status=QuestionEvaluationEvidenceStatus.ERROR,
+                    passed=None,
+                    error_code=code,
+                )
         except Exception:
-            evidence = QuestionEvaluationEvidence.objects.create(
-                organization_id=run.organization_id,
-                run=run,
-                question_case=case,
-                ordinal=case.ordinal,
-                status=QuestionEvaluationEvidenceStatus.ERROR,
-                passed=None,
-                error_code="INTERNAL_ERROR",
-            )
+            with transaction.atomic():
+                set_tenant_context(run.organization_id)
+                evidence = QuestionEvaluationEvidence.objects.create(
+                    organization_id=run.organization_id,
+                    run=run,
+                    question_case=case,
+                    ordinal=case.ordinal,
+                    status=QuestionEvaluationEvidenceStatus.ERROR,
+                    passed=None,
+                    error_code="INTERNAL_ERROR",
+                )
         QUESTION_EVAL_CASES.labels(kind=run.kind, status=evidence.status).inc()
-    _aggregate_run(run)
-    if run.status != QuestionEvaluationStatus.CANCELLED:
-        run.status = (
-            QuestionEvaluationStatus.FAILED
-            if run.error_cases == run.total_cases and run.total_cases > 0
-            else QuestionEvaluationStatus.COMPLETED
+    with transaction.atomic():
+        set_tenant_context(run.organization_id)
+        # Cancellation may arrive while the last case is executing. Serialize
+        # finalization with the canonical cancellation writer before choosing status.
+        cancellation = (
+            QuestionEvaluationRun.objects.select_for_update()
+            .get(pk=run.pk, organization_id=run.organization_id)
+            .cancel_requested_at
         )
-    run.finished_at = timezone.now()
-    run.error_code = "ALL_CASES_ERROR" if run.status == QuestionEvaluationStatus.FAILED else ""
-    run.save(
-        update_fields=[
-            "status",
-            "completed_cases",
-            "passed_cases",
-            "unscored_cases",
-            "error_cases",
-            "metrics",
-            "finished_at",
-            "error_code",
-            "updated_at",
-        ]
-    )
-    QUESTION_EVAL_RUNS.labels(kind=run.kind, status=run.status).inc()
-    QUESTION_EVAL_DURATION.labels(kind=run.kind).observe(
-        max(0.0, (run.finished_at - run.created_at).total_seconds())
-    )
-    _audit_run(run, action="completed", actor_id="evaluation-worker")
-    return run
+        if cancellation is not None:
+            run.status = QuestionEvaluationStatus.CANCELLED
+        _aggregate_run(run)
+        if run.status != QuestionEvaluationStatus.CANCELLED:
+            run.status = (
+                QuestionEvaluationStatus.FAILED
+                if run.error_cases == run.total_cases and run.total_cases > 0
+                else QuestionEvaluationStatus.COMPLETED
+            )
+        run.finished_at = timezone.now()
+        run.error_code = "ALL_CASES_ERROR" if run.status == QuestionEvaluationStatus.FAILED else ""
+        run.save(
+            update_fields=[
+                "status",
+                "completed_cases",
+                "passed_cases",
+                "unscored_cases",
+                "error_cases",
+                "metrics",
+                "finished_at",
+                "error_code",
+                "updated_at",
+            ]
+        )
+        QUESTION_EVAL_RUNS.labels(kind=run.kind, status=run.status).inc()
+        QUESTION_EVAL_DURATION.labels(kind=run.kind).observe(
+            max(0.0, (run.finished_at - run.created_at).total_seconds())
+        )
+        _audit_run(run, action="completed", actor_id="evaluation-worker")
+        return run
 
 
 @transaction.atomic
@@ -1034,6 +1089,7 @@ def request_evaluation_cancellation(
     return locked
 
 
+@transaction.atomic
 def _audit_probe(
     *,
     action: str,
@@ -1053,6 +1109,7 @@ def _audit_probe(
     not: the count is enough to see that content was exposed.
     """
 
+    set_tenant_context(organization_id)
     after: dict[str, Any] = {}
     if chunk_count is not None:
         after["chunk_count"] = chunk_count
@@ -1132,8 +1189,13 @@ def scenario_retrieval_evidence(*, result: Any) -> list[RetrievedChunk]:
     """Pair a run's citations with its numeric chunk pointers. Carries no document text.
 
     ``sources`` and the state's chunk list are produced one-to-one by the same projection, so
-    they align by position. If they ever do not, the pointers are dropped rather than guessed:
-    attributing the wrong chunk to a source would be worse than showing no pointer at all.
+    they align by position when the model cites exactly what it was given. If they ever do not,
+    a pointer is never attributed to the wrong source -- guessing would be worse than showing
+    none. BUG-012: that safety property used to also throw away every pointer outright, so a
+    misaligned answer showed zero real chunk text even to a fully authorized reader. The raw,
+    unattributed pointers are now still returned (``chunk_kind="unattributed"``) after the
+    per-source list, so the console can render them as "fetched but not matched to a citation"
+    instead of silently dropping real, resolvable evidence.
     """
 
     sources = _sources(result.output)
@@ -1141,7 +1203,8 @@ def scenario_retrieval_evidence(*, result: Any) -> list[RetrievedChunk]:
     pointers = raw if isinstance(raw, list) else []
     if not sources:
         return []
-    aligned: list[Any] = pointers if len(pointers) == len(sources) else [{}] * len(sources)
+    misaligned = len(pointers) != len(sources)
+    aligned: list[Any] = [{}] * len(sources) if misaligned else pointers
     chunks: list[RetrievedChunk] = []
     for source, pointer in zip(sources[:MAX_EVIDENCE_CHUNKS], aligned, strict=False):
         if not isinstance(source, dict):
@@ -1159,6 +1222,22 @@ def scenario_retrieval_evidence(*, result: Any) -> list[RetrievedChunk]:
                 ordinal=_as_int(safe.get("ordinal")),
             )
         )
+    if misaligned:
+        remaining = MAX_EVIDENCE_CHUNKS - len(chunks)
+        for pointer in pointers[: max(remaining, 0)]:
+            if not isinstance(pointer, dict):
+                continue
+            chunks.append(
+                RetrievedChunk(
+                    text="",
+                    source_id="",
+                    source_uri="",
+                    chunk_kind="unattributed",
+                    document_version_id=_as_int(pointer.get("document_version_id")),
+                    index_version_id=_as_int(pointer.get("index_version_id")),
+                    ordinal=_as_int(pointer.get("ordinal")),
+                )
+            )
     return chunks
 
 
@@ -1221,26 +1300,27 @@ def _as_int(value: Any) -> int | None:
 def ask_scenario_once(
     *, user: Any, release: ScenarioRelease, question: str, request_id: str = ""
 ) -> OneOffResult:
-    decision = authorize(
-        user=user,
-        capability=Capability.SCENARIO_TEST,
-        organization=release.organization,
-        project=release.scenario.project,
-        scenario=release.scenario,
-    )
-    if not decision.allowed:
-        _audit_probe(
-            action="evaluation.scenario.probe",
-            organization_id=release.organization_id,
-            actor_id=str(user.pk),
-            resource_type="scenario_release",
-            resource_id=str(release.pk),
-            allowed=False,
-            request_id=request_id,
+    with operator_transaction(user):
+        decision = authorize(
+            user=user,
+            capability=Capability.SCENARIO_TEST,
+            organization=release.organization,
+            project=release.scenario.project,
+            scenario=release.scenario,
         )
-        raise QuestionEvaluationError("ANSWER_EVALUATION_AUTHORIZATION_DENIED")
-    query = _bounded_string(question, maximum=MAX_QUESTION_CHARS, code="QUESTION_TEXT_INVALID")
-    require_real_model_provider(release)
+        if not decision.allowed:
+            _audit_probe(
+                action="evaluation.scenario.probe",
+                organization_id=release.organization_id,
+                actor_id=str(user.pk),
+                resource_type="scenario_release",
+                resource_id=str(release.pk),
+                allowed=False,
+                request_id=request_id,
+            )
+            raise QuestionEvaluationError("ANSWER_EVALUATION_AUTHORIZATION_DENIED")
+        query = _bounded_string(question, maximum=MAX_QUESTION_CHARS, code="QUESTION_TEXT_INVALID")
+        require_real_model_provider(release)
     result = execute_release_input(
         release=release,
         input_payload=scenario_question_payload(query),

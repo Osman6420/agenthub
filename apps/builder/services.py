@@ -28,6 +28,7 @@ from apps.audit.services import record_event
 from apps.builder.models import ArtifactDraft, WorkflowDraft
 from apps.catalog.models import AIProject, Scenario
 from apps.orchestration.models import ModelProfile, ModelProfileStatus
+from apps.tenancy.context import set_tenant_context
 from apps.tenancy.models import Organization
 from apps.workflows.compiler import compile_workflow
 
@@ -1054,7 +1055,8 @@ class PublishAndVerifyResult:
         return not self.missing and not self.diagnostics and self.release is not None
 
 
-def publish_and_verify(
+@transaction.atomic
+def _prepare_verified_candidate(
     draft: WorkflowDraft,
     *,
     actor: str,
@@ -1071,10 +1073,10 @@ def publish_and_verify(
     Editor may perform, and it never promotes or changes live traffic.
     """
 
-    from apps.evaluations.services import EvalError, run_eval
     from apps.releases import authoring as release_authoring
     from apps.releases.compiler import CompileError, compile_release
 
+    set_tenant_context(draft.organization_id)
     scenario = draft.scenario
     if scenario is None:
         raise BuilderError("draft_not_bound_to_scenario")
@@ -1137,21 +1139,52 @@ def publish_and_verify(
             diagnostics=[exc.as_diagnostic()],
         )
 
-    try:
-        eval_run = run_eval(release=release, created_by=actor)
-    except EvalError as exc:
-        return PublishAndVerifyResult(
-            published=artifact,
-            draft_revision=draft.revision,
-            missing=[],
-            diagnostics=[{"code": exc.code, "message": f"Eval başlatılamadı: {exc.code}"}],
-            release=release,
-        )
     return PublishAndVerifyResult(
         published=artifact,
         draft_revision=draft.revision,
         missing=[],
         diagnostics=[],
         release=release,
+    )
+
+
+def publish_and_verify(
+    draft: WorkflowDraft,
+    *,
+    actor: str,
+    expected_revision: Any,
+    version_description: str = "",
+    request_id: str = "",
+    trace_id: str = "",
+) -> PublishAndVerifyResult:
+    """Commit candidate preparation before running its independently durable evaluation."""
+    from apps.evaluations.services import EvalError, run_eval
+
+    prepared = _prepare_verified_candidate(
+        draft,
+        actor=actor,
+        expected_revision=expected_revision,
+        version_description=version_description,
+        request_id=request_id,
+        trace_id=trace_id,
+    )
+    if prepared.release is None:
+        return prepared
+    try:
+        eval_run = run_eval(release=prepared.release, created_by=actor)
+    except EvalError as exc:
+        return PublishAndVerifyResult(
+            published=prepared.published,
+            draft_revision=prepared.draft_revision,
+            missing=[],
+            diagnostics=[{"code": exc.code, "message": f"Eval başlatılamadı: {exc.code}"}],
+            release=prepared.release,
+        )
+    return PublishAndVerifyResult(
+        published=prepared.published,
+        draft_revision=prepared.draft_revision,
+        missing=[],
+        diagnostics=[],
+        release=prepared.release,
         eval_run=eval_run,
     )

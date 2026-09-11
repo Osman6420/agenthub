@@ -12,6 +12,7 @@ from django.core.management.base import CommandError
 from django.db import IntegrityError, close_old_connections, connection, transaction
 
 from apps.audit.models import AuditEvent
+from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import DocumentSet, DocumentSetVersion, DocumentSetVersionStatus
 from apps.identity.models import (
     DocumentSetResponsibility,
@@ -21,9 +22,11 @@ from apps.ingestion import staged_build
 from apps.ingestion.models import IndexStatus, IndexVersion
 from apps.ingestion.staged_build import (
     StagedBuildError,
+    active_releases_pinning_document_set_version,
     promote_staged_index,
     rollback_staged_index,
 )
+from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership
 
 pytestmark = pytest.mark.django_db
@@ -182,6 +185,59 @@ def test_audit_failure_rolls_back_entire_served_pointer_change(
     assert second.status == DocumentSetVersionStatus.PROMOTABLE
     assert second.built_index_version_id is None
     assert second_index.status == IndexStatus.PROMOTABLE
+
+
+def _active_release(org: Organization, document_set_version_id: int) -> ScenarioRelease:
+    project = AIProject.objects.create(organization=org, slug="p", name="P")
+    scenario = Scenario.objects.create(organization=org, project=project, slug="s", name="S")
+    return ScenarioRelease.objects.create(
+        organization=org,
+        scenario=scenario,
+        status=ReleaseStatus.ACTIVE,
+        runtime_version="1",
+        manifest={"document_set_versions": [document_set_version_id]},
+        artifact_manifest_sha256="0" * 64,
+        created_by="op",
+    )
+
+
+def test_promote_blocks_when_an_active_release_still_pins_the_superseded_version() -> None:
+    """BUG-010: a routine "update the document" promote must not silently ungroun a live
+    scenario -- the operator must see and confirm the impact first."""
+    org, first = _setup()
+    first_index = _index(org, first, 1)
+    promote_staged_index(first_index, actor="op")
+    release = _active_release(org, first.pk)
+    second = DocumentSetVersion.objects.create(
+        organization=org,
+        document_set=first.document_set,
+        version=2,
+        status=DocumentSetVersionStatus.PROMOTABLE,
+    )
+    second_index = _index(org, second, 1)
+
+    assert active_releases_pinning_document_set_version(
+        organization_id=org.pk, document_set_version_id=first.pk
+    ) == [release]
+
+    with pytest.raises(StagedBuildError, match="ACTIVE_RELEASES_AFFECTED"):
+        promote_staged_index(second_index, actor="op")
+
+    first.refresh_from_db()
+    first_index.refresh_from_db()
+    assert first.status == DocumentSetVersionStatus.ACTIVE
+    assert first_index.status == IndexStatus.ACTIVE
+    assert AuditEvent.objects.filter(
+        action="ingestion.staged_index.promoted",
+        outcome="failure",
+        reason="ACTIVE_RELEASES_AFFECTED",
+    ).exists()
+
+    promote_staged_index(second_index, actor="op", confirm_active_release_impact=True)
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.status == DocumentSetVersionStatus.SUPERSEDED
+    assert second.status == DocumentSetVersionStatus.ACTIVE
 
 
 def test_promote_rejects_non_promotable() -> None:

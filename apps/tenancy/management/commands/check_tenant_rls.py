@@ -14,6 +14,7 @@ class Command(BaseCommand):
         parser.add_argument("--app-role", required=True)
         parser.add_argument("--schema", default="public")
         parser.add_argument("--database", default="default")
+        parser.add_argument("--shared-vectors-only", action="store_true")
 
     def handle(self, *args: Any, **options: Any) -> None:
         inventory = tenant_table_inventory()
@@ -34,6 +35,7 @@ class Command(BaseCommand):
                 app_role=options["app_role"],
                 schema=options["schema"],
                 using=options["database"],
+                shared_vectors_only=options["shared_vectors_only"],
             )
         except (RuntimeError, ValueError) as exc:
             raise CommandError(str(exc)) from exc

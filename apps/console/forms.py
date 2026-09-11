@@ -17,9 +17,14 @@ from django.db.models import QuerySet
 
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
-from apps.catalog.models import AIProject, Scenario
+from apps.catalog.models import AIProject, Scenario, ScenarioAccessMode
 from apps.documents.models import DocumentSet, ScenarioDocumentSetBinding
-from apps.identity.capabilities import Capability
+from apps.identity.consumer_access import (
+    OPTION_CAPABILITIES,
+    ConsumerAccessError,
+    ConsumerAccessOptions,
+    package_capabilities,
+)
 from apps.identity.models import (
     Consumer,
     ConsumerBinding,
@@ -90,7 +95,29 @@ SCENARIO_PRESET_CHOICES = [
 ]
 
 
+class AccessMemberChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, member: Any) -> str:
+        return str(member.user.get_username())
+
+
 class ScenarioForm(forms.ModelForm):
+    access_mode = forms.ChoiceField(
+        label="Erişim",
+        initial=ScenarioAccessMode.INHERIT,
+        choices=[
+            (ScenarioAccessMode.INHERIT, "Projeden devral"),
+            (ScenarioAccessMode.PRIVATE, "Bu senaryoya özel erişim"),
+        ],
+        help_text="Devralmada proje rolleri geçerlidir. Özel erişimde ilk yöneticiyi açıkça seçin.",
+    )
+    initial_manager = AccessMemberChoiceField(
+        queryset=OrganizationMembership.objects.none(),
+        required=False,
+        label="Özel erişim için ilk yönetici",
+        help_text=(
+            "Seçilen kişi senaryoyu düzenler, yayımlar ve operasyonunu yönetir. Atama süresizdir."
+        ),
+    )
     preset = forms.ChoiceField(
         choices=SCENARIO_PRESET_CHOICES,
         label="Başlangıç",
@@ -118,6 +145,26 @@ class ScenarioForm(forms.ModelForm):
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
+        manager_field = cast(forms.ModelChoiceField, self.fields["initial_manager"])
+        manager_field.queryset = (
+            OrganizationMembership.objects.filter(
+                organization_id=project.organization_id if project else 0,
+                status=MembershipStatus.ACTIVE,
+                user__is_active=True,
+                user__is_superuser=False,
+            )
+            .select_related("user")
+            .order_by("user__username")
+        )
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        if cleaned.get("access_mode") == ScenarioAccessMode.PRIVATE:
+            if cleaned.get("initial_manager") is None:
+                self.add_error("initial_manager", "Özel erişim için ilk yöneticiyi seçin.")
+        elif cleaned.get("initial_manager") is not None:
+            self.add_error("initial_manager", "Devralmada doğrudan ilk yönetici seçilmez.")
+        return cleaned
 
 
 class ConsumerForm(forms.ModelForm):
@@ -253,9 +300,12 @@ class DelegatedAssignmentForm(forms.Form):
             self.add_error("expires_at", "Organizasyon yöneticisi süreli atanamaz.")
         target_fields: dict[str, str] = {
             ProjectResponsibility.VIEWER: "project",
+            ProjectResponsibility.EDITOR: "project",
+            ProjectResponsibility.MANAGER: "project",
             ProjectResponsibility.ADMINISTRATOR: "project",
             ScenarioResponsibility.VIEWER: "scenario",
             ScenarioResponsibility.EDITOR: "scenario",
+            ScenarioResponsibility.MANAGER: "scenario",
             ScenarioResponsibility.RELEASE_MANAGER: "scenario",
             ScenarioResponsibility.RUNTIME_OPERATOR: "scenario",
             ScenarioResponsibility.APPROVER: "scenario",
@@ -282,48 +332,40 @@ class ConsumerTokenIssueForm(forms.Form):
     )
 
 
-CAPABILITY_PRESETS: dict[str, tuple[str, ...]] = {
-    "workflow_runner": (Capability.WORKFLOW_RUN,),
-    "rag_debug_reader": (Capability.WORKFLOW_RUN, Capability.RETRIEVE_DEBUG),
-    "ingestion_operator": (Capability.INGESTION_READ, Capability.INGESTION_TRIGGER),
-}
+class BindingConsumerChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, obj: Consumer) -> str:
+        return f"{obj.organization.name} · {obj.name}"
+
+
+class BindingScenarioChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, obj: Scenario) -> str:
+        return f"{obj.project.name} · {obj.name}"
 
 
 class BindingForm(forms.ModelForm):
-    capability_preset = forms.ChoiceField(
-        required=False,
-        label="Capability başlangıç önerisi",
-        help_text=(
-            "Yalnız checkbox'ları doldurur; yetki vermez. Göndermeden önce exact seçimleri "
-            "inceleyin. Öneriyi değiştirirseniz Özel seçim'i kullanın."
-        ),
-        choices=(
-            ("custom", "Özel seçim"),
-            ("workflow_runner", "Workflow çalıştırıcı"),
-            ("rag_debug_reader", "RAG debug okuyucu"),
-            ("ingestion_operator", "Ingestion operatörü"),
-        ),
-        initial="custom",
-        widget=forms.Select(
-            attrs={"data-capability-presets": json.dumps(CAPABILITY_PRESETS, sort_keys=True)}
-        ),
-    )
-    capabilities = forms.MultipleChoiceField(
-        choices=Capability.choices,
-        widget=forms.CheckboxSelectMultiple,
-        help_text="Kaydedilecek exact capability allowlist'i.",
-    )
+    consumer = BindingConsumerChoiceField(queryset=Consumer.objects.none(), label="İstemci")
+    scenario = BindingScenarioChoiceField(queryset=Scenario.objects.none(), label="Senaryo")
+    run_scenario = forms.BooleanField(required=False, initial=True, label="Senaryoyu çalıştır")
+    read_tools = forms.BooleanField(required=False, label="Okuma araçlarını kullan")
+    side_effect_tools = forms.BooleanField(required=False, label="Veri değiştiren araçları kullan")
+    retrieve_debug = forms.BooleanField(required=False, label="Arama tanılama sonuçlarını gör")
+    ingestion_status = forms.BooleanField(required=False, label="Veri hazırlama durumunu gör")
 
     class Meta:
         model = ConsumerBinding
         fields = ["consumer", "scenario", "status"]
+        labels = {"consumer": "İstemci", "scenario": "Senaryo", "status": "Durum"}
 
     def __init__(self, *args: Any, user: Any = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            for field, cap in OPTION_CAPABILITIES.items():
+                self.initial[field] = cap in self.instance.capabilities
         ids = admin_organization_ids(user)
         cast(forms.ModelChoiceField, self.fields["consumer"]).queryset = _scope(
             Consumer.objects.select_related("organization").filter(
-                organization__status=OrganizationStatus.ACTIVE
+                organization__status=OrganizationStatus.ACTIVE,
+                status="active",
             ),
             ids,
             "organization_id",
@@ -338,23 +380,37 @@ class BindingForm(forms.ModelForm):
 
     def save(self, commit: bool = True) -> ConsumerBinding:
         instance = super().save(commit=False)
-        instance.capabilities = list(self.cleaned_data["capabilities"])
+        preserved = [
+            cap
+            for cap in instance.capabilities
+            if instance.pk and cap not in OPTION_CAPABILITIES.values()
+        ]
+        instance.capabilities = package_capabilities(self.selected_options()) + preserved
         if commit:
             instance.save()  # full_clean() runs here: capability allowlist + cross-org
         return instance
 
     def clean(self) -> dict[str, Any]:
         cleaned_data = super().clean() or {}
-        preset = cleaned_data.get("capability_preset") or "custom"
-        selected = tuple(sorted(cleaned_data.get("capabilities") or ()))
-        expected = tuple(sorted(CAPABILITY_PRESETS.get(preset, ())))
-        if preset != "custom" and selected != expected:
+        if "capabilities" in self.data or "capability_preset" in self.data:
             self.add_error(
-                "capabilities",
-                "Başlangıç önerisi ile exact capability seçimleri uyuşmuyor; değişiklik için "
-                "Özel seçim'i seçin.",
+                None, "Teknik izin listesi kabul edilmez. Erişim seçeneklerini kullanın."
+            )
+        try:
+            package_capabilities(self.selected_options())
+        except ConsumerAccessError as exc:
+            self.add_error(
+                None,
+                "Veri değiştiren araçlar için okuma araçlarını da seçin."
+                if str(exc) == "TOOL_ACCESS_REQUIRED"
+                else "En az bir erişim seçeneği seçin.",
             )
         return cleaned_data
+
+    def selected_options(self) -> ConsumerAccessOptions:
+        return ConsumerAccessOptions(
+            **{field: bool(self.cleaned_data.get(field)) for field in OPTION_CAPABILITIES}
+        )
 
 
 class DocumentUploadForm(forms.Form):
@@ -496,7 +552,8 @@ class DocumentSetBuildForm(forms.Form):
 
 
 class BoundedJsonField(forms.CharField):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, max_depth: int | None = None, **kwargs: Any) -> None:
+        self.max_depth = max_depth
         kwargs.setdefault("widget", forms.Textarea(attrs={"rows": 12, "class": "mono"}))
         super().__init__(*args, **kwargs)
 
@@ -505,9 +562,20 @@ class BoundedJsonField(forms.CharField):
         if raw in self.empty_values:
             return None
         try:
-            return json.loads(raw)
-        except (TypeError, json.JSONDecodeError) as exc:
+            value = json.loads(raw)
+        except (TypeError, json.JSONDecodeError, RecursionError) as exc:
             raise forms.ValidationError("Geçerli bir JSON değeri girin.") from exc
+        if self.max_depth is not None:
+            pending = [(value, 0)]
+            while pending:
+                node, depth = pending.pop()
+                if depth > self.max_depth:
+                    raise forms.ValidationError("JSON iç içe alan sınırını aşıyor.")
+                if isinstance(node, dict):
+                    pending.extend((child, depth + 1) for child in node.values())
+                elif isinstance(node, list):
+                    pending.extend((child, depth + 1) for child in node)
+        return value
 
 
 class GovernedReleaseArtifactForm(forms.Form):
@@ -789,7 +857,7 @@ class ConnectorScheduleForm(forms.Form):
         queryset=Scenario.objects.none(),
         required=False,
         widget=forms.CheckboxSelectMultiple,
-        label="Otomatik promotion senaryoları",
+        label="Otomatik kullanıma alma senaryoları",
     )
 
     def __init__(
@@ -817,7 +885,11 @@ class ConnectorScheduleForm(forms.Form):
             .select_related("project")
             .order_by("project__slug", "slug")
         )
-        choices = list(ScheduleAutomationMode.choices)
+        choices = [
+            (ScheduleAutomationMode.DRAFT_ONLY, "Yalnız belge taslağı oluştur"),
+            (ScheduleAutomationMode.STAGE_ONLY, "Belgeleri arama için hazırla"),
+            (ScheduleAutomationMode.PROMOTE_IF_SAFE, "Kontroller geçince kullanıma al"),
+        ]
         if not allow_authoring:
             choices = [
                 choice for choice in choices if choice[0] == ScheduleAutomationMode.PROMOTE_IF_SAFE

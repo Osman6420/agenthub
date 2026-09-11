@@ -347,7 +347,7 @@ def test_release_manifest_compile_rolls_back_when_audit_fails(
     def fail_audit(**_kwargs: Any) -> None:
         raise RuntimeError("audit unavailable")
 
-    monkeypatch.setattr("apps.builder.api.record_event", fail_audit)
+    monkeypatch.setattr("apps.releases.authoring.record_event", fail_audit)
     with pytest.raises(RuntimeError, match="audit unavailable"):
         _post(
             client,

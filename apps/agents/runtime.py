@@ -99,6 +99,16 @@ class AgentPaused(Exception):
         super().__init__("agent paused")
 
 
+class AgentRetrievalBoundary(Exception):
+    """Ask the canonical owner to commit this exact decision before selecting data."""
+
+    def __init__(
+        self, *, checkpoint: dict[str, Any], step: int, query: str, profile: dict[str, Any]
+    ):
+        self.checkpoint, self.step, self.query, self.profile = checkpoint, step, query, profile
+        super().__init__("agent retrieval boundary")
+
+
 @dataclass(frozen=True)
 class AgentResult:
     output: dict[str, Any]
@@ -120,6 +130,7 @@ def run_embedded_agent_loop(
     release: Any,
     workflow_run: Any,
     state: dict[str, Any],
+    node_id: str = "agent",
 ) -> AgentResult:
     """Run a tool-free compiled agent policy inside one workflow node.
 
@@ -150,6 +161,8 @@ def run_embedded_agent_loop(
         awaiting_role = invocation.binding_role
     embedded_step_count = embedded_state.pop("_embedded_step_count", 0)
     embedded_tool_call_count = embedded_state.pop("_embedded_tool_call_count", 0)
+    pending_retrieval = embedded_state.pop("_embedded_retrieval_decision", None)
+    prior_decisions = embedded_state.pop("_embedded_decisions", [])
     embedded = SimpleNamespace(
         agent_version=SimpleNamespace(compiled_config=compiled_config),
         release=release,
@@ -174,9 +187,17 @@ def run_embedded_agent_loop(
         awaiting_step=awaiting_step,
         awaiting_role=awaiting_role,
         tool_idempotency_prefix=f"run:{workflow_run.id}:agent_loop",
+        workflow_run=workflow_run,
+        workflow_node_id=node_id,
+        pending_retrieval=pending_retrieval,
+        prior_decisions=prior_decisions,
     )
 
     def _refresh(**kwargs: Any) -> None:
+        if getattr(workflow_run, "prepared_evaluation_id", None) is not None:
+            from apps.evaluations.prepared import prepared_run_generations
+
+            prepared_run_generations(workflow_run)
         workflow_run.refresh_from_db(fields=["status", "deadline_at"])
         embedded.status = workflow_run.status
         embedded.deadline_at = workflow_run.deadline_at
@@ -224,7 +245,8 @@ def execute_agent(*, run: Any, verify_context: bool = True) -> AgentResult:
     out_tokens = int(run.output_tokens)
     resuming_step = run.awaiting_step
     run_ref = str(getattr(run, "public_id", "") or "")
-    decisions: list[str] = []
+    decisions: list[str] = list(getattr(run, "prior_decisions", []))
+    pending_retrieval = getattr(run, "pending_retrieval", None)
     no_progress = 0
 
     while True:
@@ -243,7 +265,16 @@ def execute_agent(*, run: Any, verify_context: bool = True) -> AgentResult:
             summaries=tuple(ObservationSummary(**s) for s in summaries),
         )
         is_resume = resuming_step is not None and step_index == resuming_step
-        if is_resume:
+        if pending_retrieval is not None:
+            if not isinstance(pending_retrieval, dict) or set(pending_retrieval) != {
+                "kind",
+                "role",
+                "arguments",
+            }:
+                raise AgentRuntimeError("AGENT_RETRIEVAL_RESUME_INVALID")
+            decision = AgentDecision(**pending_retrieval)
+            pending_retrieval = None
+        elif is_resume:
             decision = AgentDecision(DECISION_TOOL, role=run.awaiting_role, reason_code="resume")
         else:
             decision = planner.next_action(
@@ -320,6 +351,46 @@ def execute_agent(*, run: Any, verify_context: bool = True) -> AgentResult:
                     raise AgentRuntimeError("AGENT_NO_PROGRESS")
                 continue
         no_progress = 0
+
+        if decision.kind == DECISION_RETRIEVE or (
+            decision.kind == DECISION_VERIFY and decision.role == VERIFY_RETRIEVAL
+        ):
+            workflow_run = getattr(run, "workflow_run", None)
+            if workflow_run is not None:
+                from apps.orchestration.resolver import resolve_bundle
+                from apps.workflows.models import RunRetrievalSelection
+
+                bundle = resolve_bundle(run.release)
+                if bundle.data_selection == "active_generation":
+                    selected_id = (
+                        RunRetrievalSelection.objects.filter(
+                            run_id=workflow_run.pk,
+                            organization_id=run.organization_id,
+                            step_key=f"node:{run.workflow_node_id}:agent:{step_index}",
+                        )
+                        .values_list("pk", flat=True)
+                        .first()
+                    )
+                    if selected_id is None:
+                        checkpoint = {
+                            **state,
+                            "_embedded_step_count": step_index,
+                            "_embedded_tool_call_count": tool_calls,
+                            "_embedded_decisions": decisions,
+                            "_embedded_retrieval_decision": {
+                                "kind": decision.kind,
+                                "role": decision.role,
+                                "arguments": decision.arguments,
+                            },
+                        }
+                        _assert_checkpoint_size(checkpoint)
+                        raise AgentRetrievalBoundary(
+                            checkpoint=checkpoint,
+                            step=step_index,
+                            query=objective,
+                            profile=bundle.retrieval_profile,
+                        )
+                    run.retrieval_selection_id = selected_id
 
         if decision.kind == DECISION_RETRIEVE:
             chunk_count, byte_count = _do_retrieve(run, state, objective)
@@ -422,8 +493,16 @@ def _do_retrieve(run: Any, state: dict[str, Any], objective: str) -> tuple[int, 
     from apps.orchestration.rag_steps import retrieve_for_release
 
     try:
+        selection = {}
+        if getattr(getattr(run, "workflow_run", None), "prepared_evaluation_id", None) is not None:
+            selection["workflow_run"] = run.workflow_run
+        if getattr(run, "retrieval_selection_id", None) is not None:
+            selection = {
+                "workflow_run": run.workflow_run,
+                "selection_id": run.retrieval_selection_id,
+            }
         retrieval = retrieve_for_release(
-            release=run.release, query=objective, consumer_id=run.consumer_id
+            release=run.release, query=objective, consumer_id=run.consumer_id, **selection
         )
     except Exception as exc:
         raise AgentRuntimeError("AGENT_RETRIEVAL_FAILED") from exc

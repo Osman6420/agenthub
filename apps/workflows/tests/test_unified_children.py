@@ -43,12 +43,13 @@ def _parent_workflow() -> dict:
     }
 
 
-def _parent_run(workflow_fixture):
+def _parent_run(workflow_fixture, *, execution_contract="legacy"):
     scenario = Scenario.objects.create(
         project=workflow_fixture.scenario.project,
         slug="parent",
         name="Parent",
         status="active",
+        execution_contract=execution_contract,
     )
     workflow = create_artifact_version(
         organization=workflow_fixture.organization,

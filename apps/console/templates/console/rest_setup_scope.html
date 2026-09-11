@@ -1,0 +1,14 @@
+{% extends "console/base.html" %}
+{% block title %}REST belgelerini bağla · AgentHub{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><span>REST belgelerini bağla</span></div>
+<div class="page-heading"><div><h1>REST belgelerini bağla</h1><p>{{ organization.name }} içinde belgelerin toplanacağı doküman setini seçin. Aynı set birden fazla senaryoda kullanılabilir.</p></div></div>
+<div class="card form-card">
+<details{% if search %} open{% endif %}><summary>Yönettiğim doküman setlerinde ara</summary><form method="get"><input type="hidden" name="entry" value="{{ entry }}"><label for="scope-search">Set adı</label><input id="scope-search" name="q" value="{{ search }}" maxlength="80"><button class="button secondary">Ara</button></form><p class="muted">En çok 100 eşleşme gösterilir. Listeyi daraltmak için set adını yazın.</p></details>
+<form method="post">{% csrf_token %}<input type="hidden" name="entry" value="{{ entry }}"><input type="hidden" name="submission" value="{{ submission }}">
+{% if form.errors %}<div class="notice" role="alert" tabindex="-1" data-form-error-summary><strong>Kurulum başlatılamadı.</strong>{{ form.non_field_errors }}<p>İşaretlenen alanları kontrol edin.</p></div>{% endif %}
+{{ form.as_p }}
+<p class="muted">Bu adım kaynak adını ve set seçimini size özel kaydeder. {% if form.can_create %}Yeni set seçerseniz set ve yönetici atamanız birlikte oluşturulur. {% endif %}Bağlantı izni verilmez; platform yöneticisi izin verene kadar kurulumu saklayıp daha sonra sürdürebilirsiniz.</p>
+<div class="button-row"><button>Kurulumu kaydet ve devam et</button><a class="button secondary" href="{% url 'console:documents' %}">Vazgeç</a></div>
+</form></div>
+{% endblock %}

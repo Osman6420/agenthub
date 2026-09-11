@@ -8,6 +8,11 @@ export interface OrgOption {
 }
 
 export interface BuilderInitial {
+  allowed_actions?: Partial<Record<
+    "view" | "edit" | "compile" | "test" | "release" | "access" |
+    "runtime_view" | "runtime_cancel" | "runtime_pause" | "runtime_resume" | "approve",
+    boolean
+  >>;
   organization?: string;
   draft_id?: number;
   project_id?: number;

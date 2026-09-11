@@ -82,6 +82,7 @@ _ALLOWED_TRANSITIONS = {
         RunStatus.CANCELLED,
     },
     RunStatus.RUNNING: {
+        RunStatus.RUNNING,
         *_WAITING_KIND_BY_STATUS,
         RunStatus.COMPLETED,
         RunStatus.FAILED,
@@ -142,6 +143,8 @@ def _validate_checkpoint(checkpoint: dict[str, Any]) -> dict[str, Any]:
 
 
 def _event_for_transition(previous_status: RunStatus, target_status: RunStatus) -> str:
+    if previous_status == target_status == RunStatus.RUNNING:
+        return RunEventType.CHECKPOINTED
     if target_status == RunStatus.RUNNING:
         return (
             RunEventType.RESUMED

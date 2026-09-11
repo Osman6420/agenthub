@@ -211,13 +211,23 @@ export function useBuilder(
   );
 
   const removeSelected = useCallback(() => {
-    if (readOnly || !selectedNodeId) return;
-    setNodes((current) => current.filter((n) => n.id !== selectedNodeId));
-    setEdges((current) =>
-      current.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId),
-    );
-    setSelectedNodeId(null);
-  }, [readOnly, selectedNodeId]);
+    if (readOnly) return;
+    if (selectedNodeId) {
+      setNodes((current) => current.filter((n) => n.id !== selectedNodeId));
+      setEdges((current) =>
+        current.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId),
+      );
+      setSelectedNodeId(null);
+      return;
+    }
+    // BUG-006: a selected edge had no visible removal affordance -- only the undocumented
+    // `Backspace` keyboard shortcut worked. `EdgeConfigPanel` now offers a real button wired
+    // to this same function, matching the node-removal button's pattern.
+    if (selectedEdgeId) {
+      setEdges((current) => current.filter((e) => e.id !== selectedEdgeId));
+      setSelectedEdgeId(null);
+    }
+  }, [readOnly, selectedNodeId, selectedEdgeId]);
 
   const applyErrorHighlights = useCallback((result: DiagnosticsResult) => {
     // Surface backend diagnostics on the graph: if a compiler message names a node id,

@@ -26,6 +26,8 @@ class ToolRegistryError(ValueError):
 
 @transaction.atomic
 def register_tool_definition(*, artifact: ArtifactVersion) -> ToolDefinition:
+    from apps.ingestion.connections import materialize_connection
+
     if artifact.type != ArtifactType.TOOL_DEFINITION:
         raise ToolRegistryError("NOT_A_TOOL_DEFINITION")
     spec = artifact.body.get("spec", {})
@@ -39,18 +41,25 @@ def register_tool_definition(*, artifact: ArtifactVersion) -> ToolDefinition:
     if existing is not None:
         if existing.checksum != artifact.checksum:
             raise ToolRegistryError("TOOL_DEFINITION_CHECKSUM_CONFLICT")
+        materialize_connection(profile=existing, actor=artifact.created_by)
         return existing
-    return ToolDefinition.objects.create(
-        organization=artifact.organization,
+    definition, _ = ToolDefinition.objects.get_or_create(
+        organization_id=artifact.organization_id,
         logical_id=artifact.logical_id,
         version=artifact.version,
-        manifest=artifact.body,
-        checksum=artifact.checksum,
-        protocol=str(spec["protocol"]),
-        risk=str(spec["risk"]),
-        side_effecting=bool(spec["side_effecting"]),
-        status=ToolStatus.ACTIVE,
+        defaults={
+            "manifest": artifact.body,
+            "checksum": artifact.checksum,
+            "protocol": str(spec["protocol"]),
+            "risk": str(spec["risk"]),
+            "side_effecting": bool(spec["side_effecting"]),
+            "status": ToolStatus.ACTIVE,
+        },
     )
+    if definition.checksum != artifact.checksum:
+        raise ToolRegistryError("TOOL_DEFINITION_CHECKSUM_CONFLICT")
+    materialize_connection(profile=definition, actor=artifact.created_by)
+    return definition
 
 
 @transaction.atomic

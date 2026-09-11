@@ -9,6 +9,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.audit.services import record_event
+from apps.catalog.models import AIProject, Scenario, ScenarioAccessMode
 from apps.identity.authorization import Capability, authorize
 from apps.identity.models import (
     DocumentSetResponsibility,
@@ -130,6 +131,69 @@ def _require_org_assignment_admin(*, actor: Any, organization: Organization) -> 
         raise AssignmentError(decision.reason)
 
 
+def _require_project_assignment_admin(*, actor: Any, project: AIProject, role: str) -> None:
+    if authorize(
+        user=actor, capability=Capability.RESPONSIBILITY_MANAGE, organization=project.organization
+    ).allowed:
+        return
+    if (
+        role
+        in {
+            ProjectResponsibility.VIEWER,
+            ProjectResponsibility.EDITOR,
+            ProjectResponsibility.MANAGER,
+        }
+        and authorize(
+            user=actor, capability=Capability.PROJECT_ACCESS_MANAGE, project=project
+        ).allowed
+    ):
+        return
+    raise AssignmentError("PROJECT_RESPONSIBILITY_DELEGATION_DENIED")
+
+
+def _require_scenario_assignment_admin(
+    *, actor: Any, scenario: Scenario, role: str, granting: bool
+) -> None:
+    basic = role in {
+        ScenarioResponsibility.VIEWER,
+        ScenarioResponsibility.EDITOR,
+        ScenarioResponsibility.MANAGER,
+    }
+    if basic and granting and scenario.access_mode == ScenarioAccessMode.INHERIT:
+        raise AssignmentError("SCENARIO_INHERITS_PROJECT")
+    if authorize(
+        user=actor, capability=Capability.RESPONSIBILITY_MANAGE, organization=scenario.organization
+    ).allowed:
+        return
+    if (
+        basic
+        and authorize(
+            user=actor, capability=Capability.SCENARIO_ACCESS_MANAGE, scenario=scenario
+        ).allowed
+    ):
+        return
+    if (
+        scenario.access_mode == ScenarioAccessMode.LEGACY
+        and role in {ScenarioResponsibility.VIEWER, ScenarioResponsibility.EDITOR}
+        and authorize(
+            user=actor, capability=Capability.PROJECT_MANAGE, project=scenario.project
+        ).allowed
+    ):
+        return
+    raise AssignmentError("SCENARIO_RESPONSIBILITY_DELEGATION_DENIED")
+
+
+def _require_other_permanent_manager(queryset: Any, *, code: str) -> None:
+    if not queryset.filter(
+        status=ResponsibilityStatus.ACTIVE,
+        expires_at__isnull=True,
+        membership__status=MembershipStatus.ACTIVE,
+        membership__user__is_active=True,
+        membership__user__is_superuser=False,
+    ).exists():
+        raise AssignmentError(code)
+
+
 def grant_organization_responsibility(
     *,
     organization: Organization,
@@ -203,13 +267,23 @@ def grant_project_responsibility(
     try:
         with transaction.atomic():
             organization = Organization.objects.select_for_update().get(pk=project.organization_id)
-            _require_org_assignment_admin(actor=actor, organization=organization)
+            project = AIProject.objects.select_related("organization").get(
+                pk=project.pk, organization=organization
+            )
+            _require_project_assignment_admin(actor=actor, project=project, role=responsibility)
             locked_member = _locked_membership(
                 organization=organization,
                 membership=membership,
             )
             if responsibility not in ProjectResponsibility.values:
                 raise AssignmentError("INVALID_RESPONSIBILITY")
+            if responsibility == ProjectResponsibility.MANAGER and expires_at is not None:
+                _require_other_permanent_manager(
+                    ProjectResponsibilityAssignment.objects.filter(
+                        project=project, responsibility=ProjectResponsibility.MANAGER
+                    ).exclude(membership=locked_member),
+                    code="LAST_PROJECT_MANAGER",
+                )
             assignment = _create_or_reinstate(
                 ProjectResponsibilityAssignment,
                 organization=organization,
@@ -263,33 +337,29 @@ def grant_scenario_responsibility(
     try:
         with transaction.atomic():
             organization = Organization.objects.select_for_update().get(pk=scenario.organization_id)
-            if responsibility in {
-                ScenarioResponsibility.VIEWER,
-                ScenarioResponsibility.EDITOR,
-            }:
-                org_decision = authorize(
-                    user=actor,
-                    capability=Capability.RESPONSIBILITY_MANAGE,
-                    organization=organization,
-                    scenario=scenario,
-                )
-                project_decision = authorize(
-                    user=actor,
-                    capability=Capability.PROJECT_MANAGE,
-                    organization=organization,
-                    project=scenario.project,
-                    scenario=scenario,
-                )
-                if not org_decision.allowed and not project_decision.allowed:
-                    raise AssignmentError("SCENARIO_RESPONSIBILITY_DELEGATION_DENIED")
-            else:
-                _require_org_assignment_admin(actor=actor, organization=organization)
+            scenario = Scenario.objects.select_related("organization", "project").get(
+                pk=scenario.pk, organization=organization
+            )
+            _require_scenario_assignment_admin(
+                actor=actor, scenario=scenario, role=responsibility, granting=True
+            )
             locked_member = _locked_membership(
                 organization=organization,
                 membership=membership,
             )
             if responsibility not in ScenarioResponsibility.values:
                 raise AssignmentError("INVALID_RESPONSIBILITY")
+            if (
+                responsibility == ScenarioResponsibility.MANAGER
+                and scenario.access_mode == ScenarioAccessMode.PRIVATE
+                and expires_at is not None
+            ):
+                _require_other_permanent_manager(
+                    ScenarioResponsibilityAssignment.objects.filter(
+                        scenario=scenario, responsibility=ScenarioResponsibility.MANAGER
+                    ).exclude(membership=locked_member),
+                    code="LAST_SCENARIO_MANAGER",
+                )
             assignment = _create_or_reinstate(
                 ScenarioResponsibilityAssignment,
                 organization=organization,
@@ -403,32 +473,45 @@ def remove_responsibility_assignment(
     responsibility = assignment.responsibility
     action = f"responsibility.{model._meta.model_name}.revoke"
     try:
-        if model is ScenarioResponsibilityAssignment and responsibility in {
-            ScenarioResponsibility.VIEWER,
-            ScenarioResponsibility.EDITOR,
-        }:
-            org_decision = authorize(
-                user=actor,
-                capability=Capability.RESPONSIBILITY_MANAGE,
-                organization=organization,
-            )
-            project_decision = authorize(
-                user=actor,
-                capability=Capability.PROJECT_MANAGE,
-                organization=organization,
-                project=assignment.scenario.project,
-                scenario=assignment.scenario,
-            )
-            if not org_decision.allowed and not project_decision.allowed:
-                raise AssignmentError("RESPONSIBILITY_REVOCATION_DENIED")
-        else:
-            _require_org_assignment_admin(actor=actor, organization=organization)
-
         with transaction.atomic():
-            Organization.objects.select_for_update().get(pk=organization.pk)
-            locked = model.objects.select_for_update().get(pk=assignment.pk)
+            organization = Organization.objects.select_for_update().get(pk=organization.pk)
+            locked = model.objects.select_for_update().get(
+                pk=assignment.pk, organization=organization
+            )
+            responsibility = locked.responsibility
+            if model is ProjectResponsibilityAssignment:
+                _require_project_assignment_admin(
+                    actor=actor, project=locked.project, role=responsibility
+                )
+            elif model is ScenarioResponsibilityAssignment:
+                _require_scenario_assignment_admin(
+                    actor=actor, scenario=locked.scenario, role=responsibility, granting=False
+                )
+            else:
+                _require_org_assignment_admin(actor=actor, organization=organization)
             if locked.status != ResponsibilityStatus.ACTIVE:
                 raise AssignmentError("ASSIGNMENT_NOT_ACTIVE")
+            if (
+                model is ProjectResponsibilityAssignment
+                and responsibility == ProjectResponsibility.MANAGER
+            ):
+                _require_other_permanent_manager(
+                    model.objects.filter(
+                        project=locked.project, responsibility=responsibility
+                    ).exclude(pk=locked.pk),
+                    code="LAST_PROJECT_MANAGER",
+                )
+            if (
+                model is ScenarioResponsibilityAssignment
+                and responsibility == ScenarioResponsibility.MANAGER
+                and locked.scenario.access_mode == ScenarioAccessMode.PRIVATE
+            ):
+                _require_other_permanent_manager(
+                    model.objects.filter(
+                        scenario=locked.scenario, responsibility=responsibility
+                    ).exclude(pk=locked.pk),
+                    code="LAST_SCENARIO_MANAGER",
+                )
             if (
                 model is OrganizationResponsibilityAssignment
                 and responsibility == OrganizationResponsibility.ADMINISTRATOR

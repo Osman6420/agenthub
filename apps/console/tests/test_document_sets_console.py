@@ -92,6 +92,120 @@ def test_organization_admin_can_create_document_set(client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_existing_document_add_requires_source_content_access(client: Client) -> None:
+    org = Organization.objects.create(slug="private-docs", name="Private docs")
+    target = create_document_set(organization=org, logical_id="target", name="Target", actor="seed")
+    draft = create_document_set_version(document_set=target, actor="seed")
+    manager = _member("target-manager", org, Role.PROJECT_OWNER)
+    private = create_document_set(
+        organization=org, logical_id="private", name="Private", actor="seed"
+    )
+    private_draft = create_document_set_version(document_set=private, actor="seed")
+    upload_document(
+        organization=org,
+        logical_id="private-document",
+        title="Confidential title",
+        mime_type="text/plain",
+        data=b"private",
+        actor="seed",
+        document_set_version=private_draft,
+    )
+    document = private_draft.memberships.get().document_version.document
+    client.force_login(manager)
+    detail_url = reverse("console:document_set_detail_public", args=[target.public_id])
+    add_url = reverse("console:document_set_add_member", args=[draft.pk])
+    response = client.get(detail_url)
+    assert response.status_code == 200
+    assert response.context["candidate_docs"] == []
+    assert document.logical_id not in response.content.decode()
+    assert client.post(add_url, {"document_id": document.pk}).status_code == 302
+    assert not draft.memberships.exists()
+    for invalid_id in ("9" * 20, "²", "not-an-id"):
+        assert client.post(add_url, {"document_id": invalid_id}).status_code == 302
+    assert not draft.memberships.exists()
+    assert AuditEvent.objects.filter(
+        action="documents.set_version.add_member",
+        outcome="deny",
+        reason="DOCUMENT_NOT_READABLE",
+    ).exists()
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(user=manager),
+        document_set=private,
+        responsibility=DocumentSetResponsibility.CONTENT_READER,
+        assigned_by=manager,
+    )
+    response = client.get(detail_url)
+    assert [d["id"] for d in response.context["candidate_docs"]] == [document.pk]
+    assert client.post(add_url, {"document_id": document.pk}).status_code == 302
+    assert draft.memberships.get().document_version.document_id == document.pk
+    document_url = reverse(
+        "console:document_set_document_detail", args=[target.public_id, document.public_id]
+    )
+    assert document_url in client.get(detail_url).content.decode()
+    viewer = _member("target-metadata-viewer", org, Role.AUDITOR)
+    DocumentSetResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(user=viewer),
+        document_set=target,
+        responsibility=DocumentSetResponsibility.METADATA_VIEWER,
+        assigned_by=manager,
+    )
+    client.force_login(viewer)
+    rendered = client.get(detail_url).content.decode()
+    assert document.title in rendered
+    assert document_url not in rendered
+    assert client.get(document_url).status_code == 404
+
+
+@pytest.mark.django_db
+def test_document_detail_pages_preserve_totals_and_selected_version(client: Client) -> None:
+    org = Organization.objects.create(slug="paged-docs", name="Paged docs")
+    docset = create_document_set(organization=org, logical_id="paged", name="Paged", actor="seed")
+    draft = create_document_set_version(document_set=docset, actor="seed")
+    for ordinal in range(27):
+        upload_document(
+            organization=org,
+            logical_id=f"doc-{ordinal:02}",
+            title=f"Document {ordinal:02}",
+            mime_type="text/plain",
+            data=b"page",
+            actor="seed",
+            document_set_version=draft,
+        )
+    for version in range(2, 24):
+        DocumentSetVersion.objects.create(
+            organization=org,
+            document_set=docset,
+            version=version,
+            status="promotable",
+        )
+    client.force_login(_member("paged-manager", org, Role.PROJECT_OWNER))
+    url = reverse("console:document_set_detail_public", args=[docset.public_id])
+    response = client.get(url, {"version": draft.pk})
+    assert response.status_code == 200
+    current = response.context["current_version"]
+    assert current["id"] == draft.pk
+    assert current["member_total"] == 27
+    assert len(current["members"]) == 25
+    assert len(response.context["other_versions"]) == 20
+    assert response.context["history_page"].paginator.count == 22
+    response = client.get(url, {"version": draft.pk, "member_page": 2, "history_page": 2})
+    assert len(response.context["current_version"]["members"]) == 2
+    assert len(response.context["other_versions"]) == 2
+    assert "27 doküman sürümü" in response.content.decode()
+    response = client.get(url, {"version": str(draft.pk), "member_q": "Document 26"})
+    assert response.context["current_version"]["member_total"] == 27
+    assert [m["logical_id"] for m in response.context["current_version"]["members"]] == ["doc-26"]
+    response = client.get(url, {"version": str(draft.pk), "member_q": "no matching document"})
+    assert "Aramanızla eşleşen doküman bulunamadı." in response.content.decode()
+    for invalid_id in ("9" * 20, "²", "not-an-id"):
+        response = client.get(url, {"version": invalid_id})
+        assert response.status_code == 200
+        assert response.context["current_version"]["version"] == 23
+
+
+@pytest.mark.django_db
 def test_full_set_version_lifecycle(client: Client) -> None:
     org = Organization.objects.create(slug="org-a", name="A")
     document_set = create_document_set(organization=org, logical_id="kb", name="KB", actor="seed")
@@ -315,7 +429,7 @@ def test_no_jump_link_impersonates_the_action_it_scrolls_to(client: Client) -> N
         for match in re.findall(r'<a[^>]*href="#[^"]*"[^>]*>(.*?)</a>', body, re.S)
     }
 
-    assert "Staged indeks oluştur" in submit_labels, "the real action must still be a submit"
+    assert "İndeks hazırla" in submit_labels, "the real action must still be a submit"
     assert not (submit_labels & jump_labels), (
         f"a jump link reuses an action label: {sorted(submit_labels & jump_labels)}"
     )
@@ -357,7 +471,7 @@ def test_the_build_form_holds_no_control_that_can_block_its_own_submit(client: C
     action = reverse("console:document_set_build_index", args=[version.id])
     start = body.index(f'action="{action}"')
     form_html = body[start : body.index("</form>", start)]
-    assert "Staged indeks oluştur" in form_html, "the build form should still carry its submit"
+    assert "İndeks hazırla" in form_html, "the build form should still carry its submit"
 
     controls = re.findall(r"<(?:input|select|textarea)\b[^>]*>", form_html)
     unsubmittable_required = [

@@ -13,7 +13,12 @@ from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario, ScenarioAlias
-from apps.documents.models import DocumentSet, DocumentSetGrant, ScenarioDocumentSetBinding
+from apps.documents.models import (
+    DocumentSet,
+    DocumentSetGrant,
+    ScenarioDocumentSetBinding,
+    ScenarioDocumentSetGrant,
+)
 from apps.identity.models import (
     Consumer,
     ConsumerBinding,
@@ -253,6 +258,114 @@ def test_author_manages_relationships_from_scenario_screen(client: Client) -> No
         "documents.grant.remove",
         "documents.binding.remove",
     }
+
+
+def test_binding_as_document_set_manager_also_grants_retrieval(client: Client) -> None:
+    """BUG-003/BUG-015: binding through the scenario screen, by an actor who already holds
+    document-set-manager authority, must not leave retrieval dead (no separate console step)."""
+    organization = Organization.objects.create(slug="kurum2", name="Kurum2")
+    scenario = _scenario(organization)
+    document_set = DocumentSet.objects.create(
+        organization=organization, logical_id="bilgi2", name="Bilgi2"
+    )
+    client.force_login(_member("editor2", organization, Role.SCENARIO_EDITOR))
+
+    response = client.post(
+        reverse("console:scenario_bind_document_set", args=[scenario.id]),
+        {"document_set_id": document_set.id},
+    )
+
+    assert response.status_code == 302
+    assert ScenarioDocumentSetGrant.objects.filter(
+        scenario=scenario, document_set=document_set, status="granted"
+    ).exists()
+    assert DocumentSetGrant.objects.filter(
+        document_set=document_set, principal_type="consumer", permission="retrieve"
+    ).exists()
+    assert AuditEvent.objects.filter(
+        action="scenario_document_set_access.grant_on_bind", outcome="success"
+    ).exists()
+    followed = client.get(reverse("console:scenario_detail_public", args=[scenario.public_id]))
+    assert "retrieval izni verildi" in followed.content.decode()
+
+
+def test_bind_empty_state_explains_no_document_sets_exist(client: Client) -> None:
+    """BUG-007: the bind section must say *why* it's empty instead of silently disappearing."""
+    organization = Organization.objects.create(slug="kurum-empty1", name="Empty1")
+    scenario = _scenario(organization)
+    client.force_login(_member("editor-empty1", organization, Role.SCENARIO_EDITOR))
+
+    body = client.get(
+        reverse("console:scenario_detail_public", args=[scenario.public_id])
+    ).content.decode()
+
+    assert "Bu organizasyonda henüz doküman seti yok." in body
+
+
+def test_bind_empty_state_explains_missing_document_set_authority(client: Client) -> None:
+    """BUG-007 (Sağlamlaştırma turu's second root cause): a scenario-only responsibility does
+    not grant the separate document-set-level authority `candidate_document_sets` requires."""
+    organization = Organization.objects.create(slug="kurum-empty2", name="Empty2")
+    scenario = _scenario(organization)
+    DocumentSet.objects.create(organization=organization, logical_id="baska", name="Baska")
+    user = User.objects.create_user("scenario-only", password="x")  # noqa: S106
+    membership = OrganizationMembership.objects.create(organization=organization, user=user)
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=organization,
+        membership=membership,
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=user,
+    )
+    client.force_login(user)
+
+    body = client.get(
+        reverse("console:scenario_detail_public", args=[scenario.public_id])
+    ).content.decode()
+
+    assert "ayrıca en az bir doküman seti üzerinde yöneticilik yetkiniz olması gerekiyor" in body
+
+
+def test_bind_empty_state_explains_all_already_bound(client: Client) -> None:
+    organization = Organization.objects.create(slug="kurum-empty3", name="Empty3")
+    scenario = _scenario(organization)
+    document_set = DocumentSet.objects.create(
+        organization=organization, logical_id="bilgi-e3", name="Bilgi3"
+    )
+    ScenarioDocumentSetBinding.objects.create(
+        organization=organization, scenario=scenario, document_set=document_set
+    )
+    client.force_login(_member("editor-empty3", organization, Role.SCENARIO_EDITOR))
+
+    body = client.get(
+        reverse("console:scenario_detail_public", args=[scenario.public_id])
+    ).content.decode()
+
+    assert "Erişebildiğiniz tüm doküman setleri zaten bu senaryoya bağlı." in body
+
+
+def test_recompile_link_is_offered_to_a_release_manager(client: Client) -> None:
+    """BUG-005: after binding, the page must offer a one-click way to recompile -- not just a
+    passive warning that the active release doesn't reflect the change yet."""
+    organization = Organization.objects.create(slug="kurum-recompile", name="Recompile")
+    scenario = _scenario(organization)
+    user = User.objects.create_user("release-mgr", password="x")  # noqa: S106
+    membership = OrganizationMembership.objects.create(organization=organization, user=user)
+    for responsibility in (ScenarioResponsibility.EDITOR, ScenarioResponsibility.RELEASE_MANAGER):
+        ScenarioResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            scenario=scenario,
+            responsibility=responsibility,
+            assigned_by=user,
+        )
+    client.force_login(user)
+
+    body = client.get(
+        reverse("console:scenario_detail_public", args=[scenario.public_id])
+    ).content.decode()
+
+    assert reverse("console:scenario_publish_and_verify", args=[scenario.public_id]) in body
 
 
 def test_non_author_cannot_mutate_from_scenario_screen(client: Client) -> None:

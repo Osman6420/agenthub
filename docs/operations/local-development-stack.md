@@ -27,7 +27,7 @@ seed/replace existing records.
 
 - Frontend `npm ci` runs only when `package-lock.json`, Node, or npm changes. Otherwise the existing
   locked `node_modules` installation is reused and only the local frontend build runs.
-- Python third-party packages live in a Docker layer keyed by `pyproject.toml`. Editing `apps/` or
+- Python third-party packages live in a Docker layer keyed by `pyproject.toml` and `requirements.lock`. Editing `apps/` or
   `config/` reinstalls only the local `agenthub` package with `--no-build-isolation --no-deps`; it
   does not resolve or download Python dependencies or build tools.
 - When dependency metadata genuinely changes or the Docker build cache was manually removed,

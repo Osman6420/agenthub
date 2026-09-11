@@ -18,8 +18,6 @@ from apps.documents.models import (
     ScenarioDocumentSetBinding,
 )
 from apps.documents.services import publish_document_set_version
-from apps.evaluations.models import EvalStatus
-from apps.evaluations.services import run_eval
 from apps.ingestion.models import (
     ConnectorAutomationStatus,
     ConnectorSchedulePromotionTarget,
@@ -29,11 +27,10 @@ from apps.ingestion.models import (
     ScheduleAutomationMode,
     TenantEmbeddingProfileGrant,
 )
-from apps.ingestion.staged_build import build_staged_index, promote_staged_index
+from apps.ingestion.staged_build import build_staged_index
 from apps.ingestion.vector_store import set_tenant_context
-from apps.releases.compiler import ArtifactRef, compile_release
-from apps.releases.lifecycle import promote
-from apps.releases.models import ReleaseStatus, ScenarioRelease
+from apps.releases.compiler import ArtifactRef
+from apps.releases.models import ScenarioRelease
 from apps.tenancy.services import can_manage_document_set_operations
 
 
@@ -135,6 +132,24 @@ def finish_connector_automation(
 def apply_connector_automation(
     *, schedule_id: int, candidate_set_version_id: int, organization_id: int
 ) -> str:
+    from apps.ingestion.connector_preparation import continue_scheduled_publication
+
+    publication = continue_scheduled_publication(
+        schedule_id=schedule_id,
+        candidate_set_version_id=candidate_set_version_id,
+        organization_id=organization_id,
+    )
+    if publication is not None:
+        return publication
+    from apps.ingestion.connector_preparation import preparation_result, prepare_scheduled_candidate
+
+    handled, preparation = prepare_scheduled_candidate(
+        schedule_id=schedule_id,
+        candidate_set_version_id=candidate_set_version_id,
+        organization_id=organization_id,
+    )
+    if handled:
+        return preparation_result(preparation)
     with transaction.atomic():
         set_tenant_context(organization_id)
         schedule = (
@@ -149,24 +164,14 @@ def apply_connector_automation(
             .filter(pk=candidate_set_version_id, organization_id=organization_id)
             .first()
         )
-        targets = (
-            list(schedule.promotion_targets.select_related("scenario__project").all())
-            if schedule is not None
-            else []
-        )
     if schedule is None or candidate is None:
         raise ConnectorAutomationError("AUTOMATION_TARGET_NOT_FOUND")
     if not schedule.enabled or schedule.automation_mode == ScheduleAutomationMode.DRAFT_ONLY:
         return "draft_only"
     if schedule.source.document_set_id != candidate.document_set_id:
         raise ConnectorAutomationError("AUTOMATION_DOCUMENT_SET_MISMATCH")
-    if schedule.automation_mode == ScheduleAutomationMode.PROMOTE_IF_SAFE:
-        _validate_promotion_authority(
-            schedule=schedule,
-            candidate=candidate,
-            organization_id=organization_id,
-            targets=targets,
-        )
+    if schedule.automation_mode != ScheduleAutomationMode.STAGE_ONLY:
+        raise ConnectorAutomationError("AUTOMATION_DURABLE_SOURCE_JOB_REQUIRED")
     profile = schedule.embedding_profile
     if profile is None:
         raise ConnectorAutomationError("AUTOMATION_EMBEDDING_PROFILE_REQUIRED")
@@ -197,74 +202,8 @@ def apply_connector_automation(
             ocr_profile=schedule.ocr_profile,
             actor=actor,
         )
-    if schedule.automation_mode == ScheduleAutomationMode.STAGE_ONLY:
-        _audit(schedule, "connector_automation.staged", Outcome.SUCCESS, candidate, index)
-        return "staged"
-
-    manager = _validate_promotion_authority(
-        schedule=schedule,
-        candidate=candidate,
-        organization_id=organization_id,
-        targets=targets,
-    )
-    if index.status == IndexStatus.PROMOTABLE:
-        index = promote_staged_index(index, actor=actor)
-    promoted = 0
-    for target in targets:
-        scenario = target.scenario
-        active = (
-            ScenarioRelease.objects.filter(scenario=scenario, status=ReleaseStatus.ACTIVE)
-            .order_by("-promoted_at", "-id")
-            .first()
-        )
-        if active is None:
-            _audit(
-                schedule,
-                "connector_automation.release_skipped",
-                Outcome.DENY,
-                candidate,
-                index,
-                reason="ACTIVE_RELEASE_REQUIRED",
-            )
-            continue
-        refs = _artifact_refs(active, organization_id=organization_id)
-        pinned_indexes = (
-            active.manifest.get("index_versions", []) if isinstance(active.manifest, dict) else []
-        )
-        release = compile_release(
-            scenario=scenario,
-            refs=refs,
-            runtime_version=active.runtime_version,
-            created_by=actor,
-            index_versions=[
-                value
-                for value in pinned_indexes
-                if isinstance(value, int) and not isinstance(value, bool)
-            ],
-        )
-        evaluation = run_eval(release=release, created_by=actor)
-        if evaluation.status != EvalStatus.PASSED:
-            _audit(
-                schedule,
-                "connector_automation.release_skipped",
-                Outcome.DENY,
-                candidate,
-                index,
-                reason="EVAL_NOT_PASSED",
-            )
-            continue
-        promote(release=release, actor=str(getattr(manager, "username", manager.pk)))
-        promoted += 1
-    _audit(
-        schedule,
-        "connector_automation.completed",
-        Outcome.SUCCESS,
-        candidate,
-        index,
-        reason="promotion_gates_passed" if promoted else "no_release_promoted",
-        promoted=promoted,
-    )
-    return "promoted" if promoted else "staged"
+    _audit(schedule, "connector_automation.staged", Outcome.SUCCESS, candidate, index)
+    return "staged"
 
 
 def _validate_promotion_authority(
@@ -274,10 +213,16 @@ def _validate_promotion_authority(
     organization_id: int,
     targets: list[ConnectorSchedulePromotionTarget],
 ) -> Any:
+    from apps.identity.scenario_actions import authorize_scenario_action
+
     manager = get_user_model().objects.filter(pk=schedule.promotion_approved_by).first()
-    if manager is None or not can_manage_document_set_operations(manager, candidate.document_set):
+    if (
+        manager is None
+        or not manager.is_active
+        or not can_manage_document_set_operations(manager, candidate.document_set)
+    ):
         raise ConnectorAutomationError("AUTOMATION_RELEASE_MANAGER_REVOKED")
-    if not targets:
+    if not targets or len(targets) > 200:
         raise ConnectorAutomationError("AUTOMATION_PROMOTION_TARGET_REQUIRED")
     for raw_target in targets:
         target = raw_target
@@ -289,6 +234,11 @@ def _validate_promotion_authority(
         ).exists()
         if scenario.project.organization_id != organization_id or not target_is_bound:
             raise ConnectorAutomationError("AUTOMATION_TARGET_NO_LONGER_AUTHORIZED")
+        if not all(
+            authorize_scenario_action(user=manager, scenario=scenario, action=action).allowed
+            for action in ("test", "release")
+        ):
+            raise ConnectorAutomationError("AUTOMATION_SCENARIO_AUTHORITY_REQUIRED")
     return manager
 
 

@@ -22,6 +22,7 @@ from apps.ingestion.job_lifecycle import (
     fail_build_job,
     reconcile_build_jobs,
     record_worker_heartbeat,
+    retry_build_job,
     update_progress,
 )
 from apps.ingestion.models import (
@@ -34,7 +35,6 @@ from apps.ingestion.models import (
 )
 from apps.ingestion.tasks import run_staged_index_build_job
 from apps.ingestion.tests.test_staged_build import _granted_profile, _published_set_version
-from apps.ingestion.vector_store import drop_store
 from apps.tenancy.models import Organization
 
 
@@ -72,6 +72,75 @@ def test_request_is_durable_idempotent_and_checksum_immutable(
 
 
 @pytest.mark.django_db
+def test_cancelled_job_can_be_resubmitted_with_the_same_checksum(
+    lineage: tuple[Organization, DocumentSetVersion, EmbeddingProfile],
+) -> None:
+    """BUG-004: a terminal (cancelled) job must never permanently block a fresh request for
+    the same profile combination -- only an active job may dedup-return."""
+    org, set_version, profile = lineage
+    first, created = create_build_job(
+        document_set_version=set_version,
+        embedding_profile=profile,
+        ocr_profile=None,
+        actor="owner",
+    )
+    assert created is True
+    cancel_build_job(job=first, actor="owner")
+    first.refresh_from_db()
+    assert first.status == StagedIndexBuildJobStatus.CANCELLED
+
+    second, second_created = create_build_job(
+        document_set_version=set_version,
+        embedding_profile=profile,
+        ocr_profile=None,
+        actor="owner",
+    )
+
+    assert second_created is True
+    assert second.pk != first.pk
+    assert second.request_checksum == first.request_checksum
+    assert second.status == StagedIndexBuildJobStatus.DISPATCH_PENDING
+
+
+@pytest.mark.django_db
+def test_retry_build_job_accepts_a_cancelled_job(
+    lineage: tuple[Organization, DocumentSetVersion, EmbeddingProfile],
+) -> None:
+    org, set_version, profile = lineage
+    job, _ = create_build_job(
+        document_set_version=set_version,
+        embedding_profile=profile,
+        ocr_profile=None,
+        actor="owner",
+    )
+    cancel_build_job(job=job, actor="owner")
+    job.refresh_from_db()
+
+    retried = retry_build_job(job=job, actor="owner")
+
+    assert retried.status == StagedIndexBuildJobStatus.DISPATCH_PENDING
+    assert retried.pk == job.pk
+
+
+@pytest.mark.django_db
+def test_retry_build_job_still_rejects_a_running_job(
+    lineage: tuple[Organization, DocumentSetVersion, EmbeddingProfile],
+) -> None:
+    org, set_version, profile = lineage
+    job, _ = create_build_job(
+        document_set_version=set_version,
+        embedding_profile=profile,
+        ocr_profile=None,
+        actor="owner",
+    )
+    job.status = StagedIndexBuildJobStatus.RUNNING
+    job.save(update_fields=["status", "updated_at"])
+
+    with pytest.raises(BuildJobError, match="JOB_NOT_RETRYABLE"):
+        retry_build_job(job=job, actor="owner")
+
+
+@pytest.mark.django_db
 def test_claim_redelivery_progress_and_cancel_are_terminal(
     lineage: tuple[Organization, DocumentSetVersion, EmbeddingProfile],
 ) -> None:
@@ -87,9 +156,21 @@ def test_claim_redelivery_progress_and_cancel_are_terminal(
     claimed = claim_build_job(public_id=str(job.public_id), organization_id=org.pk)
     assert claimed is not None and claimed.attempt == 1
     assert claim_build_job(public_id=str(job.public_id), organization_id=org.pk) is None
-    update_progress(job_id=job.pk, organization_id=org.pk, documents=1, chunks=2)
+    update_progress(
+        job_id=job.pk,
+        organization_id=org.pk,
+        expected_attempt=claimed.attempt,
+        documents=1,
+        chunks=2,
+    )
     with pytest.raises(BuildJobError, match="PROGRESS_NOT_MONOTONIC"):
-        update_progress(job_id=job.pk, organization_id=org.pk, documents=0, chunks=2)
+        update_progress(
+            job_id=job.pk,
+            organization_id=org.pk,
+            expected_attempt=claimed.attempt,
+            documents=0,
+            chunks=2,
+        )
     cancel_build_job(job=job, actor="owner")
     job.refresh_from_db()
     assert job.status == StagedIndexBuildJobStatus.CANCELLED
@@ -117,7 +198,9 @@ def test_late_result_cannot_resurrect_cancelled_job(
         status=IndexStatus.PROMOTABLE,
         pipeline_fingerprint=job.pipeline_fingerprint,
     )
-    complete_build_job(job_id=job.pk, organization_id=org.pk, index=index)
+    complete_build_job(
+        job_id=job.pk, organization_id=org.pk, expected_attempt=job.attempt, index=index
+    )
     job.refresh_from_db()
     assert job.status == StagedIndexBuildJobStatus.CANCELLED
     assert job.result_index_version_id is None
@@ -136,9 +219,12 @@ def test_ambiguous_failure_requires_reconciliation(
         ocr_profile=None,
         actor="owner",
     )
+    claimed = claim_build_job(public_id=str(job.public_id), organization_id=org.pk)
+    assert claimed is not None
     fail_build_job(
         job_id=job.pk,
         organization_id=org.pk,
+        expected_attempt=claimed.attempt,
         error_code="PROVIDER_OUTCOME_UNKNOWN",
         ambiguous=True,
     )
@@ -343,13 +429,15 @@ def test_job_and_outbox_force_rls_under_non_owner(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="PostgreSQL worker RLS proof")
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("layout", ["legacy", "shared_v1"])
 def test_durable_worker_builds_with_pinned_artifacts_as_non_owner(
-    monkeypatch: pytest.MonkeyPatch, settings: object
+    monkeypatch: pytest.MonkeyPatch, settings: object, layout: str
 ) -> None:
     """Exercise the real commit boundary that owner-backed/transactional tests can mask."""
 
     monkeypatch.setattr("apps.ingestion.job_lifecycle.dispatch_outbox", lambda **kwargs: 0)
     settings.DOCUMENTS_OBJECT_STORE_BACKEND = "memory"  # type: ignore[attr-defined]
+    settings.INGESTION_VECTOR_STORAGE_LAYOUT = layout  # type: ignore[attr-defined]
     storage.reset_in_memory_store()
     org = Organization.objects.create(slug="worker-rls", name="Worker RLS")
     version = _published_set_version(org, ["bounded text"])
@@ -401,6 +489,7 @@ def test_durable_worker_builds_with_pinned_artifacts_as_non_owner(
             f'GRANT UPDATE ON documents_documentversion TO "{role}"'  # noqa: S608
         )
         cursor.execute(f'GRANT INSERT ON audit_auditevent TO "{role}"')  # noqa: S608
+        cursor.execute(f'GRANT INSERT ON ingestion_sharedvectorchunk TO "{role}"')  # noqa: S608
         cursor.execute(
             f'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "{role}"'  # noqa: S608
         )
@@ -427,7 +516,21 @@ def test_durable_worker_builds_with_pinned_artifacts_as_non_owner(
         assert job.status == StagedIndexBuildJobStatus.SUCCEEDED
         assert job.result_index_version is not None
         assert job.result_index_version.chunking_profile_id == chunking.pk
-        drop_store(job.result_index_version)
+        assert job.result_index_version.storage_layout == layout
+        assert job.result_index_version.build_request_id == job.pk
+        assert job.result_index_version.build_attempt == job.attempt
+        if layout == "legacy":
+            from apps.ingestion.shared_backfill import backfill_generation
+
+            migrated = backfill_generation(
+                index_version_id=job.result_index_version.pk,
+                organization_id=org.pk,
+                actor="synthetic-owner",
+                apply=True,
+            )
+            assert migrated.switched and migrated.verified
+        else:
+            assert job.result_index_version.storage_state == "sealed"
     finally:
         with connection.cursor() as cursor:
             cursor.execute("RESET SESSION AUTHORIZATION")

@@ -371,13 +371,22 @@ def test_publish_auto_prepares_exact_profiles_without_activation(
         actor="manager",
         document_set_version=draft,
     )
-    with patch("apps.ingestion.preparation.create_build_job") as create_job:
+    from apps.ingestion.job_lifecycle import create_build_job
+    from apps.ingestion.models import StagedIndexBuildJob
+
+    with (
+        patch("apps.ingestion.preparation.create_build_job", wraps=create_build_job) as create_job,
+        patch("apps.ingestion.job_lifecycle.dispatch_outbox", return_value=0),
+    ):
         with django_capture_on_commit_callbacks(execute=True):
             services.publish_document_set_version(set_version=draft, actor="manager")
     create_job.assert_called_once()
     kwargs = create_job.call_args.kwargs
     assert kwargs["chunking_profile"] == chunking
     assert kwargs["retrieval_profile"] == retrieval
+    job = StagedIndexBuildJob.objects.get(document_set_version=draft)
+    assert job.chunking_profile_id == chunking.pk and job.retrieval_profile_id == retrieval.pk
+    assert job.embedding_profile_id == embedding.pk and job.result_index_version_id is None
     assert not IndexVersion.objects.filter(status=IndexStatus.ACTIVE).exists()
     assert DocumentSetPreparationProfile.objects.get(document_set=document_set).auto_prepare
 

@@ -21,6 +21,7 @@ from apps.console.retrieval_diagnostics import (
     DIAGNOSTIC_LOGICAL_ID,
     diagnostic_retrieval_body,
 )
+from apps.console.tests.access_fixtures import private_access_member
 from apps.documents import services as document_services
 from apps.documents.models import DocumentSetVersionStatus
 from apps.evaluations.models import QuestionEvaluationRun
@@ -231,7 +232,13 @@ def _served_scenario(client: Client, org: Organization, admin: Any) -> Scenario:
     )
     client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
-        {"name": "Kanıt senaryosu", "preset": "empty_workflow", "logical_description": "Amaç"},
+        {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
+            "name": "Kanıt senaryosu",
+            "preset": "empty_workflow",
+            "logical_description": "Amaç",
+        },
     )
     scenario = Scenario.objects.get(project=project)
     for responsibility in (

@@ -355,10 +355,10 @@ def remove_organization_membership(
         ScenarioResponsibilityAssignment,
     )
 
-    if not can_admin_org(actor, membership.organization_id):
-        raise MembershipManagementError("ADMIN_REQUIRED_OR_ORGANIZATION_INACTIVE")
     with transaction.atomic():
         Organization.objects.select_for_update().get(pk=membership.organization_id)
+        if not can_admin_org(actor, membership.organization_id):
+            raise MembershipManagementError("ADMIN_REQUIRED_OR_ORGANIZATION_INACTIVE")
         locked = OrganizationMembership.objects.select_for_update().get(pk=membership.pk)
         if locked.status != MembershipStatus.ACTIVE:
             raise MembershipManagementError("MEMBERSHIP_NOT_ACTIVE")
@@ -516,13 +516,17 @@ def author_organization_ids(user: UserLike) -> set[int] | None:
     ids.update(
         ProjectResponsibilityAssignment.objects.filter(
             **common,
-            responsibility=ProjectResponsibility.ADMINISTRATOR,
+            responsibility__in=(
+                ProjectResponsibility.ADMINISTRATOR,
+                ProjectResponsibility.EDITOR,
+                ProjectResponsibility.MANAGER,
+            ),
         ).values_list("organization_id", flat=True)
     )
     ids.update(
         ScenarioResponsibilityAssignment.objects.filter(
             **common,
-            responsibility=ScenarioResponsibility.EDITOR,
+            responsibility__in=(ScenarioResponsibility.EDITOR, ScenarioResponsibility.MANAGER),
         ).values_list("organization_id", flat=True)
     )
     return ids

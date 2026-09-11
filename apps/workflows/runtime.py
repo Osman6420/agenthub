@@ -57,12 +57,37 @@ def _apply_default_output(
         raise WorkflowRuntimeError("WORKFLOW_NODE_UNSUPPORTED")
 
 
+def retrieval_parameters(
+    *,
+    node: dict[str, Any],
+    state: dict[str, Any],
+    input_env: dict[str, Any] | None,
+    run: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    """One resolver for the query/profile hashed at selection and used during I/O."""
+    from apps.artifacts.governed_dsl import GovernedDSLValidationError, normalize_retrieval_profile
+
+    query = _envelope_query(input_env) if input_env is not None else _workflow_query(state)
+    profile = None
+    ref = node["config"].get("retrieval_profile_ref")
+    if isinstance(ref, str) and ref:
+        body = get_artifact_body_for_role(run.release, ref)
+        if not isinstance(body, dict):
+            raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_BINDING_INVALID")
+        try:
+            profile = normalize_retrieval_profile(body)
+        except GovernedDSLValidationError as exc:
+            raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_BINDING_INVALID") from exc
+    return query, profile
+
+
 def _execute_eligible_node(
     *,
     node: dict[str, Any],
     state: dict[str, Any],
     input_env: dict[str, Any] | None,
     run: Any,
+    retrieval_selection_id: int | None = None,
 ) -> dict[str, Any]:
     """Execute one governed envelope-producing node."""
 
@@ -70,29 +95,23 @@ def _execute_eligible_node(
     config = node["config"]
     release = run.release
     if node_type == "retrieve":
-        from apps.artifacts.governed_dsl import (
-            GovernedDSLValidationError,
-            normalize_retrieval_profile,
-        )
         from apps.orchestration.rag_steps import retrieve_for_release
 
-        query = _envelope_query(input_env) if input_env is not None else _workflow_query(state)
-        retrieval_profile: dict[str, Any] | None = None
-        retrieval_ref = config.get("retrieval_profile_ref")
-        if isinstance(retrieval_ref, str) and retrieval_ref:
-            body = get_artifact_body_for_role(release, retrieval_ref)
-            if not isinstance(body, dict):
-                raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_BINDING_INVALID")
-            try:
-                retrieval_profile = normalize_retrieval_profile(body)
-            except GovernedDSLValidationError as exc:
-                raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_BINDING_INVALID") from exc
+        query, retrieval_profile = retrieval_parameters(
+            node=node, state=state, input_env=input_env, run=run
+        )
+        selection: dict[str, Any] = {}
+        if getattr(run, "prepared_evaluation_id", None) is not None:
+            selection["workflow_run"] = run
+        if retrieval_selection_id is not None:
+            selection = {"workflow_run": run, "selection_id": retrieval_selection_id}
         try:
             return retrieve_for_release(
                 release=release,
                 query=query,
                 consumer_id=run.consumer_id,
                 retrieval_profile=retrieval_profile,
+                **selection,
             )
         except Exception as exc:
             raise WorkflowRuntimeError("WORKFLOW_RETRIEVAL_FAILED") from exc
@@ -108,6 +127,7 @@ def _execute_eligible_node(
                 release=release,
                 workflow_run=run,
                 state=input_env if input_env is not None else state,
+                node_id=str(node["id"]),
             )
         except AgentPaused:
             raise

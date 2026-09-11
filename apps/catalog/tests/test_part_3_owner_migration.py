@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
-from django.apps.registry import Apps
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 
@@ -17,7 +18,9 @@ AFTER = [
 ]
 
 
-def _state_apps(targets: list[tuple[str, str]]) -> Apps:
+def _state_apps(targets: list[tuple[str, str]]) -> Any:
+    # The old registry includes fields removed from today's models. Its classes
+    # are generated from the requested migration state, not the live app registry.
     executor = MigrationExecutor(connection)
     executor.migrate(targets)
     return executor.loader.project_state(targets).apps

@@ -92,6 +92,10 @@ and explicitly pinned index versions.
 
 Sprint 7 provides an internal/VPN MCP endpoint at `/mcp/` using the same bearer-token,
 binding, capability, release-routing, contract, runtime, usage, and audit path as REST.
+The ingestion-status tool requires an active `ingestion_read` binding to the source's
+document set through the same scenario, a live scenario retrieve grant, and the exact
+consumer retrieve grant. Both explicit run lookup and latest-run lookup apply this
+scope first; missing and inaccessible sources return the same `RUN_NOT_FOUND` response.
 Prometheus scrapes `/internal/metrics` with a secret-backed bearer token through private
 cluster networking. Optional OTLP export is configured with an allowlisted
 `OTEL_EXPORTER_OTLP_ENDPOINT`; an empty value disables export without affecting requests.

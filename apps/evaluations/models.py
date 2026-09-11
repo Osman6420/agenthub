@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -47,8 +48,41 @@ class EvalRun(TimeStampedModel):
     error_code = models.CharField(max_length=64, blank=True)
     created_by = models.CharField(max_length=200)
     finished_at = models.DateTimeField(null=True, blank=True)
+    prepared_source_job = models.ForeignKey(
+        "ingestion.StagedIndexBuildJob",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="prepared_evaluations",
+    )
+    prepared_actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="prepared_evaluations",
+    )
+    generation_count = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        prepared_source_job__isnull=True,
+                        prepared_actor__isnull=True,
+                        generation_count=0,
+                    )
+                    | models.Q(
+                        prepared_source_job__isnull=False,
+                        prepared_actor__isnull=False,
+                        generation_count__gte=1,
+                        generation_count__lte=200,
+                    )
+                ),
+                name="eval_prepared_generation_bound",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["release", "suite_checksum", "status"],
@@ -66,6 +100,28 @@ class EvalRun(TimeStampedModel):
     @property
     def is_passed(self) -> bool:
         return self.status == EvalStatus.PASSED
+
+
+class EvalDataGeneration(models.Model):
+    """Exact, immutable data pins for an authorized prepared-source evaluation."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    evaluation = models.ForeignKey(
+        EvalRun, on_delete=models.PROTECT, related_name="data_generations"
+    )
+    document_set = models.ForeignKey("documents.DocumentSet", on_delete=models.PROTECT)
+    document_set_version = models.ForeignKey(DocumentSetVersion, on_delete=models.PROTECT)
+    index_version = models.ForeignKey(IndexVersion, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["evaluation", "document_set"], name="uniq_eval_data_set"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Evaluation {self.evaluation_id}, set {self.document_set_id}"
 
 
 class EvalCaseResult(TimeStampedModel):

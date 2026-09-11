@@ -477,6 +477,15 @@ class ScenarioDocumentSetGrant(TimeStampedModel):
         related_name="granted_scenario_document_set_access",
     )
     granted_at = models.DateTimeField()
+    shared_consumers = models.BooleanField(default=False, db_default=False)
+    shared_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="approved_shared_scenario_data",
+    )
+    shared_approved_at = models.DateTimeField(null=True, blank=True)
     revoked_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -491,7 +500,24 @@ class ScenarioDocumentSetGrant(TimeStampedModel):
             models.UniqueConstraint(
                 fields=["scenario", "document_set", "permission"],
                 name="uniq_scenario_document_set_grant",
-            )
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        shared_consumers=False,
+                        shared_approved_by__isnull=True,
+                        shared_approved_at__isnull=True,
+                    )
+                    | models.Q(
+                        shared_consumers=True,
+                        shared_approved_by__isnull=False,
+                        shared_approved_at__isnull=False,
+                        status="granted",
+                        revoked_at__isnull=True,
+                    )
+                ),
+                name="scenario_shared_grant_explicit",
+            ),
         ]
         ordering = ["organization_id", "scenario_id", "document_set_id"]
 

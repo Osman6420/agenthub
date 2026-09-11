@@ -11,12 +11,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
+from apps.audit.services import record_event
 from apps.catalog.models import Scenario
+from apps.identity.scenario_actions import authorize_scenario_action
 from apps.releases.compiler import (
     MAX_MANIFEST_ROLE_LENGTH,
     ArtifactRef,
@@ -29,11 +32,84 @@ from apps.releases.scenario_artifacts import (
     SCENARIO_SCOPED_ROLES,
     scenario_artifact_logical_id,
 )
+from apps.tenancy.context import set_tenant_context
+from apps.tenancy.models import Organization
 from apps.workflows.compiler import WorkflowCompileError, compile_workflow
 from apps.workflows.models import CustomNodeDefinition, CustomNodeStatus
 
 MAX_MANIFEST_ARTIFACTS = 50
 MAX_MANIFEST_REQUEST_BYTES = 64 * 1024
+
+
+def compile_operator_candidate(
+    *,
+    scenario: Scenario,
+    refs: list[ArtifactRef],
+    runtime_version: str,
+    actor: Any,
+    request_id: str = "",
+    trace_id: str = "",
+) -> ScenarioRelease:
+    """Serialize with access transitions/offboarding, then compile and audit atomically."""
+    try:
+        with transaction.atomic():
+            set_tenant_context(scenario.organization_id)
+            organization = (
+                Organization.objects.select_for_update()
+                .filter(pk=scenario.organization_id, status="active")
+                .first()
+            )
+            if organization is None:
+                raise PermissionDenied
+            current = (
+                Scenario.objects.select_for_update()
+                .filter(
+                    pk=scenario.pk,
+                    organization=organization,
+                    project__organization=organization,
+                )
+                .first()
+            )
+            if current is None:
+                raise PermissionDenied
+            if not authorize_scenario_action(
+                user=actor, scenario=current, action="compile"
+            ).allowed:
+                raise PermissionDenied
+            release = compile_release(
+                scenario=current,
+                refs=refs,
+                runtime_version=runtime_version,
+                created_by=actor.get_username(),
+            )
+            record_event(
+                actor_type="user",
+                actor_id=actor.get_username(),
+                action="console.scenario.release.compile",
+                outcome="success",
+                organization_id=current.organization_id,
+                resource_type="scenario_release",
+                resource_id=str(release.pk),
+                reason=release.artifact_manifest_sha256,
+                request_id=request_id,
+                trace_id=trace_id,
+            )
+            return release
+    except PermissionDenied:
+        record_event(
+            actor_type="user",
+            actor_id=actor.get_username(),
+            action="console.scenario.release.compile",
+            outcome="deny",
+            organization_id=scenario.organization_id,
+            resource_type="scenario",
+            resource_id=str(scenario.pk),
+            reason="SCENARIO_COMPILE_FORBIDDEN",
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        raise
+
 
 _REQUEST_ERROR_MESSAGES = {
     "manifest_items_invalid": "Manifest 1–50 exact artifact seçimi içermelidir.",

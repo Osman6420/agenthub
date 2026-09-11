@@ -8,14 +8,15 @@ from django.utils import timezone
 from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import AIProject, Scenario
 from apps.documents.models import Document, DocumentSet, DocumentSetVersion
+from apps.identity.authorization import Capability, authorized_scenarios
 from apps.identity.models import (
     Consumer,
     DocumentSetResponsibility,
     DocumentSetResponsibilityAssignment,
     OrganizationResponsibilityAssignment,
+    ProjectResponsibility,
     ProjectResponsibilityAssignment,
     ResponsibilityStatus,
-    ScenarioResponsibility,
     ScenarioResponsibilityAssignment,
 )
 from apps.ingestion.models import ConnectorType, Source
@@ -52,6 +53,7 @@ def _project_responsibility_ids(user: UserLike) -> set[int]:
     return set(
         ProjectResponsibilityAssignment.objects.filter(**_active_assignment_filter(user))
         .filter(_active_expiry())
+        .filter(responsibility__in=ProjectResponsibility.values)
         .values_list("project_id", flat=True)
     )
 
@@ -111,11 +113,7 @@ def scoped_projects(user: UserLike) -> QuerySet[AIProject]:
         return qs
     organization_ids = _organization_responsibility_ids(user)
     project_ids = _project_responsibility_ids(user)
-    scenario_project_ids = (
-        ScenarioResponsibilityAssignment.objects.filter(**_active_assignment_filter(user))
-        .filter(_active_expiry())
-        .values_list("scenario__project_id", flat=True)
-    )
+    scenario_project_ids = authorized_scenarios(user, Capability.SCENARIO_VIEW).values("project_id")
     return qs.filter(
         Q(organization_id__in=organization_ids)
         | Q(id__in=project_ids)
@@ -124,14 +122,7 @@ def scoped_projects(user: UserLike) -> QuerySet[AIProject]:
 
 
 def scoped_scenarios(user: UserLike) -> QuerySet[Scenario]:
-    qs = Scenario.objects.select_related("project", "project__organization")
-    if is_platform_admin(user):  # type: ignore[arg-type]
-        return qs
-    return qs.filter(
-        Q(organization_id__in=_organization_responsibility_ids(user))
-        | Q(project_id__in=_project_responsibility_ids(user))
-        | Q(id__in=_scenario_responsibility_ids(user))
-    ).distinct()
+    return authorized_scenarios(user, Capability.SCENARIO_VIEW)
 
 
 def scoped_consumers(user: UserLike) -> QuerySet[Consumer]:
@@ -164,13 +155,9 @@ def scoped_releases(user: UserLike) -> QuerySet[ScenarioRelease]:
 
 def scoped_runs(user: UserLike) -> QuerySet[Run]:
     qs = Run.objects.select_related("organization", "scenario", "scenario__project")
-    if is_platform_admin(user):  # type: ignore[arg-type]
-        return qs
-    scenario_ids = _scenario_responsibility_ids(user, (ScenarioResponsibility.RUNTIME_OPERATOR,))
     return qs.filter(
-        Q(organization_id__in=_organization_responsibility_ids(user))
-        | Q(scenario_id__in=scenario_ids)
-    ).distinct()
+        scenario_id__in=authorized_scenarios(user, Capability.RUNTIME_VIEW).values("pk")
+    )
 
 
 def scoped_documents(user: UserLike) -> QuerySet[Document]:
@@ -232,8 +219,18 @@ def narrow_to_active_organization(
 def scoped_connector_sources(user: UserLike) -> QuerySet[Source]:
     allowed = allowed_organization_ids(user)  # type: ignore[arg-type]
     qs = Source.objects.filter(
-        connector_type__in=[ConnectorType.CONFLUENCE_DC, ConnectorType.GENERIC_REST]
+        connector_type__in=[
+            ConnectorType.CONFLUENCE_DC,
+            ConnectorType.GENERIC_REST,
+            ConnectorType.MCP_RESOURCE,
+        ],
+        document_set_id__in=scoped_document_sets(user).values("pk"),
     ).select_related(
-        "organization", "document_set", "confluence_profile", "rest_profile", "rest_contract"
+        "organization",
+        "document_set",
+        "confluence_profile",
+        "rest_profile",
+        "rest_contract",
+        "connection__mcp_resource_profile",
     )
     return qs if allowed is None else qs.filter(organization_id__in=allowed)

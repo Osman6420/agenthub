@@ -11,7 +11,7 @@
   <div>
     <p class="eyebrow">Proje bağlamında oluştur</p>
     <h1>Yeni senaryo</h1>
-    <p class="muted">Organizasyon ve proje güvenilir URL bağlamından alınır. Başlangıç yalnız doğrulanmış bir workflow draft oluşturur; release yayımlamaz.</p>
+    <p class="muted">{{ project.name }} projesinde düzenleyebileceğiniz yeni bir senaryo taslağı oluşturun.</p>
   </div>
 </div>
 
@@ -19,9 +19,14 @@
   {% csrf_token %}
   {{ form.non_field_errors }}
   <div class="form-field">{{ form.name.label_tag }}{{ form.name }}<p class="help">{{ form.name.help_text }}</p>{{ form.name.errors }}</div>
+  <fieldset><legend><strong>Erişimi seçin</strong></legend>
+    <div class="form-field">{{ form.access_mode.label_tag }}{{ form.access_mode }}<p class="help">{{ form.access_mode.help_text }}</p>{{ form.access_mode.errors }}</div>
+    <div class="form-field">{{ form.initial_manager.label_tag }}{{ form.initial_manager }}<p class="help">{{ form.initial_manager.help_text }}</p>{{ form.initial_manager.errors }}</div>
+    <p class="muted">Proje yöneticisi özel senaryonun erişimini yönetebilir. Doküman okuma ve araç onayı ayrıca verilir.</p>
+  </fieldset>
   <fieldset>
     <legend><strong>Başlangıç seçin</strong></legend>
-    <p class="muted">Studio’da değiştirebileceğiniz canonical Part 3 workflow draft’ı hazırlanır.</p>
+    <p class="muted">Seçtiğiniz başlangıcı akış düzenleyicisinde değiştirebilirsiniz.</p>
     {% for choice in form.preset %}
       <label class="relationship-card" for="{{ choice.id_for_label }}">
         {{ choice.tag }}
@@ -36,7 +41,8 @@
     {{ form.preset.errors }}
   </fieldset>
   <div class="form-field">{{ form.logical_description.label_tag }}{{ form.logical_description }}<p class="help">{{ form.logical_description.help_text }}</p>{{ form.logical_description.errors }}</div>
-  <div class="notice"><strong>Sonraki adım:</strong> Senaryo açıldığında Studio draft’ını inceleyin. Yayımlarken exact version açıklaması ayrıca istenir; candidate release, evaluation ve promotion ayrı yetkili işlemlerdir.</div>
+  <div class="notice"><strong>Sonraki adım:</strong> Akışı ve test sorularını inceleyin. Senaryo yöneticisi “Yayına al” ile kontrolleri başlatabilir; tüm kontroller geçerse senaryo yayınlanır.</div>
   <button class="button primary" type="submit">Senaryo ve draft oluştur</button>
+  <a class="button secondary" href="{% url 'console:project_detail_public' project.public_id %}#scenarios">Vazgeç</a>
 </form>
 {% endblock %}

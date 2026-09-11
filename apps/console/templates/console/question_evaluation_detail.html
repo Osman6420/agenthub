@@ -6,8 +6,7 @@
   {% else %}<a href="{% url 'console:question_sets' %}">Soru setleri</a><span>›</span><a href="{% url 'console:question_set_detail' run.question_set_version.question_set.public_id %}">{{ run.question_set_version.question_set.name }}</a>{% endif %}
   <span>›</span><span aria-current="page">Değerlendirme</span>
 </nav>
-{# Two consecutive runs used to render identically: nothing on the page said which run this
-   was, when it ran, or what it measured, so a fresh measurement looked like a stale one. #}
+{# Two consecutive runs used to render identically: nothing on the page said which run this was, when it ran, or what it measured, so a fresh measurement looked like a stale one. #}
 <div class="page-heading"><div><p class="eyebrow">Exact provenance</p><h1>{{ run.get_kind_display }} değerlendirmesi</h1>
   <p class="muted"><strong>{{ run.created_at|date:"j F Y, H:i:s" }}</strong> ·
     çalıştırma <span class="mono">{{ run.public_id|slice:":8" }}</span>

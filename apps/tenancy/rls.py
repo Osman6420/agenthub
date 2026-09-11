@@ -119,6 +119,9 @@ def tenant_table_inventory() -> tuple[TenantTable, ...]:
         label = model._meta.label_lower
         if label in _BOOTSTRAP_MODELS:
             classification = TenantTableClass.BOOTSTRAP
+        elif label == "ingestion.connection":
+            # Six global profile kinds plus explicitly tenant-owned tool rows.
+            classification = TenantTableClass.PROTECTED
         elif label in _TELEMETRY_MODELS or field.null:
             classification = TenantTableClass.TELEMETRY
         else:
@@ -201,6 +204,9 @@ def _inspect_table(
         row = cursor.fetchone()
     if row is None:
         return TableRlsState(table_name=table.table_name, exists=False)
+    canonical_policy = bool(row[3])
+    if table.model_label == "ingestion.connection":
+        canonical_policy = _inspect_connection_policies(connection, schema=schema)
     has_select = False
     if role_exists:
         with connection.cursor() as cursor:
@@ -223,8 +229,39 @@ def _inspect_table(
         rls_forced=bool(row[1]),
         owned_by_app_role=bool(row[2]),
         has_select=has_select,
-        canonical_policy=bool(row[3]),
+        canonical_policy=canonical_policy,
     )
+
+
+def _inspect_connection_policies(connection: BaseDatabaseWrapper, *, schema: str) -> bool:
+    """The mixed catalogue requires public reads and tenant-only tool inserts."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT policyname, cmd, qual, with_check, roles::text[], permissive "
+            "FROM pg_policies WHERE schemaname = %s AND tablename = 'ingestion_connection' "
+            "ORDER BY policyname",
+            [schema],
+        )
+        policies = cursor.fetchall()
+    return policies == [
+        (
+            "connection_read_scope",
+            "SELECT",
+            "((organization_id IS NULL) OR agenthub_tenant_scope_contains(organization_id))",
+            None,
+            ["public"],
+            "PERMISSIVE",
+        ),
+        (
+            "connection_tool_insert_scope",
+            "INSERT",
+            None,
+            "(((kind)::text = 'tool'::text) AND (organization_id IS NOT NULL) "
+            "AND agenthub_tenant_scope_contains(organization_id))",
+            ["public"],
+            "PERMISSIVE",
+        ),
+    ]
 
 
 def inspect_rls_readiness(
@@ -233,6 +270,7 @@ def inspect_rls_readiness(
     schema: str = "public",
     using: str = "default",
     tables: tuple[TenantTable, ...] | None = None,
+    shared_vectors_only: bool = False,
 ) -> RlsReadinessReport:
     """Inspect ADR-0004 invariants without mutating database state."""
 
@@ -269,6 +307,25 @@ def inspect_rls_readiness(
             issues.append("APP_ROLE_SUPERUSER")
         if role.bypass_rls:
             issues.append("APP_ROLE_BYPASSES_RLS")
+        if shared_vectors_only:
+            # Include roles reachable via SET ROLE, even when inheritance is disabled.
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COALESCE(bool_or("
+                    "has_function_privilege(r.oid, "
+                    "'public.agenthub_provision_index_store(bigint)', 'EXECUTE') "
+                    "OR has_function_privilege(r.oid, "
+                    "'public.agenthub_drop_index_store(bigint)', 'EXECUTE')"
+                    "), false), COALESCE(bool_or("
+                    "has_schema_privilege(r.oid, %s, 'CREATE')), false) "
+                    "FROM pg_roles r WHERE pg_has_role(%s, r.oid, 'MEMBER')",
+                    [schema, app_role],
+                )
+                legacy_ddl, schema_create = cursor.fetchone()
+            if legacy_ddl:
+                issues.append("LEGACY_VECTOR_DDL_ENABLED")
+            if schema_create:
+                issues.append("SCHEMA_CREATE_ENABLED")
     for state in table_states:
         prefix = state.table_name
         if not state.exists:

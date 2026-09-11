@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.artifacts.models import ArtifactVersion
@@ -21,6 +22,7 @@ from apps.ingestion.models import (
     EmbeddingProfile,
     IndexStatus,
     IndexVersion,
+    IngestionJobKind,
     IngestionWorkerHeartbeat,
     OcrProfile,
     StagedIndexBuildJob,
@@ -41,7 +43,7 @@ from apps.observability.metrics import (
 if TYPE_CHECKING:
     from apps.documents.models import DocumentSetVersion
 
-CONTRACT_REVISION = 3
+CONTRACT_REVISION = 12
 TERMINAL_STATES = frozenset(
     {
         StagedIndexBuildJobStatus.SUCCEEDED,
@@ -78,6 +80,9 @@ _PINNED_ARTIFACT_TYPES = {
 def _validate_claimed_inputs(job: StagedIndexBuildJob) -> None:
     """Reject invisible or drifted immutable pins before the claim transaction commits."""
 
+    _require_build_kind(job)
+    if job.document_set_version is None or job.embedding_profile is None:
+        raise BuildJobError("JOB_INPUT_LINEAGE_INVALID")
     if (
         job.document_set_version.organization_id != job.organization_id
         or job.document_set_version.document_set.organization_id != job.organization_id
@@ -96,6 +101,11 @@ def _validate_claimed_inputs(job: StagedIndexBuildJob) -> None:
             raise BuildJobError("JOB_INPUT_LINEAGE_INVALID")
 
 
+def _require_build_kind(job: StagedIndexBuildJob) -> None:
+    if job.kind != IngestionJobKind.INDEX_BUILD:
+        raise BuildJobError("JOB_KIND_MISMATCH")
+
+
 def _canonical_checksum(payload: dict[str, object]) -> str:
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest()
@@ -109,6 +119,7 @@ def config_fingerprint() -> str:
     broker = str(getattr(settings, "CELERY_BROKER_URL", ""))
     payload = {
         "schema": 1,
+        "vector_storage_layout": getattr(settings, "INGESTION_VECTOR_STORAGE_LAYOUT", "legacy"),
         "broker_scheme": broker.split(":", 1)[0].lower(),
         "object_store_endpoint": endpoint.rstrip("/").lower(),
         "object_store_bucket": bucket,
@@ -246,8 +257,14 @@ def create_build_job(
     except IntegrityError:
         with transaction.atomic():
             set_tenant_context(organization_id)
+            # BUG-004: only an ACTIVE job may dedup-return here. A terminal (cancelled/failed)
+            # job with the same checksum must never permanently block a fresh retry -- the old
+            # unconditional lookup found terminal rows too, which is exactly what made the
+            # combination unrecoverable without a manual DB edit.
             existing = StagedIndexBuildJob.objects.filter(
-                organization_id=organization_id, request_checksum=checksum
+                organization_id=organization_id,
+                request_checksum=checksum,
+                status__in=ACTIVE_STATES,
             ).first()
             if existing is None:
                 existing = StagedIndexBuildJob.objects.filter(
@@ -268,7 +285,8 @@ def dispatch_outbox(
     job_public_id: uuid.UUID | None = None,
     organization_id: int | None = None,
 ) -> int:
-    from apps.ingestion.tasks import run_staged_index_build_job
+    from apps.ingestion.connector_jobs import _project
+    from apps.ingestion.tasks import run_connector_job, run_staged_index_build_job
     from apps.tenancy.models import Organization
 
     published = 0
@@ -297,18 +315,32 @@ def dispatch_outbox(
         for outbox_id in outbox_ids:
             with transaction.atomic():
                 set_tenant_context(scoped_organization_id)
-                outbox = (
-                    StagedIndexBuildOutbox.objects.select_for_update()
-                    .select_related("job")
-                    .get(pk=outbox_id, organization_id=scoped_organization_id)
+                job_id = StagedIndexBuildOutbox.objects.values_list("job_id", flat=True).get(
+                    pk=outbox_id, organization_id=scoped_organization_id
                 )
-                if outbox.published_at is not None or outbox.job.status in TERMINAL_STATES:
+                job = StagedIndexBuildJob.objects.select_for_update().get(
+                    pk=job_id, organization_id=scoped_organization_id
+                )
+                outbox = StagedIndexBuildOutbox.objects.select_for_update().get(
+                    pk=outbox_id, organization_id=scoped_organization_id
+                )
+                outbox.job = job
+                if (
+                    outbox.published_at is not None
+                    or outbox.available_at > timezone.now()
+                    or job.status not in {"dispatch_pending", "queued", "retry_wait"}
+                ):
                     continue
                 now = timezone.now()
                 outbox.publish_attempts += 1
                 outbox.job.dispatch_attempted_at = now
                 try:
-                    run_staged_index_build_job.apply_async(
+                    task = (
+                        run_staged_index_build_job
+                        if job.kind == IngestionJobKind.INDEX_BUILD
+                        else run_connector_job
+                    )
+                    task.apply_async(
                         args=[str(outbox.job.public_id)],
                         headers={"organization_id": outbox.job.organization_id},
                         queue="ingestion",
@@ -338,17 +370,21 @@ def dispatch_outbox(
                     ]
                 )
                 outbox.job.status = StagedIndexBuildJobStatus.QUEUED
+                outbox.job.error_code = ""
                 outbox.job.queued_at = now
                 outbox.job.revision += 1
                 outbox.job.save(
                     update_fields=[
                         "status",
+                        "error_code",
                         "queued_at",
                         "dispatch_attempted_at",
                         "revision",
                         "updated_at",
                     ]
                 )
+                if job.kind != IngestionJobKind.INDEX_BUILD:
+                    _project(job)
                 published += 1
                 _observe(StagedIndexBuildJobStatus.QUEUED)
     return published
@@ -374,11 +410,12 @@ def claim_build_job(*, public_id: str, organization_id: int) -> StagedIndexBuild
         if job is None:
             raise BuildJobError("JOB_NOT_FOUND")
         _validate_claimed_inputs(job)
-        if job.status == StagedIndexBuildJobStatus.SUCCEEDED:
-            return None
-        if job.status in {StagedIndexBuildJobStatus.CANCELLED, StagedIndexBuildJobStatus.FAILED}:
-            return None
-        if job.status == StagedIndexBuildJobStatus.RUNNING:
+        if job.document_set_version is None:
+            raise BuildJobError("JOB_INPUT_LINEAGE_INVALID")
+        if job.status not in {
+            StagedIndexBuildJobStatus.DISPATCH_PENDING,
+            StagedIndexBuildJobStatus.QUEUED,
+        }:
             return None
         if job.document_set_version.document_set.status != DocumentSetStatus.ACTIVE:
             return None
@@ -393,6 +430,8 @@ def claim_build_job(*, public_id: str, organization_id: int) -> StagedIndexBuild
             INGESTION_CLAIM_LATENCY.observe(max(0.0, (now - job.queued_at).total_seconds()))
         job.status = StagedIndexBuildJobStatus.RUNNING
         job.attempt += 1
+        job.documents_completed = 0
+        job.chunks_completed = 0
         job.claimed_at = now
         job.heartbeat_at = now
         job.error_code = ""
@@ -401,6 +440,8 @@ def claim_build_job(*, public_id: str, organization_id: int) -> StagedIndexBuild
             update_fields=[
                 "status",
                 "attempt",
+                "documents_completed",
+                "chunks_completed",
                 "claimed_at",
                 "heartbeat_at",
                 "error_code",
@@ -412,14 +453,17 @@ def claim_build_job(*, public_id: str, organization_id: int) -> StagedIndexBuild
         return job
 
 
-def update_progress(*, job_id: int, organization_id: int, documents: int, chunks: int) -> None:
+def update_progress(
+    *, job_id: int, organization_id: int, expected_attempt: int, documents: int, chunks: int
+) -> None:
     with transaction.atomic():
         set_tenant_context(organization_id)
         job = StagedIndexBuildJob.objects.select_for_update().get(
             pk=job_id, organization_id=organization_id
         )
-        if job.status != StagedIndexBuildJobStatus.RUNNING:
-            return
+        _require_build_kind(job)
+        if job.attempt != expected_attempt or job.status != StagedIndexBuildJobStatus.RUNNING:
+            raise BuildJobError("BUILD_ATTEMPT_FENCED")
         if documents < job.documents_completed or chunks < job.chunks_completed:
             raise BuildJobError("PROGRESS_NOT_MONOTONIC")
         job.documents_completed = min(documents, 5_000)
@@ -430,12 +474,17 @@ def update_progress(*, job_id: int, organization_id: int, documents: int, chunks
         )
 
 
-def complete_build_job(*, job_id: int, organization_id: int, index: IndexVersion) -> None:
+def complete_build_job(
+    *, job_id: int, organization_id: int, expected_attempt: int, index: IndexVersion
+) -> None:
     with transaction.atomic():
         set_tenant_context(organization_id)
         job = StagedIndexBuildJob.objects.select_for_update().get(
             pk=job_id, organization_id=organization_id
         )
+        _require_build_kind(job)
+        if job.attempt != expected_attempt:
+            return
         if job.status in TERMINAL_STATES:
             if (
                 job.status == StagedIndexBuildJobStatus.CANCELLED
@@ -448,12 +497,22 @@ def complete_build_job(*, job_id: int, organization_id: int, index: IndexVersion
                     status=IndexStatus.FAILED
                 )
             return
+        if job.status != StagedIndexBuildJobStatus.RUNNING:
+            return
+        index = IndexVersion.objects.select_for_update().get(
+            pk=index.pk,
+            organization_id=organization_id,
+        )
         if (
             index.organization_id != organization_id
             or index.document_set_version_id != job.document_set_version_id
             or index.embedding_profile_id != job.embedding_profile_id
             or index.pipeline_fingerprint != job.pipeline_fingerprint
             or index.status != IndexStatus.PROMOTABLE
+            or (
+                index.build_request_id is not None
+                and (index.build_request_id != job.pk or index.build_attempt != expected_attempt)
+            )
         ):
             raise BuildJobError("RESULT_LINEAGE_MISMATCH")
         job.status = StagedIndexBuildJobStatus.SUCCEEDED
@@ -495,14 +554,17 @@ def complete_build_job(*, job_id: int, organization_id: int, index: IndexVersion
         _observe(StagedIndexBuildJobStatus.SUCCEEDED)
 
 
-def fail_build_job(*, job_id: int, organization_id: int, error_code: str, ambiguous: bool) -> None:
+def fail_build_job(
+    *, job_id: int, organization_id: int, expected_attempt: int, error_code: str, ambiguous: bool
+) -> None:
     safe_code = error_code if error_code.isupper() and len(error_code) <= 64 else "BUILD_FAILED"
     with transaction.atomic():
         set_tenant_context(organization_id)
         job = StagedIndexBuildJob.objects.select_for_update().get(
             pk=job_id, organization_id=organization_id
         )
-        if job.status in TERMINAL_STATES:
+        _require_build_kind(job)
+        if job.status != StagedIndexBuildJobStatus.RUNNING or job.attempt != expected_attempt:
             return
         job.status = (
             StagedIndexBuildJobStatus.RECONCILIATION_REQUIRED
@@ -520,6 +582,7 @@ def cancel_build_job(*, job: StagedIndexBuildJob, actor: str) -> StagedIndexBuil
     with transaction.atomic():
         set_tenant_context(job.organization_id)
         locked = StagedIndexBuildJob.objects.select_for_update().get(pk=job.pk)
+        _require_build_kind(locked)
         if locked.status in TERMINAL_STATES:
             return locked
         locked.status = StagedIndexBuildJobStatus.CANCELLED
@@ -544,8 +607,12 @@ def retry_build_job(*, job: StagedIndexBuildJob, actor: str) -> StagedIndexBuild
     with transaction.atomic():
         set_tenant_context(job.organization_id)
         locked = StagedIndexBuildJob.objects.select_for_update().get(pk=job.pk)
+        _require_build_kind(locked)
+        # BUG-004: a cancelled job is just as retryable as a failed one -- only a terminal
+        # status outside {FAILED, CANCELLED}, or an exhausted attempt budget, blocks retry.
         if (
-            locked.status != StagedIndexBuildJobStatus.FAILED
+            locked.status
+            not in {StagedIndexBuildJobStatus.FAILED, StagedIndexBuildJobStatus.CANCELLED}
             or locked.attempt >= locked.max_attempts
         ):
             raise BuildJobError("JOB_NOT_RETRYABLE")
@@ -605,6 +672,7 @@ def reconcile_build_jobs(*, limit: int = 100) -> int:
             oldest = (
                 StagedIndexBuildJob.objects.filter(
                     organization_id=organization_id,
+                    kind=IngestionJobKind.INDEX_BUILD,
                     status__in=[
                         StagedIndexBuildJobStatus.DISPATCH_PENDING,
                         StagedIndexBuildJobStatus.QUEUED,
@@ -621,6 +689,7 @@ def reconcile_build_jobs(*, limit: int = 100) -> int:
             ids = (
                 StagedIndexBuildJob.objects.filter(
                     organization_id=organization_id,
+                    kind=IngestionJobKind.INDEX_BUILD,
                     status=StagedIndexBuildJobStatus.RUNNING,
                     heartbeat_at__lt=cutoff,
                 )
@@ -635,8 +704,20 @@ def reconcile_build_jobs(*, limit: int = 100) -> int:
             job = StagedIndexBuildJob.objects.select_for_update().get(
                 pk=job_id, organization_id=organization_id
             )
+            if (
+                job.status != StagedIndexBuildJobStatus.RUNNING
+                or job.heartbeat_at is None
+                or job.heartbeat_at >= cutoff
+            ):
+                continue
+            lineage = Q(build_request_id=job.pk, build_attempt=job.attempt)
+            if not job.attempt_generations.exists():
+                # Transitional recovery for pre-contract-5 jobs only; shared generations
+                # and jobs with an explicit attempt binding never use timestamp inference.
+                lineage |= Q(build_request__isnull=True, storage_layout="legacy")
             exact = (
                 IndexVersion.objects.filter(
+                    lineage,
                     organization_id=job.organization_id,
                     document_set_version_id=job.document_set_version_id,
                     embedding_profile_id=job.embedding_profile_id,
@@ -648,7 +729,12 @@ def reconcile_build_jobs(*, limit: int = 100) -> int:
                 .first()
             )
             if exact is not None:
-                complete_build_job(job_id=job.pk, organization_id=job.organization_id, index=exact)
+                complete_build_job(
+                    job_id=job.pk,
+                    organization_id=job.organization_id,
+                    expected_attempt=job.attempt,
+                    index=exact,
+                )
                 INGESTION_RECONCILIATIONS.labels(outcome="linked").inc()
             else:
                 job.status = StagedIndexBuildJobStatus.RECONCILIATION_REQUIRED

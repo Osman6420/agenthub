@@ -13,14 +13,21 @@ from django.utils import timezone
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.artifacts.validation import compute_checksum
-from apps.catalog.models import Scenario
+from apps.catalog.models import Scenario, ScenarioExecutionContract
 from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
 from apps.identity.capabilities import Capability
 from apps.identity.models import Consumer
+from apps.releases.execution import release_revision
 from apps.releases.models import ScenarioRelease
+from apps.releases.revision_schema import RevisionError
 from apps.releases.services import get_artifact_body_for_role, get_manifest_role
 from apps.tenancy.context import set_tenant_context
-from apps.workflows.compiler import COMPILER_VERSION, WorkflowCompileError, compile_workflow
+from apps.workflows.compiler import (
+    COMPILER_VERSION,
+    SNAPSHOT_COMPILER_VERSION,
+    WorkflowCompileError,
+    compile_workflow,
+)
 from apps.workflows.models import (
     CustomNodeDefinition,
     CustomNodeStatus,
@@ -43,7 +50,11 @@ class WorkflowRequestError(ValueError):
 
 @transaction.atomic
 def compile_workflow_version(
-    *, scenario: Scenario, source_artifact: ArtifactVersion, created_by: str
+    *,
+    scenario: Scenario,
+    source_artifact: ArtifactVersion,
+    created_by: str,
+    execution_contract: str | None = None,
 ) -> WorkflowVersion:
     organization_id = scenario.project.organization_id
     if source_artifact.organization_id != organization_id:
@@ -59,10 +70,19 @@ def compile_workflow_version(
         )
     )
     compiled = compile_workflow(source_artifact.body, allowed_custom_nodes=allowed_refs)
+    if execution_contract is None:
+        execution_contract = scenario.execution_contract
+    if execution_contract not in ScenarioExecutionContract.values:
+        raise WorkflowCompileError("scenario execution contract is unsupported")
+    compiler_version = (
+        SNAPSHOT_COMPILER_VERSION
+        if execution_contract == ScenarioExecutionContract.SNAPSHOT
+        else COMPILER_VERSION
+    )
     existing = WorkflowVersion.objects.filter(
         scenario=scenario,
         source_artifact=source_artifact,
-        compiler_version=COMPILER_VERSION,
+        compiler_version=compiler_version,
     ).first()
     if existing is not None:
         if existing.checksum != compiled.checksum:
@@ -74,7 +94,7 @@ def compile_workflow_version(
         source_artifact=source_artifact,
         compiled_graph=compiled.graph,
         checksum=compiled.checksum,
-        compiler_version=COMPILER_VERSION,
+        compiler_version=compiler_version,
         created_by=created_by,
     )
 
@@ -109,6 +129,13 @@ def register_custom_node_definition(
 
 
 def resolve_release_workflow(release: ScenarioRelease) -> WorkflowVersion:
+    revision, snapshot = release_revision(release)
+    if revision is not None and snapshot is not None:
+        workflow = revision.workflow_version
+        workflow.compiled_graph = snapshot["workflow"]["graph"]
+        workflow.checksum = snapshot["workflow"]["checksum"]
+        workflow.compiler_version = snapshot["workflow"]["compiler_version"]
+        return workflow
     entry = get_manifest_role(release, "workflow_definition")
     body = get_artifact_body_for_role(release, "workflow_definition")
     if entry is None or body is None:
@@ -132,6 +159,7 @@ def resolve_release_workflow(release: ScenarioRelease) -> WorkflowVersion:
         scenario=release.scenario,
         source_artifact=artifact,
         created_by="release-runtime",
+        execution_contract=ScenarioExecutionContract.LEGACY,
     )
 
 
@@ -145,6 +173,7 @@ def request_unified_run(
     input_payload: dict[str, Any],
     idempotency_key: str,
     execution_mode: str,
+    prepared_evaluation=None,
 ) -> tuple[Run, bool]:
     """Admit one exact-pinned Run without trusting client-carried authority."""
 
@@ -187,7 +216,26 @@ def request_unified_run(
         or Capability.WORKFLOW_RUN not in context_capabilities
     ):
         raise WorkflowRequestError("EXECUTION_CONTEXT_INVALID")
+    try:
+        revision, snapshot = release_revision(release)
+        if revision is not None and (
+            snapshot is None
+            or workflow_version.pk != revision.workflow_version_id
+            or workflow_version.checksum != snapshot["workflow"]["checksum"]
+            or workflow_version.compiler_version != snapshot["workflow"]["compiler_version"]
+        ):
+            raise RevisionError("RUN_REVISION_CONFLICT")
+        if snapshot is not None and mode not in snapshot["workflow"]["graph"].get(
+            "execution_mode_analysis", {}
+        ).get("supported_execution_modes", []):
+            raise WorkflowRequestError("UNSUPPORTED_EXECUTION_MODE")
+    except RevisionError as exc:
+        raise WorkflowRequestError(exc.code) from None
     input_checksum = compute_checksum(input_payload)
+    if prepared_evaluation is not None:
+        from apps.evaluations.prepared import validate_prepared_admission
+
+        validate_prepared_admission(prepared_evaluation, release=release, consumer=consumer)
     existing = (
         Run.objects.select_for_update()
         .filter(consumer=consumer, idempotency_key=idempotency_key)
@@ -199,6 +247,7 @@ def request_unified_run(
             or existing.release_id != release.id
             or existing.workflow_version_id != workflow_version.id
             or existing.execution_mode != mode
+            or existing.prepared_evaluation_id != getattr(prepared_evaluation, "pk", None)
             or not existing.response_id
         ):
             raise WorkflowRequestError("IDEMPOTENCY_CONFLICT")
@@ -220,8 +269,10 @@ def request_unified_run(
         organization_id=organization_id,
         scenario=release.scenario,
         release=release,
+        scenario_revision=revision,
         workflow_version=workflow_version,
         consumer=consumer,
+        prepared_evaluation=prepared_evaluation,
         actor_id=consumer.subject,
         response_id=f"resp_{uuid.uuid4().hex}",
         idempotency_key=idempotency_key,
@@ -251,6 +302,7 @@ def request_unified_run(
             or winner.release_id != release.id
             or winner.workflow_version_id != workflow_version.id
             or winner.execution_mode != mode
+            or winner.prepared_evaluation_id != getattr(prepared_evaluation, "pk", None)
             or not winner.response_id
         ):
             raise WorkflowRequestError("IDEMPOTENCY_CONFLICT") from None

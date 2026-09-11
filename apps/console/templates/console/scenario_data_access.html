@@ -1,0 +1,13 @@
+{% extends "console/base.html" %}
+{% block title %}Veri erişimi · {{ scenario.name }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a><span>›</span><span>Veri erişimi</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Senaryo verisi</p><h1>{{ scenario.name }}</h1><p>Mevcut düzen: <strong>{{ scenario.get_data_access_mode_display }}</strong></p></div></div>
+{% if error %}<div class="warning-box" role="alert">{{ error }}</div>{% endif %}
+<section class="card"><h2>Bağlı setlerin ortak kullanım izni</h2><p>Her setin veri yöneticisi ayrı onay verir. Yeni bir set bağlamak ortak kullanım izni vermez. Onaylanmayan set, ortak veri düzeninde arama sonuçlarına katılmaz.</p>
+{% for row in rows %}<div class="access-row"><strong>{{ row.name }}</strong>{% if row.shared %}<span class="access-ok">Ortak kullanım onaylı</span>{% else %}<span class="access-missing">Veri yöneticisinin ortak kullanım onayı gerekli</span>{% endif %}</div>{% empty %}<p>Bağlı doküman seti yok.</p>{% endfor %}
+{% if limited %}<p class="notice">İlk 500 set gösteriliyor.</p>{% endif %}</section>
+{% if can_edit %}<section class="card form-card"><h2>Veri erişimini seç</h2><p>İstemciye özel düzende senaryo ve istemci izinlerinin ikisi de gerekir. Ortak düzende yalnız veri yöneticisinin onayladığı setleri, senaryoya erişim izni olan mevcut ve gelecekteki istemciler kullanabilir.</p><p>Değişiklik sonraki veri aramasında geçerli olur. İnsanların kaynak doküman okuma iznini değiştirmez.</p>
+<form method="post">{% csrf_token %}<input type="hidden" name="mode_token" value="{{ mode_token }}"><label for="data-mode">Veri erişimi</label><select id="data-mode" name="mode">{% for value,label in modes %}<option value="{{ value }}" {% if value == scenario.data_access_mode %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+<p><label><input type="checkbox" name="confirm" value="yes" required> Seçtiğim veri erişimi düzenini uygulamak istiyorum.</label></p><button class="button primary" type="submit">Veri erişimini güncelle</button></form></section>{% endif %}
+{% endblock %}

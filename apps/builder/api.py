@@ -21,7 +21,6 @@ from typing import Any
 from uuid import UUID
 
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
 
@@ -34,9 +33,12 @@ from apps.builder.node_schema import build_node_schema
 from apps.catalog.models import AIProject, Scenario
 from apps.evaluations.services import summarize_eval_run
 from apps.identity.authorization import Capability, authorize
+from apps.identity.scenario_actions import authorize_scenario_action
 from apps.orchestration.models import ModelProfile, ModelProfileStatus
 from apps.releases import authoring as release_authoring
-from apps.releases.compiler import CompileError, compile_release
+from apps.releases.compiler import CompileError
+from apps.tenancy.context import operator_transaction
+from apps.tenancy.middleware import durable_operator_view
 from apps.tenancy.models import Organization
 from apps.tenancy.services import allowed_organization_ids, can_author_scenarios
 
@@ -244,19 +246,9 @@ def _candidate_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
     allowed = allowed_organization_ids(request.user)
     if allowed is not None and scenario.organization_id not in allowed:
         raise Http404
-    can_release = authorize(
-        user=request.user,
-        capability=Capability.SCENARIO_RELEASE,
-        organization=scenario.organization,
-        project=scenario.project,
-        scenario=scenario,
-    ).allowed
-    if not can_release and not _can_author(
-        request,
-        organization_id=scenario.organization_id,
-        project=scenario.project,
-        scenario=scenario,
-    ):
+    if not authorize_scenario_action(
+        user=request.user, scenario=scenario, action="compile"
+    ).allowed:
         raise PermissionDenied
     return scenario
 
@@ -377,25 +369,14 @@ def release_manifest_compile(request: HttpRequest, public_id: UUID) -> HttpRespo
     if refs is None:
         raise services.BuilderError("manifest_invalid")
     try:
-        with transaction.atomic():
-            release = compile_release(
-                scenario=scenario,
-                refs=refs,
-                runtime_version=release_authoring.candidate_runtime_version(scenario),
-                created_by=_actor(request),
-            )
-            record_event(
-                actor_type="user",
-                actor_id=_actor(request),
-                action="console.scenario.release.compile",
-                outcome="success",
-                organization_id=scenario.organization_id,
-                resource_type="scenario_release",
-                resource_id=str(release.pk),
-                reason=release.artifact_manifest_sha256,
-                request_id=_request_id(request),
-                trace_id=_trace_id(request),
-            )
+        release = release_authoring.compile_operator_candidate(
+            scenario=scenario,
+            refs=refs,
+            runtime_version=release_authoring.candidate_runtime_version(scenario),
+            actor=request.user,
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
     except CompileError as exc:
         record_event(
             actor_type="user",
@@ -500,6 +481,7 @@ def node_artifact_library(request: HttpRequest, pk: int) -> HttpResponse:
     return JsonResponse({"role": role, "versions": versions, "library": library})
 
 
+@durable_operator_view
 @operator_api
 @require_http_methods(["POST"])
 def draft_publish_and_verify(request: HttpRequest, pk: int) -> HttpResponse:
@@ -516,15 +498,16 @@ def draft_publish_and_verify(request: HttpRequest, pk: int) -> HttpResponse:
     reachable from here.
     """
 
-    draft = _scoped_draft(request, pk)
-    _require_author(
-        request,
-        organization_id=draft.organization_id,
-        project=draft.project,
-        scenario=draft.scenario,
-    )
-    payload = _json_body(request)
-    _reject_unknown_fields(payload, {"revision", "version_description"})
+    with operator_transaction(request.user):
+        draft = _scoped_draft(request, pk)
+        _require_author(
+            request,
+            organization_id=draft.organization_id,
+            project=draft.project,
+            scenario=draft.scenario,
+        )
+        payload = _json_body(request)
+        _reject_unknown_fields(payload, {"revision", "version_description"})
 
     result = services.publish_and_verify(
         draft,
@@ -534,40 +517,47 @@ def draft_publish_and_verify(request: HttpRequest, pk: int) -> HttpResponse:
         request_id=_request_id(request),
         trace_id=_trace_id(request),
     )
-    body: dict[str, Any] = {
-        "ok": result.ok,
-        "published": {
-            "logical_id": result.published.logical_id,
-            "version": result.published.version,
-            "checksum": result.published.checksum,
-            "revision": result.draft_revision,
-        },
-        "missing": result.missing,
-        "diagnostics": result.diagnostics,
-    }
-    if result.release is not None:
-        body["release"] = {
-            "id": result.release.pk,
-            "status": result.release.status,
-            "artifact_manifest_sha256": result.release.artifact_manifest_sha256,
+    with operator_transaction(request.user):
+        _require_author(
+            request,
+            organization_id=draft.organization_id,
+            project=draft.project,
+            scenario=draft.scenario,
+        )
+        body: dict[str, Any] = {
+            "ok": result.ok,
+            "published": {
+                "logical_id": result.published.logical_id,
+                "version": result.published.version,
+                "checksum": result.published.checksum,
+                "revision": result.draft_revision,
+            },
+            "missing": result.missing,
+            "diagnostics": result.diagnostics,
         }
-    if result.eval_run is not None:
-        level, message = summarize_eval_run(result.eval_run)
-        body["evaluation"] = {
-            "level": level,
-            "message": message,
-            "status": result.eval_run.status,
-            "passed_cases": result.eval_run.passed_cases,
-            "total_cases": result.eval_run.total_cases,
-            # Reason codes only: assertion type, boolean and a stable code, never text.
-            "cases": [
-                {"case_id": c.case_id, "passed": c.passed, "assertions": c.assertions}
-                for c in result.eval_run.case_results.order_by("pk")[:100]
-            ],
-        }
-    elif result.diagnostics and result.release is not None:
-        body["evaluation"] = {"level": "error", "message": result.diagnostics[0]["message"]}
-    return JsonResponse(body, status=201 if result.ok else 200)
+        if result.release is not None:
+            body["release"] = {
+                "id": result.release.pk,
+                "status": result.release.status,
+                "artifact_manifest_sha256": result.release.artifact_manifest_sha256,
+            }
+        if result.eval_run is not None:
+            level, message = summarize_eval_run(result.eval_run)
+            body["evaluation"] = {
+                "level": level,
+                "message": message,
+                "status": result.eval_run.status,
+                "passed_cases": result.eval_run.passed_cases,
+                "total_cases": result.eval_run.total_cases,
+                # Reason codes only: assertion type, boolean and a stable code, never text.
+                "cases": [
+                    {"case_id": c.case_id, "passed": c.passed, "assertions": c.assertions}
+                    for c in result.eval_run.case_results.order_by("pk")[:100]
+                ],
+            }
+        elif result.diagnostics and result.release is not None:
+            body["evaluation"] = {"level": "error", "message": result.diagnostics[0]["message"]}
+        return JsonResponse(body, status=201 if result.ok else 200)
 
 
 def _json_body(request: HttpRequest, *, max_bytes: int | None = None) -> dict[str, Any]:

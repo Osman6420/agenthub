@@ -16,6 +16,8 @@ import http.client
 import json
 import socket
 import ssl
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -66,11 +68,35 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         super().__init__(server_hostname, port, timeout=timeout, context=context)
         self._pinned_ip = ip
         self._ssl_context = context
+        self._timeout_seconds = timeout
+        self._deadline: float | None = None
+
+    def set_deadline(self, deadline: float) -> None:
+        self._deadline = deadline
+
+    def _connect_timeout(self) -> float:
+        if self._deadline is None:
+            return self._timeout_seconds
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("request deadline exceeded")
+        return min(self._timeout_seconds, remaining)
 
     def connect(self) -> None:
-        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        sock = socket.create_connection((self._pinned_ip, self.port), self._connect_timeout())
         # ``self.host`` is the original hostname → SNI + cert hostname verification.
-        self.sock = self._ssl_context.wrap_socket(sock, server_hostname=self.host)
+        if self._deadline is None:
+            self.sock = self._ssl_context.wrap_socket(sock, server_hostname=self.host)
+        else:
+            # Expose the socket to deadline cancellation before a potentially slow
+            # TLS handshake. Certificate and hostname verification remain unchanged.
+            self.sock = sock
+            tls_sock = self._ssl_context.wrap_socket(
+                sock, server_hostname=self.host, do_handshake_on_connect=False
+            )
+            self.sock = tls_sock
+            tls_sock.settimeout(self._connect_timeout())
+            tls_sock.do_handshake()
 
 
 def _default_connection_factory(
@@ -106,6 +132,7 @@ def perform_bounded_https_request(
     path: str,
     headers: dict[str, str],
     body: bytes | None = None,
+    deadline: float | None = None,
 ) -> BoundedHttpResponse:
     """Send one bounded redirect-free HTTPS request and return status/content metadata.
 
@@ -119,8 +146,33 @@ def perform_bounded_https_request(
     ip = destination.ip_addresses[0]
     method = request.method or "POST"
     connection = factory(ip, destination.port, float(request.timeout_seconds), destination.host)
+    expired = threading.Event()
+    active_socket: list[Any] = [None]
+    timer = None
+    if deadline is not None:
+        if deadline <= time.monotonic():
+            _safe_close(connection)
+            raise ToolAdapterError("REQUEST_DEADLINE_EXCEEDED")
+        configure_deadline = getattr(connection, "set_deadline", None)
+        if configure_deadline is not None:
+            configure_deadline(deadline)
+
+        def abort() -> None:
+            expired.set()
+            sock = active_socket[0] or getattr(connection, "sock", None)
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            _safe_close(connection)
+
+        timer = threading.Timer(deadline - time.monotonic(), abort)
+        timer.daemon = True
+        timer.start()
     try:
         connection.request(method, path, body=body, headers=headers)
+        active_socket[0] = getattr(connection, "sock", None)
         response = connection.getresponse()
         status = int(response.status)
         raw = response.read(request.max_response_bytes + 1)
@@ -129,12 +181,33 @@ def perform_bounded_https_request(
         session_id = str(getheader("Mcp-Session-Id", "") or "") if getheader else ""
     except TimeoutError as exc:
         # Dispatched, but the outcome cannot be confirmed: never a false success.
-        raise ToolAdapterUncertain() from exc
+        code = (
+            "REQUEST_DEADLINE_EXCEEDED"
+            if expired.is_set() or (deadline is not None and time.monotonic() >= deadline)
+            else "OUTCOME_UNKNOWN"
+        )
+        raise ToolAdapterUncertain(code) from exc
     except OSError as exc:
+        if expired.is_set():
+            raise ToolAdapterUncertain("REQUEST_DEADLINE_EXCEEDED") from exc
         raise ToolAdapterError("CONNECTION_FAILED") from exc
+    except ValueError as exc:
+        if expired.is_set():
+            raise ToolAdapterUncertain("REQUEST_DEADLINE_EXCEEDED") from exc
+        raise
+    except http.client.HTTPException as exc:
+        if expired.is_set():
+            raise ToolAdapterUncertain("REQUEST_DEADLINE_EXCEEDED") from exc
+        if deadline is not None:
+            raise ToolAdapterError("RESPONSE_INCOMPLETE") from exc
+        raise
     finally:
+        if timer is not None:
+            timer.cancel()
         _safe_close(connection)
 
+    if expired.is_set() or (deadline is not None and time.monotonic() > deadline):
+        raise ToolAdapterUncertain("REQUEST_DEADLINE_EXCEEDED")
     if 300 <= status < 400:
         raise ToolAdapterError("REDIRECT_NOT_ALLOWED")
     if len(raw) > request.max_response_bytes:

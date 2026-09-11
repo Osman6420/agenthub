@@ -23,6 +23,11 @@ from apps.documents.services import (
     upload_document,
 )
 from apps.ingestion.confluence import ConfluenceDataCenterClient, ConfluenceError, ConfluencePage
+from apps.ingestion.connector_jobs import (
+    cleanup_connector_uploads,
+    complete_connector_snapshot,
+    connector_write,
+)
 from apps.ingestion.models import (
     ConfluenceCursorState,
     ConfluenceDocumentCursor,
@@ -32,6 +37,7 @@ from apps.ingestion.models import (
     ConfluenceSyncStatus,
     ConnectorType,
     SourceStatus,
+    StagedIndexBuildJob,
     TenantConfluenceProfileGrant,
 )
 from apps.ingestion.services import source_lock
@@ -94,6 +100,10 @@ def execute_confluence_sync(
 def _claim_run(run_id: int, *, organization_id: int) -> ConfluenceSyncRun | None:
     with transaction.atomic():
         set_tenant_context(organization_id)
+        if StagedIndexBuildJob.objects.filter(
+            organization_id=organization_id, confluence_sync_run_id=run_id
+        ).exists():
+            return None
         run = (
             ConfluenceSyncRun.objects.select_for_update(of=("self",))
             .select_related("source", "source__document_set", "confluence_profile")
@@ -140,7 +150,24 @@ def _claim_run(run_id: int, *, organization_id: int) -> ConfluenceSyncRun | None
 
 
 def _validate_runtime_grant(run: ConfluenceSyncRun) -> None:
+    from apps.ingestion.connections import ConnectionError, verify_source_connection
+    from apps.ingestion.rest_services import RestServiceError
+    from apps.ingestion.source_revisions import assert_revision_sync
+
     source = run.source
+    try:
+        assert_revision_sync(source, scheduled=run.schedule_id is not None)
+    except RestServiceError as exc:
+        raise ConfluenceError(exc.code) from exc
+    try:
+        connection_profile = verify_source_connection(source)
+    except ConnectionError as exc:
+        raise ConfluenceError(exc.code) from None
+    if (
+        connection_profile is not None
+        and connection_profile.status != ConfluenceProfileStatus.ACTIVE
+    ):
+        raise ConfluenceError("CONFLUENCE_PROFILE_DISABLED")
     profile = run.confluence_profile
     if source.connector_type != ConnectorType.CONFLUENCE_DC:
         raise ConfluenceError("CONFLUENCE_SOURCE_REQUIRED")
@@ -161,6 +188,8 @@ def _validate_runtime_grant(run: ConfluenceSyncRun) -> None:
 
 
 def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> None:
+    with connector_write(run):
+        pass
     source = run.source
     profile = run.confluence_profile
     config = source.connector_config
@@ -174,14 +203,12 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
         excluded_page_ids=set(config["excluded_page_ids"]),
     ):
         discovered += 1
-        with transaction.atomic():
-            set_tenant_context(run.organization_id)
+        with connector_write(run):
             cursor = ConfluenceDocumentCursor.objects.filter(
                 source=source, external_page_id=page.page_id
             ).first()
         if cursor is not None and cursor.external_version == page.version:
-            with transaction.atomic():
-                set_tenant_context(run.organization_id)
+            with connector_write(run):
                 cursor.root_page_id = page.root_page_id
                 cursor.external_updated_at = page.updated_at
                 cursor.last_seen_run = run
@@ -202,8 +229,7 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
                 changed += 1
             else:
                 unchanged += 1
-        with transaction.atomic():
-            set_tenant_context(run.organization_id)
+        with connector_write(run):
             ConfluenceSyncRun.objects.filter(pk=run.pk).update(
                 discovered_count=discovered,
                 changed_count=changed,
@@ -211,8 +237,7 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
                 fetched_bytes=client.fetched_bytes,
             )
 
-    with transaction.atomic():
-        set_tenant_context(run.organization_id)
+    with connector_write(run):
         missing = ConfluenceDocumentCursor.objects.filter(
             source=source, state=ConfluenceCursorState.ACTIVE
         ).exclude(last_seen_run=run)
@@ -237,6 +262,7 @@ def _execute_snapshot(run: ConfluenceSyncRun, client: ConfluenceSyncClient) -> N
             source_document_version_ids=(cursor.document_version_id for cursor in active_cursors),
             actor="confluence-worker",
         )
+        complete_connector_snapshot(run)
         locked = ConfluenceSyncRun.objects.select_for_update().get(pk=run.pk)
         locked.status = ConfluenceSyncStatus.SUCCEEDED
         locked.snapshot_complete = True
@@ -289,6 +315,22 @@ def _persist_changed_page(
     body: bytes,
     existing_cursor: ConfluenceDocumentCursor | None,
 ) -> bool:
+    created_keys: list[str] = []
+    try:
+        with connector_write(run):
+            return _persist_changed_page_locked(run, page, body, existing_cursor, created_keys)
+    except Exception:
+        cleanup_connector_uploads(organization_id=run.organization_id, created_keys=created_keys)
+        raise
+
+
+def _persist_changed_page_locked(
+    run: ConfluenceSyncRun,
+    page: ConfluencePage,
+    body: bytes,
+    existing_cursor: ConfluenceDocumentCursor | None,
+    created_keys: list[str],
+) -> bool:
     source = run.source
     logical_id = f"confluence-{source.pk}-{page.page_id}"
     checksum = hashlib.sha256(body).hexdigest()
@@ -318,6 +360,7 @@ def _persist_changed_page(
             document_set_version=draft,
             source=source,
         )
+        created_keys.append(version.object_key)
         document = version.document
         material_change = True
     else:

@@ -40,12 +40,15 @@ class OrganizationResponsibility(models.TextChoices):
 
 class ProjectResponsibility(models.TextChoices):
     VIEWER = "project_viewer", "Project viewer"
+    EDITOR = "project_editor", "Proje düzenleyeni"
+    MANAGER = "project_manager", "Proje yöneticisi"
     ADMINISTRATOR = "project_administrator", "Project administrator"
 
 
 class ScenarioResponsibility(models.TextChoices):
     VIEWER = "scenario_viewer", "Scenario viewer"
     EDITOR = "scenario_editor", "Scenario editor"
+    MANAGER = "scenario_manager", "Senaryo yöneticisi"
     RELEASE_MANAGER = "scenario_release_manager", "Scenario release manager"
     RUNTIME_OPERATOR = "scenario_runtime_operator", "Scenario runtime operator"
     APPROVER = "scenario_approver", "Scenario approver"

@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import json
+import socket
+import ssl
+import time
+from threading import Event
 from typing import Any
 
 import pytest
 
 from apps.tools.adapters import ToolAdapterError, ToolAdapterRequest, ToolAdapterUncertain
 from apps.tools.egress import ValidatedDestination
-from apps.tools.http_adapter import HttpToolAdapter
+from apps.tools.http_adapter import (
+    HttpToolAdapter,
+    _PinnedHTTPSConnection,
+    perform_bounded_https_request,
+)
 
 
 class _FakeResponse:
@@ -74,6 +82,73 @@ def _request(**overrides: Any) -> ToolAdapterRequest:
     }
     base.update(overrides)
     return ToolAdapterRequest(**base)
+
+
+def test_absolute_deadline_interrupts_a_stalled_response() -> None:
+    released = Event()
+
+    class Socket:
+        def shutdown(self, how):
+            released.set()
+
+    class StalledResponse:
+        status = 200
+
+        def read(self, amount):
+            assert released.wait(2), "deadline failed to interrupt the response"
+            raise OSError("socket closed")
+
+    class StalledConnection(_FakeConnection):
+        def __init__(self):
+            super().__init__(StalledResponse())
+            self.sock = Socket()
+
+    conn = StalledConnection()
+    started = time.monotonic()
+    with pytest.raises(ToolAdapterUncertain, match="REQUEST_DEADLINE_EXCEEDED"):
+        perform_bounded_https_request(
+            lambda *args: conn,
+            _request(),
+            path="/test",
+            headers={},
+            body=b"{}",
+            deadline=started + 0.03,
+        )
+    assert conn.closed and released.is_set()
+    assert time.monotonic() - started < 1
+
+
+def test_deadline_bounds_real_tls_handshake_without_disabling_certificate_checks(monkeypatch):
+    client_sock, peer_sock = socket.socketpair()
+    context = ssl.create_default_context()
+    dialed = []
+
+    def connect(address, timeout):
+        dialed.append(address)
+        client_sock.settimeout(timeout)
+        return client_sock
+
+    monkeypatch.setattr("apps.tools.http_adapter.socket.create_connection", connect)
+    conn = _PinnedHTTPSConnection(
+        "93.184.216.34", 443, server_hostname="api.example.com", timeout=5, context=context
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(ToolAdapterUncertain, match="REQUEST_DEADLINE_EXCEEDED"):
+            perform_bounded_https_request(
+                lambda *args: conn,
+                _request(),
+                path="/test",
+                headers={},
+                deadline=started + 0.08,
+            )
+        assert dialed == [("93.184.216.34", 443)]
+        assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
+        assert time.monotonic() - started < 1
+    finally:
+        conn.close()
+        client_sock.close()
+        peer_sock.close()
 
 
 def test_success_connects_to_validated_ip_and_sends_host_and_auth() -> None:

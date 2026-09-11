@@ -18,6 +18,7 @@ from typing import Any, cast
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import IntegrityError, connection, transaction
@@ -50,7 +51,12 @@ from apps.builder.models import WorkflowDraft
 from apps.builder.services import BuilderError
 from apps.catalog.lifecycle import ScenarioLifecycleError, activate_scenario, disable_scenario
 from apps.catalog.models import AIProject, Scenario
-from apps.catalog.services import ProjectOwnerError, create_console_project, create_console_scenario
+from apps.catalog.services import (
+    ProjectOwnerError,
+    create_authorized_console_scenario,
+    create_console_project,
+    create_console_scenario,
+)
 from apps.console import context as console_context
 from apps.console import operations, profile_fields, scoping
 from apps.console.forms import (
@@ -88,6 +94,7 @@ from apps.console.scenario_defaults import (
     prepare_scenario_contract_defaults,
     scenario_artifact_logical_id,
 )
+from apps.documents import access_services as document_access_services
 from apps.documents import services as document_services
 from apps.documents.content_access import DocumentContentError, read_document_version_content
 from apps.documents.models import (
@@ -107,6 +114,7 @@ from apps.documents.profile_authoring import (
     DocumentProfileAuthoringError,
     publish_document_profile_artifact,
 )
+from apps.documents.retrieve_scope import SHARED_DATA_CAPABILITIES
 from apps.documents.services import DocumentError, DocumentSetControlError
 from apps.documents.storage import StorageError
 from apps.evaluations import scenario_questions
@@ -148,9 +156,10 @@ from apps.identity.assignment_services import (
     grant_scenario_responsibility,
     remove_responsibility_assignment,
 )
-from apps.identity.authorization import AuthoritySource
+from apps.identity.authorization import AuthoritySource, _active_assignments
 from apps.identity.authorization import Capability as OperatorCapability
 from apps.identity.authorization import authorize as authorize_operator
+from apps.identity.consumer_access import ConsumerAccessError, create_console_binding
 from apps.identity.credentials import (
     ConsumerSubjectAllocationError,
     CredentialLifecycleError,
@@ -174,6 +183,7 @@ from apps.identity.models import (
     ScenarioResponsibility,
     ScenarioResponsibilityAssignment,
 )
+from apps.identity.scenario_actions import authorize_scenario_action, scenario_allowed_actions
 from apps.ingestion.confluence_services import (
     ConfluenceAuthorizationError,
     ConfluenceServiceError,
@@ -226,7 +236,11 @@ from apps.ingestion.rest_services import (
     mark_rest_dispatch_failed,
     register_rest_profile,
 )
-from apps.ingestion.staged_build import StagedBuildError, promote_staged_index
+from apps.ingestion.staged_build import (
+    StagedBuildError,
+    active_releases_pinning_document_set_version,
+    promote_staged_index,
+)
 from apps.ingestion.tasks import sync_confluence_source, sync_rest_source
 from apps.ingestion.vector_store import (
     VectorStoreError,
@@ -243,15 +257,24 @@ from apps.orchestration.services import (
     disable_model_profile,
     register_model_profile,
 )
+from apps.releases.authoring import compile_operator_candidate
 from apps.releases.compiler import (
     ArtifactRef,
     CompileError,
-    compile_release,
     role_accepts_artifact_type,
 )
-from apps.releases.lifecycle import LifecycleError, promote, rollback, start_canary, stop_canary
+from apps.releases.lifecycle import (
+    ROLLBACK_TARGET_STATES,
+    LifecycleError,
+    promote,
+    rollback,
+    start_canary,
+    stop_canary,
+)
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
+from apps.tenancy.context import operator_transaction
 from apps.tenancy.identifiers import IdentifierAllocationError
+from apps.tenancy.middleware import durable_operator_view
 from apps.tenancy.models import (
     MembershipStatus,
     Organization,
@@ -307,7 +330,7 @@ _CREATE_PROJECT_REASON = (
     "Yeni proje oluşturmak için organizasyon yöneticisi (organization_admin) rolü gerekir."
 )
 _CREATE_SCENARIO_REASON = (
-    "Yeni senaryo oluşturmak için senaryo düzenleyici (scenario_editor) veya üzeri bir rol gerekir."
+    "Yeni senaryo oluşturmak için ilgili projede senaryo oluşturma yetkisi gerekir."
 )
 _CREATE_CONSUMER_REASON = (
     "İstemci yönetimi için organizasyon yöneticisi (organization_admin) rolü gerekir."
@@ -319,7 +342,7 @@ _AUTHOR_REASON = (
     "Bu işlem için senaryo düzenleyici (scenario_editor) veya üzeri bir yazma rolü gerekir."
 )
 _RELEASE_AUTHORITY_REASON = (
-    "Bu işlem için Global Administrator veya organizasyon yöneticisi yetkisi gerekir."
+    "Bu işlem için bu senaryoda yöneticilik veya yayın yöneticiliği yetkisi gerekir."
 )
 _ADMIN_REASON = "Bu işlem için organizasyon yöneticisi (organization_admin) rolü gerekir."
 
@@ -806,6 +829,7 @@ def health_issues(request: HttpRequest, category: str) -> HttpResponse:
                 ],
             }
             for job in jobs
+            if job.document_set_version is not None
         ]
     else:
         raise Http404
@@ -1189,13 +1213,27 @@ def project_detail(
 ) -> HttpResponse:
     project = _scoped_project(request.user, pk, public_id)
     request.session[console_context.SESSION_KEY] = project.organization_id
-    scenarios_qs = Scenario.objects.filter(project=project).order_by("name", "slug")
+    scenarios_qs = (
+        scoping.scoped_scenarios(request.user).filter(project=project).order_by("name", "slug")
+    )
     scenario_candidates = list(scenarios_qs[:201])
+    project_shell_only = (
+        authorize_operator(
+            user=request.user, capability=OperatorCapability.PROJECT_VIEW, project=project
+        ).reason
+        == "SCENARIO_PARENT_SHELL"
+    )
     return render(
         request,
         "console/project_detail.html",
         {
             "project": project,
+            "project_shell_only": project_shell_only,
+            "access_scenarios": scoping.authorized_scenarios(
+                request.user, OperatorCapability.SCENARIO_ACCESS_MANAGE
+            )
+            .filter(project=project)
+            .order_by("name", "pk")[:200],
             "organization": project.organization,
             "scenarios": scenario_candidates[:200],
             "scenarios_limited": len(scenario_candidates) > 200,
@@ -1208,12 +1246,16 @@ def project_detail(
                 project=project,
             ).allowed,
             "create_scenario_reason": _CREATE_SCENARIO_REASON,
-            "administrator_assignments": project.responsibility_assignments.filter(
-                status=ResponsibilityStatus.ACTIVE
-            )
+            "administrator_assignments": project.responsibility_assignments.none()
+            if project_shell_only
+            else project.responsibility_assignments.filter(status=ResponsibilityStatus.ACTIVE)
             .select_related("membership__user")
             .order_by("membership__user__username", "membership_id"),
-            "can_manage_access": can_admin_org(request.user, project.organization_id),
+            "can_manage_access": authorize_operator(
+                user=request.user,
+                capability=OperatorCapability.PROJECT_ACCESS_MANAGE,
+                project=project,
+            ).allowed,
         },
     )
 
@@ -1221,8 +1263,76 @@ def project_detail(
 @login_required
 @require_GET
 def scenarios(request: HttpRequest) -> HttpResponse:
-    console_context.resolve_active_organization(request)
-    return redirect("console:projects")
+    active_org = console_context.resolve_active_organization(request)
+    queryset = scoping.narrow_to_active_organization(
+        scoping.scoped_scenarios(request.user), active_org
+    )
+    projects_qs = scoping.narrow_to_active_organization(
+        scoping.scoped_projects(request.user), active_org
+    ).order_by("name", "pk")
+    selected_project = None
+    project_filter = request.GET.get("project", "").strip()
+    if project_filter:
+        try:
+            project_public_id = uuid.UUID(project_filter)
+        except ValueError as exc:
+            raise Http404 from exc
+        selected_project = projects_qs.filter(public_id=project_public_id).first()
+        if selected_project is None:
+            raise Http404
+        queryset = queryset.filter(project=selected_project)
+    search = request.GET.get("q", "").strip()[:200]
+    if search:
+        queryset = queryset.filter(Q(name__icontains=search) | Q(slug__icontains=search))
+    status = request.GET.get("status", "")
+    status_choices = [("draft", "Taslak"), ("active", "Etkin"), ("disabled", "Devre dışı")]
+    if status not in dict(status_choices):
+        status = ""
+    if status:
+        queryset = queryset.filter(status=status)
+    page = Paginator(queryset.order_by("name", "pk"), 25).get_page(request.GET.get("page"))
+    project_options = list(projects_qs[:201])
+    # Creation stays on the existing project-authorized route, never on a list POST.
+    can_create = bool(
+        selected_project
+        and selected_project.organization.status == OrganizationStatus.ACTIVE
+        and authorize_operator(
+            user=request.user,
+            capability=OperatorCapability.SCENARIO_CREATE,
+            organization=selected_project.organization,
+            project=selected_project,
+        ).allowed
+    )
+    can_create_any = can_create or (
+        selected_project is None
+        and any(
+            project.organization.status == OrganizationStatus.ACTIVE
+            and authorize_operator(
+                user=request.user,
+                capability=OperatorCapability.SCENARIO_CREATE,
+                organization=project.organization,
+                project=project,
+            ).allowed
+            for project in project_options[:200]
+        )
+    )
+    return render(
+        request,
+        "console/scenarios.html",
+        {
+            "scenarios": page,
+            "page": page,
+            "search": search,
+            "status_filter": status,
+            "status_choices": status_choices,
+            "project_options": project_options[:200],
+            "projects_limited": len(project_options) > 200,
+            "selected_project": selected_project,
+            "can_create": can_create,
+            "can_create_any": can_create_any,
+            "create_reason": _CREATE_SCENARIO_REASON,
+        },
+    )
 
 
 def _scoped_scenario(user: UserLike, pk: int | None = None, public_id: object = None) -> Scenario:
@@ -1621,6 +1731,7 @@ def _resolved_ask_chunks(
                 "title": item.get("title", ""),
                 "score": item.get("score", 0),
                 "source_uri": item.get("source_uri", ""),
+                "chunk_kind": item.get("chunk_kind", "content"),
                 "text": resolve_chunk_text(
                     user=request.user,
                     organization_id=scenario.organization_id,
@@ -1652,6 +1763,17 @@ def scenario_detail(
         for value in raw_pinned_version_ids
         if isinstance(value, int) and not isinstance(value, bool)
     }
+    active_generation_set_ids = {
+        value
+        for value in (
+            active_release.manifest.get("document_set_ids", [])
+            if active_release
+            and active_release.execution_contract == "scenario-revision/v1"
+            and active_release.manifest.get("data_selection") == "active_generation"
+            else []
+        )
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
     consumer_bindings = list(
         ConsumerBinding.objects.select_related("consumer")
         .filter(scenario=scenario)
@@ -1670,6 +1792,15 @@ def scenario_detail(
         .order_by("document_set__name", "document_set__logical_id")
     )
     relationship_rows = []
+    live_set_grants = {
+        grant.document_set_id: grant
+        for grant in scenario.document_set_grants.filter(
+            organization_id=organization_id,
+            permission="retrieve",
+            status="granted",
+            revoked_at__isnull=True,
+        )
+    }
     for binding in bindings:
         document_set = binding.document_set
         latest_published_version = (
@@ -1702,12 +1833,20 @@ def scenario_detail(
                 "document_set": document_set,
                 "latest_version": latest_published_version,
                 "release_version": release_version,
+                "follows_active_generation": document_set.pk in active_generation_set_ids,
                 "index": release_version.built_index_version if release_version else None,
                 "scenario_count": document_set.scenario_bindings.count(),
+                "shared_consent": bool(
+                    live_set_grants.get(document_set.pk)
+                    and live_set_grants[document_set.pk].shared_consumers
+                ),
                 "consumer_rows": [
                     {
                         "binding": consumer_binding,
                         "grant": grants_by_consumer_id.get(consumer_binding.consumer_id),
+                        "can_use_shared": bool(
+                            SHARED_DATA_CAPABILITIES.intersection(consumer_binding.capabilities)
+                        ),
                     }
                     for consumer_binding in active_consumer_bindings
                 ],
@@ -1720,6 +1859,32 @@ def scenario_detail(
             }
         )
     bound_set_ids = {binding.document_set_id for binding in bindings}
+    candidate_document_sets_qs = (
+        scoping.scoped_document_sets(request.user)
+        .filter(organization_id=organization_id, status="active")
+        .exclude(id__in=bound_set_ids)
+        .order_by("name", "logical_id")
+    )
+    # BUG-007: distinguish *why* the bind form is empty instead of leaving a silent gap --
+    # this org has no active document sets at all, the operator has no document-set-level
+    # authority over any of them (a scenario-only responsibility never grants that, discovered
+    # live in the Sağlamlaştırma round), or every set that exists is already bound here.
+    document_set_bind_empty_reason = ""
+    if not candidate_document_sets_qs.exists():
+        org_has_any_active_set = DocumentSet.objects.filter(
+            organization_id=organization_id, status="active"
+        ).exists()
+        user_has_any_scoped_set = (
+            scoping.scoped_document_sets(request.user)
+            .filter(organization_id=organization_id, status="active")
+            .exists()
+        )
+        if not org_has_any_active_set:
+            document_set_bind_empty_reason = "NO_DOCUMENT_SETS"
+        elif not user_has_any_scoped_set:
+            document_set_bind_empty_reason = "NO_DOCUMENT_SET_AUTHORITY"
+        else:
+            document_set_bind_empty_reason = "ALL_ALREADY_BOUND"
     project_drafts = list(
         WorkflowDraft.objects.filter(
             organization_id=organization_id, project=scenario.project, scenario=scenario
@@ -1798,19 +1963,14 @@ def scenario_detail(
         ),
         None,
     )
-    can_write_scenario = can_author_scenarios(
-        request.user,
-        organization_id,
-        project=scenario.project,
-        scenario=scenario,
+    allowed_actions = scenario_allowed_actions(user=request.user, scenario=scenario)
+    from apps.console.publication_views import publication_context
+
+    publication_state = publication_context(
+        scenario=scenario, actor=request.user, allowed_actions=allowed_actions
     )
-    can_release_scenario = authorize_operator(
-        user=request.user,
-        capability=OperatorCapability.SCENARIO_RELEASE,
-        organization=scenario.organization,
-        project=scenario.project,
-        scenario=scenario,
-    ).allowed
+    can_write_scenario = allowed_actions["edit"]
+    can_release_scenario = allowed_actions["release"]
     studio_url = (
         f"{reverse('console:builder')}?organization={scenario.organization.slug}"
         f"&scenario={scenario.public_id}"
@@ -1830,6 +1990,14 @@ def scenario_detail(
         author_reason=_AUTHOR_REASON,
         release_reason=_RELEASE_AUTHORITY_REASON,
     )
+    question_step = {
+        **setup_steps[4],
+        "number": 4,
+        "action": "Test sorularını düzenle",
+        "detail": (
+            "Kaydettiğiniz sorular, yayına alma işlemi sırasında aday sürüm üzerinde çalıştırılır."
+        ),
+    }
     runtime_controls = applicable_runtime_controls(
         organization_id,
         project_id=scenario.project_id,
@@ -1856,6 +2024,9 @@ def scenario_detail(
             "governed_artifacts": governed_artifacts,
             "contract_status": contract_status,
             "setup_steps": setup_steps,
+            "primary_setup_steps": [*setup_steps[:3], question_step],
+            "advanced_publication_steps": [setup_steps[3], setup_steps[5]],
+            **publication_state,
             "ask_result": ask_result,
             "studio_url": studio_url,
             "artifact_type_descriptions": ARTIFACT_TYPE_DESCRIPTIONS,
@@ -1866,53 +2037,45 @@ def scenario_detail(
             "dsl_guide": _workflow_dsl_guide(),
             "consumer_bindings": consumer_bindings,
             "relationship_rows": relationship_rows,
-            "candidate_document_sets": scoping.scoped_document_sets(request.user)
-            .filter(organization_id=organization_id, status="active")
-            .exclude(id__in=bound_set_ids)
-            .order_by("name", "logical_id"),
-            "can_write": can_author_scenarios(
-                request.user,
-                organization_id,
-                project=scenario.project,
-                scenario=scenario,
-            ),
-            "can_evaluate": authorize_operator(
-                user=request.user,
-                capability=OperatorCapability.SCENARIO_TEST,
-                organization=scenario.organization,
-                project=scenario.project,
-                scenario=scenario,
-            ).allowed,
-            "can_compile_release": authorize_operator(
-                user=request.user,
-                capability=OperatorCapability.SCENARIO_RELEASE,
-                organization=scenario.organization,
-                project=scenario.project,
-                scenario=scenario,
-            ).allowed,
-            "editor_assignments": scenario.responsibility_assignments.filter(
-                status=ResponsibilityStatus.ACTIVE
+            "candidate_document_sets": candidate_document_sets_qs,
+            "document_set_bind_empty_reason": document_set_bind_empty_reason,
+            "allowed_actions": allowed_actions,
+            "can_write": allowed_actions["edit"],
+            "can_evaluate": allowed_actions["test"],
+            "can_compile_release": allowed_actions["compile"],
+            "inherited_assignments": _active_assignments(
+                scenario.project.responsibility_assignments.filter(
+                    responsibility__in=[
+                        ProjectResponsibility.VIEWER,
+                        ProjectResponsibility.EDITOR,
+                        ProjectResponsibility.MANAGER,
+                    ]
+                )
             )
             .select_related("membership__user")
-            .order_by("membership__user__username", "membership_id"),
+            .order_by("membership__user__username", "pk")[:500]
+            if scenario.access_mode == "inherit"
+            else [],
+            "editor_assignments": _active_assignments(
+                scenario.responsibility_assignments.exclude(
+                    responsibility__in=[
+                        ScenarioResponsibility.VIEWER,
+                        ScenarioResponsibility.EDITOR,
+                        ScenarioResponsibility.MANAGER,
+                    ]
+                    if scenario.access_mode == "inherit"
+                    else []
+                )
+            )
+            .select_related("membership__user")
+            .order_by("membership__user__username", "membership_id")[:500],
             "can_manage_access": can_admin_org(request.user, organization_id),
+            "can_manage_scenario_access": allowed_actions["access"],
             # Role-honest affordances (Scope D): reasons shown on disabled authoring controls.
             "author_reason": _AUTHOR_REASON,
             "release_reason": _RELEASE_AUTHORITY_REASON,
-            "can_pause_runtime": authorize_operator(
-                user=request.user,
-                capability=OperatorCapability.RUNTIME_PAUSE,
-                organization=scenario.organization,
-                project=scenario.project,
-                scenario=scenario,
-            ).allowed,
-            "can_resume_runtime": authorize_operator(
-                user=request.user,
-                capability=OperatorCapability.RUNTIME_RESUME,
-                organization=scenario.organization,
-                project=scenario.project,
-                scenario=scenario,
-            ).allowed,
+            "can_pause_runtime": allowed_actions["runtime_pause"],
+            "can_resume_runtime": allowed_actions["runtime_resume"],
             "exact_runtime_control": exact_runtime_control,
             "effective_runtime_controls": runtime_controls,
             "runtime_reason_codes": sorted(RUNTIME_CONTROL_REASON_CODES),
@@ -2124,6 +2287,7 @@ _TEST_QUESTION_MESSAGES = {
 }
 
 
+@durable_operator_view
 @login_required
 @require_POST
 def scenario_publish_and_verify(request: HttpRequest, public_id: object) -> HttpResponse:
@@ -2134,24 +2298,25 @@ def scenario_publish_and_verify(request: HttpRequest, public_id: object) -> Http
     the action, and then hunt for the resulting candidate on the releases list.
     """
 
-    scenario = _scoped_scenario(request.user, public_id=public_id)
-    if not can_author_scenarios(
-        request.user,
-        scenario.organization_id,
-        project=scenario.project,
-        scenario=scenario,
-    ):
-        raise PermissionDenied
-    drafts = list(WorkflowDraft.objects.filter(scenario=scenario).order_by("-updated_at")[:2])
-    if len(drafts) != 1:
-        messages.error(
-            request,
-            "Bu senaryonun tek bir akışı olmalı; akışı Scenario Studio'da düzenleyin."
-            if drafts
-            else "Bu senaryoya bağlı bir akış yok.",
-        )
-        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
-    draft = drafts[0]
+    with operator_transaction(request.user):
+        scenario = _scoped_scenario(request.user, public_id=public_id)
+        if not can_author_scenarios(
+            request.user,
+            scenario.organization_id,
+            project=scenario.project,
+            scenario=scenario,
+        ):
+            raise PermissionDenied
+        drafts = list(WorkflowDraft.objects.filter(scenario=scenario).order_by("-updated_at")[:2])
+        if len(drafts) != 1:
+            messages.error(
+                request,
+                "Bu senaryonun tek bir akışı olmalı; akışı Scenario Studio'da düzenleyin."
+                if drafts
+                else "Bu senaryoya bağlı bir akış yok.",
+            )
+            return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+        draft = drafts[0]
     try:
         result = builder_services.publish_and_verify(
             draft,
@@ -2255,26 +2420,13 @@ def scenario_promote(request: HttpRequest, public_id: object) -> HttpResponse:
 @require_GET
 def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonResponse:
     scenario = _scoped_scenario(request.user, public_id=public_id)
-    release_allowed = authorize_operator(
-        user=request.user,
-        capability=OperatorCapability.SCENARIO_RELEASE,
-        organization=scenario.organization,
-        project=scenario.project,
-        scenario=scenario,
-    ).allowed
-    author_allowed = can_author_scenarios(
-        request.user,
-        scenario.organization_id,
-        project=scenario.project,
-        scenario=scenario,
-    )
-    if not (release_allowed or author_allowed):
+    if not authorize_scenario_action(
+        user=request.user, scenario=scenario, action="compile"
+    ).allowed:
         raise PermissionDenied
     if scenario.organization.status != OrganizationStatus.ACTIVE:
         raise PermissionDenied
     if request.GET.get("preset", "").strip() == "minimum":
-        if not release_allowed:
-            raise PermissionDenied
         candidates: list[tuple[str, str]] = []
         workflow_logical_ids = list(
             WorkflowDraft.objects.filter(scenario=scenario)
@@ -2401,7 +2553,7 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
                 continue
             key = (item.get("type"), item.get("logical_id"), item.get("version"))
             if key in refs:
-                refs[key] += 1
+                refs[cast(tuple[str, str, int], key)] += 1
     role_candidates = [artifact_type, f"{artifact_type}.{logical_id}"]
     if artifact_type == ArtifactType.WORKFLOW_DEFINITION:
         role_candidates = ["workflow_definition", f"child_workflow.{logical_id}"]
@@ -2436,12 +2588,8 @@ def scenario_artifact_options(request: HttpRequest, public_id: object) -> JsonRe
 def scenario_compile_candidate(request: HttpRequest, public_id: object) -> HttpResponse:
     scenario = _scoped_scenario(request.user, public_id=public_id)
     organization_id = scenario.organization_id
-    if not authorize_operator(
-        user=request.user,
-        capability=OperatorCapability.SCENARIO_RELEASE,
-        organization=scenario.organization,
-        project=scenario.project,
-        scenario=scenario,
+    if not authorize_scenario_action(
+        user=request.user, scenario=scenario, action="compile"
     ).allowed:
         raise PermissionDenied
     if scenario.organization.status != OrganizationStatus.ACTIVE:
@@ -2475,25 +2623,14 @@ def scenario_compile_candidate(request: HttpRequest, public_id: object) -> HttpR
     active = ScenarioRelease.objects.filter(scenario=scenario, status=ReleaseStatus.ACTIVE).first()
     runtime_version = active.runtime_version if active else "runtime:v1"
     try:
-        with transaction.atomic():
-            release = compile_release(
-                scenario=scenario,
-                refs=refs,
-                runtime_version=runtime_version,
-                created_by=request.user.get_username(),
-            )
-            record_event(
-                actor_type="user",
-                actor_id=request.user.get_username(),
-                action="console.scenario.release.compile",
-                outcome="success",
-                organization_id=organization_id,
-                resource_type="scenario_release",
-                resource_id=str(release.pk),
-                reason=release.artifact_manifest_sha256,
-                request_id=_request_id(request),
-                trace_id=_trace_id(request),
-            )
+        release = compile_operator_candidate(
+            scenario=scenario,
+            refs=refs,
+            runtime_version=runtime_version,
+            actor=request.user,
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
     except CompileError as exc:
         diagnostic = exc.as_diagnostic()
         record_event(
@@ -2548,10 +2685,24 @@ def scenario_bind_document_set(
                 document_set=document_set,
                 actor=request.user.get_username(),
             )
-            messages.success(
-                request,
-                "Doküman seti bağlandı. Değişiklik yeni release derlendiğinde sabitlenir.",
+            grant = document_access_services.grant_scenario_document_set_access_if_authorized(
+                scenario=scenario,
+                document_set=document_set,
+                actor=request.user,
             )
+            if grant is not None:
+                messages.success(
+                    request,
+                    "Doküman seti bağlandı ve retrieval izni verildi. "
+                    "Değişiklik yeni release derlendiğinde sabitlenir.",
+                )
+            else:
+                messages.success(
+                    request,
+                    "Doküman seti bağlandı. Değişiklik yeni release derlendiğinde sabitlenir. "
+                    "Retrieval için bir doküman seti yöneticisinin ayrıca erişim vermesi "
+                    "gerekiyor.",
+                )
         except DocumentError as exc:
             messages.error(request, f"Bağ kurulamadı: {exc.code}")
     return redirect("console:scenario_detail_public", public_id=scenario.public_id)
@@ -3107,6 +3258,41 @@ def platform_setup(request: HttpRequest) -> HttpResponse:
     )
 
 
+_PROFILE_FIELD_GROUPS: dict[str, tuple[str, ...]] = {
+    "Kimlik": ("logical_id", "revision", "provider", "model"),
+    "Bağlantı": ("scheme", "host", "port", "path", "base_url", "network_policy_id"),
+    "Kimlik doğrulama": ("secret_ref",),
+    "Limitler ve model davranışı": (
+        "timeout_seconds",
+        "max_response_bytes",
+        "max_output_tokens",
+        "max_batch_size",
+        "dimensions",
+        "index_type",
+        "normalize",
+        "distance_metric",
+    ),
+}
+
+
+def _grouped_profile_fields(form: Any) -> list[tuple[str, list[Any]]]:
+    """Bucket one profile registration form's fields into named groups for display only.
+
+    BUG-009: the form/model fields themselves are unchanged -- this only reorganizes how the
+    same fields are laid out, so a field this repo adds later (to any of the 4 profile kinds
+    this template serves) still renders, under "Diğer", instead of silently disappearing.
+    """
+    remaining = {field.name: field for field in form}
+    groups: list[tuple[str, list[Any]]] = []
+    for label, names in _PROFILE_FIELD_GROUPS.items():
+        bucket = [remaining.pop(name) for name in names if name in remaining]
+        if bucket:
+            groups.append((label, bucket))
+    if remaining:
+        groups.append(("Diğer", list(remaining.values())))
+    return groups
+
+
 def _profile_registration_form(kind: str, data: object = None) -> Any:
     forms_by_kind = {
         "model": ModelProfileRegistrationForm,
@@ -3158,7 +3344,12 @@ def platform_profile_create(request: HttpRequest, profile_kind: str) -> HttpResp
     return render(
         request,
         "console/platform_profile_form.html",
-        {"title": f"{profile_kind} profili", "profile_kind": profile_kind, "form": form},
+        {
+            "title": f"{profile_kind} profili",
+            "profile_kind": profile_kind,
+            "form": form,
+            "field_groups": _grouped_profile_fields(form),
+        },
     )
 
 
@@ -3564,7 +3755,7 @@ def release_detail(request: HttpRequest, release_id: int) -> HttpResponse:
             "can_eval": (can_manage or can_author_artifacts) and pre_active,
             "can_promote": can_manage and pre_active,
             "can_start_canary": can_manage and pre_active,
-            "can_rollback": can_manage and release.status == ReleaseStatus.SUPERSEDED,
+            "can_rollback": can_manage and release.status in ROLLBACK_TARGET_STATES,
             "can_author_artifacts": can_author_artifacts,
             "latest_eval": latest_eval,
             "latest_eval_cases": latest_eval_cases,
@@ -3618,10 +3809,12 @@ def report_eval_outcome(request: HttpRequest, run: EvalRun) -> None:
     )
 
 
+@durable_operator_view
 @login_required
 @require_POST
 def release_run_eval(request: HttpRequest, release_id: int) -> HttpResponse:
-    release = _evaluable_release(request.user, release_id)
+    with operator_transaction(request.user):
+        release = _evaluable_release(request.user, release_id)
     try:
         run = run_eval(release=release, created_by=request.user.get_username())
     except EvalError as exc:
@@ -4097,6 +4290,7 @@ def workflow_run_detail(request: HttpRequest, run_id: uuid.UUID) -> HttpResponse
         "id": run.pk,
         "org": run.organization.slug,
         "scenario": run.scenario.slug,
+        "scenario_url": reverse("console:scenario_detail_public", args=[run.scenario.public_id]),
         "status": run.status,
         "error": run.error_code,
         "awaiting_node": run.awaiting_reference,
@@ -4278,12 +4472,8 @@ def builder(request: HttpRequest) -> HttpResponse:
         )
         if scenario is None or (requested_org and requested_org != scenario.organization.slug):
             raise Http404
-        can_author_scenario = can_author_scenarios(
-            request.user,
-            scenario.organization_id,
-            project=scenario.project,
-            scenario=scenario,
-        )
+        allowed_actions = scenario_allowed_actions(user=request.user, scenario=scenario)
+        can_author_scenario = allowed_actions["edit"]
         initial = {
             "organization": scenario.organization.slug,
             "project_id": scenario.project_id,
@@ -4292,16 +4482,10 @@ def builder(request: HttpRequest) -> HttpResponse:
             "scenario_name": scenario.name,
             "project_name": scenario.project.name,
             "can_author_scenario": can_author_scenario,
+            "allowed_actions": allowed_actions,
         }
-        release_decision = authorize_operator(
-            user=request.user,
-            capability=OperatorCapability.SCENARIO_RELEASE,
-            organization=scenario.organization,
-            project=scenario.project,
-            scenario=scenario,
-        )
-        initial["can_compile_release"] = release_decision.allowed
-        if release_decision.allowed or can_author_scenario:
+        initial["can_compile_release"] = allowed_actions["compile"]
+        if allowed_actions["compile"]:
             initial["artifact_options_url"] = reverse(
                 "console:scenario_artifact_options",
                 args=[scenario.public_id],
@@ -4350,18 +4534,47 @@ def builder(request: HttpRequest) -> HttpResponse:
     return render(
         request,
         "console/builder.html",
-        {"title": "Workflow builder", "builder_orgs": orgs, "builder_initial": initial},
+        {
+            "title": "Workflow builder",
+            "builder_orgs": orgs,
+            "builder_initial": initial,
+            "scenario": scenario,
+        },
     )
 
 
 @login_required
 def documents(request: HttpRequest) -> HttpResponse:
     """List tenant-scoped document sets as the primary content workspace."""
+    from apps.console.rest_setup_views import SERVER_SESSION_ENGINES
+    from apps.ingestion.rest_setup_scope import can_begin_new_set, manageable_setup_sets
+
     user = request.user
     active_org = console_context.resolve_active_organization(request)
     document_sets_qs = scoping.narrow_to_active_organization(
         scoping.scoped_document_sets(user), active_org, field="organization_id"
-    ).order_by("name", "organization__name", "logical_id")
+    )
+    search = request.GET.get("q", "").strip()[:200]
+    status_filter = request.GET.get("status", "")
+    status_choices = [
+        ("active", "Etkin"),
+        ("quarantined", "Karantinada"),
+        ("archived", "Arşivlenmiş"),
+    ]
+    if status_filter not in dict(status_choices):
+        status_filter = ""
+    if search:
+        document_sets_qs = document_sets_qs.filter(
+            Q(name__icontains=search) | Q(logical_id__icontains=search)
+        )
+    if status_filter:
+        document_sets_qs = document_sets_qs.filter(status=status_filter)
+    page = Paginator(
+        document_sets_qs.annotate(version_count=Count("versions", distinct=True)).order_by(
+            "name", "organization__name", "logical_id", "pk"
+        ),
+        25,
+    ).get_page(request.GET.get("page"))
     sets = [
         {
             "id": s.id,
@@ -4371,9 +4584,10 @@ def documents(request: HttpRequest) -> HttpResponse:
             "logical_id": s.logical_id,
             "name": s.name,
             "status": s.status,
-            "versions": s.versions.count(),
+            "status_label": dict(status_choices).get(s.status, s.status),
+            "versions": s.version_count,
         }
-        for s in document_sets_qs
+        for s in page
     ]
     can_upload = active_org is not None and can_admin_org(user, active_org.pk)
     return render(
@@ -4382,8 +4596,21 @@ def documents(request: HttpRequest) -> HttpResponse:
         {
             "title": "Doküman setleri",
             "sets": sets,
+            "page": page,
+            "search": search,
+            "status_filter": status_filter,
+            "status_choices": status_choices,
             "set_form": DocumentSetForm(user=user, organization=active_org),
             "can_upload": can_upload,
+            "can_start_rest_setup": (
+                getattr(settings, "INGESTION_DURABLE_CONNECTOR_JOBS", False)
+                and settings.SESSION_ENGINE in SERVER_SESSION_ENGINES
+                and active_org is not None
+                and (
+                    can_begin_new_set(user, active_org)
+                    or manageable_setup_sets(user, active_org).exists()
+                )
+            ),
             # Role-honest affordance (Scope D): explain the disabled create form.
             "create_reason": "" if can_upload else _CREATE_DOCUMENT_SET_REASON,
         },
@@ -4528,12 +4755,35 @@ def document_set_detail(
 ) -> HttpResponse:
     document_set = _scoped_document_set(request.user, pk, public_id)
     request.session[console_context.SESSION_KEY] = document_set.organization_id
+    shared_access_decision = authorize_operator(
+        user=request.user,
+        capability=OperatorCapability.DOCUMENT_SET_RETRIEVE_GRANT,
+        document_set=document_set,
+    )
     can_write = can_manage_documents(
         request.user,
         document_set.organization_id,
         document_set=document_set,
     )
     can_promote_index = can_manage_document_set_operations(request.user, document_set)
+    active_release_impact_names: list[str] = []
+    if can_promote_index:
+        active_version_ids = list(
+            DocumentSetVersion.objects.filter(
+                document_set=document_set, status=DocumentSetVersionStatus.ACTIVE
+            ).values_list("id", flat=True)
+        )
+        affected_releases = [
+            release
+            for version_id in active_version_ids
+            for release in active_releases_pinning_document_set_version(
+                organization_id=document_set.organization_id,
+                document_set_version_id=version_id,
+            )
+        ]
+        active_release_impact_names = sorted(
+            {f"{release.scenario.name} (#{release.scenario_id})" for release in affected_releases}
+        )
     worker_available = compatible_worker_available()
     job_labels: dict[str, tuple[str, str]] = {
         StagedIndexBuildJobStatus.DISPATCH_PENDING: (
@@ -4569,11 +4819,37 @@ def document_set_detail(
 
     def _version_detail(v: DocumentSetVersion) -> dict[str, object]:
         """Full authoring detail for one set version (members/indexes/jobs)."""
+        member_query = request.GET.get("member_q", "").strip()[:200]
+        members = (
+            v.memberships.select_related("document_version__document")
+            .filter(
+                Q(document_version__document__title__icontains=member_query)
+                | Q(document_version__document__logical_id__icontains=member_query)
+            )
+            .order_by("ordinal", "pk")
+        )
+        members_page = Paginator(members, 25).get_page(request.GET.get("member_page"))
+        readable_document_ids = set(
+            scoping.scoped_documents(request.user)
+            .filter(pk__in=[m.document_version.document_id for m in members_page])
+            .values_list("pk", flat=True)
+        )
+        indexes_page = Paginator(
+            v.index_versions.select_related("embedding_profile").order_by("-version", "-pk"),
+            10,
+        ).get_page(request.GET.get("index_page"))
         return {
             "id": v.id,
             "version": v.version,
             "status": v.status,
+            "member_total": v.memberships.count(),
+            "member_query": member_query,
+            "members_page": members_page,
+            "indexes_page": indexes_page,
             "is_draft": v.status == DocumentSetVersionStatus.DRAFT,
+            "can_edit_members": document_services.author_document_set_drafts(document_set)
+            .filter(pk=v.pk)
+            .exists(),
             "can_build": v.status
             in [DocumentSetVersionStatus.PROMOTABLE, DocumentSetVersionStatus.ACTIVE],
             "indexes": [
@@ -4588,10 +4864,13 @@ def document_set_detail(
                     "chunks": index.chunk_count,
                     "reused_documents": index.reused_document_count,
                     "can_promote": can_promote_index and index.status == IndexStatus.PROMOTABLE,
+                    "affected_active_scenarios": (
+                        active_release_impact_names
+                        if can_promote_index and index.status == IndexStatus.PROMOTABLE
+                        else []
+                    ),
                 }
-                for index in v.index_versions.select_related("embedding_profile").order_by(
-                    "-version"
-                )
+                for index in indexes_page
             ],
             "jobs": [
                 {
@@ -4612,7 +4891,8 @@ def document_set_detail(
                         StagedIndexBuildJobStatus.CANCELLED,
                     },
                     "can_retry": can_write
-                    and job.status == StagedIndexBuildJobStatus.FAILED
+                    and job.status
+                    in {StagedIndexBuildJobStatus.FAILED, StagedIndexBuildJobStatus.CANCELLED}
                     and job.attempt < job.max_attempts,
                 }
                 for job in v.index_build_jobs.order_by("-created_at", "-pk")[:5]
@@ -4621,6 +4901,7 @@ def document_set_detail(
                 {
                     "membership_id": m.id,
                     "public_id": m.document_version.document.public_id,
+                    "can_view_detail": m.document_version.document_id in readable_document_ids,
                     "logical_id": m.document_version.document.logical_id,
                     "title": m.document_version.document.title,
                     "version": m.document_version.version,
@@ -4628,9 +4909,7 @@ def document_set_detail(
                     "tombstoned": m.document_version.document.is_tombstoned,
                     "ordinal": m.ordinal,
                 }
-                for m in v.memberships.select_related("document_version__document").order_by(
-                    "ordinal"
-                )
+                for m in members_page
             ],
         }
 
@@ -4638,18 +4917,26 @@ def document_set_detail(
     # "Geçmiş sürümler" while it actually held *every* version except the selected one, so
     # selecting v1 filed the newest version under history. It is now "Diğer sürümler" and
     # every entry says where it stands, with the newest marked.
-    all_versions = list(
-        document_set.versions.order_by("-version").annotate(_member_count=Count("memberships"))
+    all_versions = document_set.versions.order_by("-version").annotate(
+        _member_count=Count("memberships")
     )
-    latest_version = all_versions[0] if all_versions else None
+    latest_version = all_versions.first()
     selected_version = latest_version
     requested_version_id = request.GET.get("version", "")
-    if requested_version_id.isdigit():
-        selected_version = next(
-            (version for version in all_versions if version.pk == int(requested_version_id)),
-            latest_version,
+    if (
+        requested_version_id.isascii()
+        and requested_version_id.isdecimal()
+        and len(requested_version_id) <= 19
+        and int(requested_version_id) <= 9223372036854775807
+    ):
+        selected_version = (
+            all_versions.filter(pk=int(requested_version_id)).first() or latest_version
         )
     current_version = _version_detail(selected_version) if selected_version is not None else None
+    history_page = Paginator(
+        all_versions.exclude(pk=selected_version.pk) if selected_version else all_versions,
+        20,
+    ).get_page(request.GET.get("history_page"))
     other_versions = [
         {
             "id": v.id,
@@ -4658,8 +4945,7 @@ def document_set_detail(
             "member_count": getattr(v, "_member_count", 0),
             "is_latest": latest_version is not None and v.pk == latest_version.pk,
         }
-        for v in all_versions
-        if selected_version is None or v.pk != selected_version.pk
+        for v in history_page
     ]
     active_index = (
         IndexVersion.objects.filter(
@@ -4672,16 +4958,17 @@ def document_set_detail(
         .order_by("-updated_at", "-id")
         .first()
     )
-    latest_members = (
-        list(latest_version.memberships.select_related("document_version").all())
-        if latest_version is not None
-        else []
+    member_counts = (
+        latest_version.memberships.aggregate(
+            total=Count("pk"),
+            parsed=Count("pk", filter=Q(document_version__parse_status=ParseStatus.PARSED)),
+        )
+        if latest_version
+        else {"total": 0, "parsed": 0}
     )
-    parsed_count = sum(
-        item.document_version.parse_status == ParseStatus.PARSED for item in latest_members
-    )
-    uploaded_complete = bool(latest_members)
-    parsed_complete = uploaded_complete and parsed_count == len(latest_members)
+    member_count, parsed_count = member_counts["total"], member_counts["parsed"]
+    uploaded_complete = member_count > 0
+    parsed_complete = uploaded_complete and parsed_count == member_count
     draft_complete = uploaded_complete and latest_version is not None
     promotable_index = (
         IndexVersion.objects.filter(
@@ -4739,17 +5026,15 @@ def document_set_detail(
         {
             "label": "Yüklendi",
             "complete": uploaded_complete,
-            "detail": f"{len(latest_members)} doküman sürümü"
-            if latest_members
-            else "Henüz içerik yok",
+            "detail": f"{member_count} doküman sürümü" if member_count else "Henüz içerik yok",
             "action": _anchor("#uploads", "Yükleme bölümüne git")
-            if can_write and not latest_members
+            if can_write and not member_count
             else None,
         },
         {
-            "label": "Ayrıştırıldı / normalize edildi",
+            "label": "İçerik işlendi",
             "complete": parsed_complete,
-            "detail": f"{parsed_count}/{len(latest_members)} hazır",
+            "detail": f"{parsed_count}/{member_count} hazır",
             "action": _anchor("#build", "İndeks ayarlarına git")
             if can_write and published_complete and not parsed_complete
             else None,
@@ -4757,7 +5042,9 @@ def document_set_detail(
         {
             "label": "Set taslağı",
             "complete": draft_complete,
-            "detail": latest_version.status if latest_version else "Taslak yok",
+            "detail": ("Taslak düzenlenebilir" if is_draft_current else "Sürüm kaydedildi")
+            if latest_version
+            else "Taslak yok",
             "action": None,
         },
         {
@@ -4769,9 +5056,9 @@ def document_set_detail(
             else None,
         },
         {
-            "label": "Staged indeks hazır",
+            "label": "İndeks hazırlandı",
             "complete": staged_ready,
-            "detail": "İndeks sürümü mevcut" if staged_ready else "Promotable indeks yok",
+            "detail": "İndeks sürümü mevcut" if staged_ready else "Hazır indeks yok",
             "action": _anchor("#build", "İndeks ayarlarına git")
             if can_write and published_complete and not staged_ready
             else None,
@@ -4784,7 +5071,7 @@ def document_set_detail(
             else (
                 f"Güncel sürüm bekliyor; set v{serving_set_version.version} serviste"
                 if serving_set_version is not None
-                else "Serve edilmiyor"
+                else "Henüz kullanıma alınmadı"
             ),
             "action": {"type": "post", "url": promote_url, "label": "Promotable indeksi aktif et"}
             if can_promote_index and current_active_index is None and promotable_index is not None
@@ -4799,14 +5086,25 @@ def document_set_detail(
         },
     ]
     # Active, uploaded documents in this set's tenant, offered as members of a draft version.
-    candidate_docs = [
-        {"id": d.id, "logical_id": d.logical_id, "version": d.current_version}
-        for d in Document.objects.filter(
-            organization_id=document_set.organization_id,
-            lifecycle_state=DocumentLifecycle.ACTIVE,
-            current_version__gt=0,
-        ).order_by("logical_id")
-    ]
+    document_query = request.GET.get("document_q", "").strip()[:200]
+    candidate_docs = (
+        [
+            {"id": d.id, "logical_id": d.logical_id, "version": d.current_version}
+            for d in scoping.scoped_documents(request.user)
+            .filter(
+                organization_id=document_set.organization_id,
+                lifecycle_state=DocumentLifecycle.ACTIVE,
+                current_version__gt=0,
+            )
+            .filter(Q(title__icontains=document_query) | Q(logical_id__icontains=document_query))
+            .order_by("logical_id", "pk")[:100]
+        ]
+        if can_write
+        else []
+    )
+    editable_scenarios = scoping.authorized_scenarios(
+        request.user, OperatorCapability.SCENARIO_EDIT
+    ).filter(organization_id=document_set.organization_id)
     bindings = list(
         document_set.scenario_bindings.select_related("scenario__project").order_by(
             "scenario__project__slug", "scenario__slug"
@@ -5085,6 +5383,8 @@ def document_set_detail(
             },
             "current_version": current_version,
             "other_versions": other_versions,
+            "history_page": history_page,
+            "document_query": document_query,
             "latest_version": latest_version,
             "active_index": active_index,
             "lifecycle_steps": lifecycle_steps,
@@ -5107,9 +5407,13 @@ def document_set_detail(
             ),
             "candidate_docs": candidate_docs,
             "bindings": bindings,
-            "candidate_scenarios": Scenario.objects.filter(
-                project__organization_id=document_set.organization_id
-            ).order_by("project__slug", "slug"),
+            "candidate_scenarios": editable_scenarios.order_by("project__slug", "slug"),
+            "editable_scenario_ids": set(editable_scenarios.values_list("pk", flat=True)),
+            "readable_scenario_ids": set(
+                scoping.scoped_scenarios(request.user)
+                .filter(pk__in=[binding.scenario_id for binding in bindings])
+                .values_list("pk", flat=True)
+            ),
             "grants": [
                 {
                     "id": grant.id,
@@ -5138,6 +5442,8 @@ def document_set_detail(
             .select_related("membership__user")
             .order_by("membership__user__username", "membership_id"),
             "can_manage_access": can_admin_org(request.user, document_set.organization_id),
+            "can_manage_shared_access": shared_access_decision.allowed
+            and shared_access_decision.source == AuthoritySource.DOCUMENT_SET_RESPONSIBILITY,
             "can_quarantine": can_quarantine,
             "max_batch_files": int(getattr(settings, "DOCUMENTS_MAX_BATCH_UPLOAD_FILES", 20)),
         },
@@ -5596,6 +5902,19 @@ def _connector_context(
     preview_items: list[dict[str, object]] | None = None,
     preview_valid: bool = False,
 ) -> dict[str, object]:
+    from apps.console.connector_presentation import (
+        ResourceRunSummary,
+        connector_state_label,
+        latest_preparable_job,
+        latest_resource_run,
+        latest_source_job,
+        resource_profile_label,
+        source_preparation,
+        source_readiness,
+        source_run_history,
+    )
+    from apps.ingestion.models import RestSetupDraft
+
     can_write = can_manage_documents(
         request.user,
         document_set.organization_id,
@@ -5608,8 +5927,11 @@ def _connector_context(
         .filter(document_set=document_set)
         .order_by("name", "slug")
     )
-    for source in source_qs:
-        latest_run: object | None
+    from apps.ingestion.source_revisions import visible_sources
+
+    source_page = Paginator(visible_sources(source_qs), 20).get_page(request.GET.get("page"))
+    for source in source_page:
+        latest_run: RestSyncRun | ConfluenceSyncRun | ResourceRunSummary | None
         if source.connector_type == ConnectorType.CONFLUENCE_DC:
             latest_run = source.confluence_sync_runs.order_by("-created_at", "-pk").first()
             confluence_profile = source.confluence_profile
@@ -5620,6 +5942,11 @@ def _connector_context(
             )
             contract_label = "Confluence sayfa ağacı"
             config_summary = f"{len(source.connector_config.get('root_page_ids', []))} kök sayfa"
+        elif source.connector_type == ConnectorType.MCP_RESOURCE:
+            latest_run = latest_resource_run(source)
+            profile_label = resource_profile_label(source)
+            contract_label = "MCP belgeleri"
+            config_summary = "Onaylı bağlantının seçilen belge alanları"
         else:
             latest_run = source.rest_sync_runs.order_by("-created_at", "-pk").first()
             rest_profile = source.rest_profile
@@ -5647,11 +5974,17 @@ def _connector_context(
                 else []
             ),
         }
+        last_success, last_failure = source_run_history(source)
+        preparation = source_preparation(latest_preparable_job(source) or latest_source_job(source))
         sources.append(
             {
                 "object": source,
                 "type_label": (
-                    "Confluence" if source.connector_type == ConnectorType.CONFLUENCE_DC else "REST"
+                    "MCP"
+                    if source.connector_type == ConnectorType.MCP_RESOURCE
+                    else "Confluence"
+                    if source.connector_type == ConnectorType.CONFLUENCE_DC
+                    else "REST"
                 ),
                 "profile_label": profile_label,
                 "contract_label": contract_label,
@@ -5665,7 +5998,21 @@ def _connector_context(
                     initial=schedule_initial,
                 ),
                 "latest_run": latest_run,
-                "can_configure": can_write or can_promote,
+                "latest_run_label": connector_state_label(latest_run.status) if latest_run else "",
+                "status_label": connector_state_label(source.status),
+                "last_success": last_success,
+                "last_failure": last_failure,
+                "preparation": preparation,
+                "automation_label": connector_state_label(schedule.automation_status)
+                if schedule
+                else "",
+                "can_configure": (can_write or can_promote)
+                and source.connector_type != ConnectorType.MCP_RESOURCE,
+                "can_run": can_write and source_readiness(source)[0],
+                "manual_only": False,
+                "can_configure_mcp": can_write
+                and source.connector_type == ConnectorType.MCP_RESOURCE
+                and getattr(settings, "INGESTION_DURABLE_CONNECTOR_JOBS", False),
             }
         )
     confluence_form = ConfluenceSourceForm(document_set=document_set, prefix="confluence")
@@ -5679,6 +6026,7 @@ def _connector_context(
     return {
         "set": document_set,
         "sources": sources,
+        "source_page": source_page,
         "can_write": can_write,
         "can_promote": can_promote,
         "confluence_form": confluence_form,
@@ -5696,6 +6044,19 @@ def _connector_context(
         "platform_setup_available": is_platform_admin(request.user),
         "preview_items": preview_items,
         "preview_valid": preview_valid,
+        "mcp_enabled": getattr(settings, "INGESTION_DURABLE_CONNECTOR_JOBS", False),
+        "rest_setup_enabled": getattr(settings, "INGESTION_DURABLE_CONNECTOR_JOBS", False),
+        "saved_rest_setups": RestSetupDraft.objects.filter(
+            organization_id=document_set.organization_id,
+            document_set=document_set,
+            owner_id=request.user.pk,
+            completed_source__isnull=True,
+            expires_at__gt=timezone.now(),
+        )
+        .only("public_id", "name", "updated_at", "expires_at")
+        .order_by("-updated_at")[:5]
+        if can_write and getattr(settings, "INGESTION_DURABLE_CONNECTOR_JOBS", False)
+        else [],
     }
 
 
@@ -5896,11 +6257,20 @@ def _scoped_connector_source(user: UserLike, source_pk: int) -> Source:
 @login_required
 @transaction.atomic
 def connector_source_detail(request: HttpRequest, source_pk: int) -> HttpResponse:
+    from apps.console.connector_presentation import (
+        ResourceRunSummary,
+        connector_state_label,
+        latest_resource_run,
+        resource_profile_label,
+        source_readiness,
+        source_run_history,
+    )
+
     source = _scoped_connector_source(request.user, source_pk)
     document_set = source.document_set
     if document_set is None:
         raise Http404
-    latest_run: ConfluenceSyncRun | RestSyncRun | None
+    latest_run: ConfluenceSyncRun | RestSyncRun | ResourceRunSummary | None
     if source.connector_type == ConnectorType.CONFLUENCE_DC:
         latest_run = source.confluence_sync_runs.order_by("-created_at", "-pk").first()
         confluence_profile = source.confluence_profile
@@ -5910,6 +6280,10 @@ def connector_source_detail(request: HttpRequest, source_pk: int) -> HttpRespons
             else "—"
         )
         contract_label = "Confluence sayfa ağacı"
+    elif source.connector_type == ConnectorType.MCP_RESOURCE:
+        latest_run = latest_resource_run(source)
+        profile_label = resource_profile_label(source)
+        contract_label = "MCP belgeleri"
     else:
         latest_run = source.rest_sync_runs.order_by("-created_at", "-pk").first()
         rest_profile = source.rest_profile
@@ -5930,11 +6304,13 @@ def connector_source_detail(request: HttpRequest, source_pk: int) -> HttpRespons
     ).first()
     active_index = indexes.filter(status=IndexStatus.ACTIVE).first()
     lifecycle = [
-        {"label": "Kaynak bağlandı", "done": True, "detail": source.get_status_display()},
+        {"label": "Kaynak bağlandı", "done": True, "detail": connector_state_label(source.status)},
         {
-            "label": "Senkron tamamlandı",
+            "label": "Belgeler alındı",
             "done": bool(latest_run and latest_run.snapshot_complete),
-            "detail": latest_run.status if latest_run else "Henüz çalıştırılmadı",
+            "detail": connector_state_label(latest_run.status)
+            if latest_run
+            else "Henüz çalıştırılmadı",
         },
         {
             "label": "Taslak adayı üretildi",
@@ -5942,21 +6318,44 @@ def connector_source_detail(request: HttpRequest, source_pk: int) -> HttpRespons
             "detail": f"v{draft_version.version}" if draft_version else "Değişiklik bekleniyor",
         },
         {
-            "label": "Set sürümü yayımlandı",
+            "label": "Doküman setinin sürümü yayımlandı",
             "done": published_version is not None,
             "detail": f"v{published_version.version}" if published_version else "Yayın bekleniyor",
         },
         {
-            "label": "Staged indeks hazırlandı",
+            "label": "Arama için hazırlandı",
             "done": bool(staged_index and staged_index.status == IndexStatus.PROMOTABLE),
-            "detail": staged_index.status if staged_index else "Build bekleniyor",
+            "detail": connector_state_label(staged_index.status)
+            if staged_index
+            else "Hazırlanmayı bekliyor",
         },
         {
-            "label": "Aktif indeks promote edildi",
+            "label": "Kullanıma alındı",
             "done": active_index is not None,
-            "detail": f"v{active_index.version}" if active_index else "Promotion bekleniyor",
+            "detail": f"v{active_index.version}" if active_index else "Kullanıma alınmayı bekliyor",
         },
     ]
+    last_success, last_failure = source_run_history(source)
+    from apps.console.connector_presentation import latest_source_job, source_preparation
+
+    common_job = latest_source_job(source)
+    from apps.console.connector_presentation import latest_preparable_job
+
+    prepared_job = latest_preparable_job(source)
+    run_ready, run_blocker = source_readiness(source)
+    from apps.console.source_preparation_views import preparation_review
+
+    can_write = can_manage_documents(
+        request.user, source.organization_id, document_set=document_set
+    )
+    from apps.console.source_revision_views import revision_context
+
+    source_revision_context = revision_context(
+        source,
+        can_write=can_write,
+        can_operate=can_manage_document_set_operations(request.user, document_set),
+        preparation_job=prepared_job,
+    )
     return render(
         request,
         "console/connector_source_detail.html",
@@ -5964,6 +6363,11 @@ def connector_source_detail(request: HttpRequest, source_pk: int) -> HttpRespons
             "source": source,
             "set": document_set,
             "latest_run": latest_run,
+            "latest_run_label": connector_state_label(latest_run.status) if latest_run else "",
+            "source_status_label": connector_state_label(source.status),
+            "job_status_label": connector_state_label(common_job.status) if common_job else "",
+            "last_success": last_success,
+            "last_failure": last_failure,
             "profile_label": profile_label,
             "contract_label": contract_label,
             "lifecycle": lifecycle,
@@ -5971,11 +6375,17 @@ def connector_source_detail(request: HttpRequest, source_pk: int) -> HttpRespons
             "published_version": published_version,
             "staged_index": staged_index,
             "active_index": active_index,
-            "can_write": can_manage_documents(
-                request.user,
-                source.organization_id,
-                document_set=source.document_set,
-            ),
+            "can_write": can_write,
+            "run_ready": run_ready,
+            "run_blocker": run_blocker,
+            "common_job": common_job,
+            "source_preparation": source_preparation(prepared_job or common_job),
+            "preparation_review": preparation_review(prepared_job) if can_write else None,
+            **source_revision_context,
+            "schedule": getattr(source, "sync_schedule", None),
+            "can_configure_mcp": can_write
+            and source.connector_type == ConnectorType.MCP_RESOURCE
+            and getattr(settings, "INGESTION_DURABLE_CONNECTOR_JOBS", False),
         },
     )
 
@@ -5993,6 +6403,37 @@ def connector_source_run(request: HttpRequest, source_pk: int) -> HttpResponse:
         document_set=document_set,
     ):
         raise PermissionDenied
+    if getattr(settings, "INGESTION_DURABLE_CONNECTOR_JOBS", False):
+        from apps.ingestion.confluence import ConfluenceError
+        from apps.ingestion.connections import ConnectionError
+        from apps.ingestion.connector_jobs import ConnectorJobError, create_connector_job
+        from apps.ingestion.mcp_resources import McpResourceError
+        from apps.ingestion.rest import RestPullError
+
+        try:
+            _, created = create_connector_job(actor=request.user, source=source)
+            messages.success(
+                request,
+                "Veri yenileme isteği kaydedildi; ilerlemeyi bu sayfadan izleyebilirsiniz."
+                if created
+                else "Bu kaynak için aynı veri yenileme işi zaten takip ediliyor.",
+            )
+        except (
+            ConnectorJobError,
+            ConnectionError,
+            RestPullError,
+            ConfluenceError,
+            McpResourceError,
+        ) as exc:
+            messages.error(request, f"Veri yenileme başlatılamadı: {exc.code}")
+        if source.connector_type == ConnectorType.MCP_RESOURCE or hasattr(
+            source, "configuration_revision"
+        ):
+            return redirect("console:connector_source_detail", source_pk=source.pk)
+        return redirect("console:document_set_connectors_public", public_id=document_set.public_id)
+    if source.connector_type == ConnectorType.MCP_RESOURCE:
+        messages.error(request, "MCP belge yenileme henüz etkinleştirilmedi.")
+        return redirect("console:connector_source_detail", source_pk=source.pk)
     try:
         if source.connector_type == ConnectorType.CONFLUENCE_DC:
             confluence_run = create_confluence_sync_run(actor=request.user, source=source)
@@ -6032,6 +6473,8 @@ def connector_source_run(request: HttpRequest, source_pk: int) -> HttpResponse:
 @require_POST
 def connector_schedule_configure(request: HttpRequest, source_pk: int) -> HttpResponse:
     source = _scoped_connector_source(request.user, source_pk)
+    if source.connector_type == ConnectorType.MCP_RESOURCE:
+        raise PermissionDenied("Bu kaynak için periyodik yenileme henüz desteklenmiyor.")
     set_tenant_context(source.organization_id)
     document_set = source.document_set
     if document_set is None:
@@ -6256,6 +6699,7 @@ def document_set_build_index(request: HttpRequest, version_pk: int) -> HttpRespo
 def _scoped_build_job(user: UserLike, public_id: uuid.UUID) -> StagedIndexBuildJob:
     job = StagedIndexBuildJob.objects.filter(
         public_id=public_id,
+        kind="index_build",
         document_set_version__in=scoping.scoped_document_set_versions(user),
     ).first()
     if job is None:
@@ -6265,6 +6709,8 @@ def _scoped_build_job(user: UserLike, public_id: uuid.UUID) -> StagedIndexBuildJ
 
 
 def _require_build_job_author(request: HttpRequest, job: StagedIndexBuildJob, action: str) -> None:
+    if job.kind != "index_build" or job.document_set_version is None:
+        raise Http404
     if can_manage_documents(
         request.user,
         job.organization_id,
@@ -6288,6 +6734,8 @@ def _require_build_job_author(request: HttpRequest, job: StagedIndexBuildJob, ac
 @require_POST
 def document_set_cancel_build_job(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
     job = _scoped_build_job(request.user, public_id)
+    if job.document_set_version is None:
+        raise Http404
     _require_build_job_author(request, job, "cancel")
     cancel_build_job(job=job, actor=request.user.get_username())
     messages.success(request, "İndeks işi iptal edildi; geç sonuçlar durumu değiştiremez.")
@@ -6301,6 +6749,8 @@ def document_set_cancel_build_job(request: HttpRequest, public_id: uuid.UUID) ->
 @require_POST
 def document_set_retry_build_job(request: HttpRequest, public_id: uuid.UUID) -> HttpResponse:
     job = _scoped_build_job(request.user, public_id)
+    if job.document_set_version is None:
+        raise Http404
     _require_build_job_author(request, job, "retry")
     try:
         retry_build_job(job=job, actor=request.user.get_username())
@@ -6332,15 +6782,25 @@ def document_set_promote_index(request: HttpRequest, index_pk: int) -> HttpRespo
         index.document_set_version.document_set,
     ):
         raise PermissionDenied
+    confirmed = request.POST.get("confirm_active_release_impact") == "1"
     try:
         promote_staged_index(
             index,
             actor=request.user.get_username(),
             request_id=_request_id(request),
+            confirm_active_release_impact=confirmed,
         )
         messages.success(request, "Set sürümü ve exact indeks atomik olarak serve edildi.")
     except StagedBuildError as exc:
-        messages.error(request, f"Promotion başarısız: {exc.code}")
+        if exc.code == "ACTIVE_RELEASES_AFFECTED":
+            messages.error(
+                request,
+                "Promosyon durduruldu: bu, hâlihazırda aktif senaryoların retrieval'ını "
+                "temelsizleştirecek. Etkilenen senaryoları gözden geçirip 'Etkilenen "
+                "senaryolar olsa bile aktif et' kutusunu işaretleyerek yeniden deneyin.",
+            )
+        else:
+            messages.error(request, f"Promotion başarısız: {exc.code}")
     return redirect(
         "console:document_set_detail_public",
         public_id=index.document_set_version.document_set.public_id,
@@ -6412,13 +6872,18 @@ def document_set_add_member(request: HttpRequest, version_pk: int) -> HttpRespon
         raise PermissionDenied
     document_id = request.POST.get("document_id", "")
     document = (
-        Document.objects.filter(
+        scoping.scoped_documents(request.user)
+        .filter(
             pk=document_id,
             organization_id=set_version.organization_id,
             lifecycle_state=DocumentLifecycle.ACTIVE,
             current_version__gt=0,
-        ).first()
-        if document_id.isdigit()
+        )
+        .first()
+        if document_id.isascii()
+        and document_id.isdecimal()
+        and len(document_id) <= 19
+        and int(document_id) <= 9223372036854775807
         else None
     )
     version = (
@@ -6427,7 +6892,20 @@ def document_set_add_member(request: HttpRequest, version_pk: int) -> HttpRespon
         else None
     )
     if version is None:
-        messages.error(request, "Add member failed: invalid document.")
+        record_event(
+            actor_type="user",
+            actor_id=str(request.user.pk),
+            organization_id=set_version.organization_id,
+            action="documents.set_version.add_member",
+            outcome="deny",
+            resource_type="document_set_version",
+            resource_id=str(set_version.pk),
+            reason="DOCUMENT_NOT_READABLE",
+        )
+        messages.error(
+            request,
+            "Belge eklenemedi. Belgenin kullanılabilirliğini ve okuma izninizi kontrol edin.",
+        )
         return redirect(
             "console:document_set_detail_public", public_id=set_version.document_set.public_id
         )
@@ -6435,9 +6913,9 @@ def document_set_add_member(request: HttpRequest, version_pk: int) -> HttpRespon
         document_services.add_document_to_set_version(
             set_version=set_version, document_version=version, actor=request.user.get_username()
         )
-        messages.success(request, "Member added.")
+        messages.success(request, "Doküman taslağa eklendi.")
     except DocumentError as exc:
-        messages.error(request, f"Add member failed: {exc.code}")
+        messages.error(request, f"Doküman eklenemedi: {exc.code}")
     return redirect(
         "console:document_set_detail_public", public_id=set_version.document_set.public_id
     )
@@ -6487,6 +6965,26 @@ def _scoped_set_version(user: UserLike, pk: int) -> DocumentSetVersion:
     return set_version
 
 
+def _require_document_binding_scenario_edit(
+    request: HttpRequest, scenario: Scenario, document_set: DocumentSet
+) -> None:
+    if authorize_scenario_action(user=request.user, scenario=scenario, action="edit").allowed:
+        return
+    record_event(
+        actor_type="user",
+        actor_id=request.user.get_username(),
+        action="documents.binding.change",
+        outcome="deny",
+        organization_id=document_set.organization_id,
+        resource_type="document_set",
+        resource_id=str(document_set.public_id),
+        reason="SCENARIO_EDIT_REQUIRED",
+        request_id=_request_id(request),
+        trace_id=_trace_id(request),
+    )
+    raise PermissionDenied
+
+
 @login_required
 @require_POST
 def document_set_bind_scenario(
@@ -6502,17 +7000,37 @@ def document_set_bind_scenario(
         Scenario.objects.filter(
             id=scenario_id, project__organization_id=document_set.organization_id
         ).first()
-        if scenario_id.isdigit()
+        if scenario_id.isascii()
+        and scenario_id.isdecimal()
+        and len(scenario_id) <= 19
+        and int(scenario_id) <= 9223372036854775807
         else None
     )
     if scenario is None:
         messages.error(request, "Bind failed: invalid scenario.")
     else:
+        _require_document_binding_scenario_edit(request, scenario, document_set)
         try:
             document_services.bind_scenario_document_set(
                 scenario=scenario, document_set=document_set, actor=request.user.get_username()
             )
-            messages.success(request, "Scenario bound. Recompile its release to apply the change.")
+            grant = document_access_services.grant_scenario_document_set_access_if_authorized(
+                scenario=scenario,
+                document_set=document_set,
+                actor=request.user,
+            )
+            if grant is not None:
+                messages.success(
+                    request,
+                    "Scenario bound and retrieval access granted. "
+                    "Recompile its release to apply the change.",
+                )
+            else:
+                messages.success(
+                    request,
+                    "Scenario bound. Recompile its release to apply the change. "
+                    "A document set manager must also grant retrieval access.",
+                )
         except DocumentError as exc:
             messages.error(request, f"Bind failed: {exc.code}")
     return redirect("console:document_set_detail_public", public_id=document_set.public_id)
@@ -6522,7 +7040,7 @@ def document_set_bind_scenario(
 @require_POST
 def document_set_unbind_scenario(request: HttpRequest, binding_pk: int) -> HttpResponse:
     binding = (
-        ScenarioDocumentSetBinding.objects.select_related("document_set")
+        ScenarioDocumentSetBinding.objects.select_related("document_set", "scenario")
         .filter(pk=binding_pk)
         .first()
     )
@@ -6541,6 +7059,7 @@ def document_set_unbind_scenario(request: HttpRequest, binding_pk: int) -> HttpR
     ):
         raise PermissionDenied
     document_set_public_id = binding.document_set.public_id
+    _require_document_binding_scenario_edit(request, binding.scenario, binding.document_set)
     document_services.unbind_scenario_document_set(binding, actor=request.user.get_username())
     messages.success(request, "Scenario unbound. Recompile its release to apply the change.")
     return redirect("console:document_set_detail_public", public_id=document_set_public_id)
@@ -6780,36 +7299,86 @@ def scenario_create(
         raise PermissionDenied
     form = ScenarioForm(request.POST or None, user=request.user, project=project)
     if request.method == "POST" and form.is_valid():
-        try:
-            with transaction.atomic():
-                scenario = create_console_scenario(
-                    project=project,
-                    name=form.cleaned_data["name"],
-                )
-                logical_id = f"{scenario.slug}_workflow"
-                builder_services.create_draft(
-                    organization=project.organization,
-                    project=project,
-                    scenario=scenario,
-                    name=f"{scenario.name} workflow",
-                    logical_id=logical_id,
-                    logical_description=form.cleaned_data["logical_description"],
-                    body=_scenario_preset_body(form.cleaned_data["preset"], logical_id=logical_id),
-                    actor=request.user.get_username(),
-                    request_id=_request_id(request),
-                )
-                prepare_scenario_contract_defaults(
-                    scenario=scenario,
-                    actor=request.user.get_username(),
-                    request_id=_request_id(request),
-                )
-                _audit_create(request, "scenario", str(scenario.pk), project.organization_id)
-        except (BuilderError, ValueError):
-            form.add_error(None, "Preset canonical workflow compiler tarafından reddedildi.")
-        except IdentifierAllocationError:
-            form.add_error(None, IdentifierAllocationError.code)
+        # BUG-002: a short-lived, atomic submit lock -- two concurrent double-submits of the
+        # same project+user+name race `cache.add()`, and only one proceeds; the loser sees a
+        # clear "already in progress" error instead of creating a second, silently-suffixed
+        # duplicate. The lock is always released once this request is done (success or not) so
+        # it never outlives the request that held it.
+        lock_key = (
+            "console:scenario_create:"
+            + hashlib.sha256(
+                f"{project.pk}:{request.user.pk}:{form.cleaned_data['name']}".encode()
+            ).hexdigest()
+        )
+        if not cache.add(lock_key, "1", timeout=10):
+            form.add_error(
+                None,
+                "Bu isimle bir senaryo oluşturma isteği zaten işleniyor. Birkaç saniye "
+                "bekleyip tekrar deneyin.",
+            )
         else:
-            return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+            try:
+                with transaction.atomic():
+                    scenario = create_authorized_console_scenario(
+                        project=project,
+                        name=form.cleaned_data["name"],
+                        actor=request.user,
+                        access_mode=form.cleaned_data["access_mode"],
+                        initial_manager=form.cleaned_data.get("initial_manager"),
+                        request_id=_request_id(request),
+                    )
+                    logical_id = f"{scenario.slug}_workflow"
+                    builder_services.create_draft(
+                        organization=project.organization,
+                        project=project,
+                        scenario=scenario,
+                        name=f"{scenario.name} workflow",
+                        logical_id=logical_id,
+                        logical_description=form.cleaned_data["logical_description"],
+                        body=_scenario_preset_body(
+                            form.cleaned_data["preset"], logical_id=logical_id
+                        ),
+                        actor=request.user.get_username(),
+                        request_id=_request_id(request),
+                    )
+                    prepare_scenario_contract_defaults(
+                        scenario=scenario,
+                        actor=request.user.get_username(),
+                        request_id=_request_id(request),
+                    )
+                    _audit_create(request, "scenario", str(scenario.pk), project.organization_id)
+            except AssignmentError as exc:
+                form.add_error(
+                    None,
+                    {
+                        "LAST_PROJECT_MANAGER": (
+                            "Devralma için önce projeye süresiz bir yönetici atayın."
+                        ),
+                        "SCENARIO_CREATE_REQUIRED": (
+                            "Bu projede senaryo oluşturma yetkiniz artık yok."
+                        ),
+                        "ELIGIBLE_ORGANIZATION_MEMBER_REQUIRED": (
+                            "Seçilen yönetici artık uygun değil. Aktif bir üye seçin."
+                        ),
+                    }.get(exc.code, "Erişim seçimleri geçersiz. Güncel durumla yeniden deneyin."),
+                )
+            except (BuilderError, ValueError):
+                form.add_error(None, "Preset canonical workflow compiler tarafından reddedildi.")
+            except IdentifierAllocationError:
+                form.add_error(None, IdentifierAllocationError.code)
+            else:
+                if not authorize_operator(
+                    user=request.user,
+                    capability=OperatorCapability.SCENARIO_VIEW,
+                    scenario=scenario,
+                ).allowed:
+                    messages.success(
+                        request, "Senaryo seçtiğiniz yöneticinin erişimiyle oluşturuldu."
+                    )
+                    return redirect("console:project_detail_public", public_id=project.public_id)
+                return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+            finally:
+                cache.delete(lock_key)
     return render(
         request,
         "console/scenario_create.html",
@@ -6841,15 +7410,30 @@ def consumer_create(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+@require_http_methods(["GET", "POST"])
 def binding_create(request: HttpRequest) -> HttpResponse:
-    return _create(
-        request,
-        form_class=BindingForm,
-        title="Yeni istemci bağı",
-        resource_type="binding",
-        permission=lambda org_id: org_id is not None and can_admin_org(request.user, org_id),
-        success_url="console:consumers",
-    )
+    organization = console_context.resolve_active_organization(request)
+    if organization is None or not can_admin_org(request.user, organization.pk):
+        raise PermissionDenied
+    form = BindingForm(request.POST or None, user=request.user)
+    if request.method == "POST" and form.is_valid():
+        try:
+            create_console_binding(
+                consumer=form.cleaned_data["consumer"],
+                scenario=form.cleaned_data["scenario"],
+                actor=request.user,
+                options=form.selected_options(),
+                status=form.cleaned_data["status"],
+                request_id=_request_id(request),
+            )
+        except ConsumerAccessError:
+            form.add_error(
+                None, "Erişim kaydedilemedi. Yetkinizi, kapsamı ve mevcut bağı kontrol edin."
+            )
+        else:
+            messages.success(request, "İstemcinin senaryo erişimi oluşturuldu.")
+            return redirect("console:consumers")
+    return render(request, "console/binding_form.html", {"form": form})
 
 
 # --- Phase 2.8 Part 6 question sets and evaluation ----------------------------
@@ -7308,6 +7892,15 @@ def question_evaluation_detail(request: HttpRequest, public_id: uuid.UUID) -> Ht
         "console/question_evaluation_detail.html",
         {
             "title": "Değerlendirme sonucu",
+            **(
+                {
+                    "navigation_section": "scenarios",
+                    "navigation_label": "Senaryolar",
+                    "navigation_url": reverse("console:scenarios"),
+                }
+                if run.question_set_version.question_set.scenario_id
+                else {}
+            ),
             "run": run,
             # A scenario-owned run belongs to its scenario, not to the organization-wide
             # question-set list the breadcrumb used to send every operator back to.
@@ -7383,18 +7976,22 @@ def document_set_ask(request: HttpRequest, public_id: object) -> HttpResponse:
     )
 
 
+@durable_operator_view
 @login_required
 @require_POST
 def scenario_ask(request: HttpRequest, public_id: object) -> HttpResponse:
-    scenario = _scoped_scenario(request.user, None, public_id)
-    form = OneOffQuestionForm(request.POST)
-    if not form.is_valid():
-        messages.error(request, "Soru geçerli değil.")
-        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
-    release = ScenarioRelease.objects.filter(scenario=scenario, status=ReleaseStatus.ACTIVE).first()
-    if release is None:
-        messages.error(request, "Aktif release bulunamadı.")
-        return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+    with operator_transaction(request.user):
+        scenario = _scoped_scenario(request.user, None, public_id)
+        form = OneOffQuestionForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, "Soru geçerli değil.")
+            return redirect("console:scenario_detail_public", public_id=scenario.public_id)
+        release = ScenarioRelease.objects.filter(
+            scenario=scenario, status=ReleaseStatus.ACTIVE
+        ).first()
+        if release is None:
+            messages.error(request, "Aktif release bulunamadı.")
+            return redirect("console:scenario_detail_public", public_id=scenario.public_id)
     try:
         result = ask_scenario_once(
             user=request.user,
@@ -7430,6 +8027,7 @@ def scenario_ask(request: HttpRequest, public_id: object) -> HttpResponse:
                 "index_version_id": chunk.index_version_id,
                 "document_version_id": chunk.document_version_id,
                 "ordinal": chunk.ordinal,
+                "chunk_kind": chunk.chunk_kind,
             }
             for chunk in (result.chunks or [])
         ],

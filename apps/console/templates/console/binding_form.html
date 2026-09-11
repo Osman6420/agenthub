@@ -1,0 +1,20 @@
+{% extends "console/base.html" %}
+{% block title %}Senaryo erişimi · AgentHub{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">İstemci erişimi</p><h1>Senaryo erişimi ver</h1><p>İstemcinin hangi senaryoyu ve hangi ek işlemleri kullanabileceğini seçin.</p></div></div>
+<form method="post" class="card form-card">{% csrf_token %}{{ form.non_field_errors }}
+<div class="form-field">{{ form.consumer.label_tag }}{{ form.consumer }}{{ form.consumer.errors }}</div>
+<div class="form-field">{{ form.scenario.label_tag }}{{ form.scenario }}{{ form.scenario.errors }}</div>
+<div class="form-field">{{ form.status.label_tag }}{{ form.status }}{{ form.status.errors }}</div>
+<p><label>{{ form.run_scenario }} {{ form.run_scenario.label }}</label>{{ form.run_scenario.errors }}</p>
+<p class="muted">Araç kullanmayan soru-cevap senaryoları için çalıştırma izni yeterlidir. Kullanılacak doküman setleri ayrıca senaryonun veri erişimi düzenine göre yetkilendirilir.</p>
+<details><summary>Gelişmiş erişim seçenekleri</summary>
+<p><label>{{ form.read_tools }} {{ form.read_tools.label }}</label>{{ form.read_tools.errors }}</p>
+<p><label>{{ form.side_effect_tools }} {{ form.side_effect_tools.label }}</label>{{ form.side_effect_tools.errors }}</p>
+<p class="notice">Veri değiştiren araçlara izin vermek insan onayı gerektiren işlemlerin onayını atlamaz. Yeni bir yayın istemciye kendiliğinden araç izni vermez.</p>
+<h2>Tanılama ve operasyon</h2>
+<p><label>{{ form.retrieve_debug }} {{ form.retrieve_debug.label }}</label>{{ form.retrieve_debug.errors }}</p>
+<p><label>{{ form.ingestion_status }} {{ form.ingestion_status.label }}</label>{{ form.ingestion_status.errors }}</p>
+</details><p><button class="button primary" type="submit">Erişimi oluştur</button> <a href="{% url 'console:consumers' %}">Vazgeç</a></p>
+</form>
+{% endblock %}

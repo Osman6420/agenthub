@@ -252,7 +252,7 @@ def test_candidate_compile_rolls_back_when_audit_fails(
     def fail_audit(**_kwargs: Any) -> None:
         raise RuntimeError("audit unavailable")
 
-    monkeypatch.setattr("apps.console.views.record_event", fail_audit)
+    monkeypatch.setattr("apps.releases.authoring.record_event", fail_audit)
     with pytest.raises(RuntimeError, match="audit unavailable"):
         client.post(
             reverse("console:scenario_compile_candidate", args=[scenario.public_id]),
@@ -452,7 +452,8 @@ def test_scenario_studio_bootstrap_names_context_and_projects_exact_active_workf
     editor_body = editor_response.content.decode()
     assert editor_response.status_code == 200
     assert '"can_author_scenario": true' in editor_body
-    assert '"can_compile_release": false' in editor_body
+    assert '"can_compile_release": true' in editor_body
+    assert '"release": false' in editor_body
     assert (
         reverse("console:scenario_artifact_options", args=[scenario.public_id]).replace(
             "/", "\\u002F"

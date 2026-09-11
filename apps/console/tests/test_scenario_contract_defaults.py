@@ -15,13 +15,14 @@ from apps.artifacts.eval_suite import validate_eval_suite_body
 from apps.artifacts.models import ArtifactVersion
 from apps.artifacts.types import ArtifactType
 from apps.audit.models import AuditEvent
-from apps.catalog.models import AIProject, Scenario
+from apps.catalog.models import AIProject, Scenario, ScenarioExecutionContract
 from apps.catalog.services import create_console_scenario
 from apps.console.scenario_defaults import (
     default_contract_body,
     prepare_scenario_contract_defaults,
     scenario_artifact_logical_id,
 )
+from apps.console.tests.access_fixtures import private_access_member
 from apps.identity.models import (
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
@@ -77,6 +78,8 @@ def test_scenario_creation_prepares_exact_contract_defaults(client: Client, pres
     response = client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
         {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
             "name": f"{preset} scenario",
             "preset": preset,
             "logical_description": f"Stable purpose for {preset}",
@@ -85,6 +88,8 @@ def test_scenario_creation_prepares_exact_contract_defaults(client: Client, pres
 
     assert response.status_code == 302
     scenario = Scenario.objects.get(project=project)
+    assert scenario.execution_contract == ScenarioExecutionContract.SNAPSHOT
+    assert scenario.data_selection == "active_generation"
     for artifact_type in SCENARIO_SCOPED_ROLES:
         artifact = ArtifactVersion.objects.get(
             organization=org,
@@ -129,6 +134,7 @@ def test_preparing_defaults_twice_never_creates_a_surprise_version() -> None:
     org = Organization.objects.create(slug="idempotent-org", name="Idempotent")
     project = AIProject.objects.create(organization=org, slug="project", name="Project")
     scenario = create_console_scenario(project=project, name="Scenario")
+    assert scenario.execution_contract == "legacy" and scenario.data_selection == "legacy_pinned"
 
     first = prepare_scenario_contract_defaults(scenario=scenario, actor="author")
     second = prepare_scenario_contract_defaults(scenario=scenario, actor="author")
@@ -162,7 +168,13 @@ def test_scenario_page_shows_contract_status_and_no_creation_panel(client: Clien
     client.force_login(author)
     client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
-        {"name": "Panel scenario", "preset": "empty_workflow", "logical_description": "Purpose"},
+        {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
+            "name": "Panel scenario",
+            "preset": "empty_workflow",
+            "logical_description": "Purpose",
+        },
     )
     scenario = Scenario.objects.get(project=project)
     _make_scenario_editor(org, author, scenario)
@@ -187,12 +199,18 @@ def test_override_route_still_enforces_exact_author_authorization(client: Client
     client.force_login(author)
     client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
-        {"name": "Override scenario", "preset": "empty_workflow", "logical_description": "Purpose"},
+        {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
+            "name": "Override scenario",
+            "preset": "empty_workflow",
+            "logical_description": "Purpose",
+        },
     )
     scenario = Scenario.objects.get(project=project)
     url = reverse("console:scenario_artifact_create", args=[scenario.public_id])
 
-    # Without the exact scenario responsibility the override route denies even a project admin.
+    # Organization metadata access still cannot edit without an exact responsibility.
     assert client.get(url, {"type": ArtifactType.INPUT_CONTRACT}).status_code == 403
     _make_scenario_editor(org, author, scenario)
 

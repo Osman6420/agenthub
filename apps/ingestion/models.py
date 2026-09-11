@@ -5,8 +5,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 from pgvector.django import HnswIndex, VectorField
 
 from apps.tenancy.models import Organization, TimeStampedModel
@@ -19,6 +21,91 @@ VECTOR_MAX_DIMENSIONS = 2000
 HALFVEC_MAX_DIMENSIONS = 4000
 
 
+class RestSetupDraft(TimeStampedModel):
+    """Private setup checkpoint; never a connection grant or runnable source."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    document_set = models.ForeignKey("documents.DocumentSet", on_delete=models.PROTECT)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    name = models.CharField(max_length=200)
+    payload = models.JSONField(default=dict)
+    revision = models.PositiveIntegerField(default=1)
+    expires_at = models.DateTimeField()
+    payload_purged_at = models.DateTimeField(null=True, blank=True, editable=False)
+    completed_source = models.ForeignKey("Source", null=True, blank=True, on_delete=models.PROTECT)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["organization", "owner", "expires_at"], name="rest_draft_owner_expiry"
+            ),
+            models.Index(
+                fields=["organization", "expires_at", "id"],
+                condition=models.Q(payload_purged_at__isnull=True, completed_source__isnull=True),
+                name="rest_draft_retention_queue",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(revision__gte=1), name="rest_draft_revision_positive"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(completed_source__isnull=True) | models.Q(payload={}),
+                name="rest_draft_completed_payload_empty",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(payload_purged_at__isnull=True)
+                | models.Q(
+                    payload={},
+                    name="",
+                    completed_source__isnull=True,
+                    payload_purged_at__gte=models.F("expires_at"),
+                ),
+                name="rest_draft_purged_payload_empty",
+            ),
+        ]
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk:
+            old = type(self).objects.get(pk=self.pk)
+            if (
+                any(
+                    getattr(self, key) != getattr(old, key)
+                    for key in (
+                        "public_id",
+                        "organization_id",
+                        "document_set_id",
+                        "owner_id",
+                        "expires_at",
+                    )
+                )
+                or old.completed_source_id is not None
+                or old.payload_purged_at is not None
+            ):
+                raise ValueError("REST_SETUP_DRAFT_BINDING_IMMUTABLE")
+        if self.payload_purged_at is not None and (
+            self.pk is None
+            or self.payload != {}
+            or self.name != ""
+            or self.completed_source_id is not None
+            or not self.expires_at <= self.payload_purged_at <= timezone.now()
+        ):
+            raise ValueError("REST_SETUP_DRAFT_PURGE_INVALID")
+        if self.document_set.organization_id != self.organization_id:
+            raise ValueError("REST_SETUP_DRAFT_SCOPE_INVALID")
+        if self.completed_source_id and (
+            self.completed_source is None
+            or self.completed_source.organization_id != self.organization_id
+            or self.completed_source.document_set_id != self.document_set_id
+            or self.completed_source.connector_type != "generic_rest"
+            or self.completed_source.slug != f"rest-{self.public_id.hex}"
+            or self.payload
+        ):
+            raise ValueError("REST_SETUP_DRAFT_SOURCE_INVALID")
+        super().save(*args, **kwargs)
+
+
 class SourceStatus(models.TextChoices):
     ACTIVE = "active", "Active"
     DISABLED = "disabled", "Disabled"
@@ -29,6 +116,7 @@ class ConnectorType(models.TextChoices):
     S3 = "s3", "S3/MinIO object"
     CONFLUENCE_DC = "confluence_dc", "Confluence Data Center"
     GENERIC_REST = "generic_rest", "Governed generic REST"
+    MCP_RESOURCE = "mcp_resource", "MCP belge kaynağı"
 
 
 class ConfluenceProfileStatus(models.TextChoices):
@@ -201,12 +289,299 @@ class ConfluenceProfile(models.Model):
         raise ValueError("ConfluenceProfile is immutable and cannot be deleted")
 
 
+class McpResourceProfile(models.Model):
+    """Immutable resource-only endpoint, platform scope and transport limits."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    logical_id = models.CharField(max_length=128)
+    revision = models.PositiveIntegerField()
+    protocol_version = models.CharField(max_length=16, default="2025-06-18")
+    destination = models.JSONField()
+    resource_prefixes = models.JSONField()
+    mime_types = models.JSONField()
+    limits = models.JSONField(default=dict, blank=True)
+    secret_ref = models.CharField(max_length=160, blank=True)
+    status = models.CharField(
+        max_length=16, choices=SourceStatus.choices, default=SourceStatus.ACTIVE
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["logical_id", "revision"], name="uniq_mcp_resource_revision"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(revision__gte=1), name="mcp_resource_revision_positive"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"mcp-resource-profile:{self.logical_id}:r{self.revision}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            if set(kwargs.get("update_fields") or []) != {"status"}:
+                raise ValueError("McpResourceProfile is immutable; only status may change")
+        else:
+            self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise ValueError("McpResourceProfile is immutable")
+
+    def clean(self) -> None:
+        from apps.ingestion.mcp_schema import validate_mcp_profile
+
+        validate_mcp_profile(
+            {
+                name: getattr(self, name)
+                for name in (
+                    "logical_id",
+                    "revision",
+                    "protocol_version",
+                    "destination",
+                    "resource_prefixes",
+                    "mime_types",
+                    "limits",
+                    "secret_ref",
+                )
+            }
+        )
+
+
+class TenantMcpResourceGrant(models.Model):
+    """Revocable exact profile/tenant/collection approval; no tool authority."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    document_set = models.ForeignKey("documents.DocumentSet", on_delete=models.PROTECT)
+    profile = models.ForeignKey(McpResourceProfile, on_delete=models.PROTECT)
+    enabled = models.BooleanField(default=True)
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "document_set", "profile"], name="uniq_mcp_resource_grant"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"mcp-resource-grant:{self.organization_id}:{self.document_set_id}:{self.profile_id}"
+
+    def clean(self) -> None:
+        if self.document_set_id and self.document_set.organization_id != self.organization_id:
+            raise ValidationError("MCP_RESOURCE_GRANT_SCOPE_INVALID")
+
+
+class ConnectionKind(models.TextChoices):
+    REST_PULL = "rest_pull", "REST veri bağlantısı"
+    CONFLUENCE = "confluence_dc", "Confluence veri bağlantısı"
+    MCP_RESOURCE = "mcp_resource", "MCP belge bağlantısı"
+    MODEL = "model", "Yanıt modeli bağlantısı"
+    EMBEDDING = "embedding", "Arama modeli bağlantısı"
+    OCR = "ocr", "Metin okuma bağlantısı"
+    TOOL = "tool", "Araç bağlantısı"
+
+
+class Connection(models.Model):
+    """One immutable identity over an exact governed profile or tenant tool revision.
+
+    Profiles and their existing tenant/set grants remain authoritative; this
+    record does not carry credentials, duplicate transport settings or grant access.
+    """
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.PROTECT, null=True, blank=True, related_name="connections"
+    )
+    tool_definition = models.OneToOneField(
+        "tools.ToolDefinition",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connection_identity",
+    )
+    model_profile = models.OneToOneField(
+        "orchestration.ModelProfile",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connection_identity",
+    )
+    embedding_profile = models.OneToOneField(
+        "EmbeddingProfile",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connection_identity",
+    )
+    ocr_profile = models.OneToOneField(
+        "OcrProfile",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connection_identity",
+    )
+    mcp_resource_profile = models.OneToOneField(
+        McpResourceProfile,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connection_identity",
+    )
+    kind = models.CharField(max_length=24, choices=ConnectionKind.choices)
+    logical_id = models.CharField(max_length=128)
+    revision = models.PositiveIntegerField()
+    profile_checksum = models.CharField(max_length=64, editable=False)
+    rest_profile = models.OneToOneField(
+        RestPullProfile,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connection_identity",
+    )
+    confluence_profile = models.OneToOneField(
+        ConfluenceProfile,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="connection_identity",
+    )
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["kind", "logical_id", "revision"],
+                condition=models.Q(organization__isnull=True),
+                name="uniq_connection_kind_revision",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "kind", "logical_id", "revision"],
+                condition=models.Q(organization__isnull=False),
+                name="uniq_connection_org_revision",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        kind="rest_pull",
+                        organization__isnull=True,
+                        tool_definition__isnull=True,
+                        model_profile__isnull=True,
+                        embedding_profile__isnull=True,
+                        ocr_profile__isnull=True,
+                        rest_profile__isnull=False,
+                        confluence_profile__isnull=True,
+                        mcp_resource_profile__isnull=True,
+                    )
+                    | models.Q(
+                        kind="confluence_dc",
+                        organization__isnull=True,
+                        tool_definition__isnull=True,
+                        model_profile__isnull=True,
+                        embedding_profile__isnull=True,
+                        ocr_profile__isnull=True,
+                        rest_profile__isnull=True,
+                        confluence_profile__isnull=False,
+                        mcp_resource_profile__isnull=True,
+                    )
+                    | models.Q(
+                        kind="mcp_resource",
+                        organization__isnull=True,
+                        tool_definition__isnull=True,
+                        model_profile__isnull=True,
+                        embedding_profile__isnull=True,
+                        ocr_profile__isnull=True,
+                        rest_profile__isnull=True,
+                        confluence_profile__isnull=True,
+                        mcp_resource_profile__isnull=False,
+                    )
+                    | models.Q(
+                        kind="model",
+                        organization__isnull=True,
+                        tool_definition__isnull=True,
+                        rest_profile__isnull=True,
+                        confluence_profile__isnull=True,
+                        mcp_resource_profile__isnull=True,
+                        model_profile__isnull=False,
+                        embedding_profile__isnull=True,
+                        ocr_profile__isnull=True,
+                    )
+                    | models.Q(
+                        kind="embedding",
+                        organization__isnull=True,
+                        tool_definition__isnull=True,
+                        rest_profile__isnull=True,
+                        confluence_profile__isnull=True,
+                        mcp_resource_profile__isnull=True,
+                        model_profile__isnull=True,
+                        embedding_profile__isnull=False,
+                        ocr_profile__isnull=True,
+                    )
+                    | models.Q(
+                        kind="ocr",
+                        organization__isnull=True,
+                        tool_definition__isnull=True,
+                        rest_profile__isnull=True,
+                        confluence_profile__isnull=True,
+                        mcp_resource_profile__isnull=True,
+                        model_profile__isnull=True,
+                        embedding_profile__isnull=True,
+                        ocr_profile__isnull=False,
+                    )
+                    | models.Q(
+                        kind="tool",
+                        organization__isnull=False,
+                        tool_definition__isnull=False,
+                        rest_profile__isnull=True,
+                        confluence_profile__isnull=True,
+                        mcp_resource_profile__isnull=True,
+                        model_profile__isnull=True,
+                        embedding_profile__isnull=True,
+                        ocr_profile__isnull=True,
+                    )
+                ),
+                name="connection_profile_kind_consistent",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(revision__gte=1), name="connection_revision_positive"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"connection:{self.kind}:{self.logical_id}:r{self.revision}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            raise ValueError("Connection is immutable")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise ValueError("Connection is immutable")
+
+    def clean(self) -> None:
+        from apps.ingestion.connections import ConnectionError, verify_connection
+
+        try:
+            verify_connection(self)
+        except ConnectionError as exc:
+            raise ValidationError(str(exc)) from exc
+
+
 class Source(TimeStampedModel):
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="sources")
     slug = models.SlugField(max_length=64)
     name = models.CharField(max_length=200)
     connector_type = models.CharField(max_length=16, choices=ConnectorType.choices)
     connector_config = models.JSONField(default=dict)
+    connection = models.ForeignKey(
+        Connection, on_delete=models.PROTECT, null=True, blank=True, related_name="sources"
+    )
     confluence_profile = models.ForeignKey(
         ConfluenceProfile,
         on_delete=models.PROTECT,
@@ -283,6 +658,7 @@ class Source(TimeStampedModel):
                         connector_type__in=[
                             ConnectorType.CONFLUENCE_DC,
                             ConnectorType.GENERIC_REST,
+                            ConnectorType.MCP_RESOURCE,
                         ],
                         document_set__isnull=False,
                     )
@@ -291,6 +667,7 @@ class Source(TimeStampedModel):
                             connector_type__in=[
                                 ConnectorType.CONFLUENCE_DC,
                                 ConnectorType.GENERIC_REST,
+                                ConnectorType.MCP_RESOURCE,
                             ]
                         )
                         & models.Q(document_set__isnull=True)
@@ -298,9 +675,29 @@ class Source(TimeStampedModel):
                 ),
                 name="source_document_set_binding_consistent",
             ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(connector_type=ConnectorType.MCP_RESOURCE)
+                    | models.Q(connection__isnull=False, document_set__isnull=False)
+                ),
+                name="source_mcp_binding_required",
+            ),
         ]
 
     def clean(self) -> None:
+        if (
+            self.pk is not None
+            and self.connection_id is None
+            and Source.objects.filter(pk=self.pk, connection__isnull=False).exists()
+        ):
+            raise ValidationError("SOURCE_CONNECTION_DOWNGRADE")
+        if self.connection_id is not None:
+            from apps.ingestion.connections import ConnectionError, verify_source_connection
+
+            try:
+                verify_source_connection(self)
+            except ConnectionError as exc:
+                raise ValidationError(str(exc)) from exc
         if not isinstance(self.connector_config, dict):
             raise ValidationError({"connector_config": "must be a mapping"})
         forbidden = {"secret", "password", "token", "access_key", "secret_key"}
@@ -315,6 +712,7 @@ class Source(TimeStampedModel):
                 "excluded_page_ids",
             },
             ConnectorType.GENERIC_REST: {"inputs"},
+            ConnectorType.MCP_RESOURCE: {"resource_prefixes"},
         }
         unknown = set(self.connector_config) - allowed.get(self.connector_type, set())
         if unknown:
@@ -357,6 +755,15 @@ class Source(TimeStampedModel):
                 )
             except ValueError as exc:
                 raise ValidationError({"connector_config": str(exc)}) from exc
+        elif self.connector_type == ConnectorType.MCP_RESOURCE:
+            from apps.ingestion.mcp_schema import validate_mcp_source_config
+
+            if self.connection is None or self.document_set is None:
+                raise ValidationError("MCP_RESOURCE_SOURCE_BINDING_REQUIRED")
+            profile = self.connection.mcp_resource_profile
+            if profile is None or self.document_set.organization_id != self.organization_id:
+                raise ValidationError("MCP_RESOURCE_SOURCE_SCOPE_INVALID")
+            validate_mcp_source_config(self.connector_config, profile.resource_prefixes)
         elif (
             self.confluence_profile_id
             or self.rest_profile_id
@@ -366,9 +773,21 @@ class Source(TimeStampedModel):
             raise ValidationError("unbound source cannot have governed connector bindings")
 
     def save(self, *args: Any, **kwargs: Any) -> None:
-        if self.connector_type in {ConnectorType.CONFLUENCE_DC, ConnectorType.GENERIC_REST}:
+        if self.connector_type in {
+            ConnectorType.CONFLUENCE_DC,
+            ConnectorType.GENERIC_REST,
+            ConnectorType.MCP_RESOURCE,
+        }:
             self.clean()
         if self.pk is not None:
+            if SourceConfigurationRevision.objects.filter(source_id=self.pk).exists():
+                sealed = Source.objects.get(pk=self.pk)
+                if any(
+                    getattr(self, field.attname) != getattr(sealed, field.attname)
+                    for field in self._meta.concrete_fields
+                    if field.name not in {"status", "updated_at"}
+                ):
+                    raise ValueError("SOURCE_REVISION_CONFIG_IMMUTABLE")
             previous = (
                 Source.objects.filter(pk=self.pk)
                 .values(
@@ -377,13 +796,23 @@ class Source(TimeStampedModel):
                     "rest_profile_id",
                     "rest_contract_id",
                     "document_set_id",
+                    "connection_id",
                 )
                 .first()
             )
             if previous is not None and (
                 previous["connector_type"]
-                in {ConnectorType.CONFLUENCE_DC, ConnectorType.GENERIC_REST}
-                or self.connector_type in {ConnectorType.CONFLUENCE_DC, ConnectorType.GENERIC_REST}
+                in {
+                    ConnectorType.CONFLUENCE_DC,
+                    ConnectorType.GENERIC_REST,
+                    ConnectorType.MCP_RESOURCE,
+                }
+                or self.connector_type
+                in {
+                    ConnectorType.CONFLUENCE_DC,
+                    ConnectorType.GENERIC_REST,
+                    ConnectorType.MCP_RESOURCE,
+                }
             ):
                 binding = (
                     self.connector_type,
@@ -401,11 +830,65 @@ class Source(TimeStampedModel):
                 )
                 if binding != previous_binding:
                     raise ValueError("governed connector source binding is immutable")
+                if (
+                    self.connector_type == ConnectorType.MCP_RESOURCE
+                    and previous["connection_id"] != self.connection_id
+                ):
+                    raise ValueError("MCP_RESOURCE_SOURCE_BINDING_IMMUTABLE")
         super().save(*args, **kwargs)
 
     @property
     def is_active(self) -> bool:
         return self.status == SourceStatus.ACTIVE
+
+
+class SourceConfigurationRevision(models.Model):
+    """Immutable source configuration lineage; one selected writer per family."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    root_source = models.ForeignKey(Source, on_delete=models.PROTECT, related_name="revisions")
+    source = models.OneToOneField(
+        Source, on_delete=models.PROTECT, related_name="configuration_revision"
+    )
+    number = models.PositiveIntegerField()
+    checksum = models.CharField(max_length=64)
+    base_token = models.CharField(max_length=64, blank=True)
+    schedule_config = models.JSONField(null=True, blank=True)
+    is_current = models.BooleanField(default=False)
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["root_source", "number"], name="source_revision_number"
+            ),
+            models.UniqueConstraint(
+                fields=["root_source"],
+                condition=models.Q(is_current=True),
+                name="source_revision_current",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(number__gte=1), name="source_revision_positive"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"source:{self.root_source_id}:r{self.number}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk is not None:
+            previous = type(self).objects.get(pk=self.pk)
+            if any(
+                getattr(self, field.attname) != getattr(previous, field.attname)
+                for field in self._meta.concrete_fields
+                if field.name != "is_current"
+            ):
+                raise ValueError("SOURCE_REVISION_IMMUTABLE")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise ValueError("SOURCE_REVISION_IMMUTABLE")
 
 
 class IndexStatus(models.TextChoices):
@@ -473,6 +956,27 @@ class IndexVersion(TimeStampedModel):
     index_type = models.CharField(max_length=16, blank=True)
     # True once the per-IndexVersion physical vector store has been provisioned and written.
     store_ready = models.BooleanField(default=False)
+    # Existing generations stay on their original storage until a verified backfill.
+    storage_layout = models.CharField(
+        max_length=24,
+        choices=[("legacy", "Legacy"), ("shared_v1", "Shared v1")],
+        default="legacy",
+        db_default="legacy",
+    )
+    storage_state = models.CharField(
+        max_length=16,
+        choices=[("new", "New"), ("open", "Open"), ("sealed", "Sealed"), ("retired", "Retired")],
+        default="new",
+        db_default="new",
+    )
+    build_request = models.ForeignKey(
+        "StagedIndexBuildJob",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="attempt_generations",
+    )
+    build_attempt = models.PositiveSmallIntegerField(null=True, blank=True)
     version = models.PositiveIntegerField()
     status = models.CharField(
         max_length=16, choices=IndexStatus.choices, default=IndexStatus.BUILDING
@@ -495,6 +999,22 @@ class IndexVersion(TimeStampedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["source", "version"], name="uniq_index_source_version"),
+            models.UniqueConstraint(
+                fields=["build_request", "build_attempt"],
+                name="uniq_index_build_attempt",
+                condition=models.Q(build_request__isnull=False),
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(build_request__isnull=True, build_attempt__isnull=True)
+                    | models.Q(
+                        build_request__isnull=False,
+                        build_attempt__isnull=False,
+                        build_attempt__gt=0,
+                    )
+                ),
+                name="index_build_attempt_binding",
+            ),
             models.UniqueConstraint(
                 fields=["document_set_version", "embedding_profile", "version"],
                 name="uniq_index_docsetver_profile_version",
@@ -897,8 +1417,20 @@ class ConnectorSyncSchedule(TimeStampedModel):
         if self.source_id and self.source.connector_type not in {
             ConnectorType.CONFLUENCE_DC,
             ConnectorType.GENERIC_REST,
+            ConnectorType.MCP_RESOURCE,
         }:
             raise ValidationError("schedule source connector is unsupported")
+        if (
+            self.source_id
+            and self.source.connector_type == ConnectorType.MCP_RESOURCE
+            and self.automation_mode
+            not in {
+                ScheduleAutomationMode.DRAFT_ONLY,
+                ScheduleAutomationMode.STAGE_ONLY,
+                ScheduleAutomationMode.PROMOTE_IF_SAFE,
+            }
+        ):
+            raise ValidationError("MCP schedule automation mode is unsupported")
         if not 900 <= self.interval_seconds <= 604_800:
             raise ValidationError({"interval_seconds": "must be between 900 and 604800"})
         if (
@@ -1128,6 +1660,75 @@ class Chunk(TimeStampedModel):
         ]
 
 
+class SharedVectorChunk(models.Model):
+    """One fixed, tenant-scoped store with distinct managed and legacy identities.
+
+    PostgreSQL migration triggers also enforce generation/document ownership,
+    physical vector dimensions and immutable, open-generation-only writes.
+    """
+
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    index_version = models.ForeignKey(
+        IndexVersion, on_delete=models.PROTECT, related_name="shared_chunks"
+    )
+    document_version = models.ForeignKey(
+        "documents.DocumentVersion", on_delete=models.PROTECT, null=True, blank=True
+    )
+    indexed_document = models.ForeignKey(
+        IndexedDocument, on_delete=models.PROTECT, null=True, blank=True
+    )
+    ordinal = models.PositiveIntegerField()
+    chunk_kind = models.CharField(
+        max_length=16, choices=[("content", "Content"), ("summary", "Summary")], default="content"
+    )
+    text = models.TextField()
+    embedding = VectorField()
+    dimensions = models.PositiveIntegerField()
+    representation = models.CharField(max_length=16)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(document_version__isnull=False, indexed_document__isnull=True)
+                    | models.Q(document_version__isnull=True, indexed_document__isnull=False)
+                ),
+                name="shared_chunk_exact_document",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(representation="vector", dimensions__in=[64, 768, 1536])
+                    | models.Q(representation="halfvec", dimensions__in=[3072, 4000])
+                ),
+                name="shared_chunk_geometry",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(chunk_kind__in=["content", "summary"]),
+                name="shared_chunk_kind",
+            ),
+            models.UniqueConstraint(
+                fields=["index_version", "document_version", "ordinal", "chunk_kind"],
+                condition=models.Q(document_version__isnull=False),
+                name="shared_chunk_managed_identity",
+            ),
+            models.UniqueConstraint(
+                fields=["index_version", "indexed_document", "ordinal", "chunk_kind"],
+                condition=models.Q(indexed_document__isnull=False),
+                name="shared_chunk_legacy_identity",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "index_version", "document_version"],
+                name="shared_chunk_scope",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"shared-chunk:{self.index_version_id}:{self.pk}"
+
+
 class EmbeddingIndexType(models.TextChoices):
     VECTOR = "vector", "vector (D<=2000)"
     HALFVEC = "halfvec", "halfvec (D<=4000)"
@@ -1353,18 +1954,56 @@ class StagedIndexBuildJobStatus(models.TextChoices):
     RECONCILIATION_REQUIRED = "reconciliation_required", "Reconciliation required"
 
 
+class IngestionJobKind(models.TextChoices):
+    INDEX_BUILD = "index_build", "Veri hazırlama"
+    REST_SYNC = "rest_sync", "REST veri yenileme"
+    CONFLUENCE_SYNC = "confluence_sync", "Confluence veri yenileme"
+    MCP_RESOURCE_SYNC = "mcp_resource_sync", "MCP belge yenileme"
+
+
 class StagedIndexBuildJob(TimeStampedModel):
-    """PostgreSQL-authoritative request-to-result lineage for one staged index build."""
+    """Shared ingestion request authority; legacy table/name and build IDs are preserved."""
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="staged_index_build_jobs"
     )
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    kind = models.CharField(
+        max_length=24,
+        choices=IngestionJobKind.choices,
+        default=IngestionJobKind.INDEX_BUILD,
+        db_default=IngestionJobKind.INDEX_BUILD,
+    )
+    source = models.ForeignKey(
+        Source, on_delete=models.PROTECT, null=True, blank=True, related_name="ingestion_jobs"
+    )
+    rest_sync_run = models.OneToOneField(
+        RestSyncRun, on_delete=models.PROTECT, null=True, blank=True, related_name="ingestion_job"
+    )
+    confluence_sync_run = models.OneToOneField(
+        ConfluenceSyncRun,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="ingestion_job",
+    )
+    source_config_checksum = models.CharField(max_length=64, blank=True, default="", editable=False)
+    preparation_job = models.ForeignKey(
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="source_jobs"
+    )
     document_set_version = models.ForeignKey(
-        "documents.DocumentSetVersion", on_delete=models.PROTECT, related_name="index_build_jobs"
+        "documents.DocumentSetVersion",
+        on_delete=models.PROTECT,
+        related_name="index_build_jobs",
+        null=True,
+        blank=True,
     )
     embedding_profile = models.ForeignKey(
-        EmbeddingProfile, on_delete=models.PROTECT, related_name="index_build_jobs"
+        EmbeddingProfile,
+        on_delete=models.PROTECT,
+        related_name="index_build_jobs",
+        null=True,
+        blank=True,
     )
     ocr_profile = models.ForeignKey(
         OcrProfile,
@@ -1431,8 +2070,83 @@ class StagedIndexBuildJob(TimeStampedModel):
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        kind="index_build",
+                        document_set_version__isnull=False,
+                        embedding_profile__isnull=False,
+                        source__isnull=True,
+                        rest_sync_run__isnull=True,
+                        confluence_sync_run__isnull=True,
+                        source_config_checksum="",
+                    )
+                    | (
+                        models.Q(
+                            document_set_version__isnull=True,
+                            embedding_profile__isnull=True,
+                            ocr_profile__isnull=True,
+                            chunking_profile__isnull=True,
+                            retrieval_profile__isnull=True,
+                            summary_model_profile__isnull=True,
+                            summary_prompt_contract__isnull=True,
+                            result_index_version__isnull=True,
+                            source__isnull=False,
+                            source_config_checksum__regex=r"^[0-9a-f]{64}$",
+                        )
+                        & (
+                            models.Q(
+                                kind="rest_sync",
+                                rest_sync_run__isnull=False,
+                                confluence_sync_run__isnull=True,
+                            )
+                            | models.Q(
+                                kind="confluence_sync",
+                                rest_sync_run__isnull=True,
+                                confluence_sync_run__isnull=False,
+                            )
+                            | models.Q(
+                                kind="mcp_resource_sync",
+                                rest_sync_run__isnull=True,
+                                confluence_sync_run__isnull=True,
+                            )
+                        )
+                    )
+                ),
+                name="ingestion_job_typed_target",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(preparation_job__isnull=True) | ~models.Q(kind="index_build"),
+                name="ingestion_preparation_parent_kind",
+            ),
+            models.UniqueConstraint(
+                fields=["source"],
+                condition=models.Q(
+                    source__isnull=False,
+                    status__in=[
+                        "dispatch_pending",
+                        "queued",
+                        "running",
+                        "retry_wait",
+                        "reconciliation_required",
+                    ],
+                ),
+                name="uniq_active_ingestion_source_job",
+            ),
+            # BUG-004: scoped to active statuses only -- a terminal (cancelled/failed) job must
+            # never permanently block a fresh request for the same checksum. An unconditional
+            # unique constraint here made the combination unrecoverable without a manual DB edit.
             models.UniqueConstraint(
                 fields=["organization", "request_checksum"],
+                condition=models.Q(
+                    status__in=[
+                        StagedIndexBuildJobStatus.DISPATCH_PENDING,
+                        StagedIndexBuildJobStatus.QUEUED,
+                        StagedIndexBuildJobStatus.RUNNING,
+                        StagedIndexBuildJobStatus.RETRY_WAIT,
+                        StagedIndexBuildJobStatus.RECONCILIATION_REQUIRED,
+                    ]
+                ),
                 name="uniq_staged_job_org_request_checksum",
             ),
             models.UniqueConstraint(
@@ -1468,6 +2182,11 @@ class StagedIndexBuildJob(TimeStampedModel):
             immutable = (
                 StagedIndexBuildJob.objects.filter(pk=self.pk)
                 .values(
+                    "kind",
+                    "source_id",
+                    "rest_sync_run_id",
+                    "confluence_sync_run_id",
+                    "source_config_checksum",
                     "organization_id",
                     "document_set_version_id",
                     "embedding_profile_id",
@@ -1479,10 +2198,16 @@ class StagedIndexBuildJob(TimeStampedModel):
                     "request_checksum",
                     "pipeline_fingerprint",
                     "requested_by",
+                    "preparation_job_id",
                 )
                 .first()
             )
             current = {
+                "kind": self.kind,
+                "source_id": self.source_id,
+                "rest_sync_run_id": self.rest_sync_run_id,
+                "confluence_sync_run_id": self.confluence_sync_run_id,
+                "source_config_checksum": self.source_config_checksum,
                 "organization_id": self.organization_id,
                 "document_set_version_id": self.document_set_version_id,
                 "embedding_profile_id": self.embedding_profile_id,
@@ -1495,9 +2220,139 @@ class StagedIndexBuildJob(TimeStampedModel):
                 "pipeline_fingerprint": self.pipeline_fingerprint,
                 "requested_by": self.requested_by,
             }
-            if immutable is not None and immutable != current:
-                raise ValueError("staged build request lineage is immutable")
+            if immutable is not None:
+                previous_preparation = immutable["preparation_job_id"]
+                if (
+                    previous_preparation is not None
+                    and previous_preparation != self.preparation_job_id
+                ):
+                    raise ValueError("INGESTION_PREPARATION_LINK_IMMUTABLE")
+                if {
+                    key: value for key, value in immutable.items() if key != "preparation_job_id"
+                } != current:
+                    raise ValueError("staged build request lineage is immutable")
+        if self.preparation_job_id is not None:
+            evidence = (
+                self.rest_sync_run
+                if self.kind == IngestionJobKind.REST_SYNC
+                else self.confluence_sync_run
+                if self.kind == IngestionJobKind.CONFLUENCE_SYNC
+                else getattr(self, "resource_snapshot", None)
+                if self.kind == IngestionJobKind.MCP_RESOURCE_SYNC
+                else None
+            )
+            target = self.preparation_job
+            if (
+                self.status != StagedIndexBuildJobStatus.SUCCEEDED
+                or evidence is None
+                or not evidence.snapshot_complete
+                or evidence.candidate_set_version_id is None
+                or target is None
+                or target.kind != IngestionJobKind.INDEX_BUILD
+                or target.organization_id != self.organization_id
+                or target.document_set_version_id != evidence.candidate_set_version_id
+            ):
+                raise ValueError("INGESTION_PREPARATION_LINK_INVALID")
         super().save(*args, **kwargs)
+
+
+class ResourceSnapshot(TimeStampedModel):
+    """Protocol evidence only; the owning common job is the sole state authority."""
+
+    job = models.OneToOneField(
+        StagedIndexBuildJob,
+        primary_key=True,
+        on_delete=models.PROTECT,
+        related_name="resource_snapshot",
+    )
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    attempt = models.PositiveSmallIntegerField(default=0)
+    snapshot_complete = models.BooleanField(default=False)
+    material_change = models.BooleanField(default=False)
+    discovered_count = models.PositiveIntegerField(default=0)
+    changed_count = models.PositiveIntegerField(default=0)
+    unchanged_count = models.PositiveIntegerField(default=0)
+    missing_count = models.PositiveIntegerField(default=0)
+    fetched_bytes = models.PositiveBigIntegerField(default=0)
+    candidate_set_version = models.ForeignKey(
+        "documents.DocumentSetVersion", null=True, blank=True, on_delete=models.PROTECT
+    )
+    schedule = models.ForeignKey(
+        ConnectorSyncSchedule,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="resource_runs",
+    )
+    schedule_slot = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(schedule__isnull=True, schedule_slot__isnull=True)
+                    | models.Q(schedule__isnull=False, schedule_slot__isnull=False)
+                ),
+                name="mcp_snapshot_schedule_pair",
+            ),
+            models.UniqueConstraint(
+                fields=["schedule", "schedule_slot"],
+                condition=models.Q(schedule__isnull=False),
+                name="mcp_snapshot_schedule_slot_unique",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"resource-snapshot:{self.job_id}"
+
+    @property
+    def source(self) -> Source:
+        if self.job.source is None:
+            raise ValueError("RESOURCE_SNAPSHOT_SOURCE_REQUIRED")
+        return self.job.source
+
+    @source.setter
+    def source(self, value: Source) -> None:
+        self.job.source = value
+
+    @property
+    def source_id(self) -> int:
+        return self.source.pk
+
+    @property
+    def status(self) -> str:
+        return self.job.status
+
+
+class SourceDocumentCursor(TimeStampedModel):
+    """Opaque resource identity and last successfully observed attempt; no job state."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    source = models.ForeignKey(Source, on_delete=models.PROTECT, related_name="resource_cursors")
+    external_id = models.CharField(max_length=2048)
+    external_id_hash = models.CharField(max_length=64)
+    content_checksum = models.CharField(max_length=64)
+    document = models.ForeignKey("documents.Document", on_delete=models.PROTECT)
+    document_version = models.ForeignKey("documents.DocumentVersion", on_delete=models.PROTECT)
+    last_seen_job = models.ForeignKey(StagedIndexBuildJob, on_delete=models.PROTECT)
+    last_seen_attempt = models.PositiveSmallIntegerField()
+    state = models.CharField(
+        max_length=16, choices=ConfluenceCursorState.choices, default=ConfluenceCursorState.ACTIVE
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "external_id_hash"], name="uniq_source_resource_identity"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(state__in=["active", "missing"]),
+                name="resource_cursor_state_valid",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"resource-cursor:{self.source_id}:{self.pk}"
 
 
 class StagedIndexBuildOutbox(TimeStampedModel):
@@ -1512,6 +2367,10 @@ class StagedIndexBuildOutbox(TimeStampedModel):
     published_at = models.DateTimeField(null=True, blank=True)
     publish_attempts = models.PositiveSmallIntegerField(default=0)
     last_error_code = models.CharField(max_length=64, blank=True)
+    completion_published_at = models.DateTimeField(null=True, blank=True)
+    completion_available_at = models.DateTimeField(null=True, blank=True)
+    completion_publish_attempts = models.PositiveIntegerField(default=0)
+    completion_error_code = models.CharField(max_length=64, blank=True)
 
 
 class IngestionWorkerHeartbeat(TimeStampedModel):

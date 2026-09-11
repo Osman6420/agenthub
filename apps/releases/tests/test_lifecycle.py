@@ -209,6 +209,32 @@ def test_rollback_rejects_non_superseded_target() -> None:
 
 
 @pytest.mark.django_db
+def test_rollback_of_a_rollback_restores_the_previously_active_release() -> None:
+    """BUG-017: rollback must itself be reversible -- a ROLLED_BACK release is a valid target,
+    not a dead end that only a from-scratch recompile could recover from."""
+    scenario = _scenario()
+    r1 = _release(scenario)
+    _pass_eval(r1)
+    promote(release=r1, actor="alice")
+    r2 = _release(scenario)
+    _pass_eval(r2)
+    promote(release=r2, actor="alice")  # r1 -> superseded, r2 -> active
+
+    rollback(scenario=scenario, target=r1, actor="alice")  # r1 -> active, r2 -> rolled_back
+    r2.refresh_from_db()
+    assert r2.status == ReleaseStatus.ROLLED_BACK
+
+    restored = rollback(scenario=scenario, target=r2, actor="alice")
+
+    assert restored.pk == r2.pk and restored.status == ReleaseStatus.ACTIVE
+    r1.refresh_from_db()
+    assert r1.status == ReleaseStatus.ROLLED_BACK
+    assert (
+        ScenarioRelease.objects.filter(scenario=scenario, status=ReleaseStatus.ACTIVE).count() == 1
+    )
+
+
+@pytest.mark.django_db
 def test_can_manage_scenario_releases_uses_scoped_capability() -> None:
     org = Organization.objects.create(slug="acme", name="Acme")
     foreign_org = Organization.objects.create(slug="foreign", name="Foreign")
@@ -313,6 +339,37 @@ def test_canary_routes_only_the_assigned_consumer() -> None:
     rel2, is_canary2 = select_release(scenario=scenario, consumer=other)
     assert is_canary2 is False
     assert rel2 is not None and rel2.pk == active.pk
+
+
+@pytest.mark.django_db
+def test_promote_stops_its_own_open_canary_and_unblocks_a_new_one() -> None:
+    """BUG-018: a release promoted directly out of `canary` status must not leave a
+    permanently-"active" ReleaseCanary row behind -- that stale row both misrepresents the
+    now-active release's page and blocks a fresh canary for the same consumer."""
+    scenario = _scenario()
+    consumer = _consumer(scenario, "canary-consumer")
+    candidate = _release(scenario)
+    _pass_eval(candidate)
+    canary = start_canary(release=candidate, consumer=consumer, ttl_seconds=3600, actor="alice")
+    assert canary.status == CanaryStatus.ACTIVE
+
+    promoted = promote(release=candidate, actor="alice")
+
+    assert promoted.status == ReleaseStatus.ACTIVE
+    canary.refresh_from_db()
+    assert canary.status == CanaryStatus.STOPPED
+    assert AuditEvent.objects.filter(
+        action="release.canary_stop", reason="superseded_by_promotion"
+    ).exists()
+
+    # The same consumer can get a fresh canary against a new candidate -- CANARY_EXISTS no
+    # longer fires against a canary that promotion already made moot.
+    next_candidate = _release(scenario)
+    _pass_eval(next_candidate)
+    new_canary = start_canary(
+        release=next_candidate, consumer=consumer, ttl_seconds=3600, actor="alice"
+    )
+    assert new_canary.status == CanaryStatus.ACTIVE
 
 
 @pytest.mark.django_db

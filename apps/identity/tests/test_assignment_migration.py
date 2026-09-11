@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
-from django.apps.registry import Apps
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 
@@ -11,7 +12,9 @@ BEFORE = [("identity", "0007_globaladministrator")]
 AFTER = [("identity", "0008_delegated_assignments")]
 
 
-def _state_apps(targets: list[tuple[str, str]]) -> Apps:
+def _state_apps(targets: list[tuple[str, str]]) -> Any:
+    # These historical model classes deliberately differ from the live registry
+    # understood by django-stubs (some no longer exist after later migrations).
     executor = MigrationExecutor(connection)
     executor.migrate(targets)
     return executor.loader.project_state(targets).apps

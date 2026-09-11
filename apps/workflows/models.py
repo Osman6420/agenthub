@@ -194,10 +194,24 @@ class Run(TimeStampedModel):
     release = models.ForeignKey(
         "releases.ScenarioRelease", on_delete=models.PROTECT, related_name="runs"
     )
+    scenario_revision = models.ForeignKey(
+        "releases.ScenarioRevision",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="runs",
+    )
     workflow_version = models.ForeignKey(
         WorkflowVersion, on_delete=models.PROTECT, related_name="unified_runs"
     )
     consumer = models.ForeignKey("identity.Consumer", on_delete=models.PROTECT, related_name="runs")
+    prepared_evaluation = models.ForeignKey(
+        "evaluations.EvalRun",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="prepared_runs",
+    )
     actor_id = models.CharField(max_length=200)
     response_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
     idempotency_key = models.CharField(max_length=128)
@@ -280,6 +294,24 @@ class Run(TimeStampedModel):
             raise ValidationError("run scenario must match run organization")
         if self.release_id and self.release.scenario_id != self.scenario_id:
             raise ValidationError("run release must match run scenario")
+        if self.release_id:
+            from apps.catalog.models import ScenarioExecutionContract
+
+            expects_revision = self.release.execution_contract == ScenarioExecutionContract.SNAPSHOT
+            if expects_revision != bool(self.scenario_revision_id):
+                raise ValidationError("run revision must match release execution contract")
+            if self.scenario_revision_id:
+                revision = self.scenario_revision
+                if (
+                    revision is None
+                    or revision.organization_id != organization_id
+                    or revision.scenario_id != self.scenario_id
+                    or revision.source_release_id != self.release_id
+                    or revision.workflow_version_id != self.workflow_version_id
+                    or revision.snapshot["workflow"]["checksum"] != self.compiled_checksum
+                    or revision.snapshot["workflow"]["compiler_version"] != self.compiler_version
+                ):
+                    raise ValidationError("run revision pins must match")
         if self.workflow_version_id and self.workflow_version.scenario_id != self.scenario_id:
             raise ValidationError("run workflow must match run scenario")
         if self.consumer_id and self.consumer.organization_id != organization_id:
@@ -304,6 +336,90 @@ class Run(TimeStampedModel):
             raise ValidationError(
                 "background claim token, expiry and checkpoint version must be set together"
             )
+
+
+class RunRetrievalSelection(models.Model):
+    """Immutable selection receipt; an empty choice is also replayable."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    run = models.ForeignKey(Run, on_delete=models.PROTECT, related_name="retrieval_selections")
+    revision = models.ForeignKey("releases.ScenarioRevision", on_delete=models.PROTECT)
+    step_key = models.CharField(max_length=200)
+    criteria_checksum = models.CharField(max_length=64)
+    generation_count = models.PositiveSmallIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["run", "step_key"], name="uniq_run_retrieval_step"),
+            models.CheckConstraint(
+                condition=models.Q(generation_count__lte=200),
+                name="retrieval_generation_count_bound",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"retrieval-selection:{self.pk}"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.pk is not None:
+            raise ValidationError("retrieval selection is immutable")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def clean(self) -> None:
+        if (
+            self.organization_id != self.run.organization_id
+            or self.organization_id != self.revision.organization_id
+            or self.revision_id != self.run.scenario_revision_id
+        ):
+            raise ValidationError("retrieval selection must match run revision and tenant")
+
+
+class RunRetrievalGeneration(models.Model):
+    """Protected exact generation reference owned by one selection receipt."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    selection = models.ForeignKey(
+        RunRetrievalSelection, on_delete=models.PROTECT, related_name="generations"
+    )
+    document_set = models.ForeignKey("documents.DocumentSet", on_delete=models.PROTECT)
+    document_set_version = models.ForeignKey(
+        "documents.DocumentSetVersion", on_delete=models.PROTECT
+    )
+    index_version = models.ForeignKey("ingestion.IndexVersion", on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["selection", "document_set"], name="uniq_retrieval_generation_set"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"retrieval-generation:{self.pk}"
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        if self.pk is not None:
+            raise ValidationError("retrieval generation is immutable")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def clean(self) -> None:
+        if (
+            any(
+                self.organization_id != obj.organization_id
+                for obj in (
+                    self.selection,
+                    self.document_set,
+                    self.document_set_version,
+                    self.index_version,
+                )
+            )
+            or self.document_set_version.document_set_id != self.document_set_id
+            or self.index_version.document_set_version_id != self.document_set_version_id
+        ):
+            raise ValidationError("retrieval generation lineage must match")
 
 
 class RunWait(TimeStampedModel):

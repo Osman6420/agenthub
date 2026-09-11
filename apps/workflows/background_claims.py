@@ -11,8 +11,11 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.services import record_event
+from apps.catalog.models import ScenarioExecutionContract
+from apps.releases.execution import execution_manifest, run_workflow_graph
+from apps.releases.revision_schema import RevisionError
 from apps.tenancy.context import set_tenant_context
-from apps.workflows.compiler import COMPILER_VERSION
+from apps.workflows.compiler import COMPILER_VERSION, SNAPSHOT_COMPILER_VERSION
 from apps.workflows.models import (
     RUN_TERMINAL_STATUSES,
     Run,
@@ -117,10 +120,19 @@ def _validate_claim_request(*, claim_token: uuid.UUID, lease_seconds: int) -> No
 
 
 def _validate_run_pins(run: Run) -> None:
-    release_manifest = run.release.manifest if isinstance(run.release.manifest, dict) else {}
+    try:
+        release_manifest = execution_manifest(run.release)
+        run_workflow_graph(run)
+    except RevisionError as exc:
+        raise BackgroundClaimError(exc.code) from None
+    expected_compiler = (
+        SNAPSHOT_COMPILER_VERSION
+        if run.release.execution_contract == ScenarioExecutionContract.SNAPSHOT
+        else COMPILER_VERSION
+    )
     if (
-        run.compiler_version != COMPILER_VERSION
-        or run.workflow_version.compiler_version != COMPILER_VERSION
+        run.compiler_version != expected_compiler
+        or run.workflow_version.compiler_version != expected_compiler
     ):
         raise BackgroundClaimError("RUN_BACKGROUND_COMPILER_INCOMPATIBLE")
     if (
@@ -145,7 +157,8 @@ def claim_background_run(
     claimed_at = now or timezone.now()
     set_tenant_context(organization_id)
     run = (
-        Run.objects.select_for_update()
+        # Claim ownership belongs to Run; immutable workflow pins are read-only.
+        Run.objects.select_for_update(of=("self",))
         .select_related("workflow_version", "release", "scenario")
         .get(pk=run_id, organization_id=organization_id)
     )

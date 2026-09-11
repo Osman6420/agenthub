@@ -1,0 +1,14 @@
+{% extends "console/base.html" %}
+{% block title %}Ortak kullanım · {{ document_set.name }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:document_set_detail_public' document_set.public_id %}">{{ document_set.name }}</a><span>›</span><span>Ortak kullanım</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Veri yöneticisi onayı</p><h1>{{ document_set.name }}</h1></div></div>
+<p class="notice">Bu onay, seçtiğiniz senaryoya erişim izni olan mevcut ve gelecekteki istemcilerin bu seti kullanmasını kapsar. Senaryo ortak veri düzenine alındığında ayrıca her istemci için set izni aranmaz. Diğer setleri veya insanların doküman okuma yetkisini kapsamaz.</p>
+{% if error %}<div class="warning-box" role="alert">{{ error }}</div>{% endif %}
+{% for grant in grants %}<section class="card form-card"><h2>{{ grant.scenario.name }}</h2><p>Senaryonun veri düzeni: {{ grant.scenario.get_data_access_mode_display }}</p>
+<form method="post">{% csrf_token %}<input type="hidden" name="grant_id" value="{{ grant.pk }}">
+{% if grant.shared_consumers %}<p class="access-ok">Ortak kullanım onaylı · {{ grant.shared_approved_at|date:"d.m.Y H:i" }} · {{ grant.shared_approved_by.get_username }}</p><button class="button danger ghost" type="submit" name="action" value="revoke">Ortak kullanım iznini kaldır</button>
+{% else %}<p><label><input type="checkbox" name="acknowledge" value="yes" required> Bu senaryonun mevcut ve gelecekteki izinli istemcilerinin bu seti ortak kullanmasına onay veriyorum.</label></p><button class="button primary" type="submit" name="action" value="approve">Ortak kullanıma izin ver</button>{% endif %}
+</form></section>{% empty %}<section class="card"><p>Bu set için canlı kullanım izni bulunan senaryo yok. Önce senaryonun set kullanım isteği onaylanmalıdır.</p></section>{% endfor %}
+{% if limited %}<p class="notice">İlk 200 senaryo gösteriliyor.</p>{% endif %}
+{% endblock %}

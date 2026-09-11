@@ -219,3 +219,46 @@ def test_readiness_rejects_missing_role() -> None:
     assert report.ready is False
     assert "APP_ROLE_MISSING" in report.issues
     assert "documents_document:SELECT_MISSING" in report.issues
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="Role privileges require PostgreSQL")
+def test_shared_cutover_rejects_direct_and_set_role_ddl_privileges():
+    role = f"shared_ready_{uuid.uuid4().hex[:12]}"
+    parent = f"shared_parent_{uuid.uuid4().hex[:12]}"
+    with connection.cursor() as cursor:
+        cursor.execute(f'CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN NOINHERIT')
+        cursor.execute(f'CREATE ROLE "{parent}" NOSUPERUSER NOBYPASSRLS NOLOGIN')
+    try:
+
+        def issues():
+            return inspect_rls_readiness(app_role=role, tables=(), shared_vectors_only=True).issues
+
+        assert issues() == ()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'GRANT EXECUTE ON FUNCTION agenthub_provision_index_store(bigint) TO "{role}"'
+            )
+        assert "LEGACY_VECTOR_DDL_ENABLED" in issues()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'REVOKE EXECUTE ON FUNCTION agenthub_provision_index_store(bigint) FROM "{role}"'
+            )
+            cursor.execute(f'GRANT "{parent}" TO "{role}"')
+            cursor.execute(
+                f'GRANT EXECUTE ON FUNCTION agenthub_drop_index_store(bigint) TO "{parent}"'
+            )
+        assert "LEGACY_VECTOR_DDL_ENABLED" in issues()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'REVOKE EXECUTE ON FUNCTION agenthub_drop_index_store(bigint) FROM "{parent}"'
+            )
+            cursor.execute(f'GRANT CREATE ON SCHEMA public TO "{parent}"')
+        assert "SCHEMA_CREATE_ENABLED" in issues()
+        with connection.cursor() as cursor:
+            cursor.execute(f'REVOKE CREATE ON SCHEMA public FROM "{parent}"')
+        assert issues() == ()
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute(f'DROP OWNED BY "{role}", "{parent}"')
+            cursor.execute(f'DROP ROLE "{role}", "{parent}"')

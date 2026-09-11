@@ -8,12 +8,15 @@ from apps.documents.access_services import (
     ScenarioDocumentSetAccessError,
     approve_scenario_document_set_access,
     bind_authorized_scenario_document_set,
+    grant_scenario_document_set_access_if_authorized,
     has_live_scenario_document_set_grant,
     request_scenario_document_set_access,
     revoke_scenario_document_set_grant,
 )
 from apps.documents.models import (
     DocumentSet,
+    DocumentSetGrant,
+    GrantPrincipalType,
     ScenarioDocumentSetAccessRequest,
     ScenarioDocumentSetBinding,
     ScenarioDocumentSetGrant,
@@ -282,3 +285,75 @@ def test_approval_audit_failure_rolls_back_request_and_grant(
     access_request.refresh_from_db()
     assert access_request.status == "pending"
     assert not ScenarioDocumentSetGrant.objects.exists()
+
+
+def test_bind_grants_when_actor_is_document_set_manager(access_fixture) -> None:
+    """BUG-003/BUG-015 option (a): a document-set manager granting on bind also unblocks the
+    shared evaluation consumer, so "Sor"/eval retrieval works without a separate hidden step."""
+    fixture = access_fixture
+
+    grant = grant_scenario_document_set_access_if_authorized(
+        scenario=fixture["scenario"],
+        document_set=fixture["document_set"],
+        actor=fixture["manager"],
+    )
+
+    assert grant is not None
+    assert has_live_scenario_document_set_grant(
+        scenario_id=fixture["scenario"].pk,
+        document_set_id=fixture["document_set"].pk,
+    )
+    assert AuditEvent.objects.filter(
+        action="scenario_document_set_access.grant_on_bind",
+        outcome="success",
+    ).exists()
+    assert DocumentSetGrant.objects.filter(
+        document_set=fixture["document_set"],
+        principal_type=GrantPrincipalType.CONSUMER,
+        permission="retrieve",
+    ).exists()
+
+
+def test_bind_grant_is_noop_without_document_set_manager_authority(access_fixture) -> None:
+    """A scenario editor without document-set-manager authority cannot self-grant; binding
+    must still succeed elsewhere (this function alone doesn't bind), and no grant is created."""
+    fixture = access_fixture
+
+    grant = grant_scenario_document_set_access_if_authorized(
+        scenario=fixture["scenario"],
+        document_set=fixture["document_set"],
+        actor=fixture["project_admin"],
+    )
+
+    assert grant is None
+    assert not has_live_scenario_document_set_grant(
+        scenario_id=fixture["scenario"].pk,
+        document_set_id=fixture["document_set"].pk,
+    )
+    assert not DocumentSetGrant.objects.filter(document_set=fixture["document_set"]).exists()
+
+
+def test_bind_grant_is_idempotent_for_evaluation_consumer(access_fixture) -> None:
+    fixture = access_fixture
+
+    first = grant_scenario_document_set_access_if_authorized(
+        scenario=fixture["scenario"],
+        document_set=fixture["document_set"],
+        actor=fixture["manager"],
+    )
+    second = grant_scenario_document_set_access_if_authorized(
+        scenario=fixture["scenario"],
+        document_set=fixture["document_set"],
+        actor=fixture["manager"],
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.pk == second.pk
+    assert (
+        DocumentSetGrant.objects.filter(
+            document_set=fixture["document_set"],
+            principal_type=GrantPrincipalType.CONSUMER,
+        ).count()
+        == 1
+    )

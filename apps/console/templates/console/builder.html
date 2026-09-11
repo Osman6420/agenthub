@@ -2,6 +2,7 @@
 {% load static %}
 {% block title %}Workflow builder · AgentHub{% endblock %}
 {% block content %}
+{% if scenario %}<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:scenarios' %}">Senaryolar</a><span>›</span><a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a><span>›</span><span aria-current="page">Akış düzenleyici</span></nav>{% endif %}
 {{ builder_orgs|json_script:"agenthub-builder-orgs" }}
 {{ builder_initial|json_script:"agenthub-builder-initial" }}
 <div class="card">

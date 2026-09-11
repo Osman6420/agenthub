@@ -1,0 +1,5 @@
+{% extends "console/base.html" %}
+{% block title %}Kaynak formunu yeniden açın · AgentHub{% endblock %}
+{% block content %}
+<div class="card"><h1>Kaynak formunu yeniden açın</h1><p>Formun süresi dolmuş veya başka bir sekmede değişmiş olabilir. Kayıtlı kaynaklarınız korunur.</p><div class="button-row"><a class="button" href="{% url 'console:rest_setup_new' set.public_id %}">Yeni form aç</a><a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynaklara dön</a></div></div>
+{% endblock %}

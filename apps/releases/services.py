@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from apps.artifacts.models import ArtifactVersion
 from apps.catalog.models import Scenario
+from apps.releases.execution import execution_manifest, release_revision
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 
 
@@ -16,7 +17,7 @@ def get_active_release(scenario: Scenario) -> ScenarioRelease | None:
 
 
 def get_manifest_role(release: ScenarioRelease, role: str) -> dict | None:
-    artifacts = release.manifest.get("artifacts", {})
+    artifacts = execution_manifest(release).get("artifacts", {})
     entry = artifacts.get(role)
     return entry if isinstance(entry, dict) else None
 
@@ -27,6 +28,10 @@ def get_artifact_body_for_role(release: ScenarioRelease, role: str) -> dict | No
     The manifest stores a portable ``ref`` (``logical_id:vN``); the body is resolved
     from the artifact registry within the scenario's organization.
     """
+    _, snapshot = release_revision(release)
+    if snapshot is not None:
+        artifact = snapshot["artifacts"].get(role)
+        return artifact["body"] if artifact is not None else None
     entry = get_manifest_role(release, role)
     if entry is None:
         return None

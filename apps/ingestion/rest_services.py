@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
+from enum import Enum
 from typing import Any
 from urllib.parse import urlsplit
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -14,12 +16,14 @@ from apps.audit.models import ActorType, Outcome
 from apps.audit.services import record_event
 from apps.catalog.models import Scenario
 from apps.documents.models import DocumentSet, DocumentSetStatus, ScenarioDocumentSetBinding
+from apps.ingestion.connections import ConnectionError, materialize_connection
 from apps.ingestion.models import (
     ConnectorSchedulePromotionTarget,
     ConnectorSyncSchedule,
     ConnectorType,
     EmbeddingProfile,
     EmbeddingProfileStatus,
+    OcrProfile,
     RestPullAuthMode,
     RestPullContract,
     RestPullContractStatus,
@@ -32,6 +36,7 @@ from apps.ingestion.models import (
     Source,
     SourceStatus,
     TenantEmbeddingProfileGrant,
+    TenantOcrProfileGrant,
     TenantRestPullProfileGrant,
 )
 from apps.ingestion.rest_schema import (
@@ -75,6 +80,7 @@ def register_rest_profile(
     try:
         with transaction.atomic():
             profile = RestPullProfile.objects.create(created_by=actor_id, **payload)
+            materialize_connection(profile=profile, actor=actor_id)
             _audit(
                 "rest_profile.create",
                 actor_id,
@@ -244,11 +250,23 @@ def create_rest_source(
             organization=organization, document_set=document_set, rest_profile=rest_profile
         ).exists():
             raise RestAuthorizationError("REST_PROFILE_NOT_GRANTED")
+        try:
+            connection = materialize_connection(
+                profile=rest_profile, actor=actor_id, require_active=True
+            )
+        except ConnectionError as exc:
+            code = (
+                "REST_PROFILE_DISABLED"
+                if exc.code == "CONNECTION_PROFILE_DISABLED"
+                else "REST_PROFILE_INVALID"
+            )
+            raise RestServiceError(code) from None
         source = Source(
             organization=organization,
             slug=slug,
             name=name,
             connector_type=ConnectorType.GENERIC_REST,
+            connection=connection,
             connector_config={"inputs": normalized},
             rest_profile=rest_profile,
             rest_contract=rest_contract,
@@ -285,6 +303,10 @@ def create_rest_sync_run(
         raise RestAuthorizationError("SCENARIO_AUTHOR_REQUIRED")
     if source.connector_type != ConnectorType.GENERIC_REST:
         raise RestServiceError("REST_SOURCE_REQUIRED")
+    from apps.ingestion.source_revisions import revision_for
+
+    if revision_for(source) is not None:
+        raise RestServiceError("SOURCE_REVISION_DURABLE_REQUIRED")
     if not source.is_active or not source.rest_profile_id or not source.rest_contract_id:
         raise RestServiceError("REST_SOURCE_DISABLED_OR_INVALID")
     if source.document_set is None or source.document_set.status != DocumentSetStatus.ACTIVE:
@@ -345,6 +367,11 @@ def mark_rest_dispatch_failed(
     return locked
 
 
+class _OcrSelection(Enum):
+    UNCHANGED = "unchanged"
+
+
+@transaction.atomic
 def configure_sync_schedule(
     *,
     actor: UserLike,
@@ -354,17 +381,23 @@ def configure_sync_schedule(
     next_run_at: Any,
     automation_mode: str = ScheduleAutomationMode.DRAFT_ONLY,
     embedding_profile: EmbeddingProfile | None = None,
+    ocr_profile: OcrProfile | None | _OcrSelection = _OcrSelection.UNCHANGED,
     scenarios: Iterable[Scenario] = (),
 ) -> ConnectorSyncSchedule:
     actor_id = _actor_id(actor)
     organization_id = source.organization_id
+    set_tenant_context(organization_id)
+    Organization.objects.select_for_update(no_key=True).get(pk=organization_id)
+    source = Source.objects.select_related("document_set").get(
+        pk=source.pk, organization_id=organization_id
+    )
     targets = list(scenarios)
     if automation_mode == ScheduleAutomationMode.PROMOTE_IF_SAFE:
         if source.document_set is None or not can_manage_document_set_operations(
             actor, source.document_set
         ):
             raise RestAuthorizationError("RELEASE_MANAGER_REQUIRED")
-        if not targets:
+        if not targets or len(targets) > 200:
             raise RestServiceError("PROMOTION_TARGET_REQUIRED")
     else:
         if source.document_set is None or not can_manage_documents(
@@ -373,16 +406,62 @@ def configure_sync_schedule(
             raise RestAuthorizationError("SCENARIO_AUTHOR_REQUIRED")
         if targets:
             raise RestServiceError("PROMOTION_TARGETS_NOT_ALLOWED")
+    if enabled:
+        from apps.ingestion.source_revisions import assert_revision_sync
+
+        assert_revision_sync(source, scheduled=True)
+    if source.connector_type == ConnectorType.MCP_RESOURCE and (
+        not getattr(settings, "INGESTION_DURABLE_CONNECTOR_JOBS", False)
+        or automation_mode
+        not in {
+            ScheduleAutomationMode.DRAFT_ONLY,
+            ScheduleAutomationMode.STAGE_ONLY,
+            ScheduleAutomationMode.PROMOTE_IF_SAFE,
+        }
+    ):
+        raise RestServiceError("MCP_RESOURCE_SCHEDULE_MODE_UNAVAILABLE")
+    if source.connector_type == ConnectorType.MCP_RESOURCE and enabled:
+        from apps.ingestion.mcp_services import validate_mcp_source
+        from apps.ingestion.rest_setup_schedule import setup_preparation_policy
+
+        validate_mcp_source(source)
+        if automation_mode in {
+            ScheduleAutomationMode.STAGE_ONLY,
+            ScheduleAutomationMode.PROMOTE_IF_SAFE,
+        }:
+            if source.document_set is None:
+                raise RestServiceError("MCP_RESOURCE_COLLECTION_REQUIRED")
+            policy = setup_preparation_policy(source.document_set, lock=True)
+            if embedding_profile is None or embedding_profile.pk != policy.embedding_profile_id:
+                raise RestServiceError("PREPARATION_POLICY_CONFLICT")
+            if isinstance(ocr_profile, _OcrSelection):
+                ocr_profile = policy.ocr_profile
+            if (ocr_profile.pk if ocr_profile else None) != policy.ocr_profile_id:
+                raise RestServiceError("PREPARATION_POLICY_CONFLICT")
     if embedding_profile is not None:
-        if embedding_profile.status != EmbeddingProfileStatus.ACTIVE:
+        embedding_profile = EmbeddingProfile.objects.get(pk=embedding_profile.pk)
+        if enabled and embedding_profile.status != EmbeddingProfileStatus.ACTIVE:
             raise RestServiceError("EMBEDDING_PROFILE_DISABLED")
         with transaction.atomic():
             set_tenant_context(organization_id)
-            if not TenantEmbeddingProfileGrant.objects.filter(
-                organization_id=organization_id, embedding_profile=embedding_profile
-            ).exists():
+            if (
+                enabled
+                and not TenantEmbeddingProfileGrant.objects.filter(
+                    organization_id=organization_id, embedding_profile=embedding_profile
+                ).exists()
+            ):
                 raise RestAuthorizationError("EMBEDDING_PROFILE_NOT_GRANTED")
+    targets = [
+        Scenario.objects.select_related("project").get(pk=scenario.pk) for scenario in targets
+    ]
     for scenario in targets:
+        from apps.identity.scenario_actions import authorize_scenario_action
+
+        if not all(
+            authorize_scenario_action(user=actor, scenario=scenario, action=action).allowed
+            for action in ("test", "release")
+        ):
+            raise RestAuthorizationError("AUTOMATION_SCENARIO_AUTHORITY_REQUIRED")
         if scenario.project.organization_id != organization_id:
             raise RestServiceError("PROMOTION_TARGET_TENANT_MISMATCH")
         if (
@@ -408,6 +487,21 @@ def configure_sync_schedule(
         schedule.next_run_at = next_run_at
         schedule.automation_mode = automation_mode
         schedule.embedding_profile = embedding_profile
+        if not isinstance(ocr_profile, _OcrSelection):
+            if ocr_profile is not None:
+                ocr_profile = OcrProfile.objects.get(pk=ocr_profile.pk)
+            if (
+                enabled
+                and ocr_profile is not None
+                and (
+                    ocr_profile.status != "active"
+                    or not TenantOcrProfileGrant.objects.filter(
+                        organization_id=organization_id, ocr_profile=ocr_profile
+                    ).exists()
+                )
+            ):
+                raise RestAuthorizationError("OCR_PROFILE_NOT_GRANTED")
+            schedule.ocr_profile = ocr_profile
         schedule.configured_by = actor_id
         schedule.promotion_approved_by = (
             actor_id if automation_mode == ScheduleAutomationMode.PROMOTE_IF_SAFE else ""
@@ -434,6 +528,7 @@ def configure_sync_schedule(
                 "enabled": enabled,
                 "interval_seconds": interval_seconds,
                 "automation_mode": automation_mode,
+                "ocr_enabled": schedule.ocr_profile_id is not None,
                 "target_count": len(targets),
             },
         )

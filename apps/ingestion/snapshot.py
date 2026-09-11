@@ -8,28 +8,21 @@ from apps.documents.models import DocumentSet, DocumentSetVersion, DocumentSetVe
 from apps.documents.services import add_document_to_set_version, create_document_set_version
 
 
-def create_material_candidate(
-    *,
-    document_set: DocumentSet,
-    source_id: int,
-    source_document_version_ids: Iterable[int],
-    actor: str,
-) -> DocumentSetVersion | None:
-    """Merge one source slice into the newest trusted snapshot; return None for a no-op.
-
-    Trusted baselines are published versions and connector-created successful candidates.  An
-    unrelated author draft is deliberately not consumed by an automated connector.
-    """
-    from apps.ingestion.models import ConfluenceSyncRun, RestSyncRun
+def latest_trusted_candidate(document_set: DocumentSet, *, allow_source_id: int | None = None):
+    from apps.ingestion.models import ConfluenceSyncRun, ResourceSnapshot, RestSyncRun
+    from apps.ingestion.source_revisions import trusted_versions
 
     published = (
-        DocumentSetVersion.objects.filter(
-            document_set=document_set,
-            status__in=[
-                DocumentSetVersionStatus.PROMOTABLE,
-                DocumentSetVersionStatus.ACTIVE,
-                DocumentSetVersionStatus.SUPERSEDED,
-            ],
+        trusted_versions(
+            DocumentSetVersion.objects.filter(
+                document_set=document_set,
+                status__in=[
+                    DocumentSetVersionStatus.PROMOTABLE,
+                    DocumentSetVersionStatus.ACTIVE,
+                    DocumentSetVersionStatus.SUPERSEDED,
+                ],
+            ),
+            allow_source_id=allow_source_id,
         )
         .order_by("-version")
         .first()
@@ -50,14 +43,42 @@ def create_material_candidate(
         ).values_list("candidate_set_version_id", flat=True)
     )
     baselines = DocumentSetVersion.objects.filter(document_set=document_set)
+    candidate_ids += list(
+        ResourceSnapshot.objects.filter(
+            job__source__document_set=document_set,
+            job__status="succeeded",
+            snapshot_complete=True,
+            candidate_set_version__isnull=False,
+        ).values_list("candidate_set_version_id", flat=True)
+    )
     if published is not None:
         candidate_ids.append(published.pk)
-    baseline = baselines.filter(pk__in=candidate_ids).order_by("-version").first()
+    return (
+        trusted_versions(baselines.filter(pk__in=candidate_ids), allow_source_id=allow_source_id)
+        .order_by("-version")
+        .first()
+    )
+
+
+def create_material_candidate(
+    *,
+    document_set: DocumentSet,
+    source_id: int,
+    source_document_version_ids: Iterable[int],
+    actor: str,
+) -> DocumentSetVersion | None:
+    """Replace one source family slice; unselected configurations stay isolated."""
+    from apps.ingestion.models import Source
+    from apps.ingestion.source_revisions import family_source_ids
+
+    source = Source.objects.get(pk=source_id, organization_id=document_set.organization_id)
+    family = family_source_ids(source)
+    baseline = latest_trusted_candidate(document_set, allow_source_id=source_id)
 
     retained: list[int] = []
     if baseline is not None:
         retained = list(
-            baseline.memberships.exclude(document_version__document__source_id=source_id)
+            baseline.memberships.exclude(document_version__document__source_id__in=family)
             .order_by("ordinal", "id")
             .values_list("document_version_id", flat=True)
         )

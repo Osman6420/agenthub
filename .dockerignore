@@ -25,3 +25,6 @@ docs/architecture/*
 arşiv/
 *.md
 !docs/architecture/workflow-dsl-llm-guide.md
+
+# Local verification artifacts and database backups never enter the build context.
+.tmp/

@@ -248,6 +248,39 @@ def test_background_claim_replay_competition_and_checkpoint_ownership(
 
 
 @pytest.mark.django_db
+def test_background_claim_with_read_only_workflow_grant(workflow_fixture) -> None:
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL runtime privilege boundary")
+    run = _queued_background_run(workflow_fixture, key="claim-read-only-workflow")
+    role = f"background_claim_{uuid4().hex[:12]}"
+    with connection.cursor() as cursor:
+        cursor.execute(f'CREATE ROLE "{role}" NOSUPERUSER NOBYPASSRLS NOLOGIN')  # noqa: S608
+        cursor.execute(f'GRANT USAGE ON SCHEMA public TO "{role}"')  # noqa: S608
+        cursor.execute(f'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{role}"')  # noqa: S608
+        cursor.execute(f'GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO "{role}"')  # noqa: S608
+        cursor.execute(f'GRANT UPDATE ON workflows_run TO "{role}"')  # noqa: S608
+        cursor.execute(f'GRANT INSERT ON audit_auditevent TO "{role}"')  # noqa: S608
+        cursor.execute(
+            f'GRANT EXECUTE ON FUNCTION agenthub_tenant_scope_contains(bigint) TO "{role}"'
+        )  # noqa: S608
+        cursor.execute(
+            "SELECT has_table_privilege(%s, 'workflows_workflowversion', 'UPDATE')", [role]
+        )
+        assert cursor.fetchone()[0] is False
+        try:
+            cursor.execute(f'SET LOCAL ROLE "{role}"')  # noqa: S608
+            result = claim_background_run(
+                organization_id=run.organization_id,
+                run_id=run.id,
+                claim_token=uuid4(),
+                lease_seconds=30,
+            )
+            assert result.outcome == "claimed"
+        finally:
+            cursor.execute("RESET ROLE")
+
+
+@pytest.mark.django_db
 def test_background_claim_fails_closed_when_audit_persistence_fails(
     workflow_fixture,
     monkeypatch,

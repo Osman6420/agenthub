@@ -306,6 +306,9 @@ def revoke_scenario_document_set_grant(
         if locked.status == ScenarioDocumentSetGrantStatus.REVOKED:
             return
         locked.status = ScenarioDocumentSetGrantStatus.REVOKED
+        locked.shared_consumers = False
+        locked.shared_approved_by = None
+        locked.shared_approved_at = None
         locked.revoked_by = actor
         locked.revoked_at = timezone.now()
         locked.save()
@@ -334,6 +337,97 @@ def has_live_scenario_document_set_grant(*, scenario_id: int, document_set_id: i
         status=ScenarioDocumentSetGrantStatus.GRANTED,
         revoked_at__isnull=True,
     ).exists()
+
+
+def _ensure_evaluation_consumer_grant(
+    *, document_set: Any, actor: Any, request_id: str = ""
+) -> None:
+    """Give the org's synthetic ``system:evaluation`` consumer retrieval on this set.
+
+    Without this, "Sor" and "Yayımla ve test et" (which both run retrieval as this shared,
+    platform-internal consumer -- never a real API client) silently retrieve zero chunks even
+    after a live `ScenarioDocumentSetGrant` exists (BUG-015). The consumer grants no external
+    API access, so this carries no additional authorization risk beyond the document-set-manager
+    check already performed by the caller.
+    """
+    from apps.documents.models import GrantPrincipalType
+    from apps.documents.services import DocumentError, grant_document_set
+    from apps.evaluations.services import EvalError, evaluation_consumer_for_organization
+
+    try:
+        consumer = evaluation_consumer_for_organization(document_set.organization_id)
+    except EvalError:
+        return
+    try:
+        grant_document_set(
+            document_set=document_set,
+            principal_type=GrantPrincipalType.CONSUMER,
+            principal_ref=str(consumer.pk),
+            actor=actor.get_username(),
+            request_id=request_id,
+        )
+    except DocumentError as exc:
+        if exc.code != "DUPLICATE_GRANT":
+            raise
+
+
+def grant_scenario_document_set_access_if_authorized(
+    *,
+    scenario: Any,
+    document_set: Any,
+    actor: Any,
+    request_id: str = "",
+    trace_id: str = "",
+) -> ScenarioDocumentSetGrant | None:
+    """Grant live retrieval authority in the same step as binding (BUG-003 option a).
+
+    Only takes effect when ``actor`` already holds document-set-manager authority
+    (`Capability.DOCUMENT_SET_RETRIEVE_GRANT`, sourced from a real `DocumentSetResponsibility`
+    or superadmin recovery) -- the same predicate `approve_scenario_document_set_access` already
+    enforces, just without requiring a separate pending request first. Returns ``None`` (never
+    raises for an authorization shortfall) when the actor lacks that authority: binding itself
+    must still succeed, and a document-set manager can grant access separately afterward.
+    """
+    decision = authorize(
+        user=actor,
+        capability=Capability.DOCUMENT_SET_RETRIEVE_GRANT,
+        organization=scenario.organization,
+        scenario=scenario,
+        document_set=document_set,
+    )
+    if not decision.allowed or decision.source not in {
+        AuthoritySource.DOCUMENT_SET_RESPONSIBILITY,
+        AuthoritySource.SUPERADMIN_RECOVERY,
+    }:
+        return None
+    now = timezone.now()
+    with transaction.atomic():
+        grant, _created = ScenarioDocumentSetGrant.objects.update_or_create(
+            scenario=scenario,
+            document_set=document_set,
+            permission=GrantPermission.RETRIEVE,
+            defaults={
+                "organization": scenario.organization,
+                "status": ScenarioDocumentSetGrantStatus.GRANTED,
+                "granted_by": actor,
+                "granted_at": now,
+                "revoked_by": None,
+                "revoked_at": None,
+            },
+        )
+        _audit(
+            actor=actor,
+            action="scenario_document_set_access.grant_on_bind",
+            outcome="success",
+            organization_id=scenario.organization_id,
+            resource_type="scenario_document_set_grant",
+            resource_id=str(grant.pk),
+            reason="ACCESS_GRANTED_ON_BIND",
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+    _ensure_evaluation_consumer_grant(document_set=document_set, actor=actor, request_id=request_id)
+    return grant
 
 
 def bind_authorized_scenario_document_set(

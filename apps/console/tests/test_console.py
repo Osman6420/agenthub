@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from threading import Barrier, Thread
+
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import close_old_connections, connection
 from django.test import Client
 from django.urls import reverse
 
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario, ScenarioAlias
+from apps.console.tests.access_fixtures import private_access_member
 from apps.identity.models import (
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
@@ -245,6 +249,8 @@ def test_scenario_author_create_is_atomic_and_audited(client: Client) -> None:
     response = client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
         {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
             "project": project.pk,
             "slug": "faq",
             "name": "FAQ",
@@ -263,3 +269,64 @@ def test_scenario_author_create_is_atomic_and_audited(client: Client) -> None:
         organization_id=org.pk,
         resource_id=str(scenario.pk),
     ).exists()
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="concurrent writers need PostgreSQL")
+@pytest.mark.django_db(transaction=True)
+def test_scenario_create_rejects_a_truly_concurrent_duplicate_submit() -> None:
+    """BUG-002: two simultaneous submits of the same project+user+name (the report's own
+    `Promise.all` repro) must create only one Scenario, not one per request. SQLite serializes
+    writers and raises spurious "database is locked" errors under real thread contention even
+    when the application-level race is handled correctly, so this is PostgreSQL-only -- the
+    same constraint the existing `test_concurrent_promotions_serialize_to_one_coherent_served_pair`
+    (apps/ingestion/tests/test_promotion.py) already lives under."""
+    org = Organization.objects.create(slug="org-race", name="Race")
+    project = AIProject.objects.create(organization=org, slug="race", name="Race")
+    user = User.objects.create_user("editor-race", password="x")  # noqa: S106
+    membership = OrganizationMembership.objects.create(organization=org, user=user)
+    ProjectResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=membership,
+        project=project,
+        responsibility=ProjectResponsibility.ADMINISTRATOR,
+        assigned_by=user,
+    )
+    url = reverse("console:project_scenario_create", args=[project.public_id])
+    payload = {
+        "access_mode": "private",
+        "initial_manager": private_access_member(org),
+        "project": project.pk,
+        "slug": "dup",
+        "name": "Dup",
+        "preset": "empty_workflow",
+        "logical_description": "Duplicate submit guard",
+    }
+    # Log in both clients sequentially first -- SQLite serializes writers, so racing
+    # `force_login`'s own session-table write (not the behavior under test) would flake here.
+    clients = [Client(), Client()]
+    for local_client in clients:
+        local_client.force_login(user)
+    barrier = Barrier(2)
+    results: list[int] = []
+    errors: list[BaseException] = []
+
+    def attempt(local_client: Client) -> None:
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+            results.append(local_client.post(url, payload).status_code)
+        except BaseException as exc:  # pragma: no cover - asserted by parent thread
+            errors.append(exc)
+        finally:
+            close_old_connections()
+
+    threads = [Thread(target=attempt, args=(local_client,)) for local_client in clients]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert not errors
+    assert sorted(results) == [200, 302]
+    assert Scenario.objects.filter(project=project, name="Dup").count() == 1

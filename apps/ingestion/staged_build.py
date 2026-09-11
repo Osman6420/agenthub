@@ -36,12 +36,14 @@ from apps.ingestion.embedding import (
     EmbeddingOutcomeUnknown,
     get_embedding_provider,
 )
+from apps.ingestion.generation_lifecycle import GenerationFenced, lock_generation
 from apps.ingestion.models import (
     EmbeddingProfile,
     EmbeddingProfileStatus,
     IndexStatus,
     IndexVersion,
     OcrProfile,
+    StagedIndexBuildJob,
     TenantEmbeddingProfileGrant,
 )
 from apps.ingestion.ocr import AsyncMarkdownOcrClient, OcrError, OcrOutcomeUnknown
@@ -53,9 +55,11 @@ from apps.ingestion.vector_store import (
     chunk_counts_by_document,
     copy_chunks,
     drop_store,
+    new_generation_layout,
     provision_store,
     write_chunks,
 )
+from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.tenancy.context import set_tenant_context
 
 # Bounds so one build cannot exhaust resources.
@@ -83,6 +87,7 @@ def build_staged_index(
     ocr_profile: OcrProfile | None = None,
     ocr_client: AsyncMarkdownOcrClient | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    build_job: StagedIndexBuildJob | None = None,
 ) -> IndexVersion:
     if connection.vendor != "postgresql":
         # The per-IndexVersion store is a pgvector-only path (ADR-0003).
@@ -152,6 +157,7 @@ def build_staged_index(
         embedding_profile,
         pipeline_fingerprint=fingerprint,
         parent=parent,
+        build_job=build_job,
         chunking_profile=chunking_profile,
         retrieval_profile=retrieval_profile,
         summary_model_profile=summary_model_profile,
@@ -211,8 +217,17 @@ def build_staged_index(
 
     with transaction.atomic():
         set_tenant_context(organization_id)
-        locked = IndexVersion.objects.select_for_update().get(pk=index_version.pk)
+        try:
+            locked = lock_generation(index_version)
+        except GenerationFenced as exc:
+            raise StagedBuildError(exc.code) from exc
+        if locked.status != IndexStatus.BUILDING or (
+            locked.storage_layout == "shared_v1" and locked.storage_state != "open"
+        ):
+            raise StagedBuildError("BUILD_GENERATION_FENCED")
         locked.status = IndexStatus.PROMOTABLE
+        if locked.storage_layout == "shared_v1":
+            locked.storage_state = "sealed"
         locked.store_ready = True
         locked.document_count = document_count
         locked.chunk_count = chunk_count
@@ -223,6 +238,7 @@ def build_staged_index(
         locked.save(
             update_fields=[
                 "status",
+                "storage_state",
                 "store_ready",
                 "document_count",
                 "chunk_count",
@@ -267,6 +283,7 @@ def _create_index_version(
     *,
     pipeline_fingerprint: str,
     parent: IndexVersion | None,
+    build_job: StagedIndexBuildJob | None,
     chunking_profile: ArtifactVersion | None,
     retrieval_profile: ArtifactVersion | None,
     summary_model_profile: ArtifactVersion | None,
@@ -274,6 +291,19 @@ def _create_index_version(
 ) -> IndexVersion:
     with transaction.atomic():
         set_tenant_context(document_set_version.organization_id)
+        if build_job is not None:
+            current_job = StagedIndexBuildJob.objects.select_for_update().get(
+                pk=build_job.pk,
+                organization_id=document_set_version.organization_id,
+            )
+            if (
+                current_job.status != "running"
+                or current_job.attempt != build_job.attempt
+                or current_job.document_set_version_id != document_set_version.pk
+                or current_job.embedding_profile_id != embedding_profile.pk
+                or current_job.pipeline_fingerprint != pipeline_fingerprint
+            ):
+                raise StagedBuildError("BUILD_GENERATION_FENCED")
         latest = (
             IndexVersion.objects.select_for_update()
             .filter(document_set_version=document_set_version, embedding_profile=embedding_profile)
@@ -292,6 +322,9 @@ def _create_index_version(
             index_type=embedding_profile.index_type,
             version=latest + 1,
             status=IndexStatus.BUILDING,
+            storage_layout=new_generation_layout(),
+            build_request=build_job,
+            build_attempt=build_job.attempt if build_job else None,
             pipeline_fingerprint=pipeline_fingerprint,
             parent_index_version=parent,
         )
@@ -570,10 +603,37 @@ def _fail(index_version: IndexVersion, *, reason: str) -> None:
         )
 
 
+def active_releases_pinning_document_set_version(
+    *, organization_id: int, document_set_version_id: int
+) -> list[ScenarioRelease]:
+    """Active ``ScenarioRelease``s whose compiled manifest still pins this exact set version.
+
+    Used to warn an operator, before a routine "update the document" promote silently
+    supersedes it (BUG-010), which already-serving scenarios would go ungrounded.
+    """
+    return [
+        release
+        for release in ScenarioRelease.objects.filter(
+            organization_id=organization_id, status=ReleaseStatus.ACTIVE
+        ).select_related("scenario")
+        if document_set_version_id in (release.manifest.get("document_set_versions") or [])
+    ]
+
+
 def promote_staged_index(
-    index_version: IndexVersion, *, actor: str, request_id: str = ""
+    index_version: IndexVersion,
+    *,
+    actor: str,
+    request_id: str = "",
+    confirm_active_release_impact: bool = False,
 ) -> IndexVersion:
-    """Atomically make this exact set-version/index pair the retrieval serving pointer."""
+    """Atomically make this exact set-version/index pair the retrieval serving pointer.
+
+    Raises ``StagedBuildError("ACTIVE_RELEASES_AFFECTED")`` instead of superseding an older
+    served version when an already-active ``ScenarioRelease`` still pins it, unless the caller
+    passes ``confirm_active_release_impact=True`` (BUG-010) -- the console view resurfaces this
+    as an explicit confirmation step rather than silently ungrounding a live scenario.
+    """
     return _serve_index(
         index_version,
         actor=actor,
@@ -585,6 +645,8 @@ def promote_staged_index(
             DocumentSetVersionStatus.ACTIVE,
         },
         invalid_code="INDEX_NOT_PROMOTABLE",
+        require_active_release_confirmation=True,
+        confirm_active_release_impact=confirm_active_release_impact,
     )
 
 
@@ -615,6 +677,8 @@ def _serve_index(
     allowed_index_statuses: set[str],
     allowed_set_statuses: set[str],
     invalid_code: str,
+    require_active_release_confirmation: bool = False,
+    confirm_active_release_impact: bool = False,
 ) -> IndexVersion:
     """Own every metadata field consulted by retrieval in one locked transaction."""
     try:
@@ -637,6 +701,9 @@ def _serve_index(
 
             # Serialize all served-pointer changes for one set and hold every affected row.
             type(document_set).objects.select_for_update().get(pk=document_set.pk)
+            from apps.ingestion.source_revisions import assert_serving_revision
+
+            assert_serving_revision(set_version)
             versions = list(
                 DocumentSetVersion.objects.select_for_update()
                 .filter(document_set_id=document_set.pk)
@@ -685,8 +752,34 @@ def _serve_index(
 
             if not locked.store_ready or locked.status not in allowed_index_statuses:
                 raise StagedBuildError(invalid_code)
+            if locked.storage_layout == "shared_v1" and locked.storage_state != "sealed":
+                raise StagedBuildError("INDEX_NOT_SEALED")
+            if locked.build_request_id and (
+                locked.build_attempt is None
+                or not StagedIndexBuildJob.objects.filter(
+                    pk=locked.build_request_id,
+                    organization_id=locked.organization_id,
+                    attempt=locked.build_attempt,
+                    status="succeeded",
+                    result_index_version_id=locked.pk,
+                ).exists()
+            ):
+                raise StagedBuildError("INDEX_BUILD_NOT_COMMITTED")
             if set_version.status not in allowed_set_statuses:
                 raise StagedBuildError("SET_VERSION_NOT_PROMOTABLE")
+            if (
+                require_active_release_confirmation
+                and not confirm_active_release_impact
+                and other_active_versions
+                and any(
+                    active_releases_pinning_document_set_version(
+                        organization_id=locked.organization_id,
+                        document_set_version_id=version_id,
+                    )
+                    for version_id in other_active_versions
+                )
+            ):
+                raise StagedBuildError("ACTIVE_RELEASES_AFFECTED")
             if other_active_indexes:
                 IndexVersion.objects.filter(pk__in=other_active_indexes).update(
                     status=IndexStatus.SUPERSEDED

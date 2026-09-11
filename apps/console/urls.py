@@ -5,11 +5,85 @@ from __future__ import annotations
 from django.contrib.auth import views as auth_views
 from django.urls import path
 
-from apps.console import views
+from apps.console import (
+    access_views,
+    data_access_views,
+    mcp_schedule_views,
+    mcp_source_views,
+    preparation_settings_views,
+    publication_views,
+    rest_setup_entry,
+    rest_setup_views,
+    runtime_transition_views,
+    source_preparation_views,
+    source_revision_views,
+    views,
+)
 
 app_name = "console"
 
 urlpatterns = [
+    path(
+        "scenarios/id/<uuid:public_id>/data-refresh/",
+        runtime_transition_views.review,
+        name="scenario_runtime_transition",
+    ),
+    path(
+        "scenarios/id/<uuid:public_id>/publish/",
+        publication_views.publish,
+        name="scenario_publish",
+    ),
+    path(
+        "connector-sources/<int:source_pk>/edit/",
+        source_revision_views.edit,
+        name="connector_source_edit",
+    ),
+    path(
+        "connector-sources/<int:source_pk>/select/",
+        source_revision_views.select,
+        name="connector_source_select",
+    ),
+    path(
+        "document-sets/<uuid:public_id>/preparation/",
+        preparation_settings_views.configure,
+        name="document_set_preparation_settings",
+    ),
+    path(
+        "connector-sources/<int:source_pk>/mcp-schedule/",
+        mcp_schedule_views.configure,
+        name="mcp_schedule_configure",
+    ),
+    path("rest-setup/", rest_setup_entry.start, name="rest_setup_start"),
+    path(
+        "document-sets/<uuid:public_id>/connectors/rest/saved/<uuid:draft_id>/resume/",
+        rest_setup_views.resume,
+        name="rest_setup_resume",
+    ),
+    path(
+        "document-sets/<uuid:public_id>/connectors/rest/new/<uuid:draft_id>/probe/",
+        rest_setup_views.probe,
+        name="rest_setup_probe",
+    ),
+    path(
+        "document-sets/<uuid:public_id>/connectors/rest/new/",
+        rest_setup_views.setup,
+        name="rest_setup_new",
+    ),
+    path(
+        "document-sets/<uuid:public_id>/connectors/rest/new/<uuid:draft_id>/",
+        rest_setup_views.setup,
+        name="rest_setup_draft",
+    ),
+    path(
+        "connector-sources/<int:source_pk>/jobs/<uuid:public_id>/action/",
+        mcp_source_views.job_action,
+        name="connector_job_action",
+    ),
+    path(
+        "document-sets/<uuid:public_id>/connectors/mcp/new/",
+        mcp_source_views.create_source,
+        name="mcp_source_create_public",
+    ),
     path(
         "login/",
         auth_views.LoginView.as_view(template_name="console/login.html"),
@@ -26,6 +100,9 @@ urlpatterns = [
     path("projects/new/", views.project_create, name="project_create"),
     path("projects/<int:pk>/", views.project_detail, name="project_detail"),
     path("projects/id/<uuid:public_id>/", views.project_detail, name="project_detail_public"),
+    path(
+        "projects/id/<uuid:public_id>/access/", access_views.project_access, name="project_access"
+    ),
     path("scenarios/", views.scenarios, name="scenarios"),
     path("scenarios/new/", views.scenario_create, name="scenario_create"),
     path(
@@ -35,6 +112,21 @@ urlpatterns = [
     ),
     path("scenarios/<int:pk>/", views.scenario_detail, name="scenario_detail"),
     path("scenarios/id/<uuid:public_id>/", views.scenario_detail, name="scenario_detail_public"),
+    path(
+        "scenarios/id/<uuid:public_id>/data-access/",
+        data_access_views.scenario_data_access,
+        name="scenario_data_access",
+    ),
+    path(
+        "document-sets/id/<uuid:public_id>/shared-access/",
+        data_access_views.document_shared_access,
+        name="document_shared_access",
+    ),
+    path(
+        "scenarios/id/<uuid:public_id>/access/",
+        access_views.scenario_access,
+        name="scenario_access",
+    ),
     path(
         "scenarios/id/<uuid:public_id>/artifacts/new/",
         views.scenario_artifact_create,
@@ -363,6 +455,11 @@ urlpatterns = [
         "connector-sources/<int:source_pk>/run/",
         views.connector_source_run,
         name="connector_source_run",
+    ),
+    path(
+        "connector-sources/<int:source_pk>/jobs/<uuid:job_public_id>/prepare/",
+        source_preparation_views.prepare,
+        name="connector_source_prepare",
     ),
     path(
         "connector-sources/<int:source_pk>/schedule/",

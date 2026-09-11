@@ -19,6 +19,8 @@ from apps.identity.models import (
     DocumentSetResponsibilityAssignment,
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
+    ScenarioResponsibility,
+    ScenarioResponsibilityAssignment,
 )
 from apps.identity.roles import Role
 from apps.tenancy.models import Organization, OrganizationMembership
@@ -64,7 +66,24 @@ def test_author_can_bind_and_unbind_scenario(client: Client) -> None:
     org = Organization.objects.create(slug="a", name="A")
     document_set = DocumentSet.objects.create(organization=org, logical_id="kb", name="KB")
     scenario = _scenario(org)
-    client.force_login(_member("editor", org, Role.SCENARIO_EDITOR))
+    editor = _member("editor", org, Role.SCENARIO_EDITOR)
+    client.force_login(editor)
+    bind_url = reverse("console:document_set_bind_scenario", args=[document_set.id])
+    detail_url = reverse("console:document_set_detail_public", args=[document_set.public_id])
+    assert list(client.get(detail_url).context["candidate_scenarios"]) == []
+    assert client.post(bind_url, {"scenario_id": scenario.id}).status_code == 403
+    assert not ScenarioDocumentSetBinding.objects.exists()
+    assert AuditEvent.objects.filter(
+        action="documents.binding.change", outcome="deny", reason="SCENARIO_EDIT_REQUIRED"
+    ).exists()
+    assignment = ScenarioResponsibilityAssignment.objects.create(
+        organization=org,
+        membership=OrganizationMembership.objects.get(user=editor),
+        scenario=scenario,
+        responsibility=ScenarioResponsibility.EDITOR,
+        assigned_by=editor,
+    )
+    assert [s.pk for s in client.get(detail_url).context["candidate_scenarios"]] == [scenario.pk]
 
     response = client.post(
         reverse("console:document_set_bind_scenario", args=[document_set.id]),
@@ -73,6 +92,18 @@ def test_author_can_bind_and_unbind_scenario(client: Client) -> None:
     assert response.status_code == 302
     binding = ScenarioDocumentSetBinding.objects.get(scenario=scenario, document_set=document_set)
     assert AuditEvent.objects.filter(action="documents.binding.create").exists()
+
+    # Expiry must close both the button and a forged unbind POST.
+    from django.utils import timezone
+
+    assignment.expires_at = timezone.now()
+    assignment.save(update_fields=["expires_at"])
+    unbind_url = reverse("console:document_set_unbind_scenario", args=[binding.id])
+    assert unbind_url not in client.get(detail_url).content.decode()
+    assert client.post(unbind_url).status_code == 403
+    assert ScenarioDocumentSetBinding.objects.filter(pk=binding.pk).exists()
+    assignment.expires_at = None
+    assignment.save(update_fields=["expires_at"])
 
     response = client.post(reverse("console:document_set_unbind_scenario", args=[binding.id]))
     assert response.status_code == 302

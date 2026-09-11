@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from typing import Any
 
-from django.db import connection
+from django.db import connection, transaction
 
 MAX_TENANT_SCOPE_IDS = 2048
 
@@ -42,3 +44,19 @@ def set_tenant_context(organization_id: int) -> None:
     """Compatibility helper for singleton worker/gateway scope."""
 
     set_tenant_scope((organization_id,))
+
+
+@contextmanager
+def operator_transaction(user: Any) -> Iterator[None]:
+    """Derive exactly the same membership scope for each independent operator segment."""
+    from apps.tenancy.models import Organization
+    from apps.tenancy.services import allowed_organization_ids
+
+    with transaction.atomic():
+        set_tenant_scope(())
+        if user is not None and getattr(user, "is_authenticated", False):
+            allowed = allowed_organization_ids(user)
+            if allowed is None:
+                allowed = set(Organization.objects.values_list("id", flat=True))
+            set_tenant_scope(allowed)
+        yield

@@ -1,0 +1,16 @@
+{% extends "console/base.html" %}
+{% block title %}MCP belge kaynağı ekle · AgentHub{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'console:document_set_connectors_public' set.public_id %}">{{ set.name }} kaynakları</a><span>›</span><span>MCP belge kaynağı</span></div>
+<div class="page-heading"><div><h1>MCP belge kaynağı ekle</h1><p class="muted">Onaylı bir bağlantının belgelerini bu koleksiyona alın.</p></div></div>
+<div class="card form-card">
+<form method="post">{% csrf_token %}{{ form.submission }}
+{% if form.errors %}<div class="notice" role="alert" tabindex="-1" data-form-error-summary><strong>Kaynak kaydedilemedi.</strong>{{ form.non_field_errors }}{% if form.submission.errors %}<p>Form doğrulanamadı. Sayfayı yeniden açın.</p>{% endif %}</div>{% endif %}
+<p>{{ form.name.label_tag }}{{ form.name }}{{ form.name.errors }}</p>
+<p>{{ form.profile.label_tag }}{{ form.profile }}{{ form.profile.errors }}</p>
+<p class="muted">Yalnız bu koleksiyon için izin verilen bağlantılar listelenir. Bağlantınız yoksa platform yöneticinizden izin isteyin.</p>
+<details{% if form.errors %} open{% endif %}><summary>Alınacak alanları daralt</summary><p>{{ form.resource_prefixes.label_tag }}{{ form.resource_prefixes }}{{ form.resource_prefixes.errors }}</p><p class="muted">{{ form.resource_prefixes.help_text }}</p></details>
+<p class="muted">Kaydetmek belge okumayı başlatmaz. Belge yenileme ve kullanıma alma adımlarını ayrıca yönetebilirsiniz.</p>
+<div class="button-row"><button type="submit">Kaynağı kaydet</button><a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Vazgeç</a></div>
+</form></div>
+{% endblock %}

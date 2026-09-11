@@ -14,6 +14,7 @@ from apps.retrieval.types import RetrievedChunk
 def _fake_bundle(**overrides: Any) -> SimpleNamespace:
     base = {
         "retrieval_profile": {},
+        "data_selection": "legacy_pinned",
         "organization_id": 1,
         "scenario_id": 2,
         "index_versions": [],

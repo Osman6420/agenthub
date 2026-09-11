@@ -1,0 +1,15 @@
+{% extends "console/base.html" %}
+{% block title %}Yenileme planı · {{ source.name }}{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'console:connector_source_detail' source.pk %}">{{ source.name }}</a><span>›</span><span>Yenileme planı</span></div>
+<div class="page-heading"><div><h1>Yenileme planı</h1><p>{{ source.name }} · {{ set.name }}</p></div></div>
+<div class="card form-card"><form method="post">{% csrf_token %}
+{% if form.errors %}<div class="notice" role="alert" tabindex="-1" data-form-error-summary><strong>Plan kaydedilemedi.</strong>{{ form.non_field_errors }}</div>{% endif %}
+{{ form.as_p }}
+{% if preparation_policy %}{% include 'console/rest_setup_preparation_summary.html' %}
+{% else %}<p class="notice">Aramaya hazırlama için önce <a href="{% url 'console:document_set_detail_public' set.public_id %}">doküman setinin hazırlama ayarlarını</a> tamamlayın. Belgeleri taslakta tutan bir plan kaydedebilirsiniz.</p>{% endif %}
+<p>Hazırlama ve değerlendirme model kullanımı ve maliyet oluşturabilir. Otomatik yayında seçtiğiniz bütün senaryoların kontrolleri geçerse belgeler ve yayınlar birlikte kullanıma alınır. Bir kontrol başarısız olursa mevcut yayın korunur.</p>
+<p class="muted">Sonraki yenileme, kaydettiğiniz andan itibaren seçtiğiniz aralık sonunda başlar. Devam eden bir yenileme varsa ikinci iş açılmaz. Geçmişte kaçırılan yenilemeler topluca çalıştırılmaz.</p>
+<div class="button-row"><button type="submit">Planı kaydet</button><a class="button secondary" href="{% url 'console:connector_source_detail' source.pk %}">Vazgeç</a></div>
+</form></div>
+{% endblock %}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -124,6 +126,69 @@ def test_chat_adapter_uses_same_sync_run(scenario_fixture: Fixture) -> None:
     run = Run.objects.get(idempotency_key="chat-1")
     assert run.status == RunStatus.COMPLETED
     assert response["X-AgentHub-Run-Id"] == str(run.id)
+
+
+def _fail_pending_sync_run(*, organization_id: int, run_id: uuid.UUID, lease_token: object) -> None:
+    """Stand-in for `execute_sync_run` that leaves the run FAILED instead of actually running
+    the workflow -- used to prove BUG-001's fix without needing a live model provider."""
+    from django.utils import timezone
+
+    Run.objects.filter(pk=run_id).update(
+        status=RunStatus.FAILED,
+        error_code="WORKFLOW_GENERATION_FAILED",
+        finished_at=timezone.now(),
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_run_is_reported_honestly_via_responses(
+    scenario_fixture: Fixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BUG-001: `/v1/responses` must not report a FAILED run as `status: "completed"`."""
+    monkeypatch.setattr("apps.gateway.views.execute_sync_run", _fail_pending_sync_run)
+
+    response = _client(scenario_fixture.raw_token).post(
+        "/v1/responses",
+        {"model": scenario_fixture.alias, "input": "hello"},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="responses-failed-1",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["output"] == []
+    assert body["error"]["code"] == "WORKFLOW_GENERATION_FAILED"
+    run = Run.objects.get(consumer=scenario_fixture.consumer, idempotency_key="responses-failed-1")
+    assert run.status == RunStatus.FAILED
+    status_view = _client(scenario_fixture.raw_token).get(f"/v1/runs/{run.id}")
+    assert status_view.json()["status"] == body["status"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_run_returns_an_error_envelope_via_chat_completions(
+    scenario_fixture: Fixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BUG-001: `/v1/chat/completions` must not fabricate `finish_reason: "stop"` for a run
+    that never actually completed -- OpenAI's chat contract has no shape for that."""
+    monkeypatch.setattr("apps.gateway.views.execute_sync_run", _fail_pending_sync_run)
+
+    response = _client(scenario_fixture.raw_token).post(
+        "/v1/chat/completions",
+        {
+            "model": scenario_fixture.alias,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="chat-failed-1",
+    )
+
+    assert response.status_code == 502
+    body = response.json()
+    assert "choices" not in body
+    assert body["error"]["code"] == "WORKFLOW_GENERATION_FAILED"
+    run = Run.objects.get(idempotency_key="chat-failed-1")
+    assert run.status == RunStatus.FAILED
 
 
 @pytest.mark.django_db(transaction=True)

@@ -110,7 +110,7 @@ TEMPLATES = [
 DATABASES = {
     "default": env.db(
         "DATABASE_URL",
-        default="postgres://agenthub:agenthub@localhost:5432/agenthub",
+        default="postgres://agenthub:agenthub@localhost:5433/agenthub",
     ),
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -259,6 +259,10 @@ INGESTION_HTTP_ALLOWED_HOSTS = env.list("INGESTION_HTTP_ALLOWED_HOSTS", default=
 INGESTION_MAX_SOURCE_BYTES = env.int("INGESTION_MAX_SOURCE_BYTES", default=10_000_000)
 INGESTION_HTTP_TIMEOUT_SECONDS = env.int("INGESTION_HTTP_TIMEOUT_SECONDS", default=15)
 INGESTION_EMBEDDING_DIMENSIONS = 64
+# Additive rollout: change only after backfill verification and compatible worker drain.
+INGESTION_VECTOR_STORAGE_LAYOUT = env.str("INGESTION_VECTOR_STORAGE_LAYOUT", default="legacy")
+# Existing source identities must be explicitly mapped before enabling this rollout gate.
+INGESTION_DURABLE_CONNECTOR_JOBS = env.bool("INGESTION_DURABLE_CONNECTOR_JOBS", default=False)
 INGESTION_BUILD_MAX_ATTEMPTS = env.int("INGESTION_BUILD_MAX_ATTEMPTS", default=3)
 INGESTION_WORKER_HEARTBEAT_TTL_SECONDS = env.int(
     "INGESTION_WORKER_HEARTBEAT_TTL_SECONDS", default=30

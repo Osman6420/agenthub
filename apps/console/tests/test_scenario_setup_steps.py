@@ -11,6 +11,7 @@ from django.urls import reverse
 
 from apps.catalog.models import AIProject, Scenario
 from apps.catalog.services import create_console_scenario
+from apps.console.tests.access_fixtures import private_access_member
 from apps.identity.models import (
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
@@ -19,20 +20,19 @@ from apps.identity.models import (
     ScenarioResponsibility,
     ScenarioResponsibilityAssignment,
 )
+from apps.releases.models import ScenarioRelease
 from apps.tenancy.models import Organization, OrganizationMembership
 
 User = get_user_model()
 pytestmark = pytest.mark.django_db
 
-# Preparing the candidate precedes the test questions: writing a question needs nothing,
-# but running one needs a release to run it against.
+# Questions are authored before the single publish action prepares and evaluates its candidate.
 STEP_TITLES = (
     "Temel bilgiler",
     "Bilgi kaynağı",
     "Akış",
-    "Aday sürüm hazırla",
     "Test soruları",
-    "Yayına al",
+    "Senaryoyu yayına al",
 )
 
 
@@ -68,7 +68,13 @@ def test_the_page_leads_with_ordered_steps(client: Client) -> None:
     client.force_login(admin)
     client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
-        {"name": "Steps scenario", "preset": "empty_workflow", "logical_description": "Purpose"},
+        {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
+            "name": "Steps scenario",
+            "preset": "empty_workflow",
+            "logical_description": "Purpose",
+        },
     )
     scenario = Scenario.objects.get(project=project)
 
@@ -125,3 +131,29 @@ def test_a_viewer_from_another_tenant_cannot_see_the_page(client: Client) -> Non
     response = client.get(reverse("console:scenario_detail_public", args=[scenario.public_id]))
 
     assert response.status_code == 404
+
+
+def test_existing_legacy_release_precedes_next_publication_preparation(client: Client) -> None:
+    org = Organization.objects.create(slug="live-org", name="Live")
+    project = AIProject.objects.create(organization=org, slug="live", name="Live")
+    scenario = Scenario.objects.create(project=project, slug="live", name="Live", status="active")
+    release = ScenarioRelease.objects.create(
+        scenario=scenario,
+        status="active",
+        runtime_version="v1",
+        manifest={},
+        artifact_manifest_sha256="a" * 64,
+        created_by="seed",
+    )
+    client.force_login(_org_admin(org, project, "live-admin"))
+    body = _scenario_page(client, scenario)
+    assert body.index(f"Yayındaki sürüm #{release.pk}") < body.index(
+        "Sonraki yayın için hazırlıklar"
+    )
+    assert '<details class="card" id="next-publication-preparation">' in body
+    assert "İzinli istemciler bu sürümü kullanır." in body
+    scenario.status = "disabled"
+    scenario.save(update_fields=["status"])
+    body = _scenario_page(client, scenario)
+    assert "Yeni çağrılar kapalı. Yayındaki sürüm korunuyor." in body
+    assert "İzinli istemciler bu sürümü kullanır." not in body

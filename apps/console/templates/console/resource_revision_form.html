@@ -1,0 +1,17 @@
+{% extends "console/base.html" %}
+{% block title %}Kaynak ayarlarını düzenle · AgentHub{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'console:connector_source_detail' source.pk %}">{{ source.name }}</a><span>›</span><span>Kaynak ayarları</span></div>
+<div class="page-heading"><div><p class="eyebrow">{{ set.name }}</p><h1>{% if review %}Yeni ayarları gözden geçirin{% else %}Kaynak ayarlarını düzenle{% endif %}</h1><p>Değişiklikler yeni sürüm olarak kaydedilir. Mevcut ayarlar ve yenileme planı, hazırlanan yeni sürüme geçene kadar çalışmaya devam eder.</p></div></div>
+<div class="card"><form method="post">{% csrf_token %}
+{% if review %}
+<p><strong>Kaynak adı:</strong> {{ review.name }}</p><p><strong>Bağlantı:</strong> {{ review.profile.logical_id }} · r{{ review.profile.revision }}</p>
+{% if source.connector_type == 'mcp_resource' %}<p><strong>Alınacak kaynak alanları:</strong></p><ul>{% for prefix in review.config.resource_prefixes %}<li>{{ prefix }}</li>{% endfor %}</ul>
+{% else %}<p><strong>Kök sayfalar:</strong> {{ review.config.root_page_ids|join:', ' }}</p><p><strong>Hariç tutulan sayfalar:</strong> {{ review.config.excluded_page_ids|join:', '|default:'Yok' }}</p><p><strong>Kök sayfalar dahil:</strong> {{ review.config.include_root|yesno:'Evet,Hayır' }}</p>{% endif %}
+<p><strong>Geçişten sonra:</strong> {{ review.plan }}</p>
+{% if preparation_policy %}{% include 'console/rest_setup_preparation_summary.html' %}<p>Hazırlama ayarları değişirse yeniden incelemeniz istenir.</p>{% endif %}
+<div hidden>{{ form.as_p }}</div><button class="button" name="action" value="save">Yeni sürüm olarak kaydet</button>
+{% else %}{{ form.as_p }}<button class="button" name="action" value="review">Değişiklikleri incele</button>{% endif %}
+<a class="button secondary" href="{% url 'console:connector_source_edit' source.pk %}">Baştan düzenle</a>
+</form></div>
+{% endblock %}

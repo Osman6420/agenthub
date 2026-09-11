@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.artifacts.services import create_artifact_version
 from apps.artifacts.types import ArtifactType
@@ -13,6 +15,7 @@ from apps.audit.models import AuditEvent
 from apps.builder.models import WorkflowDraft
 from apps.catalog.models import AIProject, Scenario
 from apps.catalog.services import create_console_scenario
+from apps.console.tests.access_fixtures import private_access_member
 from apps.identity.models import (
     OrganizationResponsibility,
     OrganizationResponsibilityAssignment,
@@ -74,6 +77,8 @@ def test_contextual_preset_create_produces_valid_draft_without_release(
     response = client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
         {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
             "name": f"{preset} scenario",
             "preset": preset,
             "logical_description": f"Stable purpose for {preset}",
@@ -106,7 +111,13 @@ def test_scenario_create_form_exposes_no_parent_or_removed_technical_fields(clie
 
     assert response.status_code == 200
     fields = response.context["form"].fields
-    assert set(fields) == {"name", "preset", "logical_description"}
+    assert set(fields) == {
+        "name",
+        "preset",
+        "logical_description",
+        "access_mode",
+        "initial_manager",
+    }
     body = response.content.decode()
     assert "Empty Workflow" in body
     assert "Document Answer" in body
@@ -128,6 +139,8 @@ def test_preset_create_rolls_back_scenario_and_draft_when_audit_fails(
         client.post(
             reverse("console:project_scenario_create", args=[project.public_id]),
             {
+                "access_mode": "private",
+                "initial_manager": private_access_member(org),
                 "name": "Must rollback",
                 "preset": "empty_workflow",
                 "logical_description": "Rollback test",
@@ -256,7 +269,7 @@ def test_artifact_options_exclude_document_set_owned_chunking_profiles(client: C
     )
 
 
-def test_artifact_options_allow_author_read_but_keep_release_preset_manager_only(
+def test_artifact_options_allow_editor_candidate_preset_and_recheck_revocation(
     client: Client,
 ) -> None:
     org = Organization.objects.create(slug="selector-role-org", name="Selector Role")
@@ -276,7 +289,11 @@ def test_artifact_options_allow_author_read_but_keep_release_preset_manager_only
     response = client.get(url)
 
     assert response.status_code == 200
-    assert client.get(url, {"preset": "minimum"}).status_code == 403
+    assert client.get(url, {"preset": "minimum"}).status_code == 200
+    ScenarioResponsibilityAssignment.objects.filter(
+        scenario=scenario, membership__user=editor
+    ).update(expires_at=timezone.now() - timedelta(seconds=1))
+    assert client.get(url, {"preset": "minimum"}).status_code in {403, 404}
 
 
 def test_scenario_page_uses_dependent_selector_and_compiler_mode_curl(client: Client) -> None:

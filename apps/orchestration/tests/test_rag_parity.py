@@ -43,6 +43,7 @@ def _bundle(**overrides: Any) -> SimpleNamespace:
         "prompt_text": "system prompt",
         "model_profile": {},
         "retrieval_profile": {},
+        "data_selection": "legacy_pinned",
         "organization_id": 1,
         "scenario_id": 2,
         "index_versions": [],

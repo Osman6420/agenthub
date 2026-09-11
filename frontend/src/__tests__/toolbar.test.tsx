@@ -48,3 +48,25 @@ describe("workflow publish feedback", () => {
     expect(onAction).not.toHaveBeenCalled();
   });
 });
+
+describe("navigation back to the scenario (BUG-008)", () => {
+  it("links back when the editor was opened for a scenario", () => {
+    render(
+      <Toolbar
+        builder={builderStub()}
+        draftName="Flow"
+        busy={false}
+        onAction={vi.fn()}
+        backHref="/console/scenarios/7/"
+      />,
+    );
+
+    expect(screen.getByText("← Senaryoya dön")).toHaveAttribute("href", "/console/scenarios/7/");
+  });
+
+  it("shows no back link when the draft carries neither a scenario nor a project id", () => {
+    render(<Toolbar builder={builderStub()} draftName="Flow" busy={false} onAction={vi.fn()} />);
+
+    expect(screen.queryByText("← Senaryoya dön")).not.toBeInTheDocument();
+  });
+});

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 import uuid
@@ -14,6 +15,8 @@ import jsonschema
 from django.db import transaction
 from django.utils import timezone
 
+from apps.orchestration.resolver import resolve_bundle
+from apps.releases.execution import run_workflow_graph
 from apps.releases.services import get_artifact_body_for_role
 from apps.tenancy.context import set_tenant_context
 from apps.workflows.background_claims import (
@@ -37,6 +40,7 @@ from apps.workflows.models import (
     RunExecutionMode,
     RunJoin,
     RunJoinStatus,
+    RunRetrievalSelection,
     RunStatus,
 )
 from apps.workflows.run_parallel import (
@@ -53,6 +57,7 @@ from apps.workflows.runtime import (
     _execute_eligible_node,
     _execute_node,
     _validate_output_policy,
+    retrieval_parameters,
 )
 from apps.workflows.services import WorkflowRequestError, _assert_state_size
 from apps.workflows.state_mapping import (
@@ -122,6 +127,14 @@ class RunExecution:
     checkpoint_version: int
     wait_id: uuid.UUID | None = None
     resume_token: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class _RetrievalBoundary:
+    node_id: str
+    query: str
+    profile: dict[str, Any]
+    agent_step: int | None = None
 
 
 def _execution(result: RunTransitionResult) -> RunExecution:
@@ -393,10 +406,21 @@ def _node_input(node: dict[str, Any], state: dict[str, Any]) -> dict[str, Any] |
         raise WorkflowRuntimeError(exc.code) from None
 
 
-def _run_eligible(*, run: Run, node: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+def _run_eligible(
+    *,
+    run: Run,
+    node: dict[str, Any],
+    state: dict[str, Any],
+    retrieval_selection_id: int | None = None,
+) -> dict[str, Any]:
     """Produce one governed node envelope through the shared runtime seam, bounded in time."""
 
+    if run.prepared_evaluation_id is not None:
+        from apps.evaluations.prepared import prepared_run_generations
+
+        prepared_run_generations(run)
     started = time.monotonic()
+    elapsed_prior = 0.0
     input_env = _node_input(node, state)
     if node["type"] == "agent_loop":
         resume = state.get(_AGENT_RESUME_KEY)
@@ -406,19 +430,42 @@ def _run_eligible(*, run: Run, node: dict[str, Any], state: dict[str, Any]) -> d
             and isinstance(resume.get("checkpoint"), dict)
         ):
             input_env = dict(resume["checkpoint"])
+            elapsed = input_env.get("_embedded_elapsed_seconds", 0.0)
+            if (
+                isinstance(elapsed, bool)
+                or not isinstance(elapsed, (int, float))
+                or not math.isfinite(elapsed)
+                or elapsed < 0
+            ):
+                raise WorkflowRuntimeError("WORKFLOW_NODE_TIMED_OUT")
+            elapsed_prior = float(elapsed)
+    if elapsed_prior >= MAX_NODE_SECONDS:
+        raise WorkflowRuntimeError("WORKFLOW_NODE_TIMED_OUT")
     retry_policy = node.get("retry_policy")
     max_attempts = int(retry_policy["max_attempts"]) if isinstance(retry_policy, dict) else 1
     for attempt in range(1, max_attempts + 1):
+        from apps.agents.runtime import AgentRetrievalBoundary
+
         try:
+            selection_kwargs: dict[str, Any] = {}
+            if retrieval_selection_id is not None:
+                selection_kwargs["retrieval_selection_id"] = retrieval_selection_id
             envelope = _execute_eligible_node(
                 node=node,
                 state=state,
                 input_env=input_env,
                 run=run,
+                **selection_kwargs,
             )
-            if time.monotonic() - started > MAX_NODE_SECONDS:
+            if elapsed_prior + time.monotonic() - started > MAX_NODE_SECONDS:
                 raise WorkflowRuntimeError("WORKFLOW_NODE_TIMED_OUT")
             return envelope
+        except AgentRetrievalBoundary as boundary:
+            elapsed = elapsed_prior + time.monotonic() - started
+            if elapsed > MAX_NODE_SECONDS:
+                raise WorkflowRuntimeError("WORKFLOW_NODE_TIMED_OUT") from None
+            boundary.checkpoint["_embedded_elapsed_seconds"] = elapsed
+            raise
         except WorkflowRuntimeError as exc:
             if exc.code not in _TRANSIENT_NODE_ERRORS or attempt >= max_attempts:
                 raise
@@ -710,13 +757,32 @@ def _execute_compensations(
     return True
 
 
+def _branch_io_guard(run: Run, branch: RunBranch, delivery_token: uuid.UUID) -> None:
+    if (
+        run.status in RUN_TERMINAL_STATUSES
+        or run.cancellation_state == RunCancellationState.REQUESTED
+    ):
+        raise WorkflowRuntimeError("WORKFLOW_CANCELLED")
+    if timezone.now() >= run.deadline_at:
+        raise WorkflowRuntimeError("RUN_DEADLINE_EXCEEDED")
+    if (
+        branch.status != RunBranchStatus.RUNNING
+        or branch.delivery_token != delivery_token
+        or branch.claim_expires_at is None
+        or branch.claim_expires_at <= timezone.now()
+    ):
+        raise WorkflowRuntimeError("WORKFLOW_BRANCH_CLAIM_INVALID")
+
+
 def execute_run_branch_path(*, branch: RunBranch, delivery_token: uuid.UUID) -> Any:
     """Execute only the immutable branch path this durable branch owns."""
 
-    initial_run = branch.run
-    nodes, _outgoing, branch_edges, _input_node = _validated_graph(
-        initial_run.workflow_version.compiled_graph
-    )
+    with transaction.atomic():
+        set_tenant_context(branch.organization_id)
+        initial_run = branch.run
+        nodes, _outgoing, branch_edges, _input_node = _validated_graph(
+            run_workflow_graph(initial_run)
+        )
     region = nodes.get(branch.region_node_id)
     if region is None or region["type"] not in REGION_NODE_TYPES:
         raise WorkflowRuntimeError("WORKFLOW_PARALLEL_REGION_INVALID")
@@ -725,6 +791,7 @@ def execute_run_branch_path(*, branch: RunBranch, delivery_token: uuid.UUID) -> 
     state = deepcopy(branch.input_state)
     current = branch.region_node_id
     for _ in range(len(nodes)):
+        selection_arguments = None
         # Keep RLS scope for a node's governed database work, but commit its lease renewal
         # before beginning the next node. This bounds Run/RunJoin/RunBranch lock duration to
         # the safe boundary rather than the complete multi-node branch path.
@@ -736,19 +803,7 @@ def execute_run_branch_path(*, branch: RunBranch, delivery_token: uuid.UUID) -> 
             active_branch = RunBranch.objects.get(
                 pk=branch.id, organization_id=branch.organization_id
             )
-            if (
-                run.status in RUN_TERMINAL_STATUSES
-                or run.cancellation_state == RunCancellationState.REQUESTED
-            ):
-                raise WorkflowRuntimeError("WORKFLOW_CANCELLED")
-            if timezone.now() >= run.deadline_at:
-                raise WorkflowRuntimeError("RUN_DEADLINE_EXCEEDED")
-            if (
-                active_branch.status != RunBranchStatus.RUNNING
-                or active_branch.claim_expires_at is None
-                or active_branch.claim_expires_at <= timezone.now()
-            ):
-                raise WorkflowRuntimeError("WORKFLOW_BRANCH_CLAIM_INVALID")
+            _branch_io_guard(run, active_branch, delivery_token)
             edge = branch_edges[current].get(name)
             if edge is None:
                 raise WorkflowRuntimeError("WORKFLOW_PARALLEL_REGION_INVALID")
@@ -761,7 +816,46 @@ def execute_run_branch_path(*, branch: RunBranch, delivery_token: uuid.UUID) -> 
                         raise WorkflowRuntimeError(exc.code) from None
                 return state.get("result", state.get("output", state))
             node = nodes[current]
-            state = _project_envelope(node, state, _run_eligible(run=run, node=node, state=state))
+            if node["type"] == "retrieve":
+                bundle = resolve_bundle(run.release)
+                if bundle.data_selection == "active_generation":
+                    query, profile = retrieval_parameters(
+                        node=node, state=state, input_env=_node_input(node, state), run=run
+                    )
+                    selection_arguments = _RetrievalBoundary(
+                        str(node["id"]),
+                        query,
+                        profile if profile is not None else bundle.retrieval_profile,
+                    )
+        selection_id = None
+        if selection_arguments is not None:
+            from apps.workflows.retrieval_selection import (
+                RetrievalSelectionError,
+                capture_active_selection,
+            )
+
+            try:
+                selection_id = capture_active_selection(
+                    organization_id=branch.organization_id,
+                    run_id=branch.run_id,
+                    owner_token=delivery_token,
+                    branch_id=branch.pk,
+                    node_id=selection_arguments.node_id,
+                    query=selection_arguments.query,
+                    profile=selection_arguments.profile,
+                ).id
+            except RetrievalSelectionError as exc:
+                raise WorkflowRuntimeError(exc.code) from None
+        with transaction.atomic():
+            set_tenant_context(branch.organization_id)
+            run.refresh_from_db()
+            active_branch.refresh_from_db()
+            _branch_io_guard(run, active_branch, delivery_token)
+            state = _project_envelope(
+                node,
+                state,
+                _run_eligible(run=run, node=node, state=state, retrieval_selection_id=selection_id),
+            )
             try:
                 _assert_state_size(state)
             except WorkflowRequestError:
@@ -809,9 +903,7 @@ def _execute_owned_bounded_run(
             or run.sync_lease_expires_at <= timezone.now()
         ):
             raise UnifiedExecutorError("RUN_EXECUTOR_SYNC_LEASE_INVALID")
-        nodes, outgoing, _branch_edges, current = _validated_graph(
-            run.workflow_version.compiled_graph
-        )
+        nodes, outgoing, _branch_edges, current = _validated_graph(run_workflow_graph(run))
     owner = _owner_transition_kwargs(run, owner_token)
     if run.status == RunStatus.QUEUED:
         started = transition_run(
@@ -825,15 +917,41 @@ def _execute_owned_bounded_run(
         )
         if started.outcome != "committed":
             return _execution(started)
-    return _execute_started_owned_run(
-        organization_id=organization_id,
-        run_id=run.id,
-        owner_token=owner_token,
-        execution_mode=execution_mode,
-        nodes=nodes,
-        outgoing=outgoing,
-        current=current,
+    from apps.workflows.retrieval_selection import (
+        MAX_SELECTIONS_PER_RUN,
+        RetrievalSelectionError,
+        capture_active_selection,
     )
+
+    selection_failure = None
+    for _ in range(MAX_SELECTIONS_PER_RUN + 1):
+        result = _execute_started_owned_run(
+            organization_id=organization_id,
+            run_id=run.id,
+            owner_token=owner_token,
+            execution_mode=execution_mode,
+            nodes=nodes,
+            outgoing=outgoing,
+            current=current,
+            selection_failure=selection_failure,
+        )
+        if isinstance(result, RunExecution):
+            return result
+        # The preceding checkpoint transaction has committed before selection,
+        # and the selection commits before this loop can enter node/provider I/O.
+        try:
+            capture_active_selection(
+                organization_id=organization_id,
+                run_id=run.id,
+                owner_token=owner_token,
+                node_id=result.node_id,
+                query=result.query,
+                profile=result.profile,
+                agent_step=result.agent_step,
+            )
+        except RetrievalSelectionError as exc:
+            selection_failure = exc.code
+    raise UnifiedExecutorError("RETRIEVAL_SELECTION_LIMIT")
 
 
 @transaction.atomic
@@ -846,7 +964,8 @@ def _execute_started_owned_run(
     nodes: dict[str, dict[str, Any]],
     outgoing: dict[str, list[dict[str, Any]]],
     current: str,
-) -> RunExecution:
+    selection_failure: str | None = None,
+) -> RunExecution | _RetrievalBoundary:
     """Run node work after the durable running transition has committed."""
 
     set_tenant_context(organization_id)
@@ -872,6 +991,8 @@ def _execute_started_owned_run(
     input_tokens = 0
     output_tokens = 0
     try:
+        if selection_failure is not None:
+            raise WorkflowRuntimeError(selection_failure)
         while True:
             guarded = _guard_transition(run, owner_token)
             if guarded is not None:
@@ -952,10 +1073,88 @@ def _execute_started_owned_run(
                 _record_compensation(run, node)
                 state = _project_envelope(node, state, output if isinstance(output, dict) else {})
             elif node["type"] in _ELIGIBLE_NODE_TYPES:
-                from apps.agents.runtime import AgentPaused
+                from apps.agents.runtime import AgentPaused, AgentRetrievalBoundary
 
+                selection_id = None
+                if node["type"] == "retrieve":
+                    bundle = resolve_bundle(run.release)
+                    if bundle.data_selection == "active_generation":
+                        selection_id = (
+                            RunRetrievalSelection.objects.filter(
+                                run=run,
+                                organization_id=organization_id,
+                                step_key=f"node:{node['id']}",
+                            )
+                            .values_list("pk", flat=True)
+                            .first()
+                        )
+                        if selection_id is None:
+                            query, profile = retrieval_parameters(
+                                node=node, state=state, input_env=_node_input(node, state), run=run
+                            )
+                            run.refresh_from_db()
+                            checkpointed = transition_run(
+                                organization_id=organization_id,
+                                run_id=run.pk,
+                                transition_token=_transition_token(
+                                    owner_token, f"select:{node['id']}"
+                                ),
+                                expected_checkpoint_version=run.checkpoint_version,
+                                expected_status=RunStatus.RUNNING,
+                                target_status=RunStatus.RUNNING,
+                                checkpoint={**state, _CURSOR_KEY: str(node["id"])},
+                                step_delta=len(executed),
+                                tool_call_delta=tool_calls,
+                                input_token_delta=input_tokens,
+                                output_token_delta=output_tokens,
+                                reason_code="RETRIEVAL_SELECTION_BOUNDARY",
+                                **owner,
+                            )
+                            if (
+                                checkpointed.outcome != "committed"
+                                or checkpointed.status != "running"
+                            ):
+                                return _execution(checkpointed)
+                            return _RetrievalBoundary(
+                                str(node["id"]),
+                                query,
+                                profile if profile is not None else bundle.retrieval_profile,
+                            )
                 try:
-                    envelope = _run_eligible(run=run, node=node, state=state)
+                    envelope = _run_eligible(
+                        run=run, node=node, state=state, retrieval_selection_id=selection_id
+                    )
+                except AgentRetrievalBoundary as boundary:
+                    run.refresh_from_db()
+                    checkpointed = transition_run(
+                        organization_id=organization_id,
+                        run_id=run.pk,
+                        transition_token=_transition_token(
+                            owner_token, f"select:{node['id']}:agent:{boundary.step}"
+                        ),
+                        expected_checkpoint_version=run.checkpoint_version,
+                        expected_status=RunStatus.RUNNING,
+                        target_status=RunStatus.RUNNING,
+                        checkpoint={
+                            **state,
+                            _CURSOR_KEY: str(node["id"]),
+                            _AGENT_RESUME_KEY: {
+                                "node_id": str(node["id"]),
+                                "checkpoint": boundary.checkpoint,
+                            },
+                        },
+                        step_delta=len(executed),
+                        tool_call_delta=tool_calls,
+                        input_token_delta=input_tokens,
+                        output_token_delta=output_tokens,
+                        reason_code="RETRIEVAL_SELECTION_BOUNDARY",
+                        **owner,
+                    )
+                    if checkpointed.outcome != "committed" or checkpointed.status != "running":
+                        return _execution(checkpointed)
+                    return _RetrievalBoundary(
+                        str(node["id"]), boundary.query, boundary.profile, boundary.step
+                    )
                 except AgentPaused as exc:
                     if (
                         execution_mode == RunExecutionMode.SYNC

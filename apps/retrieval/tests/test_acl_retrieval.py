@@ -41,9 +41,10 @@ pg_only = pytest.mark.skipif(
 pytestmark = [pytest.mark.django_db, pg_only]
 
 
-@pytest.fixture(autouse=True)
-def _memory_object_store(settings: object) -> Iterator[None]:
+@pytest.fixture(autouse=True, params=["legacy", "shared_v1"])
+def _memory_object_store(settings: object, request: pytest.FixtureRequest) -> Iterator[None]:
     settings.DOCUMENTS_OBJECT_STORE_BACKEND = "memory"  # type: ignore[attr-defined]
+    settings.INGESTION_VECTOR_STORAGE_LAYOUT = request.param  # type: ignore[attr-defined]
     storage.reset_in_memory_store()
     yield
     storage.reset_in_memory_store()
@@ -394,3 +395,75 @@ def test_grant_is_required_and_is_consumer_specific() -> None:
     assert _retrieve(org, [dsv.id], consumer=allowed)
     assert _retrieve(org, [dsv.id], consumer=denied) == []
     assert _retrieve(org, [dsv.id]) == []
+
+
+def test_shared_mode_keeps_per_set_consent_binding_tenant_and_tombstone_live() -> None:
+    from apps.documents.shared_access import set_shared_consumer_consent
+    from apps.identity.models import (
+        ConsumerBinding,
+        DocumentSetResponsibility,
+        DocumentSetResponsibilityAssignment,
+    )
+    from apps.tenancy.models import OrganizationMembership
+
+    org = Organization.objects.create(slug="shared", name="Shared")
+    embedding = _profile(org)
+    allowed = _published_set(org, "allowed", ["alpha shared policy text"])
+    withheld = _published_set(org, "withheld", ["alpha restricted policy text"])
+    for version in (allowed, withheld):
+        _build_and_promote(org, version, embedding)
+    scenario = _scenario(org)
+    scenario.data_access_mode = "scenario_shared"
+    scenario.save(update_fields=["data_access_mode"])
+    manager = get_user_model().objects.create_user(username="shared-data-manager")
+    membership = OrganizationMembership.objects.create(organization=org, user=manager)
+    grants = []
+    for version in (allowed, withheld):
+        DocumentSetResponsibilityAssignment.objects.create(
+            organization=org,
+            document_set=version.document_set,
+            membership=membership,
+            responsibility=DocumentSetResponsibility.MANAGER,
+            assigned_by=manager,
+        )
+        grants.append(
+            ScenarioDocumentSetGrant.objects.create(
+                organization=org,
+                scenario=scenario,
+                document_set=version.document_set,
+                granted_by=manager,
+                granted_at=timezone.now(),
+            )
+        )
+    consumer = _consumer(org)
+    binding = ConsumerBinding.objects.create(
+        consumer=consumer, scenario=scenario, capabilities=["workflow_run"]
+    )
+    _grant(consumer, withheld)  # ordinary grant cannot substitute for shared consent
+    versions = [allowed.pk, withheld.pk]
+    assert not _retrieve(org, versions, consumer=consumer, scenario=scenario)
+    set_shared_consumer_consent(
+        grant=grants[0], actor=manager, enabled=True, acknowledge_future_consumers=True
+    )
+    hits = _retrieve(org, versions, consumer=consumer, scenario=scenario)
+    assert hits and all(hit.source_id == f"docset-version:{allowed.pk}" for hit in hits)
+    future = _consumer(org, "future")
+    assert not _retrieve(org, versions, consumer=future, scenario=scenario)
+    ConsumerBinding.objects.create(
+        consumer=future, scenario=scenario, capabilities=["workflow_run"]
+    )
+    assert _retrieve(org, versions, consumer=future, scenario=scenario)
+    ConsumerBinding.objects.filter(pk=binding.pk).update(status="revoked")
+    assert not _retrieve(org, versions, consumer=consumer, scenario=scenario)
+    foreign = Organization.objects.create(slug="foreign-shared", name="Foreign")
+    foreign_consumer = _consumer(foreign)
+    assert not _retrieve(org, versions, consumer=foreign_consumer, scenario=scenario)
+    set_shared_consumer_consent(grant=grants[0], actor=manager, enabled=False)
+    assert not _retrieve(org, versions, consumer=future, scenario=scenario)
+    set_shared_consumer_consent(
+        grant=grants[0], actor=manager, enabled=True, acknowledge_future_consumers=True
+    )
+    doc_services.soft_delete_document(
+        Document.objects.get(organization=org, logical_id="allowed-doc-0"), actor="op"
+    )
+    assert not _retrieve(org, versions, consumer=future, scenario=scenario)

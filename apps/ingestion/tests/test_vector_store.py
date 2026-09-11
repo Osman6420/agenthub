@@ -128,7 +128,8 @@ def test_ddl_functions_enforce_store_lifecycle() -> None:
     iv = _index_version(dimensions=4)
     vector_store.provision_store(iv)
     iv.status = IndexStatus.ACTIVE
-    iv.save(update_fields=["status", "updated_at"])
+    iv.store_ready = True
+    iv.save(update_fields=["status", "store_ready", "updated_at"])
 
     with pytest.raises(VectorStoreError, match="INDEX_STORE_ACTIVE"):
         vector_store.drop_store(iv)
@@ -137,6 +138,8 @@ def test_ddl_functions_enforce_store_lifecycle() -> None:
     iv.save(update_fields=["status", "updated_at"])
     vector_store.drop_store(iv)
     assert not vector_store.store_exists(iv)
+    iv.refresh_from_db()
+    assert not iv.store_ready
 
 
 @pg_only

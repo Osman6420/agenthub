@@ -32,6 +32,7 @@ COMPOSITION_NODE_TYPES = frozenset({"subworkflow"})
 # can resume.
 COMPILED_WORKFLOW_API_VERSION = "agenthub/compiled-workflow/v5"
 COMPILER_VERSION = "workflow-compiler/v6"
+SNAPSHOT_COMPILER_VERSION = "workflow-compiler/v7"
 
 _SYNC_BLOCKER_BY_NODE_TYPE = {
     "tool": "tool_pause_policy_unproven",

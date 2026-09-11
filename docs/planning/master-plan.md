@@ -6,6 +6,200 @@ Track project-level intent without treating target designs as implemented behavi
 
 ## Current state
 
+On 2026-09-11 the owner approved security and local transition closure. Python and
+frontend dependency audits now report zero known findings. Docker/CI installations
+respect requirements.lock. A restored copy of the local database passed migration
+rehearsal before the canonical Update migrated the main local database and started
+all roles; existing table counts were preserved and worker readiness passed. The
+combined task owns evidence and remaining external-environment/shared-only cutover
+boundaries. This is not an external production deployment.
+
+The owner approved implementation of the seven AgentHub simplification workstreams
+on 2026-09-09 and requested one task document. The single active
+[AgentHub development plan](../tasks/Agent_Hub_MD/plan.md) replaces their independent
+briefs and owns scope, conflict resolution, risks, milestones and verification.
+The [source briefs](archive/agenthub-simplification-source-briefs-2026-09-09/README.md)
+are archived design inputs, not completed product work. Earlier assessment-only
+approval descriptions below are historical; current authorization and progress
+are defined by the unified task. Existing application data and unrelated work
+remain protected; destructive cleanup and production deployment are excluded.
+
+Current increments include exact MCP ingestion scope, additive shared-vector
+storage/build-attempt fencing/backfill, and explicit project/scenario roles with
+inheritance and previewed access transitions. New console scenarios choose
+inherited or private initial access. Additive scenario revisions and durable data
+selection, shared connector jobs with MCP resource ingestion, the gated REST setup
+wizard and source status views also have implemented, tested increments. Automatic
+preparation intent now commits with document-set publication. The unified task
+also includes the approved private REST setup checkpoint: users can save while a
+connection grant is pending and resume with current authority after it is granted.
+Checkpoint storage, stale-write protection and atomic completion have automated
+and browser evidence in the same task. Shared REST/Confluence stage-only completion now
+links to the canonical preparation job; the periodic REST wizard can reuse the set's
+reviewed preparation policy. The setup entry now selects an existing managed set or
+atomically creates an explicitly managed new set with its private waiting checkpoint.
+Explicit manual REST/Confluence/MCP snapshot preparation also uses the same reviewed
+set policy and exact build link. Connector snapshot membership is protected from author
+draft edits; this increment has PostgreSQL and limited browser evidence in the task.
+MCP periodic refresh now uses the same schedule and Job/Outbox, with immutable slot
+evidence and draft-only or reviewed stage-only preparation. Targeted PostgreSQL,
+revoked-grant pause, scope/role and narrow browser checks are recorded in the task.
+Initial preparation settings can now be saved before a document version exists; the
+REST wizard checkpoints its inputs before opening settings and resumes the same step.
+REST configuration editing now preserves an immutable source family, isolates candidate
+documents and atomically selects/restores an exactly prepared revision and its saved plan.
+PostgreSQL concurrency, SQL/RLS, grant revocation, audit rollback and retained-source
+checks plus limited browser evidence are recorded in the task. MCP and Confluence now
+share the same revision/edit/review/restore flow, with typed deferred snapshot proof,
+one-hour actor-bound review intent, current grant checks and legacy family writer fencing.
+Migration 0037 and worker contract 11 preserve the original source and schedule until
+explicit prepared selection. Targeted PostgreSQL and browser evidence is in the task;
+source revision edits now preserve the approved automatic-publication plan across
+REST, MCP and Confluence; exact evaluation and atomic activation have PostgreSQL evidence.
+Model, embedding and OCR catalogue revisions now also map to the shared Connection identity;
+their original profile and grant authorities remain intact. Migration mapping, immutable SQL
+guards, registration/audit rollback, read-only roles and existing provider/console paths have
+targeted evidence in the task. HTTP/MCP tool definitions now map to tenant-owned Connection
+identities with exact provenance, atomic registration/audit and tenant-only INSERT/SELECT
+policies. Migration/rollback and app-role provisioning/readiness checks preserve global
+catalogue write restrictions; tool bindings, approval and execution authority are unchanged.
+Single-action scenario publication now records a reviewed, resumable intent and commits
+the final release/activation/audit atomically. Exact case resumption, stale inputs, revoked
+authority, unchanged live traffic on failure and PostgreSQL guards have targeted evidence.
+The console exposes publication and its history while preserving specialist controls;
+new console scenarios choose snapshot/active-generation while existing scenarios retain
+their prior contract until an explicit reviewed transition. Shared connector promotion
+uses the same publication receipt. Local integrated OpenAI preparation/retrieval/answer
+acceptance has now passed; external connector servers and deployment review remain separate.
+Expired private REST setup content now has a bounded, preview-first PostgreSQL
+owner maintenance command. It retains receipts/audit, leaves active drafts and
+completed sources intact, and rejects early clearing or restoration of cleared
+payloads. Reference-preserving vector retention, concurrent build/read measurements and
+restricted-role readiness checks now have PostgreSQL evidence; production cutover remains
+excluded. Document detail search/pagination and current scenario publication presentation
+are implemented. A separate local PostgreSQL/Redis/MinIO stack proved scenario creation,
+publication and real background execution under the restricted application role, including
+idempotent replay and browser role/scope denials. The task records remaining external-provider
+and deployment-wide acceptance separately from completed implementation and local checks.
+The final local run also prepared a synthetic document using real OpenAI embeddings,
+activated its shared index, published a Studio-configured Document Answer scenario and
+answered with one retrieved evidence chunk. The disposable runtime was aligned to the
+existing LangGraph dependency pins; the main host/image drift was recorded and left untouched.
+
+The [proposal consistency review](archive/proposal-consistency-review-2026-09-09/assessment.md)
+reviews the 22-file `docs/tasks/Agent_Hub_MD` copy against its canonical task records
+and relevant current code. The owner clarified that these remain ideas under
+consideration, not a blanket implementation instruction. During this review the
+owner selected combined editing, publishing and runtime operation for the target
+project/scenario manager role; this is a design preference, not authorization to
+implement or migrate it. Inheritance/private-scenario administration, shared-client
+data access, freshness policy and rollout remain separate decisions. Existing
+navigation implementation is distinguished from the unimplemented proposals.
+No application behavior or original proposal was changed. See the
+[verification record](archive/proposal-consistency-review-2026-09-09/verification.md).
+
+The [console UI redesign implementation brief](../tasks/console-ui-redesign/implementation-instructions.md)
+consolidates the document-workspace concepts, retained navigation improvements and existing
+scenario-detail subtask. The [umbrella task](../tasks/console-ui-redesign/plan.md) is **Planned**;
+this document delivery changes no application behavior and does not authorize separate
+RAG/storage/authorization redesigns. Evidence: [document verification](../tasks/console-ui-redesign/verification.md).
+
+The [RAG architecture simplification implementation brief](../tasks/rag-architecture-simplification/implementation-prompt.md)
+was prepared at the owner's request on 2026-09-09. The [task](../tasks/rag-architecture-simplification/plan.md)
+is **Planned**, not implemented. It combines the 44-model sizing candidate, preserved
+project/scenario authorization, a single static vector table, one scenario snapshot,
+independent data freshness and durable REST/MCP/tool workflows. It references the
+existing shared-vector-storage work and keeps separate authorization-policy changes
+conditional on their own approved scope. No feature or permission is removed merely
+to meet the table count. See [document verification](../tasks/rag-architecture-simplification/verification.md).
+This delivery changes no application code, schema, runtime, permissions or data.
+
+The [authorization simplification implementation brief](../tasks/authorization-simplification/implementation-prompt.md)
+is prepared at the owner's request on 2026-09-09. The linked
+[task](../tasks/authorization-simplification/plan.md) is **Planned**, not implemented.
+The brief defines role matrices, inheritance, compatibility-preserving transition,
+consumer/data access modes and acceptance tests. This document delivery changes
+no application authorization, schema, runtime or deployment state.
+
+The [authorization simplification assessment](archive/authorization-simplification-assessment-2026-09-09/assessment.md)
+was completed on 2026-09-09. It inventories 13 human responsibilities, 24 operator
+capabilities and 10 consumer capabilities, and recommends fewer visible role
+packages while retaining organization/project/scenario and protected-content
+boundaries. Inheritance, role merges and consumer document-grant consolidation
+are proposals only, not approved implementation or changed permissions. The source
+review also flags MCP ingestion-status scope for follow-up. Evidence: 43 targeted
+backend and 15 frontend tests passed; no live PostgreSQL/browser verification.
+See [verification](archive/authorization-simplification-assessment-2026-09-09/verification.md).
+
+The [console navigation increment](../tasks/console-navigation-2026-09-08/plan.md) restores a
+scoped searchable Scenarios entry point, role-aware Tests/Approvals links, active-section
+feedback, parent navigation, project-filtered scenario shortcuts, contextual form cancellation
+and a responsive menu. Implementation and navigation tests are
+recorded separately from the outstanding full lifecycle browser gate in its verification.
+
+On 2026-09-08 the owner clarified that **project-level and scenario-level
+authorization must both remain**. Workspace membership alone is insufficient;
+project and scenario permissions must continue to be evaluated server-side for
+the relevant actor, resource and action, including REST/MCP execution and data
+access. Preserve current inheritance and grant semantics unless separately approved;
+this clarification does not introduce a new inheritance policy or authorize broader access.
+It supersedes the authorization simplification in section 7 of the archived RAG
+assessment and the target-model mappings that remove the project boundary or fold
+project/scenario assignments into WorkspaceMembership. The 35-model estimate must
+therefore be reassessed; it is not a current target table count. A shared vector
+table and simpler release management remain compatible with these access boundaries.
+This is an owner requirement recorded in planning only: no implementation, permissions,
+schema or audit behavior changed. Verification: compared the archived assessment and
+target-model mappings; documentation whitespace check passed. Application tests are
+not applicable to this localized clarification. Implementation review must verify
+permission equivalence and cross-project/scenario denial before any consolidation.
+
+The revised **conservative sizing candidate is 44 application tables, or 54 total
+with the existing 10 Django infrastructure tables**. The arithmetic starts from the
+35-model reference and restores nine explicitly counted models: Project (AIProject),
+PlatformResponsibilityAssignment, OrganizationResponsibilityAssignment,
+ProjectResponsibilityAssignment, ScenarioResponsibilityAssignment,
+DocumentSetResponsibilityAssignment, ScenarioDocumentSetAccessRequest,
+ScenarioDocumentSetGrant and DocumentSetGrant. Solution already represents Scenario;
+it is not added twice. Membership remains affiliation and the retained assignments
+remain authority; the archived workspace-role replacements are not also applied.
+Retaining document access requests/grants is a conservative assumption, not a claim
+that all nine additional tables are technically required by project/scenario access
+alone. No permission-removal assumption is used to lower this estimate.
+Chunk is already one of the 44 tables; all vector rows use it, with zero additional
+dynamic stores or partitions. Relative to the earlier verified local inventory of
+80 application + 10 Django + 9 dynamic tables (99 total), this is 36 fewer application
+tables (45%) and 45 fewer total tables. The inventory was not re-queried for this
+calculation. Verification: parsed the 35-model list, checked 44 unique proposed model
+names and one Chunk entry, inspected the nine restored source declarations, and
+checked documentation whitespace. This is a sizing estimate, not a verified migration
+result or approval of other feature reductions in the earlier proposal. Permission
+equivalence, relationship constraints and any further required models remain design
+and implementation review gates; schema/runtime/security/privacy/telemetry unchanged.
+
+The owner requires ingestion to create no dynamic production tables. The
+[fixed vector storage assessment](archive/fixed-vector-storage-assessment-2026-09-08/assessment.md)
+recommends one static chunk/vector table with row-based generations and deployment-managed
+search indexes. This constraint rules out retaining per-generation physical stores in the
+target design discussed below. Assessment completed; no schema, runtime privilege or ADR
+implementation change. See [verification](archive/fixed-vector-storage-assessment-2026-09-08/verification.md).
+
+The owner-led [RAG product architecture reassessment](archive/rag-product-architecture-reassessment-2026-09-08/assessment.md)
+challenges the current governance/versioning model against rapid RAG delivery, isolated teams and
+durable agents/approvals/parallelism/compensation. Its 35-model reference design and 80-model mapping
+are assessment outputs, not adopted scope or implemented architecture. See its
+[verification](archive/rag-product-architecture-reassessment-2026-09-08/verification.md).
+
+The [database architecture review](archive/database-architecture-review-2026-09-08/assessment.md)
+reconciles 80 application tables, 10 Django infrastructure tables and 9 local dynamic vector stores.
+It identifies conditional consolidation candidates and a vector-store retention gap; this is a
+completed assessment, with no schema change or approved implementation commitment. Its
+[verification](archive/database-architecture-review-2026-09-08/verification.md) records the limits.
+
+The [UI redesign concept assessment](archive/ui-redesign-concept-2026-09-08/assessment.md)
+provides two static document-workspace/preparation proposals. This is design exploration;
+no redesigned application behavior or implementation commitment is recorded by that unit.
+
 As of 2026-07-14, Sprints 0–11 and Phase 2 P1 (live chat), P2 (content plane & storage), P3 (real
 embeddings + staged blue/green indexing), P4 (document-ACL retrieval + FORCE RLS + pointer-flip
 promotion — the security core; real ACL-scoped tenant RAG is now servable), P5 (real

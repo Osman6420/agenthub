@@ -120,6 +120,10 @@ def chunk_to_dict(chunk: RetrievedChunk) -> dict[str, Any]:
         "fused_score": chunk.fused_score,
         "document_routing_score": chunk.document_routing_score,
         "retrieval_stage": chunk.retrieval_stage,
+        "document_version_id": chunk.document_version_id,
+        "document_set_version_id": chunk.document_set_version_id,
+        "index_version_id": chunk.index_version_id,
+        "ordinal": chunk.ordinal,
     }
 
 
@@ -180,18 +184,68 @@ def retrieve_for_release(
     query: str,
     consumer_id: int | None = None,
     retrieval_profile: dict[str, Any] | None = None,
+    workflow_run: Any | None = None,
+    selection_id: int | None = None,
 ) -> dict[str, Any]:
     """Run governed, release-scoped retrieval and return a JSON-safe ``retrieval`` state block."""
     bundle = resolve_bundle(release)
-    chunks = get_retrieval_provider().retrieve(
-        query=query,
-        profile=(retrieval_profile if retrieval_profile is not None else bundle.retrieval_profile),
-        organization_id=bundle.organization_id,
-        scenario_id=getattr(bundle, "scenario_id", getattr(release, "scenario_id", None)),
-        index_versions=bundle.index_versions,
-        document_set_version_ids=bundle.document_set_version_ids,
-        consumer_id=consumer_id,
-    )
+    profile = retrieval_profile if retrieval_profile is not None else bundle.retrieval_profile
+    provider = get_retrieval_provider()
+    if workflow_run is not None and getattr(workflow_run, "prepared_evaluation_id", None):
+        if (
+            workflow_run.release_id != release.pk
+            or workflow_run.organization_id != bundle.organization_id
+            or workflow_run.consumer_id != consumer_id
+            or (bundle.data_selection == "active_generation" and selection_id is None)
+        ):
+            raise ValueError("PREPARED_EVALUATION_RUN_INVALID")
+        prepared_reader = getattr(provider, "retrieve_prepared", None)
+        if not callable(prepared_reader):
+            raise ValueError("PREPARED_EVALUATION_PROVIDER_UNSUPPORTED")
+        chunks = prepared_reader(
+            query=query,
+            profile=profile,
+            organization_id=bundle.organization_id,
+            scenario_id=bundle.scenario_id,
+            consumer_id=consumer_id,
+            release_id=release.pk,
+            run_id=workflow_run.pk,
+            selection_id=selection_id,
+        )
+    elif bundle.data_selection == "active_generation":
+        if (
+            workflow_run is None
+            or selection_id is None
+            or workflow_run.release_id != release.pk
+            or workflow_run.organization_id != bundle.organization_id
+            or workflow_run.consumer_id != consumer_id
+        ):
+            raise ValueError("RETRIEVAL_SELECTION_REQUIRED")
+        selected_reader = getattr(provider, "retrieve_selected", None)
+        if not callable(selected_reader):
+            raise ValueError("RETRIEVAL_SELECTION_PROVIDER_UNSUPPORTED")
+        chunks = selected_reader(
+            query=query,
+            profile=profile,
+            organization_id=bundle.organization_id,
+            scenario_id=bundle.scenario_id,
+            consumer_id=consumer_id,
+            release_id=release.pk,
+            run_id=workflow_run.pk,
+            selection_id=selection_id,
+        )
+    elif bundle.data_selection == "legacy_pinned":
+        chunks = provider.retrieve(
+            query=query,
+            profile=profile,
+            organization_id=bundle.organization_id,
+            scenario_id=getattr(bundle, "scenario_id", getattr(release, "scenario_id", None)),
+            index_versions=bundle.index_versions,
+            document_set_version_ids=bundle.document_set_version_ids,
+            consumer_id=consumer_id,
+        )
+    else:
+        raise ValueError("RETRIEVAL_SELECTION_MODE_UNSUPPORTED")
     return {
         "chunks": [chunk_to_dict(chunk) for chunk in chunks],
         "top_score": max((chunk.score for chunk in chunks), default=0.0),

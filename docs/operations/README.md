@@ -44,6 +44,9 @@ Document application/configuration/data rollback or forward-fix triggers, compat
 
 ## Runbooks
 
+The [expired REST setup maintenance runbook](rest-setup-retention.md) covers scoped
+preview, explicit irreversible payload clearing and preservation of audit receipts.
+
 Each runbook names symptoms, prerequisites, safe diagnostic steps, bounded remediation, verification, escalation, and owner. Production access must be least-privileged, approved, and audited.
 
 PostgreSQL/pgvector, Redis, object-storage configuration, and distinct Django/Celery

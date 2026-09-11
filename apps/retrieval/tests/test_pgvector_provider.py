@@ -27,9 +27,13 @@ def test_provider_returns_nothing_without_pinned_indexes() -> None:
 
 @pytest.mark.django_db
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="pgvector requires PostgreSQL")
+@pytest.mark.parametrize("layout", ["legacy", "shared_v1"])
 def test_provider_filters_tenant_and_pinned_index(
     monkeypatch: pytest.MonkeyPatch,
+    settings,
+    layout,
 ) -> None:
+    settings.INGESTION_VECTOR_STORAGE_LAYOUT = layout
     monkeypatch.setitem(CONNECTORS, "https", FakeConnector)
     org_a = Organization.objects.create(slug="a", name="A")
     org_b = Organization.objects.create(slug="b", name="B")

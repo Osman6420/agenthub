@@ -56,11 +56,33 @@ describe("builder deep link", () => {
     render(<App apiBase="/console/api/builder/"
       orgs={[{ slug: "org-b", name: "B", can_write: false }]}
       initial={{ organization: "org-b", project_id: 4, project_name: "Project",
-        scenario_id: 17, scenario_name: "Support", can_author_scenario: true,
+        scenario_id: 17, scenario_name: "Support", can_author_scenario: false,
+        allowed_actions: { edit: true, compile: true, release: false },
         ai_authoring: { available: true, message: "AI authoring hazır" } }} />);
 
     expect(await screen.findByText("Scenario Studio AI planner")).toBeInTheDocument();
     expect(screen.getByText("AI authoring hazır")).toBeInTheDocument();
+  });
+
+  it("does not replace denied scenario actions with organization or legacy write flags", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const value = String(url);
+      const payload = value.includes("node-schema") ? {
+        organization: "org-b", can_write: true,
+        dsl: { api_version: "agenthub/v1", kind: "Workflow" },
+        limits: { max_nodes: 50, max_edges: 100 }, node_types: [],
+        tool_binding_roles: [], custom_nodes: [], projects: [],
+      } : { drafts: [] };
+      return new Response(JSON.stringify(payload), { status: 200 });
+    }));
+    render(<App apiBase="/console/api/builder/"
+      orgs={[{ slug: "org-b", name: "B", can_write: true }]}
+      initial={{ organization: "org-b", project_id: 4, scenario_id: 17,
+        can_author_scenario: true, can_compile_release: true,
+        allowed_actions: { edit: false, compile: false, release: false },
+        ai_authoring: { available: true, message: "AI authoring hazır" } }} />);
+    expect(await screen.findByText("salt okunur")).toBeInTheDocument();
+    expect(screen.queryByText("Scenario Studio AI planner")).not.toBeInTheDocument();
   });
 
   it("opens the scenario's single workflow directly, with no draft list or create form", async () => {

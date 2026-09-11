@@ -1,6 +1,7 @@
 {% extends "console/base.html" %}
 {% block title %}{{ title }} · AgentHub{% endblock %}
 {% block content %}
+<p><a class="button secondary" href="{% url 'console:retention_operations' %}">Veri saklama yönetimi</a></p>
 <div class="page-heading"><div><p class="eyebrow">Platform-only governed setup</p><h1>Profil ve grant hazırlığı</h1><p class="muted">Immutable profil revizyonları, status-only disable ve explicit tenant/document-set grant'leri. Endpoint ve secret referansları bu envanterde gösterilmez.</p></div></div>
 {% if not confluence_policy_ready %}<div class="warning-box">Confluence network policy allowlist deployment tarafında boş; profil formu policy eklenene kadar kullanılamaz.</div>{% endif %}
 

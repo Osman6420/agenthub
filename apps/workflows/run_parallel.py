@@ -17,6 +17,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.artifacts.validation import compute_checksum
+from apps.releases.execution import run_workflow_graph
 from apps.tenancy.context import set_tenant_context
 from apps.workflows.compiler import (
     COMPILED_WORKFLOW_API_VERSION,
@@ -84,7 +85,7 @@ def _json_size(value: Any) -> int:
 
 
 def _node(run: Run, node_id: str) -> dict[str, Any]:
-    graph = run.workflow_version.compiled_graph
+    graph = run_workflow_graph(run)
     if graph.get("api_version") != COMPILED_WORKFLOW_API_VERSION:
         raise RunParallelError("RUN_EXECUTOR_GRAPH_VERSION_UNSUPPORTED")
     for node in graph["nodes"]:

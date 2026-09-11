@@ -1,0 +1,19 @@
+{% extends "console/base.html" %}
+{% block title %}Veri yenileme ayarı · {{ scenario.name }}{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a><span>›</span><span>Veri yenileme ayarı</span></nav>
+<h1>Güncel belgeleri takip et</h1>
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+{% if transition %}
+<section class="card">
+<p>Yeni yayınlar, senaryoya bağlı doküman setlerinin kullanıma hazır en güncel verisini takip eder. Yarım kalan bir adım yeniden çalıştığında daha önce seçtiği veriyi kullanır.</p>
+<p>Bu ayarı kaydetmek mevcut yayını değiştirmez. Değişiklik, senaryoyu test edip yeniden yayınladığınızda devreye girer. Devam eden işler kendi yayın sürümleriyle tamamlanır.</p>
+{% if transition.current_release %}<p>Mevcut yayın: #{{ transition.current_release.pk }}</p>{% endif %}
+<h2>Bağlı doküman setleri</h2>
+<ul>{% for binding in transition.document_sets %}<li>{{ binding.document_set.name }}</li>{% empty %}<li>Henüz bağlı doküman seti yok.</li>{% endfor %}</ul>
+{% if transition.already_enabled %}<p>Bu ayar zaten etkin.</p>
+{% else %}<form method="post">{% csrf_token %}<input type="hidden" name="review" value="{{ transition.review }}"><button type="submit">Sonraki yayınlar için etkinleştir</button></form>{% endif %}
+</section>
+{% endif %}
+<a class="button secondary" href="{% url 'console:scenario_detail_public' scenario.public_id %}">Senaryoya dön</a>
+{% endblock %}

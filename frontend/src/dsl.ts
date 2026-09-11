@@ -164,5 +164,11 @@ export function dslToGraph(body: unknown): ParsedGraph {
 // Deterministic grid layout so a reloaded draft is laid out identically every time.
 function layoutPosition(index: number): { x: number; y: number } {
   const perColumn = 4;
-  return { x: 60 + Math.floor(index / perColumn) * 260, y: 40 + (index % perColumn) * 120 };
+  const row = index % perColumn;
+  // BUG-014: nodes within a column used to share one x-coordinate, but `WorkflowNode`'s
+  // handles are `Position.Left`/`Position.Right` (a horizontal-flow layout) -- React Flow's
+  // default bezier then had to bow far sideways to connect two vertically stacked nodes. A
+  // small per-row offset keeps the staircase readable without changing handle positions or
+  // the edge type, both of which would have a much wider visual effect.
+  return { x: 60 + Math.floor(index / perColumn) * 260 + row * 36, y: 40 + row * 120 };
 }

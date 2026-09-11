@@ -12,6 +12,7 @@ from django.urls import reverse
 from apps.audit.models import AuditEvent
 from apps.catalog.models import AIProject, Scenario
 from apps.console.context import SESSION_KEY
+from apps.console.tests.access_fixtures import private_access_member
 from apps.documents.models import DocumentSet
 from apps.identity.assignment_services import remove_responsibility_assignment
 from apps.identity.models import (
@@ -298,6 +299,8 @@ def test_contextual_creates_ignore_forged_parent_fields(client: Client) -> None:
     scenario_response = client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
         {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
             "project": foreign_project.pk,
             "name": "Context Scenario",
             "preset": "document_answer",

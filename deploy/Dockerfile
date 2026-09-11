@@ -37,11 +37,11 @@ RUN apt-get update \
 # Install third-party dependencies in a layer keyed only by dependency metadata. Minimal package
 # placeholders let setuptools read the application metadata without coupling this expensive layer to
 # normal source edits. BuildKit retains downloaded wheels across legitimate dependency-layer rebuilds.
-COPY pyproject.toml ./
+COPY pyproject.toml requirements.lock ./
 RUN --mount=type=cache,target=/root/.cache/pip mkdir -p config apps \
     && touch config/__init__.py apps/__init__.py \
     && pip install "setuptools>=68" \
-    && pip install .
+    && pip install -c requirements.lock .
 
 # Install the real application without dependency resolution. Source-only changes now rebuild this
 # cheap layer and cannot download Python packages. The development bind mount still replaces these

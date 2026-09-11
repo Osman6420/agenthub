@@ -125,7 +125,7 @@ def test_forged_active_org_in_session_is_cleared(client: Client) -> None:
     assert "Own" in response.content.decode()
 
 
-def test_active_org_narrows_project_list_and_scenarios_live_under_project(client: Client) -> None:
+def test_active_org_narrows_project_and_scenario_lists(client: Client) -> None:
     org_a = _org("a")
     org_b = _org("b")
     _scenario(org_a, "alpha")
@@ -146,9 +146,11 @@ def test_active_org_narrows_project_list_and_scenarios_live_under_project(client
     defaulted = client.get(reverse("console:projects")).content.decode()
     assert "P alpha" in defaulted
     assert "P beta" not in defaulted
-    assert client.get(reverse("console:scenarios")).headers["Location"] == reverse(
-        "console:projects"
-    )
+    scenarios = client.get(reverse("console:scenarios"))
+    assert scenarios.status_code == 200
+    assert "P alpha" in scenarios.content.decode()
+    assert "P beta" not in scenarios.content.decode()
+    assert "Location" not in scenarios.headers
 
 
 def test_single_org_user_gets_static_label_not_dropdown(client: Client) -> None:

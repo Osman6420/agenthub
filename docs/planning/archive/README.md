@@ -4,6 +4,41 @@ Archive a completed or superseded task/component plan only after current behavio
 
 ## Completed task archives
 
+- [Superseded AgentHub design briefs (consolidated 2026-09-09)](agenthub-simplification-source-briefs-2026-09-09/README.md).
+  Seven proposal groups now have one [active development plan](../../tasks/Agent_Hub_MD/plan.md).
+  Historical source verification is preserved; product implementation is not complete.
+
+- [Proposal consistency review (assessment completed 2026-09-09)](proposal-consistency-review-2026-09-09/plan.md);
+  [assessment](proposal-consistency-review-2026-09-09/assessment.md),
+  [verification](proposal-consistency-review-2026-09-09/verification.md).
+  Review only; combined manager role selected as a design direction, no implementation
+  or migration authorized and no replacement implementation plan.
+
+- [Authorization simplification assessment (assessment completed 2026-09-09)](authorization-simplification-assessment-2026-09-09/plan.md);
+  [assessment](authorization-simplification-assessment-2026-09-09/assessment.md),
+  [verification](authorization-simplification-assessment-2026-09-09/verification.md).
+  No authorization implementation or replacement implementation plan.
+
+- [Fixed vector storage assessment (assessment completed 2026-09-08)](fixed-vector-storage-assessment-2026-09-08/plan.md);
+  [assessment](fixed-vector-storage-assessment-2026-09-08/assessment.md),
+  [verification](fixed-vector-storage-assessment-2026-09-08/verification.md).
+  Refines the RAG reassessment with the owner's no-dynamic-tables constraint;
+  no implementation or replacement implementation plan.
+
+- [RAG product architecture reassessment (assessment completed 2026-09-08)](rag-product-architecture-reassessment-2026-09-08/plan.md);
+  [assessment](rag-product-architecture-reassessment-2026-09-08/assessment.md),
+  [target model](rag-product-architecture-reassessment-2026-09-08/target-model.md),
+  [verification](rag-product-architecture-reassessment-2026-09-08/verification.md). No implementation; no replacement implementation plan.
+
+- [Database architecture review (assessment completed 2026-09-08)](database-architecture-review-2026-09-08/plan.md);
+  [assessment](database-architecture-review-2026-09-08/assessment.md),
+  [inventory](database-architecture-review-2026-09-08/inventory.md),
+  [verification](database-architecture-review-2026-09-08/verification.md). No schema change; no replacement implementation plan.
+
+- [UI redesign concepts (design exploration completed 2026-09-08)](ui-redesign-concept-2026-09-08/plan.md);
+  [assessment](ui-redesign-concept-2026-09-08/assessment.md),
+  [verification](ui-redesign-concept-2026-09-08/verification.md). No application implementation.
+
 - [Source ZIP packaging (completed 2026-09-01)](source-distribution-zip-2026-09-01/plan.md);
   [verification](source-distribution-zip-2026-09-01/verification.md).
 

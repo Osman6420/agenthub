@@ -567,7 +567,9 @@ def test_index_promotion_requires_document_set_manager(client: Client) -> None:
     client.force_login(manager)
     with patch("apps.console.views.promote_staged_index") as promote:
         assert client.post(url).status_code == 302
-        promote.assert_called_once_with(index, actor="set-manager", request_id=ANY)
+        promote.assert_called_once_with(
+            index, actor="set-manager", request_id=ANY, confirm_active_release_impact=False
+        )
 
 
 @pytest.mark.django_db

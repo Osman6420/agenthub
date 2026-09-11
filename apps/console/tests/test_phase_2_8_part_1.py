@@ -62,12 +62,13 @@ def test_sidebar_exposes_only_task_oriented_primary_navigation(client: Client) -
 
     assert ">Ana Sayfa</a>" in sidebar
     assert ">Projeler</a>" in sidebar
+    assert ">Senaryolar</a>" in sidebar
+    assert ">Testler</a>" in sidebar
     assert ">Dokümanlar</a>" in sidebar
     assert ">İstemciler</a>" in sidebar
     assert ">Çalıştırmalar</a>" in sidebar
     for removed in (
         "Organizasyonlar",
-        "Senaryolar",
         "Workflow izleri",
         "Recovery kararları",
         "DSL / grafik",
@@ -205,7 +206,6 @@ def test_health_results_list_exact_scenarios_and_document_sets(client: Client) -
     ("route_name", "target_name"),
     [
         ("console:organizations", "console:dashboard"),
-        ("console:scenarios", "console:projects"),
         ("console:artifacts", "console:projects"),
     ],
 )
@@ -294,8 +294,8 @@ def test_project_is_scenario_entry_point_with_accessible_tabs(client: Client) ->
     body = response.content.decode()
 
     assert response.status_code == 200
-    assert 'role="tablist"' in body
-    assert 'aria-current="page">Senaryolar' in body
+    assert 'aria-label="Proje bölümleri"' in body
+    assert 'aria-current="location">Senaryolar' in body
     assert reverse("console:scenario_detail_public", args=[scenario.public_id]) in body
     create_url = reverse("console:project_scenario_create", args=[project.public_id])
     assert create_url in body
@@ -323,7 +323,7 @@ def test_scenario_breadcrumb_and_task_tabs_preserve_project_context(client: Clie
 
     assert reverse("console:dashboard") in body
     assert reverse("console:project_detail_public", args=[project.public_id]) in body
-    assert 'role="tablist"' in body
+    assert 'aria-label="Senaryo bölümleri"' in body
     # The scenario page leads with its ordered steps; the remaining operator surfaces stay
     # reachable by anchor. "Release'ler" moved inside the collapsed advanced block.
     for label in ("Adımlar", "Dokümanlar", "Erişim", "Gelişmiş"):
@@ -343,7 +343,7 @@ def test_document_set_uses_task_tabs_for_existing_sections(client: Client) -> No
         reverse("console:document_set_detail_public", args=[document_set.public_id])
     ).content.decode()
 
-    assert 'role="tablist"' in body
+    assert 'aria-label="Doküman seti bölümleri"' in body
     for label in ("Genel", "Dokümanlar", "Sürümler ve indeks", "Kaynaklar"):
         assert label in body
     assert "scroll-margin-top: 84px" in body

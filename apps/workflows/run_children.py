@@ -16,6 +16,7 @@ from apps.gateway.execution_context import (
 )
 from apps.identity.capabilities import Capability
 from apps.identity.models import BindingStatus, ConsumerBinding
+from apps.releases.execution import run_workflow_graph
 from apps.releases.models import ReleaseStatus, ScenarioRelease
 from apps.releases.services import get_manifest_role
 from apps.tenancy.context import set_tenant_context
@@ -263,7 +264,7 @@ def converge_run_child(*, child_run_id: uuid.UUID, organization_id: int) -> bool
         graph_node = next(
             (
                 item
-                for item in parent.workflow_version.compiled_graph.get("nodes", [])
+                for item in run_workflow_graph(parent).get("nodes", [])
                 if item.get("id") == link.call_site
             ),
             None,

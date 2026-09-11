@@ -25,8 +25,10 @@ from apps.documents.services import bind_scenario_document_set
 from apps.identity.models import (
     DocumentSetResponsibility,
     DocumentSetResponsibilityAssignment,
+    ScenarioResponsibilityAssignment,
 )
 from apps.ingestion.automation import ConnectorAutomationError, claim_connector_automation
+from apps.ingestion.connector_preparation import ConnectorPreparationError
 from apps.ingestion.embedding_services import grant_embedding_profile, register_embedding_profile
 from apps.ingestion.models import (
     ConnectorAutomationStatus,
@@ -608,6 +610,24 @@ def test_document_set_manager_can_select_exact_safe_promotion_target(governed_re
         embedding_profile=embedding_profile,
     )
 
+    with pytest.raises(RestAuthorizationError, match="AUTOMATION_SCENARIO_AUTHORITY_REQUIRED"):
+        configure_sync_schedule(
+            actor=manager,
+            source=source,
+            interval_seconds=900,
+            enabled=True,
+            next_run_at=timezone.now(),
+            automation_mode="promote_if_safe",
+            embedding_profile=embedding_profile,
+            scenarios=[scenario],
+        )
+    ScenarioResponsibilityAssignment.objects.create(
+        organization=organization,
+        scenario=scenario,
+        membership=membership,
+        responsibility="scenario_manager",
+        assigned_by=platform,
+    )
     schedule = configure_sync_schedule(
         actor=manager,
         source=source,
@@ -639,7 +659,7 @@ def test_document_set_manager_can_select_exact_safe_promotion_target(governed_re
     )
     assignment.delete()
 
-    with pytest.raises(RuntimeError, match="AUTOMATION_RELEASE_MANAGER_REVOKED"):
+    with pytest.raises(ConnectorPreparationError, match="AUTOMATION_DURABLE_SOURCE_JOB_REQUIRED"):
         apply_connector_automation_task.run(schedule.pk, candidate.pk, organization.pk)
     candidate.refresh_from_db()
     assert candidate.status == DocumentSetVersionStatus.DRAFT

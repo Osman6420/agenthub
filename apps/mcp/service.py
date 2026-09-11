@@ -7,7 +7,11 @@ from datetime import UTC
 from typing import Any
 
 import jsonschema
+from django.db import transaction
+from django.db.models import Exists, OuterRef
 
+from apps.documents.models import ScenarioDocumentSetBinding
+from apps.documents.retrieve_scope import live_consumer_scenario_grants
 from apps.gateway.errors import ApiError, ErrorCode
 from apps.gateway.views import ResponsesView
 from apps.identity.capabilities import Capability
@@ -15,6 +19,7 @@ from apps.identity.models import Consumer, ConsumerProtocol
 from apps.identity.services import resolve_active_binding
 from apps.ingestion.models import IngestionRun
 from apps.mcp.schemas import TOOL_BY_NAME, TOOLS
+from apps.tenancy.context import set_tenant_context
 
 
 @dataclass(frozen=True)
@@ -139,23 +144,45 @@ def _run_status(args: dict[str, Any], context: McpRequestContext) -> dict[str, A
     return result
 
 
+@transaction.atomic
 def _ingestion_status(args: dict[str, Any], consumer: Consumer) -> dict[str, Any]:
-    runs = IngestionRun.objects.filter(source__organization_id=consumer.organization_id)
+    set_tenant_context(consumer.organization_id)
+    scenario_ids = [
+        scenario_id
+        for scenario_id, capabilities in consumer.bindings.filter(
+            organization_id=consumer.organization_id,
+            status="active",
+            consumer__status="active",
+            consumer__organization__status="active",
+            scenario__project__organization_id=consumer.organization_id,
+        ).values_list("scenario_id", "capabilities")
+        if Capability.INGESTION_READ in capabilities
+    ]
+    # Correlate both keys: a grant for another scenario must not authorize this
+    # binding, even when both scenarios belong to the same project.
+    scenario_grants = live_consumer_scenario_grants(
+        consumer=consumer,
+        scenario_ids=scenario_ids,
+    ).filter(
+        scenario_id=OuterRef("scenario_id"),
+        document_set_id=OuterRef("document_set_id"),
+    )
+    document_sets = ScenarioDocumentSetBinding.objects.filter(
+        organization_id=consumer.organization_id,
+        scenario_id__in=scenario_ids,
+        document_set__organization_id=consumer.organization_id,
+    ).filter(Exists(scenario_grants))
+    runs = IngestionRun.objects.filter(
+        organization_id=consumer.organization_id,
+        source__organization_id=consumer.organization_id,
+        source__document_set_id__in=document_sets.values("document_set_id"),
+    )
     if "run_id" in args:
         runs = runs.filter(pk=args["run_id"])
-    run = runs.order_by("-created_at").first()
+    run = runs.order_by("-created_at", "-pk").first()
     if run is None:
         raise ApiError(ErrorCode.RUN_NOT_FOUND, "Run not found.", http_status_code=404)
 
-    # Status access is capability-gated through a binding for the source's project.
-    bindings = consumer.bindings.filter(status="active").only("capabilities")
-    allowed = any(Capability.INGESTION_READ in binding.capabilities for binding in bindings)
-    if not allowed:
-        raise ApiError(
-            ErrorCode.CAPABILITY_DENIED,
-            "The request is not permitted.",
-            http_status_code=403,
-        )
     return {
         "run_id": run.id,
         "status": run.status,

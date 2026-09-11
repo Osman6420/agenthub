@@ -21,6 +21,7 @@ from apps.audit.services import record_event
 from apps.catalog.models import Scenario
 from apps.evaluations.models import EvalRun, EvalStatus
 from apps.identity.models import Consumer
+from apps.releases.compiler import lock_release_scenario
 from apps.releases.compiler import promote_release as _activate
 from apps.releases.models import CanaryStatus, ReleaseCanary, ReleaseStatus, ScenarioRelease
 from apps.releases.services import get_manifest_role
@@ -122,8 +123,10 @@ def _assert_release_gate(release: ScenarioRelease, *, actor: str, action: str) -
         _audit(action, release=release, actor=actor, outcome="deny", reason="EVAL_SUITE_NOT_PINNED")
         raise LifecycleError("EVAL_SUITE_NOT_PINNED")
     checksum = str(entry.get("checksum", ""))
-    if not EvalRun.objects.filter(
-        release=release, suite_checksum=checksum, status=EvalStatus.PASSED
+    from apps.evaluations.prepared import serving_evaluations
+
+    if not serving_evaluations(
+        EvalRun.objects.filter(release=release, suite_checksum=checksum, status=EvalStatus.PASSED)
     ).exists():
         _audit(action, release=release, actor=actor, outcome="deny", reason="EVAL_REQUIRED")
         raise LifecycleError("EVAL_REQUIRED")
@@ -141,7 +144,33 @@ def promote(*, release: ScenarioRelease, actor: str) -> ScenarioRelease:
         raise LifecycleError("RELEASE_NOT_PROMOTABLE")
     _assert_release_gate(release, actor=actor, action="release.promote")
     with transaction.atomic():
+        lock_release_scenario(release.scenario)
+        release = ScenarioRelease.objects.select_for_update().get(pk=release.pk)
+        if release.status not in PROMOTABLE_STATES:
+            raise LifecycleError("RELEASE_NOT_PROMOTABLE")
+        _assert_release_gate(release, actor=actor, action="release.promote")
         promoted = _activate(release)
+        # BUG-018: a release that is now generally active is no longer "in canary" for
+        # anyone -- close its own still-open ReleaseCanary rows in the same transaction so
+        # (a) its detail page stops showing a stale "still in canary" state, and (b) a new
+        # canary for the same consumer isn't blocked by `start_canary`'s CANARY_EXISTS check
+        # against a canary this promotion just made moot.
+        stopped = list(
+            ReleaseCanary.objects.select_for_update().filter(
+                release=promoted, status=CanaryStatus.ACTIVE
+            )
+        )
+        if stopped:
+            ReleaseCanary.objects.filter(pk__in=[canary.pk for canary in stopped]).update(
+                status=CanaryStatus.STOPPED
+            )
+            _audit(
+                "release.canary_stop",
+                release=promoted,
+                actor=actor,
+                outcome="allow",
+                reason="superseded_by_promotion",
+            )
         _audit("release.promote", release=promoted, actor=actor, outcome="allow", reason="promoted")
     return promoted
 
@@ -230,17 +259,24 @@ def stop_canary(*, canary: ReleaseCanary, actor: str) -> ReleaseCanary:
     return locked
 
 
+#: BUG-017: a release displaced by rollback lands here, not SUPERSEDED (normal promotion's
+#: displacement status) -- and either state is a valid rollback *target*, so rolling back
+#: is itself reversible: rolling back to A, then back to B, then back to A again all work.
+ROLLBACK_TARGET_STATES = frozenset({ReleaseStatus.SUPERSEDED, ReleaseStatus.ROLLED_BACK})
+
+
 def rollback(*, scenario: Scenario, target: ScenarioRelease, actor: str) -> ScenarioRelease:
-    """Atomically restore a previously superseded release as the active one."""
+    """Atomically restore a previously superseded (or rolled-back) release as the active one."""
     if target.scenario_id != scenario.id:
         raise LifecycleError("TARGET_SCENARIO_MISMATCH")
 
     with transaction.atomic():
         # Re-read the target under lock; never trust the caller's in-memory status.
+        lock_release_scenario(scenario)
         locked_target = ScenarioRelease.objects.select_for_update().get(pk=target.pk)
         if locked_target.scenario_id != scenario.id:
             raise LifecycleError("TARGET_SCENARIO_MISMATCH")
-        if locked_target.status != ReleaseStatus.SUPERSEDED:
+        if locked_target.status not in ROLLBACK_TARGET_STATES:
             raise LifecycleError("TARGET_NOT_ROLLBACKABLE")
 
         # Free the single-active slot before activating the target.

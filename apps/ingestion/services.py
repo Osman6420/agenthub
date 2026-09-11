@@ -23,6 +23,12 @@ from apps.ingestion.models import (
     Source,
 )
 from apps.ingestion.pipeline import CHUNKERS, EMBEDDERS, PARSERS, PipelineError
+from apps.ingestion.vector_store import (
+    VectorRow,
+    new_generation_layout,
+    provision_store,
+    write_chunks,
+)
 from apps.tenancy.context import set_tenant_context
 
 
@@ -123,7 +129,12 @@ def _build_index(run: IngestionRun) -> IndexVersion:
             source=source,
             version=latest + 1,
             status=IndexStatus.BUILDING,
+            storage_layout=new_generation_layout(),
+            dimensions=64,
+            index_type="vector",
         )
+        if index.storage_layout == "shared_v1":
+            provision_store(index)
         chunk_count = 0
         for raw in raw_documents:
             parsed = parser(raw)
@@ -135,24 +146,52 @@ def _build_index(run: IngestionRun) -> IndexVersion:
                 checksum=hashlib.sha256(raw.content).hexdigest(),
             )
             chunks = chunker(parsed.text)
-            Chunk.objects.bulk_create(
-                [
-                    Chunk(
-                        organization_id=source.organization_id,
-                        index_version=index,
-                        document=document,
-                        ordinal=ordinal,
-                        text=text,
-                        embedding=embedder(text),
-                    )
-                    for ordinal, text in enumerate(chunks)
-                ]
-            )
+            if index.storage_layout == "shared_v1":
+                write_chunks(
+                    index,
+                    [
+                        VectorRow(
+                            organization_id=source.organization_id,
+                            document_version_id=None,
+                            indexed_document_id=document.pk,
+                            ordinal=ordinal,
+                            text=text,
+                            embedding=embedder(text),
+                        )
+                        for ordinal, text in enumerate(chunks)
+                    ],
+                )
+            else:
+                Chunk.objects.bulk_create(
+                    [
+                        Chunk(
+                            organization_id=source.organization_id,
+                            index_version=index,
+                            document=document,
+                            ordinal=ordinal,
+                            text=text,
+                            embedding=embedder(text),
+                        )
+                        for ordinal, text in enumerate(chunks)
+                    ]
+                )
             chunk_count += len(chunks)
         index.status = IndexStatus.PROMOTABLE
         index.document_count = len(raw_documents)
         index.chunk_count = chunk_count
-        index.save(update_fields=["status", "document_count", "chunk_count", "updated_at"])
+        if index.storage_layout == "shared_v1":
+            index.storage_state = "sealed"
+            index.store_ready = True
+        index.save(
+            update_fields=[
+                "status",
+                "document_count",
+                "chunk_count",
+                "storage_state",
+                "store_ready",
+                "updated_at",
+            ]
+        )
         return index
 
 

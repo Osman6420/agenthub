@@ -1,7 +1,7 @@
 {% extends "console/base.html" %}
 {% block title %}{{ title }} · AgentHub{% endblock %}
 {% block content %}
-<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:projects' %}">Projeler</a><span>›</span><span>Release'ler</span></nav>
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:scenarios' %}">Senaryolar</a><span>›</span><span>Release'ler</span></nav>
 <div class="page-heading"><div><p class="eyebrow">Yayın yönetimi</p><h1>Release'ler</h1><p class="muted">Yalnız exact erişiminizdeki immutable release'ler. Lifecycle işlemleri release detayında yeniden yetkilendirilir.</p></div></div>
 <section class="card">
   {% if rows %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki release'ler</caption>

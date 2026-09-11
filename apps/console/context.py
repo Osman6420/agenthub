@@ -13,7 +13,9 @@ from __future__ import annotations
 from django.http import HttpRequest
 
 from apps.console import scoping
-from apps.identity.authorization import Capability, authorize
+from apps.console.navigation import navigation_context
+from apps.evaluations.question_services import can_read_question_sets
+from apps.identity.authorization import Capability, authorize, authorized_scenarios
 from apps.identity.models import ScenarioResponsibility
 from apps.tenancy.models import Organization
 from apps.tenancy.services import can_admin_org, is_platform_admin
@@ -41,7 +43,7 @@ def can_view_runs_surface(user: object, active: Organization | None) -> bool:
     return (
         organization_runtime
         or scoping.scoped_runs(user).exists()
-        or scoping.has_scenario_responsibility(user, (ScenarioResponsibility.RUNTIME_OPERATOR,))
+        or authorized_scenarios(user, Capability.RUNTIME_VIEW).exists()
     )
 
 
@@ -98,6 +100,7 @@ def active_workspace(request: HttpRequest) -> dict[str, object]:
     active = resolve_active_organization(request)
     can_admin_active = active is not None and can_admin_org(user, active.pk)
     return {
+        **navigation_context(request),
         "active_organization": active,
         "available_organizations": available,
         "available_organizations_limited": available_limited,
@@ -106,8 +109,12 @@ def active_workspace(request: HttpRequest) -> dict[str, object]:
         "can_manage_organization_members": can_admin_active,
         "is_platform_admin": is_platform_admin(user),
         "show_projects_navigation": can_admin_active or scoping.scoped_projects(user).exists(),
+        "show_scenarios_navigation": can_admin_active or scoping.scoped_scenarios(user).exists(),
+        "show_questions_navigation": active is not None and can_read_question_sets(user, active),
         "show_documents_navigation": can_admin_active
         or scoping.scoped_document_sets(user).exists(),
         "show_consumers_navigation": can_admin_active or scoping.scoped_consumers(user).exists(),
         "show_runs_navigation": can_view_runs_surface(user, active),
+        "show_approvals_navigation": bool(getattr(user, "is_superuser", False))
+        or scoping.has_scenario_responsibility(user, (ScenarioResponsibility.APPROVER,)),
     }

@@ -7,6 +7,7 @@
     {% csrf_token %}
     {{ form.as_p }}
     <button type="submit">Oluştur</button>
+    <a class="button secondary" href="{{ navigation_url }}">Vazgeç</a>
   </form>
 </div>
 {% endblock %}

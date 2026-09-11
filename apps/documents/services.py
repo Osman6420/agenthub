@@ -19,7 +19,7 @@ import hashlib
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Max
+from django.db.models import Max, QuerySet
 from django.utils import timezone
 
 from apps.audit.services import record_event
@@ -42,6 +42,7 @@ from apps.documents.models import (
 from apps.documents.storage import StorageError, build_object_key, get_object_store
 from apps.identity.authorization import AuthoritySource, Capability, authorize
 from apps.ingestion.models import Source
+from apps.tenancy.context import set_tenant_context
 from apps.tenancy.identifiers import (
     MAX_ALLOCATION_ATTEMPTS,
     IdentifierAllocationError,
@@ -190,6 +191,7 @@ def upload_document(
         )
     if source is not None and source.document_set_id != document_set_version.document_set_id:
         raise DocumentError("SOURCE_SET_MISMATCH", "source and draft set must match")
+    _require_author_membership(document_set_version)
 
     checksum = hashlib.sha256(data).hexdigest()
     object_key = build_object_key(organization_id=organization.id, document_logical_id=logical_id)
@@ -307,18 +309,28 @@ def soft_delete_document(document: Document, *, actor: str, request_id: str = ""
     return locked
 
 
+@transaction.atomic
 def purge_document(document: Document, *, actor: str, request_id: str = "") -> int:
     """Physically delete a document's blobs and versions (elevated, audited, fail-closed).
 
-    Refuses if any version is pinned into a document-set version (``DOCUMENT_IN_USE``). Blob
-    deletion runs before the metadata delete and is idempotent, so a retry after a transient
+    Refuses if any version is pinned into a set or retained vector generation
+    (``DOCUMENT_IN_USE``). Blob deletion precedes metadata and is idempotent, so a transient
     storage error converges. Returns the number of versions removed.
     """
-    versions = list(DocumentVersion.objects.filter(document=document))
+    # Fence new versions and FK references until the metadata delete commits. Otherwise
+    # a concurrent membership/chunk insert could leave referenced metadata without bytes.
+    set_tenant_context(document.organization_id)
+    document = Document.objects.select_for_update().get(
+        pk=document.pk, organization_id=document.organization_id
+    )
+    versions = list(DocumentVersion.objects.select_for_update().filter(document=document))
     if DocumentSetMembership.objects.filter(document_version__document=document).exists():
         raise DocumentError("DOCUMENT_IN_USE", "document is pinned into a document set")
 
-    from apps.ingestion.models import DocumentOcrJob
+    from apps.ingestion.models import DocumentOcrJob, SharedVectorChunk
+
+    if SharedVectorChunk.objects.filter(document_version__document=document).exists():
+        raise DocumentError("DOCUMENT_IN_USE", "document is retained by a vector generation")
 
     derived_keys = list(
         DocumentOcrJob.objects.filter(document_version__document=document)
@@ -443,6 +455,23 @@ def create_document_set_version(
     return version
 
 
+def author_document_set_drafts(document_set: DocumentSet) -> QuerySet[DocumentSetVersion]:
+    """Exclude connector snapshots in SQL; history size never becomes a Python ID list."""
+    return document_set.versions.filter(
+        status=DocumentSetVersionStatus.DRAFT,
+        rest_sync_runs__isnull=True,
+        confluence_sync_runs__isnull=True,
+        resourcesnapshot__isnull=True,
+    )
+
+
+def _require_author_membership(set_version: DocumentSetVersion) -> None:
+    if not author_document_set_drafts(set_version.document_set).filter(pk=set_version.pk).exists():
+        raise DocumentError(
+            "SET_SNAPSHOT_IMMUTABLE", "connector snapshots cannot be edited; open a new draft"
+        )
+
+
 @transaction.atomic
 def branch_document_set_version(
     *, source: DocumentSetVersion, actor: str, request_id: str = ""
@@ -457,24 +486,8 @@ def branch_document_set_version(
     compete for the next publish.
     """
 
-    from apps.ingestion.models import ConfluenceSyncRun, RestSyncRun
-
     locked_set = DocumentSet.objects.select_for_update().get(pk=source.document_set_id)
-    connector_draft_ids = list(
-        ConfluenceSyncRun.objects.filter(
-            source__document_set=locked_set, candidate_set_version__isnull=False
-        ).values_list("candidate_set_version_id", flat=True)
-    ) + list(
-        RestSyncRun.objects.filter(
-            source__document_set=locked_set, candidate_set_version__isnull=False
-        ).values_list("candidate_set_version_id", flat=True)
-    )
-    existing = (
-        locked_set.versions.filter(status=DocumentSetVersionStatus.DRAFT)
-        .exclude(pk__in=connector_draft_ids)
-        .order_by("-version")
-        .first()
-    )
+    existing = author_document_set_drafts(locked_set).order_by("-version").first()
     if existing is not None:
         raise DocumentError("SET_DRAFT_ALREADY_OPEN", "an author draft is already open")
     draft = create_document_set_version(document_set=locked_set, actor=actor, request_id=request_id)
@@ -511,24 +524,8 @@ def get_or_create_manual_draft(
     Connector-owned draft candidates are deliberately excluded: a manual upload must not mutate a
     snapshot that an in-flight connector automation run may publish or index.
     """
-    from apps.ingestion.models import ConfluenceSyncRun, RestSyncRun
-
     locked_set = DocumentSet.objects.select_for_update().get(pk=document_set.pk)
-    connector_draft_ids = list(
-        ConfluenceSyncRun.objects.filter(
-            source__document_set=locked_set, candidate_set_version__isnull=False
-        ).values_list("candidate_set_version_id", flat=True)
-    ) + list(
-        RestSyncRun.objects.filter(
-            source__document_set=locked_set, candidate_set_version__isnull=False
-        ).values_list("candidate_set_version_id", flat=True)
-    )
-    draft = (
-        locked_set.versions.filter(status=DocumentSetVersionStatus.DRAFT)
-        .exclude(pk__in=connector_draft_ids)
-        .order_by("-version")
-        .first()
-    )
+    draft = author_document_set_drafts(locked_set).order_by("-version").first()
     if draft is not None:
         return draft
 
@@ -572,6 +569,7 @@ def upsert_document_in_set_draft(
         raise DocumentError("SET_VERSION_FROZEN", "published set versions are immutable")
     if document_version.organization_id != locked.organization_id:
         raise DocumentError("DOCUMENT_TENANT_MISMATCH", "document must belong to the set tenant")
+    _require_author_membership(locked)
 
     existing = list(
         locked.memberships.select_for_update()
@@ -623,6 +621,7 @@ def add_document_to_set_version(
     locked = DocumentSetVersion.objects.select_for_update().get(pk=set_version.pk)
     if locked.is_frozen:
         raise DocumentError("SET_VERSION_FROZEN", "published set versions are immutable")
+    _require_author_membership(locked)
     existing = locked.memberships.filter(document_version=document_version).first()
     if existing is not None:
         return existing
@@ -664,6 +663,7 @@ def remove_document_from_set_draft(
     locked = DocumentSetVersion.objects.select_for_update().get(pk=set_version.pk)
     if locked.is_frozen:
         raise DocumentError("SET_VERSION_FROZEN", "published set versions are immutable")
+    _require_author_membership(locked)
     membership = (
         DocumentSetMembership.objects.select_for_update()
         .filter(
@@ -718,11 +718,11 @@ def publish_document_set_version(
     )
     from apps.ingestion.preparation import enqueue_auto_preparation
 
-    transaction.on_commit(
-        lambda: enqueue_auto_preparation(
-            document_set_version_id=locked.pk,
-            organization_id=locked.organization_id,
-        )
+    # Persist the preparation intent with publication. Only broker delivery is
+    # deferred by create_build_job; process loss after commit must not lose the job.
+    enqueue_auto_preparation(
+        document_set_version_id=locked.pk,
+        organization_id=locked.organization_id,
     )
     return locked
 

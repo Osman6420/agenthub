@@ -33,4 +33,4 @@ def execute_question_evaluation_task(self: object, *, organization_id: int, run_
             .prefetch_related("question_set_version__cases", "case_evidence")
             .get(pk=run_id, organization_id=organization_id)
         )
-        execute_question_evaluation(run=run)
+    execute_question_evaluation(run=run)

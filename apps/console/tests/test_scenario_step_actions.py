@@ -10,6 +10,7 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.catalog.models import AIProject, LifecycleStatus, Scenario
+from apps.console.tests.access_fixtures import private_access_member
 from apps.evaluations.models import QuestionSet
 from apps.identity.models import (
     OrganizationResponsibility,
@@ -48,7 +49,13 @@ def _admin(org: Organization, project: AIProject, username: str) -> Any:
 def _new_scenario(client: Client, org: Organization, project: AIProject) -> Scenario:
     client.post(
         reverse("console:project_scenario_create", args=[project.public_id]),
-        {"name": "Adım senaryosu", "preset": "empty_workflow", "logical_description": "Amaç"},
+        {
+            "access_mode": "private",
+            "initial_manager": private_access_member(org),
+            "name": "Adım senaryosu",
+            "preset": "empty_workflow",
+            "logical_description": "Amaç",
+        },
     )
     return Scenario.objects.get(project=project)
 
@@ -60,8 +67,8 @@ def setup(client: Client) -> tuple[Organization, AIProject, Scenario, Any]:
     admin = _admin(org, project, "step-admin")
     client.force_login(admin)
     scenario = _new_scenario(client, org, project)
-    # Creating a scenario grants neither responsibility: authoring and promotion are exact,
-    # scenario-scoped roles. The fixture holds both so a single test can isolate one of them.
+    # A separate explicit manager owns initial private access. This actor keeps
+    # narrow authoring/publishing responsibilities so each denial remains meaningful.
     membership = OrganizationMembership.objects.get(organization=org, user=admin)
     for responsibility in (
         ScenarioResponsibility.EDITOR,
@@ -311,6 +318,41 @@ def test_a_one_off_answer_returns_to_the_page_that_asked(
             reverse("console:scenario_detail_public", args=[scenario.public_id])
         ).content.decode()
     )
+
+
+def test_scenario_detail_never_leaks_a_raw_template_comment(
+    client: Client, setup: tuple[Organization, AIProject, Scenario, Any]
+) -> None:
+    """BUG-013: a multi-line `{# #}` Django comment is not parsed as a comment and used to
+    render as literal, confusing text on every scenario detail page."""
+    _org, _project, scenario, _admin_user = setup
+
+    body = client.get(
+        reverse("console:scenario_detail_public", args=[scenario.public_id])
+    ).content.decode()
+
+    assert "{#" not in body
+    assert "#}" not in body
+
+
+def test_asking_the_identical_question_twice_never_500s(
+    client: Client, setup: tuple[Organization, AIProject, Scenario, Any]
+) -> None:
+    """BUG-011: `ask_scenario_once`'s idempotency key is deterministic per release+question --
+    a bare-identical repeat used to hit `RunTransitionError` unguarded and 500 with a debug
+    traceback instead of replaying the already-terminal run's own answer."""
+    _org, _project, scenario, _admin_user = setup
+    client.post(reverse("console:scenario_publish_and_verify", args=[scenario.public_id]))
+    client.post(reverse("console:scenario_promote", args=[scenario.public_id]))
+    url = reverse("console:scenario_ask", args=[scenario.public_id])
+    payload = {"question": "Kargo ne zaman gelir?"}
+
+    first = client.post(url, payload, follow=True)
+    second = client.post(url, payload, follow=True)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert "Kargo ne zaman gelir?" in second.content.decode()
 
 
 def test_another_tenant_cannot_reach_the_step_actions(

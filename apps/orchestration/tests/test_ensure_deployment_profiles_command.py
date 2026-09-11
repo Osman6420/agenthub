@@ -89,6 +89,7 @@ def test_check_only_distinguishes_missing_profiles_from_invalid_configuration(
 @pytest.mark.django_db
 def test_existing_profile_revision_must_match_declared_immutable_fields(
     deployment_profile_env: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     get_user_model().objects.create_user(
         username="platform-recovery",
@@ -97,13 +98,16 @@ def test_existing_profile_revision_must_match_declared_immutable_fields(
         is_superuser=True,
     )
     call_command("ensure_deployment_profiles")
-    ModelProfile.objects.filter(logical_id="primary-chat", revision=1).update(model="other")
+    # A deployment cannot repurpose the registered revision. Mapped catalogues
+    # also reject direct SQL mutation, so exercise a changed deployment declaration.
+    monkeypatch.setenv("MODEL_NAME", "other")
 
     with pytest.raises(CommandError) as mismatch:
         call_command("ensure_deployment_profiles", check_only=True)
     assert mismatch.value.returncode == 1
     assert "model" in str(mismatch.value)
     assert "other" not in str(mismatch.value)
+    assert ModelProfile.objects.get(logical_id="primary-chat", revision=1).model == "test-chat"
 
 
 @pytest.mark.django_db

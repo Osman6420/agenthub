@@ -3,5 +3,5 @@
 {% block content %}
 <nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:platform_setup' %}">Platform kurulumu</a><span>›</span><span>Grant</span></nav>
 <div class="page-heading"><div><p class="eyebrow">Explicit allowlist</p><h1>{{ profile_kind }} grant'i</h1><p class="muted">{{ profile.logical_id }} · r{{ profile.revision }}. Connector grant'i exact doküman setine; embedding grant'i exact organizasyona verilir.</p></div></div>
-<section class="card form-card"><form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Grant'i kaydet</button></form></section>
+<section class="card form-card"><form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Grant'i kaydet</button><a class="button secondary" href="{% url 'console:platform_setup' %}">Vazgeç</a></form></section>
 {% endblock %}

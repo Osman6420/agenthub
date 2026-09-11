@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -112,6 +113,8 @@ class GovernedRestClient:
         connection_factory: ConnectionFactory | None = None,
         secret_resolver: SecretResolver | None = None,
         sleeper: Callable[[float], None] = time.sleep,
+        deadline: float | None = None,
+        before_request: Callable[[], None] | None = None,
     ) -> None:
         self._resolver = resolver
         self._factory = connection_factory or _default_connection_factory
@@ -119,10 +122,64 @@ class GovernedRestClient:
         self._sleep = sleeper
         self._request_count = 0
         self._fetched_bytes = 0
+        if deadline is not None and (not math.isfinite(deadline) or deadline <= 0):
+            raise RestPullError("REST_REQUEST_DEADLINE_INVALID")
+        self._deadline = deadline
+        self._before_request = before_request
+
+    def _authorize_request(self) -> None:
+        if self._before_request is not None:
+            self._before_request()
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            raise RestPullError("REST_REQUEST_DEADLINE_EXCEEDED")
 
     @property
     def fetched_bytes(self) -> int:
         return self._fetched_bytes
+
+    def read_first_page(
+        self, profile: RestPullProfile, definition: dict[str, Any], *, inputs: dict[str, Any]
+    ) -> dict[str, Any] | list[Any]:
+        definition = validate_contract(definition)
+        normalized = validate_source_inputs(definition, inputs)
+        if definition["request"]["method"] != profile.method:
+            raise RestPullError("REST_PROFILE_METHOD_MISMATCH")
+        return self._read_page(profile, definition, normalized, page_index=0, cursor="")
+
+    def _read_page(
+        self,
+        profile: RestPullProfile,
+        definition: dict[str, Any],
+        inputs: dict[str, Any],
+        *,
+        page_index: int,
+        cursor: str,
+    ) -> dict[str, Any] | list[Any]:
+        request_spec, pagination = definition["request"], definition["pagination"]
+        page_size = int(pagination.get("page_size", 0))
+        values: dict[str, Any] = {
+            "page_number": page_index + 1,
+            "offset": page_index * page_size,
+            "page_size": page_size,
+            "cursor": cursor,
+        }
+        query = render_tree(request_spec.get("query", {}), inputs, **values)
+        if not isinstance(query, dict):
+            raise RestPullError("REST_QUERY_MAPPING_INVALID")
+        mode = pagination["mode"]
+        if mode == "page_number":
+            query[pagination["parameter"]] = page_index + 1
+        elif mode == "offset":
+            query[pagination["parameter"]] = page_index * page_size
+        elif mode == "cursor" and cursor:
+            query[pagination["parameter"]] = cursor
+        body = None
+        if "body" in request_spec:
+            rendered_body = render_tree(request_spec["body"], inputs, **values)
+            body = json.dumps(rendered_body, separators=(",", ":")).encode("utf-8")
+        return self._request_json(
+            profile, path=render_path(request_spec["path"], inputs), query=query, body=body
+        )
 
     def iter_items(
         self,
@@ -142,38 +199,11 @@ class GovernedRestClient:
         visited_cursors: set[str] = set()
         item_count = 0
         for page_index in range(profile.max_pages):
-            page_number = page_index + 1
             page_size = int(pagination.get("page_size", 0))
-            query = render_tree(
-                request_spec.get("query", {}),
-                normalized,
-                page_number=page_number,
-                offset=page_index * page_size,
-                page_size=page_size,
-                cursor=cursor,
-            )
-            if not isinstance(query, dict):
-                raise RestPullError("REST_QUERY_MAPPING_INVALID")
             mode = pagination["mode"]
-            if mode == "page_number":
-                query[pagination["parameter"]] = page_number
-            elif mode == "offset":
-                query[pagination["parameter"]] = page_index * page_size
-            elif mode == "cursor" and cursor:
-                query[pagination["parameter"]] = cursor
-            body = None
-            if "body" in request_spec:
-                rendered_body = render_tree(
-                    request_spec["body"],
-                    normalized,
-                    page_number=page_number,
-                    offset=page_index * page_size,
-                    page_size=page_size,
-                    cursor=cursor,
-                )
-                body = json.dumps(rendered_body, separators=(",", ":")).encode("utf-8")
-            path = render_path(request_spec["path"], normalized)
-            payload = self._request_json(profile, path=path, query=query, body=body)
+            payload = self._read_page(
+                profile, definition, normalized, page_index=page_index, cursor=cursor
+            )
             try:
                 items = resolve_pointer(payload, response_spec["items_pointer"])
             except RestContractError as exc:
@@ -250,6 +280,7 @@ class GovernedRestClient:
         query: dict[str, Any],
         body: bytes | None,
     ) -> dict[str, Any] | list[Any]:
+        self._authorize_request()
         try:
             destination = validate_destination(
                 {
@@ -260,6 +291,7 @@ class GovernedRestClient:
                 },
                 resolver=self._resolver,
             )
+            self._authorize_request()
             credential = (
                 self._secrets.resolve(profile.secret_ref)
                 if profile.auth_mode != RestPullAuthMode.NONE
@@ -298,12 +330,18 @@ class GovernedRestClient:
         )
         retries = profile.max_retries if profile.method == "GET" else 0
         for attempt in range(retries + 1):
+            self._authorize_request()
             self._request_count += 1
             if self._request_count > profile.max_requests:
                 raise RestPullError("REST_REQUEST_LIMIT_EXCEEDED")
             try:
                 response = perform_bounded_https_request(
-                    self._factory, request, path=request_path, headers=headers, body=body
+                    self._factory,
+                    request,
+                    path=request_path,
+                    headers=headers,
+                    body=body,
+                    deadline=self._deadline,
                 )
             except ToolAdapterUncertain as exc:
                 if profile.method == "GET" and attempt < retries:
@@ -326,6 +364,7 @@ class GovernedRestClient:
             if (response.status == 429 or 500 <= response.status <= 599) and attempt < retries:
                 self._sleep(float(2**attempt))
                 continue
+            self._authorize_request()
             return self._parse_json(profile, response)
         raise RestPullError("REST_UPSTREAM_UNAVAILABLE")
 
@@ -345,7 +384,7 @@ class GovernedRestClient:
             raise RestPullError("REST_TOTAL_BYTES_EXCEEDED")
         try:
             payload = json.loads(response.body.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError) as exc:
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
             raise RestPullError("REST_RESPONSE_NOT_JSON") from exc
         if not isinstance(payload, (dict, list)):
             raise RestPullError("REST_RESPONSE_INVALID")

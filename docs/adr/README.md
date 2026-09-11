@@ -6,6 +6,10 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 
 ## Current decisions
 
+The additive execution snapshot and independently durable data-selection decision is
+[ADR-0021](0021-scenario-revision-and-durable-data-selection.md); activation remains gated
+by the combined task's verification record.
+
 | ADR | Status | Scope / relationship |
 | --- | --- | --- |
 | [0001](0001-custom-console-ldap-auth.md) | Accepted | Human operator console and LDAP/AD authentication. |
@@ -26,3 +30,7 @@ Statuses are Proposed, Accepted, Superseded, or Rejected. An accepted ADR is cha
 | [0016](0016-explicit-scenario-and-atomic-served-index-lifecycle.md) | Accepted | Separate governed scenario callability plus one atomic document-set/index serving pointer. |
 | [0017](0017-bounded-halfvec-response-truncation.md) | Accepted | Refines ADR-0003 for explicit `halfvec(4000)` provider-response truncation. |
 | [0018](0018-portable-openshift-build-and-database-initialization.md) | Accepted | Portable mirror/Binary builds plus deadlock-free managed and bundled database initialization. |
+| [0019](0019-explicit-combined-scenario-manager.md) | Accepted | Additive exact scenario manager; composes with ADR-0015 without broadening old assignments. |
+| [0020](0020-shared-generation-vector-storage.md) | Accepted; rollout in progress | Fixed shared geometry indexes, immutable generation lineage and owner-only additive backfill. |
+| [0021](0021-scenario-revision-and-durable-data-selection.md) | Accepted; rollout in progress | Immutable execution snapshots and durable retrieval generation selection. |
+| [0022](0022-shared-connection-and-ingestion-job-authority.md) | Accepted; rollout in progress | Exact Connection identities and one ingestion job/outbox authority with protocol compatibility projections. |

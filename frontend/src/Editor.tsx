@@ -198,7 +198,19 @@ export function Editor({
             </div>)}
           </div>}
         </div>
-        : <Toolbar builder={builder} draftName={draft.name} busy={busy || jsonDirty} onAction={runAction} />}
+        : <Toolbar
+            builder={builder}
+            draftName={draft.name}
+            busy={busy || jsonDirty}
+            onAction={runAction}
+            backHref={
+              draft.scenario_id
+                ? `/console/scenarios/${draft.scenario_id}/`
+                : draft.project_id
+                  ? `/console/projects/${draft.project_id}/`
+                  : null
+            }
+          />}
       {verifyResult && <VerifyResultPanel result={verifyResult} onDismiss={() => setVerifyResult(null)} />}
       <div style={{ display: "flex", gap: 8, padding: "8px 0" }}>
         <button type="button" aria-pressed={view === "graph"} onClick={() => {
@@ -257,6 +269,7 @@ export function Editor({
             nodes={builder.nodes}
             disabled={builder.readOnly}
             onChange={builder.updateEdgeSelector}
+            onRemove={builder.removeSelected}
           />
         ) : (
           <NodeConfigPanel

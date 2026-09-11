@@ -10,6 +10,7 @@ export function Toolbar({
   draftName,
   busy,
   onAction,
+  backHref,
 }: {
   builder: BuilderController;
   draftName: string;
@@ -18,6 +19,10 @@ export function Toolbar({
     action: "validate" | "save" | "publish" | "publishAndVerify",
     versionDescription?: string,
   ) => void;
+  // BUG-008: the editor had no visible way back to the scenario/project it was opened from --
+  // only the browser's own back button, which is unreliable across tab switches or a direct
+  // URL open. `null` when the draft carries neither a scenario nor a project id yet.
+  backHref?: string | null;
 }) {
   const { readOnly, isDirty, diagnostics } = builder;
   const [versionDescription, setVersionDescription] = useState("");
@@ -35,6 +40,11 @@ export function Toolbar({
   return (
     <div style={{ borderBottom: "1px solid #262b36" }}>
       <div className="ah-builder-toolbar-row">
+        {backHref && (
+          <a href={backHref} style={{ ...btn(), textDecoration: "none", display: "inline-block" }}>
+            ← Senaryoya dön
+          </a>
+        )}
         <strong>{draftName}</strong>
         <label style={{ fontSize: 12, color: "#8b95a7" }}>
           workflow ID

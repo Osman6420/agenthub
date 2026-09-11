@@ -42,3 +42,11 @@ CACHES = {
 
 # Hermetic object store so document-plane tests exercise upload/purge without MinIO.
 DOCUMENTS_OBJECT_STORE_BACKEND = "memory"
+
+# base.py reads the developer's .env. Hermetic tests must never inherit a live
+# model endpoint choice; provider integration tests opt in through `settings`.
+RUNTIME_MODEL_PROVIDER = ""
+RUNTIME_EMBEDDING_PROVIDER = ""
+INGESTION_VECTOR_STORAGE_LAYOUT = "legacy"
+AI_AUTHORING_PROVIDER = ""
+EVALUATION_LLM_JUDGE_ENABLED = False

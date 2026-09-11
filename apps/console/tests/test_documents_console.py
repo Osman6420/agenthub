@@ -80,6 +80,41 @@ def _draft(org: Organization):
 
 
 @pytest.mark.django_db
+def test_document_list_filters_pages_and_counts_only_visible_sets(client: Client) -> None:
+    org = Organization.objects.create(slug="paged-sets", name="Paged")
+    other = Organization.objects.create(slug="hidden-sets", name="Hidden")
+    rows = DocumentSet.objects.bulk_create(
+        [
+            DocumentSet(organization=org, logical_id=f"guide-{n:02}", name=f"Guide {n:02}")
+            for n in range(27)
+        ]
+    )
+    DocumentSet.objects.create(organization=other, logical_id="guide-secret", name="Guide Secret")
+    DocumentSet.objects.create(
+        organization=org, logical_id="archived", name="Old", status="archived"
+    )
+    services.get_or_create_manual_draft(document_set=rows[0], actor="seed")
+    client.force_login(_member("paged-admin", org, Role.ORGANIZATION_ADMIN))
+    url = reverse("console:documents")
+    first = client.get(url, {"q": "Guide", "status": "active"})
+    assert first.status_code == 200
+    assert len(first.context["sets"]) == 25
+    assert first.context["page"].paginator.count == 27
+    assert first.context["sets"][0]["versions"] == 1
+    assert "Guide Secret" not in first.content.decode()
+    second = client.get(url, {"q": "Guide", "status": "active", "page": "2"})
+    assert len(second.context["sets"]) == 2
+    assert {s["id"] for s in first.context["sets"]}.isdisjoint(
+        s["id"] for s in second.context["sets"]
+    )
+    assert "q=Guide&amp;status=active&amp;page=1" in second.content.decode()
+    missing = client.get(url, {"q": "Guide Secret"})
+    assert missing.context["page"].paginator.count == 0
+    assert "Eşleşen doküman seti yok" in missing.content.decode()
+    assert client.get(url, {"status": "archived"}).context["page"].paginator.count == 1
+
+
+@pytest.mark.django_db
 def test_documents_list_is_tenant_scoped(client: Client) -> None:
     org_a = Organization.objects.create(slug="org-a", name="A")
     org_b = Organization.objects.create(slug="org-b", name="B")
@@ -101,13 +136,17 @@ def test_documents_list_is_tenant_scoped(client: Client) -> None:
         actor="seed",
         document_set_version=_draft(org_b),
     )
-    DocumentSet.objects.create(organization=org_a, logical_id="set-a", name="Set A")
-    DocumentSet.objects.create(organization=org_b, logical_id="set-b", name="Set B")
+    set_a = DocumentSet.objects.create(organization=org_a, logical_id="set-a", name="Set A")
+    set_b = DocumentSet.objects.create(organization=org_b, logical_id="set-b", name="Set B")
 
     client.force_login(_member("alice", org_a, Role.PROJECT_OWNER))
-    body = client.get(reverse("console:documents")).content.decode()
-    assert "set-a" in body
-    assert "set-b" not in body
+    response = client.get(reverse("console:documents"))
+    assert response.status_code == 200
+    body = response.content.decode()
+    # Friendly names are primary; exact links still prove object/tenant scope.
+    assert "Set A" in body and "Set B" not in body
+    assert reverse("console:document_set_detail_public", args=[set_a.public_id]) in body
+    assert reverse("console:document_set_detail_public", args=[set_b.public_id]) not in body
     assert "doc-a" not in body  # standalone inventory is not part of the primary journey
     assert "doc-b" not in body
     assert "Gelişmiş envanteri aç" not in body

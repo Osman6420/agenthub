@@ -18,6 +18,11 @@ from apps.documents.models import (
     DocumentVersion,
 )
 from apps.documents.services import DocumentError, get_or_create_manual_draft, upload_document
+from apps.ingestion.connector_jobs import (
+    cleanup_connector_uploads,
+    complete_connector_snapshot,
+    connector_write,
+)
 from apps.ingestion.models import (
     ConnectorType,
     RestDocumentCursor,
@@ -28,6 +33,7 @@ from apps.ingestion.models import (
     RestSyncRun,
     RestSyncStatus,
     SourceStatus,
+    StagedIndexBuildJob,
     TenantRestPullProfileGrant,
 )
 from apps.ingestion.rest import GovernedRestClient, RestPullError, RestPullItem
@@ -94,6 +100,10 @@ def execute_rest_sync(
 def _claim_run(run_id: int, *, organization_id: int) -> RestSyncRun | None:
     with transaction.atomic():
         set_tenant_context(organization_id)
+        if StagedIndexBuildJob.objects.filter(
+            organization_id=organization_id, rest_sync_run_id=run_id
+        ).exists():
+            return None
         run = (
             RestSyncRun.objects.select_for_update(of=("self",))
             .select_related(
@@ -135,7 +145,22 @@ def _claim_run(run_id: int, *, organization_id: int) -> RestSyncRun | None:
 
 
 def _validate_runtime_grant(run: RestSyncRun) -> None:
+    from apps.ingestion.connections import ConnectionError, verify_source_connection
+
     source = run.source
+    from apps.ingestion.rest_services import RestServiceError
+    from apps.ingestion.source_revisions import assert_revision_sync
+
+    try:
+        assert_revision_sync(source, scheduled=run.schedule_id is not None)
+    except RestServiceError as exc:
+        raise RestPullError(exc.code) from exc
+    try:
+        connection_profile = verify_source_connection(source)
+    except ConnectionError as exc:
+        raise RestPullError(exc.code) from None
+    if connection_profile is not None and connection_profile.status != RestPullProfileStatus.ACTIVE:
+        raise RestPullError("REST_PROFILE_DISABLED")
     if source.connector_type != ConnectorType.GENERIC_REST:
         raise RestPullError("REST_SOURCE_REQUIRED")
     if source.status != SourceStatus.ACTIVE:
@@ -161,6 +186,8 @@ def _validate_runtime_grant(run: RestSyncRun) -> None:
 
 
 def _execute_snapshot(run: RestSyncRun, client: RestSyncClient) -> None:
+    with connector_write(run):
+        pass
     source = run.source
     inputs = dict(source.connector_config["inputs"])
     discovered = changed = unchanged = 0
@@ -170,8 +197,7 @@ def _execute_snapshot(run: RestSyncRun, client: RestSyncClient) -> None:
             raise RestPullError("REST_DUPLICATE_EXTERNAL_ID")
         seen_external_ids.add(item.external_id)
         discovered += 1
-        with transaction.atomic():
-            set_tenant_context(run.organization_id)
+        with connector_write(run):
             cursor = RestDocumentCursor.objects.filter(
                 source=source, external_id=item.external_id
             ).first()
@@ -188,8 +214,7 @@ def _execute_snapshot(run: RestSyncRun, client: RestSyncClient) -> None:
                 changed += 1
             else:
                 unchanged += 1
-        with transaction.atomic():
-            set_tenant_context(run.organization_id)
+        with connector_write(run):
             RestSyncRun.objects.filter(pk=run.pk).update(
                 discovered_count=discovered,
                 changed_count=changed,
@@ -197,8 +222,7 @@ def _execute_snapshot(run: RestSyncRun, client: RestSyncClient) -> None:
                 fetched_bytes=client.fetched_bytes,
             )
 
-    with transaction.atomic():
-        set_tenant_context(run.organization_id)
+    with connector_write(run):
         missing = RestDocumentCursor.objects.filter(source=source, state="active").exclude(
             last_seen_run=run
         )
@@ -223,6 +247,7 @@ def _execute_snapshot(run: RestSyncRun, client: RestSyncClient) -> None:
             source_document_version_ids=active_ids,
             actor="rest-worker",
         )
+        complete_connector_snapshot(run)
         locked = RestSyncRun.objects.select_for_update().get(pk=run.pk)
         locked.status = RestSyncStatus.SUCCEEDED
         locked.snapshot_complete = True
@@ -271,6 +296,22 @@ def _persist_item(
     content: bytes,
     existing_cursor: RestDocumentCursor | None,
 ) -> bool:
+    created_keys: list[str] = []
+    try:
+        with connector_write(run):
+            return _persist_item_locked(run, item, content, existing_cursor, created_keys)
+    except Exception:
+        cleanup_connector_uploads(organization_id=run.organization_id, created_keys=created_keys)
+        raise
+
+
+def _persist_item_locked(
+    run: RestSyncRun,
+    item: RestPullItem,
+    content: bytes,
+    existing_cursor: RestDocumentCursor | None,
+    created_keys: list[str],
+) -> bool:
     source = run.source
     checksum = hashlib.sha256(content).hexdigest()
     if existing_cursor is not None and existing_cursor.content_checksum == checksum:
@@ -306,6 +347,7 @@ def _persist_item(
             document_set_version=draft,
             source=source,
         )
+        created_keys.append(version.object_key)
     with transaction.atomic():
         set_tenant_context(run.organization_id)
         cursor = (
@@ -340,8 +382,7 @@ def _persist_item(
 def _mark_cursor(
     cursor: RestDocumentCursor, *, run: RestSyncRun, revision: str, state: str
 ) -> None:
-    with transaction.atomic():
-        set_tenant_context(run.organization_id)
+    with connector_write(run):
         locked = RestDocumentCursor.objects.select_for_update().get(pk=cursor.pk)
         locked.external_revision = revision
         locked.last_seen_run = run

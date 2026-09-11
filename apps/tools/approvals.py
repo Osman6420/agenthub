@@ -65,6 +65,16 @@ def request_tool_invocation(
     tool_input: dict[str, Any],
     idempotency_key: str,
     consumer_capabilities: list[str],
+    # BUG-016: this is the only production input to `decide_approval`'s separation-of-duties
+    # check below. Today's two real production callers -- the workflow `tool` node
+    # (`apps.workflows.unified_executor._invoke_tool`) and the agent-loop tool step
+    # (`apps.agents.runtime`) -- both call `request_tool_invocation` without it, because the
+    # current product surface has no human-initiated tool-triggering path (every request
+    # today originates from a consumer-driven workflow/agent run, never a console user). The
+    # SELF_APPROVAL_FORBIDDEN check in `decide_approval` is exercised by this module's own
+    # tests (which pass this parameter explicitly) but cannot fire against real traffic until
+    # a human-initiated trigger surface exists and is wired to populate it. Treat this as an
+    # inert, forward-reserved parameter, not an active control, until that wiring lands.
     initiated_by_user: Any | None = None,
 ) -> ToolInvocation:
     if not idempotency_key or len(idempotency_key) > _MAX_KEY_LENGTH:
@@ -213,6 +223,10 @@ def decide_approval(
         elif approval.initiated_by_user_id == actor.pk:
             # Human separation of duties applies only when both identities are
             # verified users. Consumer and user identifiers are distinct types.
+            # BUG-016: `initiated_by_user_id` is None for every request today's production
+            # callers create (see `request_tool_invocation`'s docstring), so this branch is
+            # currently unreachable against real traffic -- it activates automatically once a
+            # human-initiated tool-triggering surface starts populating that parameter.
             _audit_actor(
                 "tool.approval_decide",
                 "deny",

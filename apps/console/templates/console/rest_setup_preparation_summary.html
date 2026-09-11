@@ -1,0 +1,7 @@
+<details><summary>Doküman setinin hazırlama ayarları</summary>
+<dl><dt>Arama modeli</dt><dd>{{ preparation_policy.embedding_profile.logical_id }} · r{{ preparation_policy.embedding_profile.revision }}</dd>
+<dt>Belge parçalama</dt><dd>{{ preparation_policy.chunking_profile.logical_description|default:preparation_policy.chunking_profile.logical_id }} · v{{ preparation_policy.chunking_profile.version }}</dd>
+<dt>Görsellerden metin okuma</dt><dd>{% if preparation_policy.ocr_profile %}{{ preparation_policy.ocr_profile.logical_id }} · r{{ preparation_policy.ocr_profile.revision }}{% else %}Kapalı{% endif %}</dd>
+<dt>Özetleme</dt><dd>{% if preparation_policy.summary_model_profile %}Açık{% else %}Kapalı{% endif %}</dd></dl>
+<p class="muted">Bu kaynak doküman setinin hazırlama ayarlarını kullanır. Bu özet ayarları değiştirmez; sonraki hazırlamalarda setin güncel ayarları ve izinleri tekrar kontrol edilir.</p>
+</details>

@@ -173,7 +173,7 @@ def test_evidence_pairs_sources_with_pointers_by_position() -> None:
     assert chunks[0].text == ""
 
 
-def test_a_length_mismatch_drops_the_pointers_instead_of_guessing() -> None:
+def test_a_length_mismatch_never_attributes_a_pointer_to_the_wrong_source() -> None:
     chunks = scenario_retrieval_evidence(
         result=_result(
             [
@@ -183,8 +183,29 @@ def test_a_length_mismatch_drops_the_pointers_instead_of_guessing() -> None:
             [{"index_version_id": 7, "document_version_id": 3, "ordinal": 2}],
         )
     )
-    assert [c.title for c in chunks] == ["A", "B"]
-    assert all(c.document_version_id is None and c.index_version_id is None for c in chunks)
+    per_source = [c for c in chunks if c.chunk_kind != "unattributed"]
+    assert [c.title for c in per_source] == ["A", "B"]
+    assert all(c.document_version_id is None and c.index_version_id is None for c in per_source)
+
+
+def test_a_length_mismatch_still_surfaces_the_raw_pointer_as_unattributed_evidence() -> None:
+    """BUG-012: a misaligned answer must not throw away every real, resolvable chunk pointer --
+    it is kept, just not attributed to a specific (possibly wrong) citation."""
+    chunks = scenario_retrieval_evidence(
+        result=_result(
+            [
+                {"source_id": "a", "source_uri": "u", "title": "A", "score": 0.9},
+                {"source_id": "b", "source_uri": "v", "title": "B", "score": 0.8},
+            ],
+            [{"index_version_id": 7, "document_version_id": 3, "ordinal": 2}],
+        )
+    )
+    unattributed = [c for c in chunks if c.chunk_kind == "unattributed"]
+    assert len(unattributed) == 1
+    assert unattributed[0].index_version_id == 7
+    assert unattributed[0].document_version_id == 3
+    assert unattributed[0].ordinal == 2
+    assert unattributed[0].source_id == ""
 
 
 def test_evidence_is_empty_without_sources() -> None:
