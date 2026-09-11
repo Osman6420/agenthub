@@ -1,0 +1,10 @@
+{% extends "console/base.html" %}
+{% block title %}Artifact'ler · AgentHub{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Immutable registry</p><h1>Artifact'ler</h1><p class="muted">Artifact'ler backend yapı taşlarıdır; aktif kullanım senaryo release'i içindeki exact pin ile belirlenir.</p></div></div>
+<div class="card table-card">
+  {% if rows %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki artifact sürümleri</caption><thead><tr><th>Organizasyon</th><th>Tür</th><th>Artifact</th><th>Checksum</th></tr></thead><tbody>
+  {% for artifact in rows %}<tr data-href="{% url 'console:artifact_detail' artifact.id %}"><td><a href="{% url 'console:organization_detail' artifact.organization.slug %}">{{ artifact.organization.name }}</a></td><td><span class="badge">{{ artifact.get_type_display }}</span></td><td><strong><a href="{% url 'console:artifact_detail' artifact.id %}">{{ artifact.logical_id }}</a></strong> · v{{ artifact.version }}</td><td class="mono">{{ artifact.checksum|slice:':12' }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">Yetki kapsamınızda artifact yok.</div>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agenthub:p2.6:target-scenario-contract",
+  "title": "P2.6 inert target scenario contract",
+  "description": "Planning fixture only; not an AgentHub importable artifact.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fixture_status", "scenario_id", "purpose", "required_parts", "trajectories"],
+  "properties": {
+    "fixture_status": {"const": "target_not_importable"},
+    "scenario_id": {"type": "string", "pattern": "^S[0-9]{2}$"},
+    "purpose": {"type": "string", "minLength": 1, "maxLength": 500},
+    "required_parts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^P2\\.6\\.[0-9]+$"}
+    },
+    "trajectories": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "happy",
+          "invalid_input",
+          "authentication_failure",
+          "authorization_denial",
+          "cross_tenant_denial",
+          "timeout",
+          "cancellation",
+          "replay_redelivery",
+          "partial_failure",
+          "stale_resume",
+          "budget_exhaustion",
+          "audit_redaction",
+          "crash_restart_recovery"
+        ]
+      }
+    }
+  }
+}

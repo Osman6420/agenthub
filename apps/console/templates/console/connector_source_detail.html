@@ -1,0 +1,56 @@
+{% extends "console/base.html" %}
+{% block title %}{{ source.name }} · AgentHub{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><a href="{% url 'console:document_set_detail_public' set.public_id %}">{{ set.name }}</a><span>›</span><a href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynaklar</a><span>›</span><span>{{ source.name }}</span></div>
+<div class="page-heading"><div><p class="eyebrow">{{ set.organization.name }} · {{ set.name }}</p><h1>{{ source.name }}</h1><p class="muted">Belge yenilemenin durumunu izleyin ve hazırlanan veriyi yönetin.</p></div>{% if can_write and run_ready %}<form method="post" action="{% url 'console:connector_source_run' source.id %}">{% csrf_token %}<button class="button" type="submit">Şimdi çalıştır</button></form>{% endif %}</div>
+{% if run_blocker %}<div class="notice">{{ run_blocker }}</div>{% endif %}
+{% if can_edit_source %}<p><a class="button secondary" href="{% url 'console:connector_source_edit' source.id %}">Kaynak ayarlarını düzenle</a></p>{% endif %}
+{% if configuration_revision %}
+<div class="card"><h2>Kaynak ayarları</h2><p>Sürüm {{ configuration_revision.number }} · {% if configuration_revision.is_current %}Kullanılan ayarlar{% else %}Geçmiş veya deneme ayarları. Bu ayarlarla alınan belgeler geçiş yapılana kadar mevcut veriye karışmaz.{% endif %}</p>
+{% if not configuration_revision.is_current %}<p><strong>Bu sürüme geçildiğinde uygulanacak plan:</strong> {{ revision_schedule_label }}. Sonradan yapılan plan değişiklikleri yerine bu sürüm kaydedilirken seçilen plan uygulanır.</p>{% endif %}
+{% if selection_index %}<form method="post" action="{% url 'console:connector_source_select' source.id %}">{% csrf_token %}<input type="hidden" name="expected" value="{{ selection_token }}"><input type="hidden" name="index_id" value="{{ selection_index.id }}"><p>Hazırlanan belgelerle birlikte bu ayarlara geçilir. Diğer sürümün periyodik yenilemesi durur; bu ayarlarda seçilen plan başlar. Eski ayarlar ve belgeler korunur.</p><p><label><input type="checkbox" name="confirm_active_release_impact"> Mevcut yayınlar eski belge sürümüne bağlıysa bu geçişten etkilenmesini onaylıyorum.</label></p><button>Bu ayarları ve belgeleri kullan</button></form>{% elif not configuration_revision.is_current %}<p>Geçiş için bu ayarlarla belgeleri alıp aramaya hazırlayın. Tamamlanınca yetkili yönetici buradan geçiş yapabilir.</p>{% endif %}
+<details><summary>Ayar geçmişi</summary><ul>{% for revision in configuration_history %}<li><a href="{% url 'console:connector_source_detail' revision.source_id %}">Sürüm {{ revision.number }} · {{ revision.source.name }}</a>{% if revision.is_current %} · Kullanılıyor{% endif %}</li>{% endfor %}</ul></details></div>
+{% endif %}
+{% if common_job %}
+<div class="card"><h2>Yenileme işlemi</h2><p>{{ job_status_label }} · Deneme {{ common_job.attempt }} / {{ common_job.max_attempts }}</p>
+{% if can_write %}
+{% if common_job.status == 'dispatch_pending' or common_job.status == 'queued' or common_job.status == 'running' or common_job.status == 'retry_wait' %}
+<form method="post" action="{% url 'console:connector_job_action' source.id common_job.public_id %}">{% csrf_token %}<button class="button secondary" name="action" value="cancel">Yenilemeyi iptal et</button></form>
+{% elif common_job.status == 'failed' or common_job.status == 'cancelled' %}
+{% if common_job.attempt < common_job.max_attempts %}<form method="post" action="{% url 'console:connector_job_action' source.id common_job.public_id %}">{% csrf_token %}<button class="button secondary" name="action" value="retry">Yeniden dene</button></form>{% endif %}
+{% elif common_job.status == 'reconciliation_required' %}<p>Son işlem sonucu doğrulanmalı. Platform yöneticinizin incelemesi gerekiyor.</p>{% endif %}
+{% endif %}
+</div>
+{% if preparation_review %}
+<div class="card"><h2>Alınan belgeleri aramaya hazırla</h2>
+{% if preparation_review.blocker %}<p class="notice">{{ preparation_review.blocker }}</p><a href="{% url 'console:document_set_detail_public' set.public_id %}">Doküman setinin hazırlama ayarları</a>
+{% else %}<p>Bu yenilemeyle alınan belge sürümü, doküman setinin aşağıdaki ayarlarıyla hazırlanır. Model kullanımı maliyet oluşturabilir. Kullanıma alma ayrıca yönetilir.</p>
+{% include 'console/rest_setup_preparation_summary.html' with preparation_policy=preparation_review.policy %}
+<form method="post" action="{% url 'console:connector_source_prepare' source.id preparation_review.job.public_id %}">{% csrf_token %}<input type="hidden" name="policy" value="{{ preparation_review.fingerprint }}"><button class="button" type="submit">Aramaya hazırla</button></form>
+{% endif %}</div>
+{% endif %}
+{% if source_preparation %}
+<div class="card"><h2>Bu yenilemenin hazırlanması</h2><p><strong>{{ source_preparation.label }}</strong></p>{% if source_preparation.publication %}<p>{{ source_preparation.publication }}</p>{% else %}<p>Belgelerin alınması tamamlandı. Arama için hazırlama ayrı izlenir; kullanıma alma ayrıca yönetilir.</p>{% endif %}
+{% if source_preparation.blocker %}<p class="notice">{{ source_preparation.blocker }}</p>{% endif %}
+{% with preparation=source_preparation.job %}{% if preparation and can_write %}
+{% if preparation.status == 'dispatch_pending' or preparation.status == 'queued' or preparation.status == 'running' or preparation.status == 'retry_wait' %}<form method="post" action="{% url 'console:document_set_cancel_build_job' preparation.public_id %}">{% csrf_token %}<button class="button secondary">Hazırlamayı iptal et</button></form>
+{% elif preparation.status == 'failed' or preparation.status == 'cancelled' %}{% if preparation.attempt < preparation.max_attempts %}<form method="post" action="{% url 'console:document_set_retry_build_job' preparation.public_id %}">{% csrf_token %}<button class="button secondary">Hazırlamayı yeniden dene</button></form>{% endif %}
+{% elif preparation.status == 'reconciliation_required' %}<p>Son hazırlama işleminin sonucu doğrulanmalı. Platform yöneticinizin incelemesi gerekiyor.</p>{% endif %}
+{% endif %}{% endwith %}</div>
+{% endif %}
+{% endif %}
+<div class="relationship-grid">
+  <div class="card"><h2>Bağlantı</h2><p>{{ profile_label }}</p><p><span class="badge {{ source.status }}">{{ source_status_label }}</span></p>
+    <p><strong>Yenileme:</strong> {% if schedule and schedule.enabled %}Periyodik · Sonraki yenileme: {{ schedule.next_run_at|date:'d.m.Y H:i' }}{% else %}Elle başlatılır{% endif %}</p>
+    {% if can_configure_mcp %}{% if not configuration_revision or configuration_revision.is_current %}<a class="button secondary" href="{% url 'console:mcp_schedule_configure' source.pk %}">Yenileme planını düzenle</a>{% endif %}{% endif %}
+    {% if schedule and schedule.enabled %}<p><strong>Periyodik yenilemeden sonra:</strong> {% if schedule.automation_mode == 'stage_only' %}Aramaya hazırlanır; kullanıma alma ayrıca yönetilir.{% elif schedule.automation_mode == 'promote_if_safe' %}Mevcut kontrol ve onaylarla kullanıma alma denenir.{% else %}Belgeler taslakta tutulur.{% endif %}</p>{% endif %}
+    <details><summary>Kaynak ayrıntıları</summary><p><strong>Tür:</strong> {{ source.get_connector_type_display }}</p><p><strong>Kaynak kimliği:</strong> {{ source.slug }}</p><p><strong>Belge eşlemesi:</strong> {{ contract_label }}</p></details>
+  </div>
+  <div class="card"><h2>Son yenileme</h2>
+    {% if latest_run %}<p><strong>{{ latest_run_label }}</strong></p><p>Başlangıç: {{ latest_run.started_at|default:latest_run.created_at|date:'d.m.Y H:i' }}{% if latest_run.finished_at %} · Bitiş: {{ latest_run.finished_at|date:'d.m.Y H:i' }}{% endif %}</p><p>Bulunan {{ latest_run.discovered_count }} · değişen {{ latest_run.changed_count }} · değişmeyen {{ latest_run.unchanged_count }} · eksilen {{ latest_run.missing_count }}</p><details><summary>İşlem ayrıntıları</summary><p>Okunan: {{ latest_run.fetched_bytes }} bayt</p>{% if latest_run.error_code %}<p>Hata kodu: <span class="mono">{{ latest_run.error_code }}</span></p>{% endif %}</details>{% else %}<p class="muted">Henüz belge alınmadı.</p>{% endif %}
+    <p><strong>Son başarılı yenileme:</strong> {% if last_success %}{{ last_success.finished_at|default:last_success.created_at|date:'d.m.Y H:i' }}{% else %}Henüz yok{% endif %}</p>
+    {% if last_failure %}<p><strong>Son hata:</strong> {{ last_failure.updated_at|date:'d.m.Y H:i' }} · <span class="mono">{{ last_failure.error_code }}</span></p>{% endif %}
+  </div>
+</div>
+<div class="card"><h2>Doküman setinin hazırlanma durumu</h2><p class="muted">Bu doküman setinin belgeleri tüm bağlı kaynaklarla birlikte hazırlanır. Belge almak ve kullanıma almak ayrı adımlardır.</p>{% for step in lifecycle %}<div class="relationship-card"><strong>{% if step.done %}✓{% else %}○{% endif %} {{ step.label }}</strong><span class="muted"> · {{ step.detail }}</span></div>{% endfor %}</div>
+{% endblock %}

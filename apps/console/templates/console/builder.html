@@ -1,0 +1,30 @@
+{% extends "console/base.html" %}
+{% load static %}
+{% block title %}Workflow builder · AgentHub{% endblock %}
+{% block content %}
+{% if scenario %}<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:scenarios' %}">Senaryolar</a><span>›</span><a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a><span>›</span><span aria-current="page">Akış düzenleyici</span></nav>{% endif %}
+{{ builder_orgs|json_script:"agenthub-builder-orgs" }}
+{{ builder_initial|json_script:"agenthub-builder-initial" }}
+<div class="card">
+  <h1>Workflow builder</h1>
+  <p class="muted">
+    Workflow'u görsel olarak hazırlayın, backend compiler ile doğrulayın ve immutable bir
+    <code>workflow_definition</code> artifact'i yayımlayın. Doğrulama ve publish sunucuda çalışır;
+    bu canvas governed builder API üzerindeki kullanım katmanıdır.
+  </p>
+</div>
+<div id="agenthub-builder-root"
+     data-api-base="/console/api/builder/"
+     data-orgs-id="agenthub-builder-orgs"
+     data-initial-id="agenthub-builder-initial">
+  <noscript>
+    <div class="msg error" role="alert">Workflow builder JavaScript gerektirir.</div>
+  </noscript>
+  <div class="msg" data-builder-fallback>
+    Builder yükleniyor… Bu mesaj kalırsa frontend bundle üretilmemiştir.
+    <code>npm --prefix frontend ci &amp;&amp; npm --prefix frontend run build</code> komutunu çalıştırın.
+  </div>
+</div>
+<link rel="stylesheet" href="{% static 'builder/builder.css' %}">
+<script type="module" src="{% static 'builder/builder.js' %}?v=generate-binding-json-fix-1"></script>
+{% endblock %}

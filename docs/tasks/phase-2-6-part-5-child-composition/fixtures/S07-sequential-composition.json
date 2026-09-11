@@ -1,0 +1,30 @@
+{
+  "fixture_status": "reference_p2_6_5_only",
+  "scenario_id": "S07",
+  "note": "P2.6.5 owns only subworkflow/agent_call. This sequential variant of the S07 contract-review composition exercises pinned child composition WITHOUT the parallel/join region (owned by P2.6.2). Its executable equivalent is apps/workflows/tests/test_composition.py. child_workflow.<role>/child_agent.<role> manifest pins are resolved to exact released child scenarios by the release compiler (apps/workflows/composition.pin_composition_children).",
+  "target_contract": {
+    "api_version": "agenthub/v1",
+    "kind": "Workflow",
+    "metadata": {"id": "contract_review_composition_sequential"},
+    "spec": {
+      "input_node": "input",
+      "nodes": [
+        {"id": "input", "type": "input"},
+        {"id": "clause_extraction", "type": "subworkflow", "config": {"workflow_role": "clause_extractor", "max_depth": 2}, "input_mapping": [{"from": "/input/contract_ref", "to": "/input/contract_ref"}], "output_mapping": [{"from": "/output", "to": "/branches/clauses/output"}]},
+        {"id": "risk_review", "type": "agent_call", "config": {"agent_role": "contract_risk_reviewer", "max_decisions": 4, "allowed_actions": ["retrieve", "respond"]}, "input_mapping": [{"from": "/branches/clauses/output", "to": "/input/clauses"}], "output_mapping": [{"from": "/output", "to": "/output"}]},
+        {"id": "validate", "type": "validate_contract"},
+        {"id": "end", "type": "end"}
+      ],
+      "edges": [
+        {"from": "input", "to": "clause_extraction"},
+        {"from": "clause_extraction", "to": "risk_review"},
+        {"from": "risk_review", "to": "validate"},
+        {"from": "validate", "to": "end"}
+      ]
+    }
+  },
+  "required_manifest_child_pins": {
+    "child_workflow.clause_extractor": "pins the clause-extractor workflow_definition; the release compiler derives its released child scenario + active release + checksums",
+    "child_agent.contract_risk_reviewer": "pins the contract-risk agent_definition; effective capabilities are attenuated to the intersection of parent/call-site/child-release/live-consumer sources"
+  }
+}

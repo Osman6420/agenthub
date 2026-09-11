@@ -1,0 +1,61 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ title }}</h1>
+
+  <form class="filter-bar" method="get">
+    <label>Durum
+      <select name="status">
+        <option value="">Tümü</option>
+        {% for value, label in status_choices %}<option value="{{ value }}"{% if applied.status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Senaryo
+      <input type="text" name="q" value="{{ applied.q|default:'' }}" placeholder="slug içerir" maxlength="100">
+    </label>
+    <label>Dönem
+      <select name="days">
+        <option value="">Tümü</option>
+        {% for d in days_choices %}<option value="{{ d }}"{% if applied.days == d %} selected{% endif %}>Son {{ d }} gün</option>{% endfor %}
+      </select>
+    </label>
+    <button class="button secondary" type="submit">Filtrele</button>
+  </form>
+  {% if applied %}<div class="filter-note">{% if applied.bucket %}<span class="chip">Grup: {{ applied.bucket }}</span>{% endif %}<span>Filtre uygulanıyor.</span><a href="{% url 'console:workflow_runs' %}">Temizle</a></div>{% endif %}
+
+  {% if rows %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Workflow çalıştırmaları</caption>
+    <thead>
+      <tr>
+        <th>Çalıştırma</th><th>Organizasyon</th><th>Senaryo</th><th>Durum</th>
+        <th>Beklenen düğüm</th><th>Hata</th><th>Oluşturulma</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr data-href="{{ r.href }}">
+        <td><a href="{{ r.href }}">#{{ r.id }}</a></td>
+        <td>{{ r.org }}</td>
+        <td>{{ r.scenario }}</td>
+        <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+        <td>{{ r.awaiting_node|default:"-" }}</td>
+        <td>{{ r.error|default:"-" }}</td>
+        <td>{{ r.created }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% if page.paginator.num_pages > 1 %}
+  <div class="pagination">
+    {% if page.has_previous %}<a href="?{% if base_query %}{{ base_query }}&amp;{% endif %}page={{ page.previous_page_number }}">← Önceki</a>{% endif %}
+    <span>Sayfa {{ page.number }} / {{ page.paginator.num_pages }} · {{ page.paginator.count }} kayıt</span>
+    {% if page.has_next %}<a href="?{% if base_query %}{{ base_query }}&amp;{% endif %}page={{ page.next_page_number }}">Sonraki →</a>{% endif %}
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="muted">{% if applied %}Bu filtreyle eşleşen workflow çalıştırması yok.{% else %}Yetki kapsamınızda workflow çalıştırması yok.{% endif %}</p>
+  {% endif %}
+</div>
+{% endblock %}

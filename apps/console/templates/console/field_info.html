@@ -1,0 +1,27 @@
+{% comment %}
+Reusable inline help for any authoring surface whose options are not visible on screen —
+JSON bodies, DSL fields, profile pickers. Include it next to the control:
+
+    {% include "console/field_info.html" with info_title="Parçalama profili" info_body=schema.summary info_items=schema.fields %}
+
+Server-rendered on purpose: the text comes from the same schema the validator enforces, so
+it cannot drift from the rules, and it needs no script to be readable.
+{% endcomment %}
+<details class="field-info">
+  <summary aria-label="{{ info_title }} hakkında bilgi"><span aria-hidden="true">ⓘ</span> Bu alan ne işe yarar?</summary>
+  <div class="field-info-body">
+    {% if info_body %}<p class="muted">{{ info_body }}</p>{% endif %}
+    {% if info_items %}
+    <dl>
+      {% for item in info_items %}
+      <dt>{{ item.label }}</dt>
+      <dd class="muted">{{ item.help }}
+        {% if item.choices %}<br><span class="mono">{% for choice in item.choices %}{{ choice.value }}{% if not forloop.last %} · {% endif %}{% endfor %}</span>{% endif %}
+        {% if item.kind and item.kind != "select" %}<br><span class="mono">{{ item.min }} – {{ item.max }}</span>{% endif %}
+      </dd>
+      {% endfor %}
+    </dl>
+    {% endif %}
+    {% if info_note %}<p class="muted">{{ info_note }}</p>{% endif %}
+  </div>
+</details>

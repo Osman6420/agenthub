@@ -1,0 +1,30 @@
+{
+  "fixture_status": "target_not_importable",
+  "scenario_id": "S07",
+  "target_contract": {
+    "api_version": "agenthub/v1",
+    "kind": "Workflow",
+    "metadata": {"id": "contract_review_composition"},
+    "spec": {
+      "input_node": "input",
+      "nodes": [
+        {"id": "input", "type": "input"},
+        {"id": "review_parallel", "type": "parallel", "config": {"join": "review_join", "max_concurrency": 2}},
+        {"id": "clause_extraction", "type": "subworkflow", "config": {"workflow_role": "clause_extractor", "max_depth": 2}, "input_mapping": [{"from": "/input/contract_ref", "to": "/input/contract_ref"}], "output_mapping": [{"from": "/output", "to": "/branches/clauses/output"}]},
+        {"id": "risk_review", "type": "agent_call", "config": {"agent_role": "contract_risk_reviewer", "max_decisions": 4, "allowed_actions": ["retrieve", "respond"]}, "input_mapping": [{"from": "/input/contract_ref", "to": "/input/contract_ref"}], "output_mapping": [{"from": "/output", "to": "/branches/risk/output"}]},
+        {"id": "review_join", "type": "join", "config": {"mode": "all", "branches": ["clauses", "risk"], "merge": [{"from": "/branches/clauses/output", "to": "/review/clauses"}, {"from": "/branches/risk/output", "to": "/review/risk"}]}},
+        {"id": "validate", "type": "validate_contract"},
+        {"id": "end", "type": "end"}
+      ],
+      "edges": [
+        {"from": "input", "to": "review_parallel"},
+        {"from": "review_parallel", "to": "clause_extraction", "branch": "clauses"},
+        {"from": "review_parallel", "to": "risk_review", "branch": "risk"},
+        {"from": "clause_extraction", "to": "review_join", "branch": "clauses"},
+        {"from": "risk_review", "to": "review_join", "branch": "risk"},
+        {"from": "review_join", "to": "validate"},
+        {"from": "validate", "to": "end"}
+      ]
+    }
+  }
+}

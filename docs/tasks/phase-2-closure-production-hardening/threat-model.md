@@ -1,0 +1,48 @@
+# Threat Model: Phase 2 closure production hardening
+
+## Assets and trust boundaries
+
+Tenant rows and database roles; document/model inputs and outputs; connector/model/OCR credentials;
+CA/DNS/firewall policy; provider budget and audit history. Boundaries are application/worker →
+PostgreSQL and platform profile → approved external/private service.
+
+## Principal threats
+
+- Cross-tenant access through missing/leaked tenant context, table ownership or `BYPASSRLS`.
+- Malware, polyglot or spoofed uploaded content becoming parseable/indexable remains an explicitly
+  deferred Phase 3 risk rather than a Phase 2 closure control.
+- SSRF, DNS rebinding, credential disclosure or unintended destinations in live profiles.
+- Confidential content retention by providers and unbounded cost or response size.
+- Blind retry after a dispatched request with an unknown outcome.
+- Audit/log leakage of file content, prompts, responses, endpoints or credentials.
+
+## Required controls and tests
+
+FORCE RLS plus a non-owner role; transaction-local context and pool-leak tests; immutable platform
+profiles referenced by ID only; resolved-IP/TLS/redirect/timeout/size controls; synthetic smoke
+data; redacted audit; cost/rate/token limits; terminal `outcome_unknown`; documented disable and
+rollback drills.
+
+For P11.1, table discovery comes only from Django's installed model metadata; catalog lookups and
+role/schema/policy values remain bound parameters. Readiness inspection
+is read-only. A dynamic inventory prevents a newly-added direct-tenant model from silently falling
+outside the report, while explicit bootstrap/telemetry classifications make exclusions visible.
+The check is not proof that request and worker context propagation is correct, and passing it must
+not be treated as authorization to activate a production role or policy.
+The diagnostic requires read access only; write/delete grants must be separately minimized per
+table so immutable or append-only records do not gain blanket mutation privileges.
+
+P11.2 uses transaction-local `app.tenant_scope`, never a client-provided tenant selector. Console
+scope is derived from authenticated memberships; machine scope is set only after bearer-token
+resolution; worker scope comes from a required queue organization id and every first lookup also
+matches that id. Empty/malformed scope fails closed. Membership and token resolution remain explicit
+bootstrap exceptions because applying tenant RLS before identity resolution creates a circular
+dependency. An injected SQL statement could set a custom GUC, so RLS remains defense in depth and
+does not replace injection prevention, parameterization, or least-privilege grants.
+
+## Residual risk
+
+Concrete provider retention, corporate network topology and operational ownership cannot be
+accepted until the selected environment inputs are reviewed. Uploaded content remains unscanned;
+the malware/polyglot/type-spoofing risk and its complete control package are explicitly deferred to
+Phase 3 and must remain visible in production risk acceptance.

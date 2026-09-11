@@ -1,0 +1,104 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: agenthub-binary-builds
+  annotations:
+    description: Triggerless Binary BuildConfigs for immutable AgentHub release images.
+parameters:
+  - name: RELEASE_ID
+    required: true
+    description: Shared immutable release identifier and ImageStream tag.
+  - name: NODE_BASE_IMAGE
+    required: true
+    description: Approved Node base image resolved to an immutable digest for promotion.
+  - name: PYTHON_BASE_IMAGE
+    required: true
+    description: Approved Python base image resolved to an immutable digest for promotion.
+  - name: NGINX_BASE_IMAGE
+    required: true
+    description: Approved non-root Nginx base image resolved to an immutable digest.
+  - name: PGVECTOR_BASE_IMAGE
+    required: true
+    description: Approved pgvector/PostgreSQL base image resolved to an immutable digest.
+objects:
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: agenthub
+      labels: {app.kubernetes.io/part-of: agenthub}
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: agenthub-static
+      labels: {app.kubernetes.io/part-of: agenthub}
+  - apiVersion: image.openshift.io/v1
+    kind: ImageStream
+    metadata:
+      name: agenthub-postgresql
+      labels: {app.kubernetes.io/part-of: agenthub}
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: agenthub-app
+      labels: {app.kubernetes.io/part-of: agenthub}
+    spec:
+      runPolicy: Serial
+      source: {type: Binary}
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: deploy/Dockerfile
+          buildArgs:
+            - {name: STATIC_RELEASE_ID, value: "${RELEASE_ID}"}
+            - {name: NODE_BASE_IMAGE, value: "${NODE_BASE_IMAGE}"}
+            - {name: PYTHON_BASE_IMAGE, value: "${PYTHON_BASE_IMAGE}"}
+            - {name: NGINX_BASE_IMAGE, value: "${NGINX_BASE_IMAGE}"}
+      output:
+        to: {kind: ImageStreamTag, name: "agenthub:${RELEASE_ID}"}
+      triggers: []
+      resources:
+        requests: {cpu: "1", memory: 2Gi, ephemeral-storage: 2Gi}
+        limits: {cpu: "4", memory: 8Gi, ephemeral-storage: 8Gi}
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: agenthub-static
+      labels: {app.kubernetes.io/part-of: agenthub}
+    spec:
+      runPolicy: Serial
+      source: {type: Binary}
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: deploy/static.Dockerfile
+          buildArgs:
+            - {name: STATIC_RELEASE_ID, value: "${RELEASE_ID}"}
+            - {name: NODE_BASE_IMAGE, value: "${NODE_BASE_IMAGE}"}
+            - {name: PYTHON_BASE_IMAGE, value: "${PYTHON_BASE_IMAGE}"}
+            - {name: NGINX_BASE_IMAGE, value: "${NGINX_BASE_IMAGE}"}
+      output:
+        to: {kind: ImageStreamTag, name: "agenthub-static:${RELEASE_ID}"}
+      triggers: []
+      resources:
+        requests: {cpu: "1", memory: 2Gi, ephemeral-storage: 2Gi}
+        limits: {cpu: "4", memory: 8Gi, ephemeral-storage: 8Gi}
+  - apiVersion: build.openshift.io/v1
+    kind: BuildConfig
+    metadata:
+      name: agenthub-postgresql
+      labels: {app.kubernetes.io/part-of: agenthub}
+    spec:
+      runPolicy: Serial
+      source: {type: Binary}
+      strategy:
+        type: Docker
+        dockerStrategy:
+          dockerfilePath: deploy/postgres-openshift.Dockerfile
+          buildArgs:
+            - {name: PGVECTOR_BASE_IMAGE, value: "${PGVECTOR_BASE_IMAGE}"}
+      output:
+        to: {kind: ImageStreamTag, name: "agenthub-postgresql:${RELEASE_ID}"}
+      triggers: []
+      resources:
+        requests: {cpu: "1", memory: 2Gi, ephemeral-storage: 2Gi}
+        limits: {cpu: "4", memory: 8Gi, ephemeral-storage: 8Gi}

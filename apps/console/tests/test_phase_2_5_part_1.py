@@ -1,0 +1,312 @@
+"""Phase 2.5 Part 1 dashboard, organization overview and navigation security tests."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.test import Client
+from django.urls import reverse
+
+from apps.artifacts.models import ArtifactVersion
+from apps.catalog.models import AIProject, Scenario
+from apps.documents.models import DocumentSet, DocumentSetGrant, ScenarioDocumentSetBinding
+from apps.identity.models import (
+    Consumer,
+    ConsumerBinding,
+    ConsumerProtocol,
+    OrganizationResponsibility,
+    OrganizationResponsibilityAssignment,
+)
+from apps.identity.roles import Role
+from apps.releases.models import ScenarioRelease
+from apps.tenancy.models import Organization, OrganizationMembership, OrganizationStatus
+from apps.tenancy.services import can_admin_org, can_author_scenarios
+
+User = get_user_model()
+pytestmark = pytest.mark.django_db
+
+
+def _member(username: str, organization: Organization, role: str = Role.AUDITOR) -> Any:
+    user = User.objects.create_user(username, password="x")  # noqa: S106
+    membership = OrganizationMembership.objects.create(organization=organization, user=user)
+    responsibilities: dict[str, str] = {
+        Role.ORGANIZATION_ADMIN: OrganizationResponsibility.ADMINISTRATOR,
+        Role.AUDITOR: OrganizationResponsibility.AUDITOR,
+    }
+    responsibility = responsibilities.get(role)
+    if responsibility is not None:
+        OrganizationResponsibilityAssignment.objects.create(
+            organization=organization,
+            membership=membership,
+            responsibility=responsibility,
+            assigned_by=user,
+        )
+    return user
+
+
+def _scenario(organization: Organization, slug: str = "yardim") -> Scenario:
+    project = AIProject.objects.create(
+        organization=organization, slug=f"proje-{slug}", name=f"Proje {slug}"
+    )
+    return Scenario.objects.create(
+        organization=organization,
+        project=project,
+        slug=slug,
+        name=f"Senaryo {slug}",
+    )
+
+
+def test_dashboard_lists_authorized_active_and_disabled_organizations(client: Client) -> None:
+    active = Organization.objects.create(slug="aktif", name="Aktif Kurum")
+    disabled = Organization.objects.create(
+        slug="pasif", name="Pasif Kurum", status=OrganizationStatus.DISABLED
+    )
+    foreign = Organization.objects.create(slug="yabanci", name="Yabancı Kurum")
+    user = _member("member", active)
+    OrganizationMembership.objects.create(organization=disabled, user=user)
+    client.force_login(user)
+
+    response = client.get(reverse("console:dashboard"))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    assert "Aktif Kurum" in body
+    assert "Pasif Kurum" in body
+    assert "Yabancı Kurum" not in body
+    assert f'value="{active.id}"' in body
+    assert f'value="{disabled.id}"' in body
+    assert foreign.slug not in body
+
+
+def test_organization_workspace_redirects_to_tenant_scoped_home_and_contextual_details(
+    client: Client,
+) -> None:
+    organization = Organization.objects.create(slug="kurum", name="Kurum")
+    foreign = Organization.objects.create(slug="gizli", name="Gizli Kurum")
+    scenario = _scenario(organization)
+    foreign_scenario = _scenario(foreign, "gizli")
+    document_set = DocumentSet.objects.create(
+        organization=organization, logical_id="bilgi", name="Bilgi Seti"
+    )
+    Consumer.objects.create(
+        organization=organization,
+        subject="portal",
+        name="Portal İstemcisi",
+        protocol=ConsumerProtocol.REST,
+    )
+    artifact = ArtifactVersion.objects.create(
+        organization=organization,
+        type="prompt_template",
+        logical_id="cevap",
+        version=1,
+        body={"template": "Yanıtla"},
+        checksum="a" * 64,
+        created_by="test",
+    )
+    release = ScenarioRelease.objects.create(
+        scenario=scenario,
+        status="candidate",
+        runtime_version="runtime/v1",
+        manifest={
+            "artifacts": {
+                "prompt": {
+                    "type": artifact.type,
+                    "ref": artifact.ref,
+                    "checksum": artifact.checksum,
+                }
+            }
+        },
+        artifact_manifest_sha256="b" * 64,
+        created_by="test",
+    )
+    user = _member("auditor", organization)
+    client.force_login(user)
+
+    response = client.get(reverse("console:organization_detail", args=[organization.slug]))
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("console:dashboard")
+    assert client.session["active_organization_id"] == organization.id
+    project_body = client.get(
+        reverse("console:project_detail_public", args=[scenario.project.public_id])
+    ).content.decode()
+    scenario_body = client.get(
+        reverse("console:scenario_detail_public", args=[scenario.public_id])
+    ).content.decode()
+    document_body = client.get(reverse("console:documents")).content.decode()
+    assert scenario.name in project_body
+    assert document_set.name in document_body
+    assert reverse("console:release_detail", args=[release.id]) in scenario_body
+    release_body = client.get(reverse("console:release_detail", args=[release.id])).content.decode()
+    assert reverse("console:artifact_detail", args=[artifact.id]) in release_body
+    assert foreign_scenario.name not in project_body
+    assert (
+        client.get(reverse("console:organization_detail", args=[foreign.slug])).status_code == 404
+    )
+
+
+def test_disabled_organization_is_readable_but_rejects_direct_mutation(client: Client) -> None:
+    organization = Organization.objects.create(
+        slug="pasif", name="Pasif", status=OrganizationStatus.DISABLED
+    )
+    scenario = _scenario(organization)
+    document_set = DocumentSet.objects.create(
+        organization=organization, logical_id="bilgi", name="Bilgi"
+    )
+    editor = _member("editor", organization, Role.ORGANIZATION_ADMIN)
+    client.force_login(editor)
+
+    detail = client.get(reverse("console:organization_detail", args=[organization.slug]))
+    mutation = client.post(
+        reverse("console:scenario_bind_document_set", args=[scenario.id]),
+        {"document_set_id": document_set.id},
+    )
+
+    assert detail.status_code == 302
+    assert detail.headers["Location"] == reverse("console:dashboard")
+    home = client.get(reverse("console:dashboard")).content.decode()
+    assert "Pasif" in home
+    assert mutation.status_code == 403
+    assert can_admin_org(editor, organization.id) is False
+    assert can_author_scenarios(editor, organization.id) is False
+
+
+def test_platform_admin_cannot_mutate_disabled_organization() -> None:
+    organization = Organization.objects.create(
+        slug="pasif", name="Pasif", status=OrganizationStatus.DISABLED
+    )
+    root = User.objects.create_superuser("root", "root@example.com", "x")  # noqa: S106
+
+    assert can_admin_org(root, organization.id) is False
+    assert can_author_scenarios(root, organization.id) is False
+
+
+def test_disabled_organization_is_not_offered_by_creation_forms(client: Client) -> None:
+    Organization.objects.create(slug="aktif", name="Aktif")
+    disabled = Organization.objects.create(
+        slug="pasif", name="Pasif", status=OrganizationStatus.DISABLED
+    )
+    root = User.objects.create_superuser("root", "root@example.com", "x")  # noqa: S106
+    client.force_login(root)
+
+    response = client.get(reverse("console:project_create"))
+    body = response.content.decode()
+
+    assert response.status_code == 200
+    assert 'name="organization"' not in body
+    client.post(reverse("console:switch_organization"), {"organization_id": disabled.pk})
+    assert client.get(reverse("console:project_create")).status_code == 403
+
+
+def test_detail_pages_are_cross_tenant_safe_and_keep_canonical_urls(client: Client) -> None:
+    own = Organization.objects.create(slug="kendi", name="Kendi")
+    foreign = Organization.objects.create(slug="yabanci", name="Yabancı")
+    own_scenario = _scenario(own, "kendi")
+    foreign_scenario = _scenario(foreign, "yabanci")
+    foreign_consumer = Consumer.objects.create(
+        organization=foreign,
+        subject="foreign-client",
+        name="Yabancı İstemci",
+        protocol=ConsumerProtocol.REST,
+    )
+    foreign_release = ScenarioRelease.objects.create(
+        scenario=foreign_scenario,
+        status="candidate",
+        runtime_version="runtime/v1",
+        manifest={"artifacts": {}},
+        artifact_manifest_sha256="c" * 64,
+        created_by="test",
+    )
+    client.force_login(_member("member", own))
+
+    assert reverse("console:scenario_detail", args=[own_scenario.id]) == (
+        f"/console/scenarios/{own_scenario.id}/"
+    )
+    assert (
+        client.get(
+            reverse("console:project_detail", args=[foreign_scenario.project_id])
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(reverse("console:consumer_detail", args=[foreign_consumer.id])).status_code
+        == 404
+    )
+    assert (
+        client.get(reverse("console:release_detail", args=[foreign_release.id])).status_code == 404
+    )
+
+
+def test_organization_and_target_details_narrow_transaction_scope(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    organization = Organization.objects.create(slug="kurum", name="Kurum")
+    scenario = _scenario(organization)
+    client.force_login(_member("member", organization))
+    calls: list[int] = []
+    monkeypatch.setattr("apps.console.views.set_tenant_context", calls.append)
+
+    assert (
+        client.get(reverse("console:organization_detail", args=[organization.slug])).status_code
+        == 302
+    )
+    assert client.get(reverse("console:scenario_detail", args=[scenario.id])).status_code == 200
+
+    assert calls == [organization.id, organization.id]
+
+
+def test_scenario_document_set_consumer_and_release_names_cross_link(client: Client) -> None:
+    organization = Organization.objects.create(slug="kurum", name="Kurum")
+    scenario = _scenario(organization)
+    document_set = DocumentSet.objects.create(
+        organization=organization, logical_id="bilgi", name="Bilgi"
+    )
+    consumer = Consumer.objects.create(
+        organization=organization,
+        subject="portal",
+        name="Portal",
+        protocol=ConsumerProtocol.REST,
+    )
+    ConsumerBinding.objects.create(
+        organization=organization,
+        consumer=consumer,
+        scenario=scenario,
+        capabilities=["workflow_run"],
+    )
+    ScenarioDocumentSetBinding.objects.create(
+        organization=organization, scenario=scenario, document_set=document_set
+    )
+    DocumentSetGrant.objects.create(
+        organization=organization,
+        document_set=document_set,
+        principal_type="consumer",
+        principal_ref=str(consumer.id),
+        permission="retrieve",
+    )
+    release = ScenarioRelease.objects.create(
+        scenario=scenario,
+        status="candidate",
+        runtime_version="runtime/v1",
+        manifest={"artifacts": {}},
+        artifact_manifest_sha256="d" * 64,
+        created_by="test",
+    )
+    client.force_login(_member("auditor", organization))
+
+    scenario_body = client.get(
+        reverse("console:scenario_detail", args=[scenario.id])
+    ).content.decode()
+    consumer_body = client.get(
+        reverse("console:consumer_detail", args=[consumer.id])
+    ).content.decode()
+    release_body = client.get(reverse("console:release_detail", args=[release.id])).content.decode()
+
+    assert reverse("console:consumer_detail_public", args=[consumer.public_id]) in scenario_body
+    assert reverse("console:scenario_detail_public", args=[scenario.public_id]) in consumer_body
+    assert (
+        reverse("console:document_set_detail_public", args=[document_set.public_id])
+        in consumer_body
+    )
+    assert reverse("console:scenario_detail_public", args=[scenario.public_id]) in release_body

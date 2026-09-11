@@ -1,0 +1,6 @@
+.git/
+.github/
+.venv/
+*.env
+*.tar.gz
+__pycache__/

@@ -1,0 +1,49 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ title }}</h1>
+  {% if rows %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Bekleyen tool onayları</caption>
+    <thead>
+      <tr>
+        <th>ID</th><th>Organizasyon</th><th>Çağrı</th><th>Tool</th>
+        <th>Risk</th><th>Sona erme</th><th>İşlemler</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ r.org }}</td>
+        <td>{{ r.invocation }}</td>
+        <td>{{ r.tool_ref }}</td>
+        <td><span class="badge">{{ r.risk }}</span></td>
+        <td>{{ r.expires }}</td>
+        <td>
+          {% if r.can_decide %}
+          <form class="inline" method="post" action="{% url 'console:tool_approval_decide' r.id %}">
+            {% csrf_token %}
+            <input type="hidden" name="decision" value="approve">
+            <button class="link" type="submit">Onayla</button>
+          </form>
+          <form class="inline" method="post" action="{% url 'console:tool_approval_decide' r.id %}">
+            {% csrf_token %}
+            <input type="hidden" name="decision" value="reject">
+            <button class="link" type="submit">Reddet</button>
+          </form>
+          {% endif %}
+          <form class="inline" method="post" action="{% url 'console:tool_invocation_cancel' r.invocation %}">
+            {% csrf_token %}<button class="link" type="submit">İptal et</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">Yetki kapsamınızda bekleyen tool onayı yok.</p>
+  {% endif %}
+</div>
+{% endblock %}

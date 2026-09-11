@@ -1,0 +1,13 @@
+{% extends "console/base.html" %}
+{% block title %}Bağlantı izni bekleniyor · AgentHub{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'console:document_set_connectors_public' set.public_id %}">{{ set.name }} kaynakları</a><span>›</span><span>REST kurulumu</span></div>
+<div class="card form-card">
+{% if error %}<h1>Kurulum kaydedilemedi</h1><p class="notice" role="alert">{{ error }}</p>
+{% else %}<h1>Bağlantı izni bekleniyor</h1><p><strong>{{ source_name }}</strong> için seçilen bağlantı şu anda bu doküman setinde kullanılamıyor. Platform yöneticisi izin verdiğinde {{ step }}. adımdan devam edebilirsiniz.</p>
+<p>Girdiğiniz alanlar korunuyor. Daha sonra devam etmek için kurulumu kaydedin. Bu kayıt bağlantıyı çalıştırmaz.</p>
+<form method="post">{% csrf_token %}<input type="hidden" name="submission" value="{{ submission }}"><div class="button-row"><button name="action" value="save_draft">Kurulumu kaydet ve bekle</button><button class="button secondary" name="action" value="back">Önceki adım</button></div></form>
+{% endif %}
+<p><a href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynaklar ekranına dön</a></p>
+</div>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "console/base.html" %}
+{% block title %}Hazırlama ayarları · {{ set.name }}{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'console:document_set_detail_public' set.public_id %}">{{ set.name }}</a><span>›</span><span>Hazırlama ayarları</span></div>
+<div class="page-heading"><div><h1>Hazırlama ayarları</h1><p>{{ set.name }} belgelerinin arama için nasıl hazırlanacağını seçin. Henüz belge eklemeniz gerekmez.</p></div></div>
+<div class="card form-card"><form method="post">{% csrf_token %}
+{% if form.errors %}<div class="notice" role="alert" tabindex="-1" data-form-error-summary><strong>Ayarlar kaydedilemedi.</strong>{{ form.non_field_errors }}</div>{% endif %}
+{% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<p>{{ field.label_tag }}{{ field }}{{ field.errors }}</p>{% endif %}{% endfor %}
+<p class="muted">Standart parçalama belgeleri {{ standard_chunking.size }} karakterlik parçalara böler, aralarında {{ standard_chunking.overlap }} karakter ortak alan bırakır; belge başına en çok {{ standard_chunking.max_chunks }} parça üretir.</p>
+<p>Kaydetmek mevcut belgeleri işlemez veya kullanıma almaz. Otomatik hazırlamayı açarsanız sonraki belge yayınları model kullanımı ve maliyet oluşturabilir.</p>
+{% if setup_id %}<p>Kaynak kurulumu kaydedildi. Ayarları kaydettikten sonra yenileme ve hazırlama seçimine döneceksiniz.</p>{% endif %}
+<div class="button-row"><button type="submit">Ayarları kaydet{% if setup_id %} ve kuruluma dön{% endif %}</button><a class="button secondary" href="{% if setup_id %}{% url 'console:rest_setup_draft' set.public_id setup_id %}{% else %}{% url 'console:document_set_detail_public' set.public_id %}{% endif %}">Vazgeç</a></div>
+</form></div>
+{% endblock %}

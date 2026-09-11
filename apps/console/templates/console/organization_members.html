@@ -1,0 +1,99 @@
+{% extends "console/base.html" %}
+{% block title %}Kullanıcılar ve yetkiler · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu">
+  <a href="{% url 'console:dashboard' %}">{{ organization.name }}</a>
+  <span>›</span><span>Kullanıcılar ve yetkiler</span>
+</nav>
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">{{ organization.name }}</p>
+    <h1>Kullanıcılar ve yetkiler</h1>
+    <p class="muted">Organizasyon üyeliği ile proje, senaryo ve doküman seti sorumlulukları ayrı yönetilir. Global Administrator ve recovery superadmin sıradan rol seçenekleri değildir.</p>
+  </div>
+</div>
+
+<section class="card">
+  <h2>Kullanıcı ekle</h2>
+  <form method="post" action="{% url 'console:organization_member_add' %}">
+    {% csrf_token %}
+    {{ add_form.as_p }}
+    <button class="button primary" type="submit">Üyelik ekle</button>
+  </form>
+</section>
+
+<section class="card" aria-labelledby="assignment-heading">
+  <div class="section-heading">
+    <div>
+      <h2 id="assignment-heading">Sorumluluk ata</h2>
+      <p class="muted">Bir sorumluluk türü, organizasyon üyesi ve aynı organizasyondan tam hedef seçin. Atama doküman içeriği yetkisini dolaylı olarak genişletmez.</p>
+    </div>
+  </div>
+  <form method="post" action="{% url 'console:delegated_assignment_add' %}">
+    {% csrf_token %}
+    {{ assignment_form.as_p }}
+    <button class="button primary" type="submit">Sorumluluğu incele ve ata</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Mevcut üyelikler</h2>
+  {% for membership in memberships %}
+    <div class="access-row">
+      <div>
+        <strong>{{ membership.user.get_username }}</strong>
+        <p class="muted">
+          {{ membership.get_status_display }} ·
+          {{ membership.delegated_counts.organization }} organizasyon ·
+          {{ membership.delegated_counts.projects }} proje ·
+          {{ membership.delegated_counts.scenarios }} senaryo ·
+          {{ membership.delegated_counts.document_sets }} doküman seti
+        </p>
+      </div>
+      <form method="post" action="{% url 'console:organization_member_remove' membership.id %}">
+        {% csrf_token %}
+        <button class="button secondary" type="submit">Üyeliği kaldır</button>
+      </form>
+    </div>
+  {% empty %}
+    <div class="empty">Üyelik yok.</div>
+  {% endfor %}
+  {% if memberships_limited %}<p class="muted">İlk 200 üyelik gösteriliyor.</p>{% endif %}
+</section>
+
+<section class="card" aria-labelledby="assignments-heading">
+  <h2 id="assignments-heading">Açık sorumluluklar</h2>
+  <h3>Organizasyon sorumlulukları</h3>
+  {% for assignment in organization_assignments %}
+    <div class="access-row">
+      <div><strong>{{ assignment.membership.user.get_username }}</strong><p class="muted">{{ assignment.get_responsibility_display }}</p></div>
+      <form method="post" action="{% url 'console:delegated_assignment_remove' 'organization' assignment.id %}">{% csrf_token %}<button class="button secondary" type="submit">Sorumluluğu kaldır</button></form>
+    </div>
+  {% empty %}<p class="muted">Organizasyon sorumluluğu yok.</p>{% endfor %}
+
+  <h3>Proje sorumlulukları</h3>
+  {% for assignment in project_assignments %}
+    <div class="access-row">
+      <div><strong>{{ assignment.membership.user.get_username }}</strong><p class="muted">{{ assignment.project.name }} · {{ assignment.get_responsibility_display }}</p></div>
+      <form method="post" action="{% url 'console:delegated_assignment_remove' 'project' assignment.id %}">{% csrf_token %}<button class="button secondary" type="submit">Sorumluluğu kaldır</button></form>
+    </div>
+  {% empty %}<p class="muted">Proje sorumluluğu yok.</p>{% endfor %}
+
+  <h3>Senaryo sorumlulukları</h3>
+  {% for assignment in scenario_assignments %}
+    <div class="access-row">
+      <div><strong>{{ assignment.membership.user.get_username }}</strong><p class="muted">{{ assignment.scenario.project.name }} · {{ assignment.scenario.name }} · {{ assignment.get_responsibility_display }}</p></div>
+      <form method="post" action="{% url 'console:delegated_assignment_remove' 'scenario' assignment.id %}">{% csrf_token %}<button class="button secondary" type="submit">Sorumluluğu kaldır</button></form>
+    </div>
+  {% empty %}<p class="muted">Senaryo sorumluluğu yok.</p>{% endfor %}
+
+  <h3>Doküman seti sorumlulukları</h3>
+  {% for assignment in document_set_assignments %}
+    <div class="access-row">
+      <div><strong>{{ assignment.membership.user.get_username }}</strong><p class="muted">{{ assignment.document_set.name }} · {{ assignment.get_responsibility_display }}</p></div>
+      <form method="post" action="{% url 'console:delegated_assignment_remove' 'document_set' assignment.id %}">{% csrf_token %}<button class="button secondary" type="submit">Sorumluluğu kaldır</button></form>
+    </div>
+  {% empty %}<p class="muted">Doküman seti sorumluluğu yok.</p>{% endfor %}
+  {% if assignments_limited %}<p class="muted">Her sorumluluk türü için ilk 200 kayıt gösteriliyor.</p>{% endif %}
+</section>
+{% endblock %}

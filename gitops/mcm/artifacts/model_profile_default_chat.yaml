@@ -1,0 +1,9 @@
+api_version: agenthub/v1
+kind: ModelProfile
+metadata:
+  organization: mcm
+  logical_id: default_chat
+spec:
+  # Platform profile catalog entry is provisioned separately by a platform admin.
+  # Artifacts cannot choose endpoint, credentials, transport, or TLS policy.
+  profile_id: 00000000-0000-0000-0000-000000000001

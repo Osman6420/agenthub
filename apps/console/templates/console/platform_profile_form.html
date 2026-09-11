@@ -1,0 +1,26 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:platform_setup' %}">Platform kurulumu</a><span>›</span><span>{{ profile_kind }}</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Platform-only immutable katalog</p><h1>{{ profile_kind }} profili kaydet</h1><p class="muted">Kayıt tek başına egress açmaz. Deployment allowlist/policy, secret resolver, explicit grant ve runtime kapıları ayrı ayrı geçilmelidir.</p></div></div>
+<section class="card form-card">
+  <div class="warning-box">Secret değeri değil yalnız <span class="mono">secret:NAME</span> referansı girin. Referans kayıttan sonra bu konsolda tekrar gösterilmez.</div>
+  {% if form.non_field_errors %}<div class="warning-box">{{ form.non_field_errors }}</div>{% endif %}
+  <form method="post" autocomplete="off">
+    {% csrf_token %}
+    {# BUG-009: aynı form alanları -- yalnızca görüntü mantıksal gruplara ayrıldı; #}
+    {# gruplama apps/console/views.py::_grouped_profile_fields'te tanımlı. #}
+    {% for group_label, group_fields in field_groups %}
+    <fieldset class="profile-field-group"><legend>{{ group_label }}</legend>
+      {% if group_label == "Bağlantı" %}<p class="muted">scheme+host+port+path, sağlayıcının tam endpoint URL'sini oluşturan parçalardır (ör. <span class="mono">https://api.example.com:443/v1</span>).</p>{% endif %}
+      {% if group_label == "Kimlik doğrulama" %}<p class="muted">Bir <span class="mono">secret:NAME</span> referansı -- ham değer değil.</p>{% endif %}
+      {% for field in group_fields %}
+      <div class="profile-field-row">{{ field.label_tag }}{{ field }}{% if field.help_text %}<span class="muted">{{ field.help_text }}</span>{% endif %}{{ field.errors }}</div>
+      {% endfor %}
+    </fieldset>
+    {% endfor %}
+    <button type="submit">Canonical doğrula ve profili kaydet</button>
+    <a class="button secondary" href="{% url 'console:platform_setup' %}">Vazgeç</a>
+  </form>
+</section>
+{% endblock %}

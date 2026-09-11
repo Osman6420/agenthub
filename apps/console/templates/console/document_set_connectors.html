@@ -1,0 +1,64 @@
+{% extends "console/base.html" %}
+{% block title %}{{ set.name }} kaynakları · AgentHub{% endblock %}
+{% block content %}
+
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><a href="{% url 'console:document_set_detail_public' set.public_id %}">{{ set.name }}</a><span>›</span><span>Kaynaklar</span></div>
+<div class="page-heading"><div><p class="eyebrow">{{ set.organization.name }} · {{ set.name }}</p><h1>Kaynaklar ve yenileme</h1><p class="muted">Bağlı kaynakları ve belge yenilemelerini yönetin. Yeni belgeler, seçtiğiniz hazırlama ve kullanıma alma adımlarından geçer.</p></div></div>
+
+<div class="card">
+  <div class="section-heading"><div><h2>Bağlı kaynaklar</h2><p class="muted">Son yenilemeleri kontrol edin veya yeni bir kaynak ekleyin.</p></div></div>
+  {% for source in sources %}
+  <div class="relationship-card">
+    <div class="relationship-head"><div><h3><a href="{% url 'console:connector_source_detail' source.object.id %}">{{ source.object.name }}</a></h3><p class="muted">{{ source.type_label }}</p></div><span class="badge {{ source.object.status }}">{{ source.status_label }}</span></div>
+    <div class="relationship-body">
+      <div>
+        <h4>Kaynak özeti</h4>
+        <p><strong>Bağlantı:</strong> {{ source.profile_label }}</p><details><summary>Kaynak ayrıntıları</summary><p>{{ source.object.slug }} · {{ source.contract_label }}</p><p>{{ source.config_summary }}</p></details>
+        {% if source.latest_run %}<div class="notice"><strong>Son yenileme · {{ source.latest_run_label }}</strong><p class="muted">Bulunan {{ source.latest_run.discovered_count }} · değişen {{ source.latest_run.changed_count }} · değişmeyen {{ source.latest_run.unchanged_count }} · eksilen {{ source.latest_run.missing_count }}</p></div>{% else %}<p class="muted">Henüz belge alınmadı.</p>{% endif %}
+        <p><strong>Son başarılı yenileme:</strong> {% if source.last_success %}{{ source.last_success.finished_at|default:source.last_success.created_at|date:'d.m.Y H:i' }}{% else %}Henüz yok{% endif %}</p>
+        {% if source.last_failure %}<p><strong>Son hata:</strong> {{ source.last_failure.updated_at|date:'d.m.Y H:i' }} · {{ source.last_failure.error_code }}</p>{% endif %}
+        {% if source.can_run %}<form method="post" action="{% url 'console:connector_source_run' source.object.id %}">{% csrf_token %}<button class="button secondary" type="submit">Şimdi çalıştır</button></form>{% endif %}
+      </div>
+      <div>
+        <h4>Yenileme ve hazırlama</h4>
+        {% if source.preparation %}<p><strong>Bu yenilemenin hazırlanması:</strong> {{ source.preparation.label }}</p>{% if source.preparation.blocker %}<p class="notice">{{ source.preparation.blocker }}</p>{% endif %}{% endif %}
+        {% if source.manual_only %}<p class="muted">Bu kaynak isteğinizle yenilenir.</p>{% else %}
+        {% if source.schedule %}<p class="muted">{% if source.schedule.enabled %}Sonraki yenileme: {{ source.schedule.next_run_at|date:'d.m.Y H:i' }}{% else %}Periyodik yenileme kapalı{% endif %}</p>{% if not source.preparation %}<p class="muted">Hazırlık: {{ source.automation_label }}</p>{% endif %}{% else %}<p class="muted">Bu kaynak isteğinizle yenilenir.</p>{% endif %}
+        {% if source.can_configure %}<details><summary>Yenileme planını düzenle</summary><form class="compact-form" method="post" action="{% url 'console:connector_schedule_configure' source.object.id %}">{% csrf_token %}{{ source.schedule_form.as_p }}<p class="muted">Otomatik kullanıma alma için bu doküman setinde operasyon yetkisi gerekir. Yalnız bu seti kullanan senaryolar seçilebilir.</p><button class="button secondary" type="submit">Planı kaydet</button></form></details>{% endif %}
+        {% if source.can_configure_mcp %}<a class="button secondary" href="{% url 'console:mcp_schedule_configure' source.object.pk %}">Yenileme planını düzenle</a>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% empty %}<div class="empty">Bu doküman setine bağlı kaynak yok.</div>{% endfor %}
+  {% if source_page.has_other_pages %}<nav aria-label="Kaynak sayfaları" class="button-row">{% if source_page.has_previous %}<a class="button secondary" href="?page={{ source_page.previous_page_number }}">Önceki sayfa</a>{% endif %}<span>{{ source_page.number }} / {{ source_page.paginator.num_pages }}</span>{% if source_page.has_next %}<a class="button secondary" href="?page={{ source_page.next_page_number }}">Sonraki sayfa</a>{% endif %}</nav>{% endif %}
+</div>
+
+{% if can_write %}
+{% if mcp_enabled %}<div class="card"><h2>MCP belgeleri</h2><p>Onaylı bir MCP bağlantısındaki belgeleri bu doküman setine ekleyin.</p><a class="button secondary" href="{% url 'console:mcp_source_create_public' set.public_id %}">MCP belge kaynağı ekle</a></div>{% endif %}
+<div class="card"><h2>Yeni kaynak ekle</h2><p>Bağlantıyı seçin, alınacak belgeleri tanımlayın ve yenileme sıklığını belirleyin.</p></div>
+<div class="relationship-grid">
+  <div class="card form-card">
+    <h2>Confluence kaynağı ekle</h2><p class="muted">Bir başlangıç sayfası seçerek altındaki belgeleri bu doküman setine alın.</p>
+    {% if not confluence_ready %}<p class="notice">Bu doküman seti için onaylı Confluence bağlantısı yok. Platform yöneticisi bağlantıya izin verdikten sonra kuruluma devam edebilirsiniz.</p>{% endif %}
+    <details{% if confluence_form.errors %} open{% endif %}><summary>Confluence bağlantısını yapılandır</summary><form method="post" action="{% url 'console:confluence_source_create_public' set.public_id %}">{% csrf_token %}{{ confluence_form.as_p }}<button type="submit">Confluence kaynağı oluştur</button></form></details>
+  </div>
+  <div class="card form-card">
+    <h2>REST kaynağı ekle</h2>{% if not rest_ready %}<p class="notice">Bu doküman seti için onaylı REST bağlantısı yok. Kurulumu kaydedebilir, platform yöneticisi izin verdiğinde devam edebilirsiniz.</p>{% endif %}{% if rest_setup_enabled %}<p><a class="button" href="{% url 'console:rest_setup_new' set.public_id %}">REST kaynağını adım adım ekle</a></p>{% endif %}
+    {% if saved_rest_setups %}<h3>Kaydettiğiniz kurulumlar</h3><ul>{% for draft in saved_rest_setups %}<li><strong>{{ draft.name }}</strong> · {{ draft.expires_at|date:"d.m.Y" }} tarihine kadar açılabilir<form method="post" action="{% url 'console:rest_setup_resume' set.public_id draft.public_id %}">{% csrf_token %}<button class="button secondary">Kuruluma devam et</button></form></li>{% endfor %}</ul>{% endif %}
+    <details{% if rest_source_form.errors %} open{% endif %}><summary>Mevcut belge eşlemesiyle gelişmiş kayıt</summary><p class="muted">Gelişmiş kayıt için önce aşağıda veri eşlemesini oluşturun. Hedef ve kimlik bilgileri onaylı bağlantıdan gelir.</p>
+    <form method="post" action="{% url 'console:rest_source_create_public' set.public_id %}">{% csrf_token %}{{ rest_source_form.as_p }}<button type="submit">REST kaynağı oluştur</button></form></details>
+  </div>
+</div>
+
+<div class="card form-card">
+  <details{% if contract_form.errors or preview_valid %} open{% endif %}><summary>Gelişmiş REST belge eşlemesi</summary><div class="section-heading"><div><h2>REST belge eşlemesi</h2><p class="muted">Alan yollarını ve istek değişkenlerini JSON ile tanımlayın. Örnek yanıtla kontrol, dış sisteme bağlanmaz.</p></div></div>
+  <form method="post">{% csrf_token %}{{ contract_form.as_p }}
+    <div class="button-row"><button class="button secondary" type="submit" formaction="{% url 'console:rest_contract_preview_public' set.public_id %}">Eşlemeyi kontrol et</button><button type="submit" formaction="{% url 'console:rest_contract_create_public' set.public_id %}">Eşleme sürümünü kaydet</button></div>
+  </form>
+  {% if preview_valid %}<div class="notice success"><strong>Eşleme doğrulandı; ağ isteği yapılmadı.</strong>{% for item in preview_items %}<p><span class="mono">{{ item.external_id }}</span> · {{ item.title }} · rev {{ item.revision }}{% if item.deleted %} · silinmiş{% endif %}</p>{% empty %}<p class="muted">Örnek yanıt verilmedi veya belge listesi boş.</p>{% endfor %}</div>{% endif %}
+</details></div>
+{% if platform_setup_available and not rest_ready or platform_setup_available and not confluence_ready %}<p><a href="{% url 'console:platform_setup' %}">Bağlantı izinlerini yönet</a></p>{% endif %}
+{% endif %}
+
+{% endblock %}

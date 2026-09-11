@@ -1,0 +1,107 @@
+{% comment %}
+These editors are included *inside* the staged-index build form, and their controls carry no
+``name`` — they are read by document-profiles.js and posted separately as JSON, so they can
+never be part of a form submission. They must therefore never be ``required``: an empty
+required control blocks the enclosing form's native submit, and because these sit inside a
+collapsed <details> the browser cannot focus it to report the problem. The build button then
+does nothing at all, with only "An invalid form control ... is not focusable" in the console.
+The emptiness check lives in editorPayload(), which owns this validation.
+{% endcomment %}
+<div class="profile-inspector" data-profile-inspector aria-label="{{ label }} ayrıntıları">
+  {% if form_schema %}{% include "console/field_info.html" with info_title=label info_body=form_schema.summary info_items=form_schema.fields %}{% endif %}
+  <p class="notice" data-profile-publish-status aria-live="polite" hidden></p>
+  <p class="muted" data-profile-empty>İçeriğini görmek için bir profil seçin.</p>
+  {% for item in items %}
+  <details class="relationship-card" data-profile-option="{{ item.id }}">
+    <summary><strong>{{ item.title }}</strong> · içeriği ve yeteneği gör</summary>
+    <p class="muted">{{ item.summary }}</p>
+    {% if item.bounds %}<p class="muted">{{ item.bounds }}</p>{% endif %}
+    {% if item.body_too_large %}
+      <p class="notice">İçerik güvenli doküman-seti önizleme sınırını aşıyor.</p>
+    {% elif item.can_edit and item.artifact_type == "prompt_template" %}
+      <div data-document-profile-editor data-source-artifact-id="{{ item.id }}"
+        data-artifact-type="{{ item.artifact_type }}">
+        <label>Prompt metni</label>
+        <textarea rows="8" data-profile-prompt>{{ item.prompt_text }}</textarea>
+        <label>Bu sürümde ne değişti?</label>
+        <input maxlength="1000" data-profile-version-description>
+        <button class="button secondary" type="button" data-profile-publish>Yeni sürümü yayımla</button>
+        <span data-profile-editor-status role="status"></span>
+      </div>
+    {% elif item.can_edit and item.artifact_type == "model_profile" %}
+      <div data-document-profile-editor data-source-artifact-id="{{ item.id }}"
+        data-artifact-type="{{ item.artifact_type }}" data-current-profile-id="{{ item.profile_id }}">
+        <label>Aktif platform model profili</label>
+        <select data-profile-model>
+          {% for profile in document_model_profile_options %}
+          <option value="{{ profile.id }}">{{ profile.label }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted">Yalnız güvenli UUID referansı kaydedilir; endpoint ve secret gösterilmez.</p>
+        <label>Bu sürümde ne değişti?</label>
+        <input maxlength="1000" data-profile-version-description>
+        <button class="button secondary" type="button" data-profile-publish>Yeni sürümü yayımla</button>
+        <span data-profile-editor-status role="status"></span>
+      </div>
+    {% elif item.can_edit and item.body_json %}
+      <div data-document-profile-editor data-source-artifact-id="{{ item.id }}"
+        data-artifact-type="{{ item.artifact_type }}">
+        <label>Profil içeriği</label>
+        <textarea class="mono" rows="12" data-profile-json>{{ item.body_json }}</textarea>
+        <label>Bu sürümde ne değişti?</label>
+        <input maxlength="1000" data-profile-version-description>
+        <button class="button secondary" type="button" data-profile-publish>Yeni sürümü yayımla</button>
+        <span data-profile-editor-status role="status"></span>
+      </div>
+    {% elif item.body_json %}
+      <pre class="mono" style="white-space:pre-wrap;overflow-wrap:anywhere;">{{ item.body_json }}</pre>
+    {% endif %}
+    {% if platform_managed %}
+      <p class="muted">Platform-managed immutable revizyon; bu formdan düzenlenmez.</p>
+      {% if platform_profile_manage_url %}
+        <a class="button secondary" target="_blank" rel="noopener"
+          href="{{ platform_profile_manage_url }}">Platform profillerini yönet</a>
+      {% endif %}
+    {% endif %}
+  </details>
+  {% empty %}
+  <p class="muted">Bu organizasyona açık seçenek yok.</p>
+  {% endfor %}
+  {% if authorable %}
+  <details class="relationship-card" data-document-profile-editor
+    data-artifact-type="{{ artifact_type }}"{% if form_schema %} data-derive-identity="1"{% endif %}>
+    <summary><strong>Yeni {{ label|lower }} ekle</strong></summary>
+    <label>Adı</label><input maxlength="120" data-profile-display-name
+      placeholder="Örn. Uzun teknik dokümanlar">
+    {% if not form_schema %}
+    {# Types without a field description still need their raw identity fields. #}
+    <label>Logical ID</label><input maxlength="128" data-profile-logical-id>
+    <label>Kalıcı amaç</label><input maxlength="1000" data-profile-logical-description>
+    {% endif %}
+    {% if artifact_type == "prompt_template" %}
+      <label>Prompt metni</label><textarea rows="8" data-profile-prompt></textarea>
+    {% elif artifact_type == "model_profile" %}
+      <label>Aktif platform model profili</label>
+      <select data-profile-model><option value="">Profil seçin</option>
+        {% for profile in document_model_profile_options %}
+        <option value="{{ profile.id }}">{{ profile.label }}</option>
+        {% endfor %}
+      </select>
+      <p class="muted">Yalnız güvenli UUID referansı kaydedilir; endpoint ve secret gösterilmez.</p>
+    {% elif form_schema %}
+      {% include "console/profile_field_form.html" with prefix=artifact_type values_json=form_schema.defaults_json %}
+      <details><summary class="muted">JSON olarak düzenle</summary>
+        <textarea class="mono" rows="10" data-profile-json-advanced>{{ new_body_json }}</textarea>
+        <p class="muted">Doldurulursa yukarıdaki alanların yerine bu gövde yayımlanır.</p>
+      </details>
+    {% else %}
+      <label>Profil içeriği</label>
+      <textarea class="mono" rows="12" data-profile-json>{{ new_body_json }}</textarea>
+    {% endif %}
+    <label>İlk sürüm açıklaması</label>
+    <input maxlength="1000" data-profile-version-description>
+    <button class="button secondary" type="button" data-profile-publish>Yeni artifact yayımla</button>
+    <span data-profile-editor-status role="status"></span>
+  </details>
+  {% endif %}
+</div>

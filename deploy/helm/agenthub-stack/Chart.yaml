@@ -1,0 +1,11 @@
+apiVersion: v2
+name: agenthub-stack
+description: Non-production OpenShift stack with AgentHub, PostgreSQL/pgvector, Redis and MinIO
+type: application
+version: 0.2.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.27.0-0"
+dependencies:
+  - name: agenthub
+    version: 0.2.0
+    repository: file://../agenthub

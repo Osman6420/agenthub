@@ -1,0 +1,1376 @@
+"""Operator JSON API for the visual workflow builder (session/LDAP authenticated).
+
+This is an *operator* surface: it reuses the console's Django authentication (LDAP in
+production per ADR-0001, or the model backend when LDAP is disabled) and the Sprint 1
+tenant/role authorization helpers. It is **not** the public consumer gateway — there is no
+bearer-token path, no CORS, and CSRF applies to every mutating method. The frontend is
+non-authoritative: it renders backend state and diagnostics; every decision is re-made
+here on the server.
+
+Authorization:
+- organization-shell discovery is membership-scoped;
+- protected draft content and every mutation require exact scenario-editor authority.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from functools import wraps
+from typing import Any
+from uuid import UUID
+
+from django.core.exceptions import PermissionDenied
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
+from django.views.decorators.http import require_http_methods
+
+from apps.artifacts.models import ArtifactVersion
+from apps.artifacts.types import ArtifactType
+from apps.audit.services import record_event
+from apps.builder import authoring, services
+from apps.builder.models import ArtifactDraft, WorkflowDraft
+from apps.builder.node_schema import build_node_schema
+from apps.catalog.models import AIProject, Scenario
+from apps.evaluations.services import summarize_eval_run
+from apps.identity.authorization import Capability, authorize
+from apps.identity.scenario_actions import authorize_scenario_action
+from apps.orchestration.models import ModelProfile, ModelProfileStatus
+from apps.releases import authoring as release_authoring
+from apps.releases.compiler import CompileError
+from apps.tenancy.context import operator_transaction
+from apps.tenancy.middleware import durable_operator_view
+from apps.tenancy.models import Organization
+from apps.tenancy.services import allowed_organization_ids, can_author_scenarios
+
+
+def operator_api(view: Callable[..., HttpResponse]) -> Callable[..., HttpResponse]:
+    """Require an authenticated operator and translate errors to JSON envelopes.
+
+    Unlike ``login_required`` this returns a 401 JSON body (not an HTML redirect) so the
+    SPA can react, and it maps the builder's typed errors to stable status codes.
+    """
+
+    @wraps(view)
+    def wrapper(request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
+        if not request.user.is_authenticated:
+            return JsonResponse({"error": {"code": "authentication_required"}}, status=401)
+        try:
+            return view(request, *args, **kwargs)
+        except services.BuilderError as exc:
+            status = 409 if exc.code == "stale_revision" else 400
+            return JsonResponse({"error": {"code": exc.code, "message": str(exc)}}, status=status)
+        except PermissionDenied:
+            return JsonResponse({"error": {"code": "forbidden"}}, status=403)
+        except Http404:
+            return JsonResponse({"error": {"code": "not_found"}}, status=404)
+
+    return wrapper
+
+
+def _request_id(request: HttpRequest) -> str:
+    return str(getattr(request, "request_id", ""))[:64]
+
+
+def _trace_id(request: HttpRequest) -> str:
+    return str(getattr(request, "trace_id", ""))[:64]
+
+
+def _actor(request: HttpRequest) -> str:
+    return request.user.get_username()
+
+
+def _actor_id(request: HttpRequest) -> int:
+    if request.user.pk is None:
+        raise PermissionDenied
+    return request.user.pk
+
+
+@operator_api
+@require_http_methods(["POST"])
+def ai_candidates(request: HttpRequest) -> HttpResponse:
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=False))
+    _reject_unknown_fields(
+        payload, {"organization", "project_id", "scenario_id", "description", "artifact_type"}
+    )
+    org = _resolve_org_in_scope(request, payload.get("organization"))
+    project = _resolve_project(org, payload.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
+    result = authoring.generate_candidate(
+        organization=org,
+        project=project,
+        scenario=scenario,
+        actor=_actor(request),
+        actor_id=_actor_id(request),
+        description=payload.get("description"),
+        artifact_type=payload.get("artifact_type", "workflow_definition"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(result)
+
+
+@operator_api
+@require_http_methods(["POST"])
+def ai_candidate_repair(request: HttpRequest) -> HttpResponse:
+    """Run one human-triggered repair turn over an unsaved Scenario Studio candidate."""
+
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(
+        payload,
+        {
+            "organization",
+            "project_id",
+            "scenario_id",
+            "candidate",
+            "instruction",
+            "prompt_contract",
+            "authoring_context",
+        },
+    )
+    org = _resolve_org_in_scope(request, payload.get("organization"))
+    project = _resolve_project(org, payload.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
+    result = authoring.repair_candidate(
+        organization=org,
+        project=project,
+        scenario=scenario,
+        actor=_actor(request),
+        actor_id=_actor_id(request),
+        candidate=payload.get("candidate"),
+        instruction=payload.get("instruction"),
+        prompt_contract=payload.get("prompt_contract"),
+        authoring_context=payload.get("authoring_context"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(result)
+
+
+@operator_api
+@require_http_methods(["POST"])
+def ai_candidate_accept(request: HttpRequest) -> HttpResponse:
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(
+        payload,
+        {
+            "organization",
+            "project_id",
+            "scenario_id",
+            "name",
+            "logical_id",
+            "candidate",
+            "artifact_type",
+            "prompt_contract",
+            "authoring_context",
+            "draft_id",
+            "revision",
+        },
+    )
+    org = _resolve_org_in_scope(request, payload.get("organization"))
+    project = _resolve_project(org, payload.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
+    draft = authoring.accept_candidate(
+        organization=org,
+        project=project,
+        scenario=scenario,
+        actor=_actor(request),
+        name=payload.get("name", ""),
+        logical_id=payload.get("logical_id", ""),
+        candidate=payload.get("candidate"),
+        artifact_type=payload.get("artifact_type", "workflow_definition"),
+        prompt_contract=payload.get("prompt_contract"),
+        authoring_context=payload.get("authoring_context"),
+        draft_id=payload.get("draft_id"),
+        expected_revision=payload.get("revision"),
+        request_id=_request_id(request),
+    )
+    if isinstance(draft, ArtifactDraft):
+        return JsonResponse(_serialize_artifact_draft(draft, can_write=True), status=201)
+    return JsonResponse(_serialize(draft, can_write=True), status=201)
+
+
+@operator_api
+@require_http_methods(["POST"])
+def transient_diagnostics(request: HttpRequest) -> HttpResponse:
+    """Canonical validation for an unsaved Studio candidate; never persists it."""
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(payload, {"organization", "body"})
+    _resolve_org_in_scope(request, payload.get("organization"))
+    return JsonResponse(services.diagnose(payload.get("body")))
+
+
+def _candidate_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
+    """Resolve a scenario for candidate preparation.
+
+    Preparing a candidate — assembling a manifest, preflighting it and compiling it — is
+    authoring work, so an exact Scenario Editor is allowed alongside a release manager. It
+    changes no live traffic: promotion, rollback, canary and scenario activation remain
+    release-manager-only and are enforced separately.
+    """
+
+    scenario = (
+        Scenario.objects.select_related("organization", "project")
+        .filter(public_id=public_id)
+        .first()
+    )
+    if scenario is None:
+        raise Http404
+    allowed = allowed_organization_ids(request.user)
+    if allowed is not None and scenario.organization_id not in allowed:
+        raise Http404
+    if not authorize_scenario_action(
+        user=request.user, scenario=scenario, action="compile"
+    ).allowed:
+        raise PermissionDenied
+    return scenario
+
+
+def _artifact_scenario(request: HttpRequest, public_id: UUID) -> Scenario:
+    return _candidate_scenario(request, public_id)
+
+
+def _manifest_payload_result(
+    *, scenario: Scenario, payload: dict[str, Any]
+) -> tuple[list[Any] | None, JsonResponse | None]:
+    _reject_unknown_fields(payload, {"items"})
+    try:
+        refs = release_authoring.resolve_manifest_refs(
+            scenario=scenario,
+            items=payload.get("items"),
+        )
+    except release_authoring.ManifestRequestError as exc:
+        return None, JsonResponse(
+            {"ok": False, "diagnostics": [exc.as_diagnostic()]},
+        )
+    return refs, None
+
+
+@operator_api
+@require_http_methods(["POST"])
+def release_manifest_preflight(request: HttpRequest, public_id: UUID) -> HttpResponse:
+    """Run canonical release compilation inside an always-rollback transaction."""
+
+    scenario = _candidate_scenario(request, public_id)
+    payload = _json_body(
+        request,
+        max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,
+    )
+    refs, error_response = _manifest_payload_result(scenario=scenario, payload=payload)
+    if error_response is not None:
+        return error_response
+    if refs is None:
+        raise services.BuilderError("manifest_invalid")
+    result = release_authoring.preflight_release(
+        scenario=scenario,
+        refs=refs,
+        runtime_version=release_authoring.candidate_runtime_version(scenario),
+        created_by=_actor(request),
+    )
+    return JsonResponse(result.as_dict())
+
+
+@operator_api
+@require_http_methods(["POST"])
+def release_manifest_requirements(request: HttpRequest, public_id: UUID) -> HttpResponse:
+    """Return deterministic manifest roles required by one exact published workflow."""
+
+    scenario = _candidate_scenario(request, public_id)
+    payload = _json_body(
+        request,
+        max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,
+    )
+    _reject_unknown_fields(payload, {"workflow_artifact_id"})
+    try:
+        result = release_authoring.analyze_workflow_requirements(
+            scenario=scenario,
+            workflow_artifact_id=payload.get("workflow_artifact_id"),
+        )
+    except release_authoring.ManifestRequestError as exc:
+        return JsonResponse({"ok": False, "diagnostics": [exc.as_diagnostic()]})
+    except CompileError as exc:
+        return JsonResponse({"ok": False, "diagnostics": [exc.as_diagnostic()]})
+    return JsonResponse({"ok": True, "diagnostics": [], **result})
+
+
+@operator_api
+@require_http_methods(["GET"])
+def release_manifest_derived(request: HttpRequest, public_id: UUID) -> HttpResponse:
+    """Return the manifest that would be pinned for this scenario's published workflow.
+
+    Read-only: it shows what the candidate *will* contain and what is still missing, so the
+    panel can report the manifest instead of asking an operator to reassemble it.
+    """
+
+    scenario = _candidate_scenario(request, public_id)
+    logical_ids = list(
+        WorkflowDraft.objects.filter(scenario=scenario)
+        .order_by("logical_id")
+        .values_list("logical_id", flat=True)
+        .distinct()[:2]
+    )
+    workflow = (
+        ArtifactVersion.objects.filter(
+            organization_id=scenario.organization_id,
+            type=ArtifactType.WORKFLOW_DEFINITION,
+            logical_id=logical_ids[0],
+        )
+        .order_by("-version")
+        .first()
+        if len(logical_ids) == 1
+        else None
+    )
+    if workflow is None:
+        return JsonResponse({"ok": False, "available": False, "missing": [], "pins": []})
+    derived = release_authoring.derive_manifest(scenario=scenario, workflow_artifact=workflow)
+    return JsonResponse({"available": True, **derived.as_dict()})
+
+
+@operator_api
+@require_http_methods(["POST"])
+def release_manifest_compile(request: HttpRequest, public_id: UUID) -> HttpResponse:
+    """Create one audited candidate or return a safe canonical diagnostic."""
+
+    scenario = _candidate_scenario(request, public_id)
+    payload = _json_body(
+        request,
+        max_bytes=release_authoring.MAX_MANIFEST_REQUEST_BYTES,
+    )
+    refs, error_response = _manifest_payload_result(scenario=scenario, payload=payload)
+    if error_response is not None:
+        return error_response
+    if refs is None:
+        raise services.BuilderError("manifest_invalid")
+    try:
+        release = release_authoring.compile_operator_candidate(
+            scenario=scenario,
+            refs=refs,
+            runtime_version=release_authoring.candidate_runtime_version(scenario),
+            actor=request.user,
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+    except CompileError as exc:
+        record_event(
+            actor_type="user",
+            actor_id=_actor(request),
+            action="console.scenario.release.compile",
+            outcome="failure",
+            organization_id=scenario.organization_id,
+            resource_type="scenario",
+            resource_id=str(scenario.pk),
+            reason=exc.code,
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+        )
+        return JsonResponse({"ok": False, "diagnostics": [exc.as_diagnostic()]})
+    return JsonResponse(
+        {
+            "ok": True,
+            "diagnostics": [],
+            "release": {
+                "id": release.pk,
+                "status": release.status,
+                "artifact_manifest_sha256": release.artifact_manifest_sha256,
+            },
+        },
+        status=201,
+    )
+
+
+_NODE_ARTIFACT_KINDS = {
+    "prompt": ArtifactType.PROMPT_TEMPLATE,
+    "model": ArtifactType.MODEL_PROFILE,
+    "retrieval": ArtifactType.RETRIEVAL_PROFILE,
+}
+MAX_LIBRARY_BODY_BYTES = 32 * 1024
+MAX_LIBRARY_ENTRIES = 25
+
+
+def _library_entry(artifact: ArtifactVersion) -> dict[str, Any]:
+    encoded = json.dumps(artifact.body, ensure_ascii=False).encode("utf-8")
+    too_large = len(encoded) > MAX_LIBRARY_BODY_BYTES
+    return {
+        "artifact_version_id": artifact.pk,
+        "logical_id": artifact.logical_id,
+        "logical_description": artifact.logical_description,
+        "version": artifact.version,
+        "version_description": artifact.version_description,
+        "checksum": artifact.checksum,
+        "created_at": artifact.created_at.isoformat(),
+        "body_too_large": too_large,
+        "body": None if too_large else artifact.body,
+    }
+
+
+@operator_api
+@require_http_methods(["GET"])
+def node_artifact_library(request: HttpRequest, pk: int) -> HttpResponse:
+    """Return a node's own artifact history plus reusable bodies of the same type.
+
+    Node-owned artifacts are immutable and private to their node, so "go back to v3" is
+    served by reading an older body and republishing it forward, and "start from an
+    existing profile" is a body *copy* — neither pins a foreign artifact into this node.
+    Both were previously only reachable by picking raw logical ids in the manifest panel.
+    """
+
+    draft = _scoped_draft(request, pk)
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    kind = request.GET.get("kind", "")
+    node_id = request.GET.get("node_id", "")
+    artifact_type = _NODE_ARTIFACT_KINDS.get(kind)
+    if artifact_type is None or not node_id:
+        raise services.BuilderError("node_artifact_kind_invalid")
+    if kind == "retrieval":
+        role = services.retrieve_node_role(draft, node_id)
+    else:
+        role = services.generate_node_roles(draft, node_id)[
+            "prompt_ref" if kind == "prompt" else "model_profile_ref"
+        ]
+
+    scoped = ArtifactVersion.objects.filter(
+        organization_id=draft.organization_id, type=artifact_type
+    )
+    versions = [
+        _library_entry(artifact)
+        for artifact in scoped.filter(logical_id=role).order_by("-version")[:MAX_LIBRARY_ENTRIES]
+    ]
+    # One row per other logical artifact of this type, newest version, for copying.
+    library: list[dict[str, Any]] = []
+    for logical_id in (
+        scoped.exclude(logical_id=role)
+        .order_by("logical_id")
+        .values_list("logical_id", flat=True)
+        .distinct()[:MAX_LIBRARY_ENTRIES]
+    ):
+        latest = scoped.filter(logical_id=logical_id).order_by("-version").first()
+        if latest is not None:
+            library.append(_library_entry(latest))
+    return JsonResponse({"role": role, "versions": versions, "library": library})
+
+
+@durable_operator_view
+@operator_api
+@require_http_methods(["POST"])
+def draft_publish_and_verify(request: HttpRequest, pk: int) -> HttpResponse:
+    """Publish a draft, derive its manifest, compile a candidate and evaluate it.
+
+    This replaces a journey that spanned four screens and two returns: publish in Studio,
+    re-select every artifact by logical id in the manifest panel, compile, leave to author
+    an evaluation suite, come back, compile a *second* candidate, then run the evaluation
+    from the release page. Every step here is already determined by the draft and the
+    scenario, so none of it needs an operator decision.
+
+    Authority is unchanged: this is candidate preparation, which an exact Scenario Editor
+    may perform. Promotion, rollback and canary remain release-manager-only and are not
+    reachable from here.
+    """
+
+    with operator_transaction(request.user):
+        draft = _scoped_draft(request, pk)
+        _require_author(
+            request,
+            organization_id=draft.organization_id,
+            project=draft.project,
+            scenario=draft.scenario,
+        )
+        payload = _json_body(request)
+        _reject_unknown_fields(payload, {"revision", "version_description"})
+
+    result = services.publish_and_verify(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        version_description=payload.get("version_description", ""),
+        request_id=_request_id(request),
+        trace_id=_trace_id(request),
+    )
+    with operator_transaction(request.user):
+        _require_author(
+            request,
+            organization_id=draft.organization_id,
+            project=draft.project,
+            scenario=draft.scenario,
+        )
+        body: dict[str, Any] = {
+            "ok": result.ok,
+            "published": {
+                "logical_id": result.published.logical_id,
+                "version": result.published.version,
+                "checksum": result.published.checksum,
+                "revision": result.draft_revision,
+            },
+            "missing": result.missing,
+            "diagnostics": result.diagnostics,
+        }
+        if result.release is not None:
+            body["release"] = {
+                "id": result.release.pk,
+                "status": result.release.status,
+                "artifact_manifest_sha256": result.release.artifact_manifest_sha256,
+            }
+        if result.eval_run is not None:
+            level, message = summarize_eval_run(result.eval_run)
+            body["evaluation"] = {
+                "level": level,
+                "message": message,
+                "status": result.eval_run.status,
+                "passed_cases": result.eval_run.passed_cases,
+                "total_cases": result.eval_run.total_cases,
+                # Reason codes only: assertion type, boolean and a stable code, never text.
+                "cases": [
+                    {"case_id": c.case_id, "passed": c.passed, "assertions": c.assertions}
+                    for c in result.eval_run.case_results.order_by("pk")[:100]
+                ],
+            }
+        elif result.diagnostics and result.release is not None:
+            body["evaluation"] = {"level": "error", "message": result.diagnostics[0]["message"]}
+        return JsonResponse(body, status=201 if result.ok else 200)
+
+
+def _json_body(request: HttpRequest, *, max_bytes: int | None = None) -> dict[str, Any]:
+    if not request.body:
+        return {}
+    if max_bytes is not None and len(request.body) > max_bytes:
+        raise services.BuilderError("request_too_large")
+    try:
+        parsed = json.loads(request.body)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise services.BuilderError("invalid_json", "request body is not valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise services.BuilderError("invalid_json", "request body must be a JSON object")
+    return parsed
+
+
+def _reject_unknown_fields(payload: dict[str, Any], allowed: set[str]) -> None:
+    if set(payload) - allowed:
+        raise services.BuilderError("unexpected_field")
+
+
+def _resolve_org_in_scope(request: HttpRequest, ref: Any) -> Organization:
+    allowed = allowed_organization_ids(request.user)
+    qs = Organization.objects.all()
+    if isinstance(ref, int) or (isinstance(ref, str) and ref.isdigit()):
+        org = qs.filter(pk=int(ref)).first()
+    elif isinstance(ref, str) and ref:
+        org = qs.filter(slug=ref).first()
+    else:
+        raise services.BuilderError("organization_required", "organization is required")
+    if org is None or (allowed is not None and org.id not in allowed):
+        raise Http404
+    return org
+
+
+def _can_author(
+    request: HttpRequest,
+    *,
+    organization_id: int,
+    project: AIProject | None,
+    scenario: Scenario | None,
+) -> bool:
+    if project is None or scenario is None:
+        return False
+    return can_author_scenarios(
+        request.user,
+        organization_id,
+        project=project,
+        scenario=scenario,
+    )
+
+
+def _can_view(
+    request: HttpRequest,
+    *,
+    organization: Organization,
+    project: AIProject | None,
+    scenario: Scenario | None,
+) -> bool:
+    if project is None or scenario is None:
+        return False
+    return authorize(
+        user=request.user,
+        capability=Capability.SCENARIO_VIEW,
+        organization=organization,
+        project=project,
+        scenario=scenario,
+    ).allowed
+
+
+def _require_author(
+    request: HttpRequest,
+    *,
+    organization_id: int,
+    project: AIProject | None,
+    scenario: Scenario | None,
+) -> None:
+    if not _can_author(
+        request,
+        organization_id=organization_id,
+        project=project,
+        scenario=scenario,
+    ):
+        raise PermissionDenied
+
+
+def _scoped_draft(request: HttpRequest, pk: int) -> WorkflowDraft:
+    allowed = allowed_organization_ids(request.user)
+    qs = WorkflowDraft.objects.select_related("organization", "project", "scenario")
+    if allowed is not None:
+        qs = qs.filter(organization_id__in=allowed)
+    draft = qs.filter(pk=pk).first()
+    if draft is None:
+        raise Http404
+    return draft
+
+
+def _scoped_artifact_draft(request: HttpRequest, pk: int) -> ArtifactDraft:
+    allowed = allowed_organization_ids(request.user)
+    # Document-set-owned drafts are not reachable through Studio, including by direct URL.
+    qs = ArtifactDraft.objects.select_related("organization", "project", "scenario").exclude(
+        artifact_type__in=services.DOCUMENT_SET_OWNED_ARTIFACT_TYPES
+    )
+    if allowed is not None:
+        qs = qs.filter(organization_id__in=allowed)
+    draft = qs.filter(pk=pk).first()
+    if draft is None:
+        raise Http404
+    return draft
+
+
+def _serialize(draft: WorkflowDraft, *, can_write: bool) -> dict[str, Any]:
+    return {
+        "id": draft.pk,
+        "organization": draft.organization.slug,
+        "organization_id": draft.organization_id,
+        "project_id": draft.project_id,
+        "scenario_id": draft.scenario_id,
+        "name": draft.name,
+        "logical_id": draft.logical_id,
+        "logical_description": draft.logical_description,
+        "body": draft.body,
+        "last_published_version": draft.last_published_version,
+        "last_published_at": (
+            draft.last_published_at.isoformat() if draft.last_published_at else None
+        ),
+        "created_by": draft.created_by,
+        "updated_by": draft.updated_by,
+        "revision": draft.revision,
+        "updated_at": draft.updated_at.isoformat(),
+        # Drives the frontend read-only mode; the server still re-checks on every write.
+        "can_write": can_write,
+    }
+
+
+def _serialize_artifact_draft(draft: ArtifactDraft, *, can_write: bool) -> dict[str, Any]:
+    return {
+        "id": draft.pk,
+        "draft_kind": "artifact",
+        "artifact_type": draft.artifact_type,
+        "organization": draft.organization.slug,
+        "organization_id": draft.organization_id,
+        "project_id": draft.project_id,
+        "scenario_id": draft.scenario_id,
+        "name": draft.name,
+        "logical_id": draft.logical_id,
+        "logical_description": draft.logical_description,
+        "body": draft.body,
+        "last_published_version": draft.last_published_version,
+        "last_published_at": (
+            draft.last_published_at.isoformat() if draft.last_published_at else None
+        ),
+        "created_by": draft.created_by,
+        "updated_by": draft.updated_by,
+        "revision": draft.revision,
+        "updated_at": draft.updated_at.isoformat(),
+        "can_write": can_write,
+    }
+
+
+@operator_api
+@require_http_methods(["GET"])
+def node_schema(request: HttpRequest) -> HttpResponse:
+    org = _resolve_org_in_scope(request, request.GET.get("organization"))
+    schema = build_node_schema(organization_id=org.id)
+    schema["organization"] = org.slug
+    schema["can_write"] = False
+    schema["projects"] = [
+        {"id": project.id, "slug": project.slug, "name": project.name}
+        for project in AIProject.objects.filter(organization=org).order_by("name", "id")
+    ]
+    return JsonResponse(schema)
+
+
+@operator_api
+@require_http_methods(["GET"])
+def model_profile_options(request: HttpRequest) -> HttpResponse:
+    """Project only safe active platform-model fields into an exact scenario authoring scope."""
+
+    org = _resolve_org_in_scope(request, request.GET.get("organization"))
+    project = _resolve_project(org, request.GET.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, request.GET.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
+    profiles = list(
+        ModelProfile.objects.filter(status=ModelProfileStatus.ACTIVE)
+        .only(
+            "public_id",
+            "logical_id",
+            "revision",
+            "provider",
+            "model",
+            "max_output_tokens",
+        )
+        .order_by("logical_id", "-revision")[:101]
+    )
+    limited = len(profiles) > 100
+    display_profiles = profiles[:100]
+    selected_profile_id = request.GET.get("selected_profile_id", "")
+    if selected_profile_id:
+        try:
+            UUID(selected_profile_id)
+        except ValueError as exc:
+            raise services.BuilderError("model_profile_invalid") from exc
+    if selected_profile_id and all(
+        str(profile.public_id) != selected_profile_id for profile in display_profiles
+    ):
+        selected = next(
+            (profile for profile in profiles if str(profile.public_id) == selected_profile_id),
+            None,
+        )
+        if selected is None:
+            selected = (
+                ModelProfile.objects.filter(
+                    public_id=selected_profile_id,
+                    status=ModelProfileStatus.ACTIVE,
+                )
+                .only(
+                    "public_id",
+                    "logical_id",
+                    "revision",
+                    "provider",
+                    "model",
+                    "max_output_tokens",
+                )
+                .first()
+            )
+        if selected is not None:
+            display_profiles.append(selected)
+    return JsonResponse(
+        {
+            "options": [
+                {
+                    "profile_id": str(profile.public_id),
+                    "logical_id": profile.logical_id,
+                    "revision": profile.revision,
+                    "provider": profile.provider,
+                    "model": profile.model,
+                    "max_output_tokens": profile.max_output_tokens,
+                }
+                for profile in display_profiles
+            ],
+            "limited": limited,
+        }
+    )
+
+
+@operator_api
+@require_http_methods(["GET", "POST"])
+def drafts(request: HttpRequest) -> HttpResponse:
+    if request.method == "GET":
+        allowed = allowed_organization_ids(request.user)
+        qs = WorkflowDraft.objects.select_related("organization")
+        if allowed is not None:
+            qs = qs.filter(organization_id__in=allowed)
+        items = [
+            {
+                "id": d.pk,
+                "organization": d.organization.slug,
+                "organization_id": d.organization_id,
+                "project_id": d.project_id,
+                "scenario_id": d.scenario_id,
+                "name": d.name,
+                "logical_id": d.logical_id,
+                "logical_description": d.logical_description,
+                "last_published_version": d.last_published_version,
+                "updated_at": d.updated_at.isoformat(),
+                "revision": d.revision,
+                "can_write": _can_author(
+                    request,
+                    organization_id=d.organization_id,
+                    project=d.project,
+                    scenario=d.scenario,
+                ),
+            }
+            for d in qs
+            if _can_view(
+                request,
+                organization=d.organization,
+                project=d.project,
+                scenario=d.scenario,
+            )
+        ]
+        return JsonResponse({"drafts": items})
+
+    payload = _json_body(request)
+    _reject_unknown_fields(
+        payload,
+        {
+            "organization",
+            "project_id",
+            "scenario_id",
+            "name",
+            "logical_id",
+            "logical_description",
+            "body",
+        },
+    )
+    org = _resolve_org_in_scope(request, payload.get("organization"))
+    project = _resolve_project(org, payload.get("project_id"))
+    if project is None:
+        raise services.BuilderError("project_required")
+    scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+    if scenario is None:
+        raise services.BuilderError("scenario_required")
+    _require_author(
+        request,
+        organization_id=org.id,
+        project=project,
+        scenario=scenario,
+    )
+    draft = services.create_draft(
+        organization=org,
+        name=payload.get("name", ""),
+        logical_id=payload.get("logical_id", ""),
+        logical_description=payload.get("logical_description", ""),
+        body=payload.get("body"),
+        actor=_actor(request),
+        project=project,
+        scenario=scenario,
+        request_id=_request_id(request),
+    )
+    return JsonResponse(_serialize(draft, can_write=True), status=201)
+
+
+@operator_api
+@require_http_methods(["GET", "PUT", "DELETE"])
+def draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    draft = _scoped_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    can_write = _can_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    if request.method == "GET":
+        return JsonResponse(_serialize(draft, can_write=can_write))
+
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    if request.method == "DELETE":
+        payload = _json_body(request)
+        _reject_unknown_fields(payload, {"revision"})
+        services.delete_draft(
+            draft,
+            actor=_actor(request),
+            expected_revision=payload.get("revision"),
+            request_id=_request_id(request),
+        )
+        return JsonResponse({"deleted": True})
+
+    payload = _json_body(request)
+    _reject_unknown_fields(payload, {"name", "logical_description", "body", "revision"})
+    updated = services.update_draft(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        name=payload.get("name"),
+        logical_description=payload.get("logical_description"),
+        body=payload.get("body"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(_serialize(updated, can_write=True))
+
+
+@operator_api
+@require_http_methods(["POST"])
+def draft_diagnostics(request: HttpRequest, pk: int) -> HttpResponse:
+    draft = _scoped_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    payload = _json_body(request)
+    # Allow validating an unsaved editor body; fall back to the stored draft body.
+    body = payload["body"] if "body" in payload else draft.body
+    return JsonResponse(services.diagnose(body))
+
+
+@operator_api
+@require_http_methods(["GET", "PUT"])
+def generate_node_binding(request: HttpRequest, pk: int, node_id: str) -> HttpResponse:
+    """Inspect or atomically save the author-facing binding for one Generate node."""
+
+    draft = _scoped_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    can_write = _can_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    if request.method == "GET":
+        return JsonResponse(
+            {**services.get_generate_node_binding(draft, node_id=node_id), "can_write": can_write}
+        )
+
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(
+        payload, {"revision", "workflow_body", "prompt_text", "model_profile_id"}
+    )
+    updated = services.save_generate_node_binding(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        workflow_body=payload.get("workflow_body"),
+        node_id=node_id,
+        prompt_text=payload.get("prompt_text"),
+        model_profile_id=payload.get("model_profile_id"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(
+        {
+            "draft": _serialize(updated, can_write=True),
+            "binding": services.get_generate_node_binding(updated, node_id=node_id),
+        }
+    )
+
+
+@operator_api
+@require_http_methods(["GET", "PUT"])
+def retrieve_node_binding(request: HttpRequest, pk: int, node_id: str) -> HttpResponse:
+    """Inspect or atomically save the author-facing binding for one Retrieve node."""
+
+    draft = _scoped_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    can_write = _can_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    if request.method == "GET":
+        return JsonResponse(
+            {**services.get_retrieve_node_binding(draft, node_id=node_id), "can_write": can_write}
+        )
+
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(payload, {"revision", "workflow_body", "profile_body"})
+    updated = services.save_retrieve_node_binding(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        workflow_body=payload.get("workflow_body"),
+        node_id=node_id,
+        profile_body=payload.get("profile_body"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(
+        {
+            "draft": _serialize(updated, can_write=True),
+            "binding": services.get_retrieve_node_binding(updated, node_id=node_id),
+        }
+    )
+
+
+@operator_api
+@require_http_methods(["POST"])
+def draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
+    draft = _scoped_draft(request, pk)
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    payload = _json_body(request)
+    _reject_unknown_fields(payload, {"revision", "version_description"})
+    artifact = services.publish_draft(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        version_description=payload.get("version_description", ""),
+        request_id=_request_id(request),
+    )
+    draft.refresh_from_db(fields=["revision"])
+    return JsonResponse(
+        {
+            "published": True,
+            "artifact_type": artifact.type,
+            "logical_id": artifact.logical_id,
+            "logical_description": artifact.logical_description,
+            "version": artifact.version,
+            "version_description": artifact.version_description,
+            "checksum": artifact.checksum,
+            "revision": draft.revision,
+        },
+        status=201,
+    )
+
+
+@operator_api
+@require_http_methods(["GET", "POST"])
+def artifact_drafts(request: HttpRequest) -> HttpResponse:
+    if request.method == "POST":
+        payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+        _reject_unknown_fields(
+            payload,
+            {
+                "organization",
+                "project_id",
+                "scenario_id",
+                "artifact_type",
+                "name",
+                "logical_id",
+                "logical_description",
+                "body",
+                "source_artifact_version_id",
+            },
+        )
+        org = _resolve_org_in_scope(request, payload.get("organization"))
+        project = _resolve_project(org, payload.get("project_id"))
+        if project is None:
+            raise services.BuilderError("project_required")
+        scenario = _resolve_scenario(org, project, payload.get("scenario_id"))
+        if scenario is None:
+            raise services.BuilderError("scenario_required")
+        _require_author(
+            request,
+            organization_id=org.id,
+            project=project,
+            scenario=scenario,
+        )
+        source_id = payload.get("source_artifact_version_id")
+        source: ArtifactVersion | None = None
+        if source_id not in (None, ""):
+            if not isinstance(source_id, int) or isinstance(source_id, bool):
+                raise services.BuilderError("source_artifact_invalid")
+            source = ArtifactVersion.objects.filter(
+                pk=source_id,
+                organization=org,
+                type__in={
+                    ArtifactType.PROMPT_TEMPLATE,
+                    ArtifactType.MODEL_PROFILE,
+                    ArtifactType.RETRIEVAL_PROFILE,
+                },
+            ).first()
+            if source is None:
+                raise Http404
+        artifact_type = source.type if source else payload.get("artifact_type", "")
+        logical_id = source.logical_id if source else payload.get("logical_id", "")
+        logical_description = (
+            source.logical_description if source else payload.get("logical_description", "")
+        )
+        body = source.body if source else payload.get("body")
+        if source is not None:
+            existing = ArtifactDraft.objects.filter(
+                organization=org,
+                scenario=scenario,
+                artifact_type=source.type,
+                logical_id=source.logical_id,
+            ).first()
+            if existing is not None:
+                return JsonResponse(_serialize_artifact_draft(existing, can_write=True))
+        draft = services.create_artifact_draft(
+            organization=org,
+            project=project,
+            scenario=scenario,
+            artifact_type=artifact_type,
+            name=payload.get("name", "")
+            or (f"{source.logical_id} {source.type}" if source else ""),
+            logical_id=logical_id,
+            logical_description=logical_description,
+            body=body,
+            actor=_actor(request),
+            request_id=_request_id(request),
+        )
+        return JsonResponse(_serialize_artifact_draft(draft, can_write=True), status=201)
+
+    allowed = allowed_organization_ids(request.user)
+    qs = ArtifactDraft.objects.select_related("organization", "project", "scenario").exclude(
+        artifact_type__in=services.DOCUMENT_SET_OWNED_ARTIFACT_TYPES
+    )
+    if allowed is not None:
+        qs = qs.filter(organization_id__in=allowed)
+    return JsonResponse(
+        {
+            "drafts": [
+                _serialize_artifact_draft(
+                    draft,
+                    can_write=_can_author(
+                        request,
+                        organization_id=draft.organization_id,
+                        project=draft.project,
+                        scenario=draft.scenario,
+                    ),
+                )
+                for draft in qs
+                if _can_view(
+                    request,
+                    organization=draft.organization,
+                    project=draft.project,
+                    scenario=draft.scenario,
+                )
+            ]
+        }
+    )
+
+
+@operator_api
+@require_http_methods(["GET", "PUT", "DELETE"])
+def artifact_draft_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    draft = _scoped_artifact_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    can_write = _can_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    if request.method == "GET":
+        return JsonResponse(_serialize_artifact_draft(draft, can_write=can_write))
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    if request.method == "DELETE":
+        payload = _json_body(request)
+        _reject_unknown_fields(payload, {"revision"})
+        services.delete_artifact_draft(
+            draft,
+            actor=_actor(request),
+            expected_revision=payload.get("revision"),
+            request_id=_request_id(request),
+        )
+        return JsonResponse({"deleted": True})
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(payload, {"name", "body", "revision"})
+    updated = services.update_artifact_draft(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        name=payload.get("name"),
+        body=payload.get("body"),
+        request_id=_request_id(request),
+    )
+    return JsonResponse(_serialize_artifact_draft(updated, can_write=True))
+
+
+@operator_api
+@require_http_methods(["POST"])
+def artifact_draft_diagnostics(request: HttpRequest, pk: int) -> HttpResponse:
+    draft = _scoped_artifact_draft(request, pk)
+    if not _can_view(
+        request,
+        organization=draft.organization,
+        project=draft.project,
+        scenario=draft.scenario,
+    ):
+        raise Http404
+    payload = _json_body(request, max_bytes=services.ai_authoring_request_limit(accept=True))
+    _reject_unknown_fields(payload, {"body"})
+    body = payload["body"] if "body" in payload else draft.body
+    return JsonResponse(services.diagnose_artifact(draft.artifact_type, body))
+
+
+@operator_api
+@require_http_methods(["POST"])
+def artifact_draft_publish(request: HttpRequest, pk: int) -> HttpResponse:
+    draft = _scoped_artifact_draft(request, pk)
+    _require_author(
+        request,
+        organization_id=draft.organization_id,
+        project=draft.project,
+        scenario=draft.scenario,
+    )
+    payload = _json_body(request)
+    _reject_unknown_fields(payload, {"revision", "version_description"})
+    artifact = services.publish_artifact_draft(
+        draft,
+        actor=_actor(request),
+        expected_revision=payload.get("revision"),
+        version_description=payload.get("version_description", ""),
+        request_id=_request_id(request),
+    )
+    draft.refresh_from_db(fields=["revision"])
+    return JsonResponse(
+        {
+            "published": True,
+            "artifact_version_id": artifact.pk,
+            "artifact_type": artifact.type,
+            "logical_id": artifact.logical_id,
+            "logical_description": artifact.logical_description,
+            "version": artifact.version,
+            "version_description": artifact.version_description,
+            "checksum": artifact.checksum,
+            "revision": draft.revision,
+        },
+        status=201,
+    )
+
+
+@operator_api
+@require_http_methods(["GET"])
+def scenario_artifact_version(request: HttpRequest, public_id: UUID, pk: int) -> HttpResponse:
+    """Return one bounded exact artifact body already eligible for this scenario picker."""
+
+    scenario = _artifact_scenario(request, public_id)
+    artifact = ArtifactVersion.objects.filter(pk=pk, organization=scenario.organization).first()
+    if artifact is None:
+        raise Http404
+    encoded = json.dumps(artifact.body, ensure_ascii=False, sort_keys=True)
+    too_large = len(encoded.encode("utf-8")) > services.MAX_DRAFT_BODY_BYTES
+    can_author = can_author_scenarios(
+        request.user,
+        scenario.organization_id,
+        project=scenario.project,
+        scenario=scenario,
+    )
+    record_event(
+        actor_type="user",
+        actor_id=_actor(request),
+        action="console.builder.artifact_version.preview",
+        outcome="success",
+        organization_id=scenario.organization_id,
+        resource_type=artifact.type,
+        resource_id=f"{artifact.logical_id}:v{artifact.version}",
+        reason=artifact.checksum,
+        request_id=_request_id(request),
+    )
+    return JsonResponse(
+        {
+            "id": artifact.pk,
+            "artifact_type": artifact.type,
+            "logical_id": artifact.logical_id,
+            "logical_description": artifact.logical_description,
+            "version": artifact.version,
+            "version_description": artifact.version_description,
+            "checksum": artifact.checksum,
+            "body": None if too_large else artifact.body,
+            "body_too_large": too_large,
+            "can_create_new_version": can_author
+            and artifact.type
+            in {
+                ArtifactType.PROMPT_TEMPLATE,
+                ArtifactType.MODEL_PROFILE,
+                ArtifactType.RETRIEVAL_PROFILE,
+            },
+        }
+    )
+
+
+def _resolve_project(org: Organization, ref: Any) -> AIProject | None:
+    if ref in (None, ""):
+        return None
+    project = AIProject.objects.filter(pk=ref, organization_id=org.id).first()
+    if project is None:
+        raise services.BuilderError("project_not_found", "project not found in organization")
+    return project
+
+
+def _resolve_scenario(org: Organization, project: AIProject | None, ref: Any) -> Scenario | None:
+    if ref in (None, ""):
+        return None
+    if not isinstance(ref, int) and not (isinstance(ref, str) and ref.isdigit()):
+        raise services.BuilderError("scenario_invalid")
+    scenario = Scenario.objects.filter(pk=int(ref), organization=org).first()
+    if scenario is None:
+        raise services.BuilderError("scenario_not_found")
+    if project is None or scenario.project_id != project.id:
+        raise services.BuilderError("scenario_project_mismatch")
+    return scenario

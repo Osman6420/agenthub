@@ -1,0 +1,36 @@
+{% extends "console/base.html" %}
+{% block title %}Senaryolar · AgentHub{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">Çalışma alanı</p><h1>Senaryolar</h1><p class="muted">Senaryolarınızı bulun, düzenleyin ve test edin. Her senaryo kendi projesine bağlıdır.</p></div>
+  {% if selected_project %}
+    {% if can_create %}<a class="button primary" href="{% url 'console:project_scenario_create' selected_project.public_id %}">Yeni senaryo</a>{% else %}<button class="button primary" disabled title="{{ create_reason }}">Yeni senaryo</button>{% endif %}
+  {% elif can_create_any %}<a class="button secondary" href="{% url 'console:projects' %}">Yeni senaryo için proje seç</a>{% else %}<button class="button secondary" disabled title="{{ create_reason }}">Yeni senaryo</button>{% endif %}
+</div>
+<form class="filter-bar" method="get" role="search" aria-label="Senaryo ara ve filtrele">
+  <label for="scenario-search">Senaryo ara<input id="scenario-search" name="q" value="{{ search }}" maxlength="200" placeholder="Senaryo adı"></label>
+  <label for="scenario-project">Proje<select id="scenario-project" name="project"><option value="">Tüm projeler</option>{% if selected_project %}<option value="{{ selected_project.public_id }}" selected>{{ selected_project.name }}</option>{% endif %}{% for project in project_options %}{% if project != selected_project %}<option value="{{ project.public_id }}">{{ project.name }}</option>{% endif %}{% endfor %}</select></label>
+  <label for="scenario-status">Durum<select id="scenario-status" name="status"><option value="">Tüm durumlar</option>{% for value,label in status_choices %}<option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <button class="button secondary" type="submit">Filtrele</button>
+  {% if search or selected_project or status_filter %}<a class="button ghost" href="{% url 'console:scenarios' %}">Filtreleri temizle</a>{% endif %}
+</form>
+{% if projects_limited %}<p class="muted">Proje seçicisinde ilk 200 proje gösteriliyor. Diğer projelere Projeler bölümünden ulaşabilirsiniz.</p>{% endif %}
+<p class="muted" role="status">{{ page.paginator.count }} senaryo{% if selected_project %} · <a href="{% url 'console:project_detail_public' selected_project.public_id %}">{{ selected_project.name }} projesini aç</a>{% endif %}</p>
+<div class="card table-card">
+  {% if scenarios %}<div class="table-scroll"><table>
+    <caption class="sr-only">Yetki kapsamındaki senaryolar</caption>
+    <thead><tr><th>Senaryo</th><th>Proje</th><th>Durum</th></tr></thead>
+    <tbody>{% for scenario in scenarios %}<tr data-href="{% url 'console:scenario_detail_public' scenario.public_id %}">
+      <td><strong><a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a></strong></td>
+      <td><a href="{% url 'console:project_detail_public' scenario.project.public_id %}">{{ scenario.project.name }}</a></td>
+      <td><span class="badge {{ scenario.status }}">{% for value,label in status_choices %}{% if scenario.status == value %}{{ label }}{% endif %}{% endfor %}</span></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty"><h2>{% if search or selected_project or status_filter %}Eşleşen senaryo yok{% else %}Görüntülenebilir senaryo yok{% endif %}</h2><p>{% if search or selected_project or status_filter %}Aramayı değiştirin veya filtreleri temizleyin.{% else %}Senaryolar, erişiminiz olan projelerde hazırlanır.{% endif %}</p></div>{% endif %}
+  {% if page.has_other_pages %}<nav class="pagination" aria-label="Senaryo sayfaları">
+    {% if page.has_previous %}<a href="?q={{ search|urlencode }}&amp;project={{ selected_project.public_id|default:'' }}&amp;status={{ status_filter|urlencode }}&amp;page={{ page.previous_page_number }}">← Önceki</a>{% endif %}
+    <span>{{ page.number }} / {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}<a href="?q={{ search|urlencode }}&amp;project={{ selected_project.public_id|default:'' }}&amp;status={{ status_filter|urlencode }}&amp;page={{ page.next_page_number }}">Sonraki →</a>{% endif %}
+  </nav>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "console/base.html" %}
+{% block title %}{{ document.title|default:document.logical_id }} · AgentHub{% endblock %}
+{% block content %}
+
+<div class="breadcrumbs"><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><a href="{% url 'console:document_set_detail_public' set.public_id %}">{{ set.name }}</a><span>›</span><span>{{ document.title|default:document.logical_id }}</span></div>
+<div class="page-heading">
+  <div><p class="eyebrow">{{ organization.slug }} · Set içeriği</p><h1>{{ document.title|default:document.logical_id }}</h1><p class="muted mono">{{ document.logical_id }}</p></div>
+  {% if document.is_tombstoned %}<span class="badge disabled">tombstone</span>{% else %}<span class="badge active">aktif</span>{% endif %}
+</div>
+
+<div class="summary-grid">
+  <div class="summary-card"><span>Güncel sürüm</span><strong>v{{ document.current_version }}</strong></div>
+  <div class="summary-card"><span>Kaynak</span><strong class="text-value">{% if document.source %}{{ document.source.name }}{% else %}Manuel yükleme{% endif %}</strong></div>
+  <div class="summary-card"><span>Set pinleri</span><strong>{{ memberships|length }}</strong></div>
+</div>
+
+{% if can_write and not document.is_tombstoned %}
+<div class="card relationship-grid">
+  <div><h2>Yeni sürüm yükle</h2><p class="muted">Belge kimliği korunur; immutable yeni sürüm oluşturulur ve manuel taslağa pinlenir.</p><form class="form-card" method="post" action="{% url 'console:document_set_document_replace' set.public_id document.public_id %}" enctype="multipart/form-data">{% csrf_token %}{{ replacement_form.as_p }}<button type="submit">Yeni sürümü taslağa ekle</button></form></div>
+  <div><h2>İçeriği tombstone et</h2><p class="muted">Yeni retrieval ve yüklemeler durur. Yayımlanmış set pinleri ve saklanan baytlar silinmez.</p><form method="post" action="{% url 'console:document_set_document_tombstone' set.public_id document.public_id %}">{% csrf_token %}<button class="button danger" type="submit">Tombstone et</button></form></div>
+</div>
+{% endif %}
+
+<div class="card table-card"><div class="table-scroll"><table><caption class="sr-only">Doküman sürümleri</caption><thead><tr><th>Sürüm</th><th>Ayrıştırma</th><th>Tür</th><th>Boyut</th><th>Oluşturma</th><th>İçerik</th></tr></thead><tbody>{% for version in versions %}<tr id="document-version-{{ version.id }}"><td><a href="#document-version-{{ version.id }}">v{{ version.version }}</a></td><td><span class="badge {{ version.parse_status }}">{{ version.get_parse_status_display }}</span></td><td>{{ version.mime_type }}</td><td>{{ version.byte_size }} bayt</td><td>{{ version.created_at|date:"d.m.Y H:i" }}</td><td>{% if can_read_content and version.id in readable_version_ids %}<div class="actions"><a class="button secondary" href="{% url 'console:document_version_preview' set.public_id document.public_id version.id %}">Güvenli önizleme</a><a class="button secondary" href="{% url 'console:document_version_download' set.public_id document.public_id version.id %}">Ek olarak indir</a></div>{% else %}<span class="muted">Bu set sürümünde içerik okuma yetkisi gerekli.</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% if chunk_view %}
+<div class="card">
+  <div class="section-heading"><div><h2>İndeks parçaları (chunk)</h2><p class="muted">Aktif indeks v{{ chunk_view.index_version }} içinde bu dokümandan üretilen parçalar. Yalnız yetkili operatörlere gösterilir; embedding gösterilmez.</p></div><span class="badge">{{ chunk_view.total_chunks }} parça</span></div>
+  {% if chunk_view.preview %}
+  <p class="muted">İlk {{ chunk_view.preview|length }} parçanın kısaltılmış önizlemesi:</p>
+  {% for chunk in chunk_view.preview %}<div class="relationship-card"><div class="relationship-head"><div><h4>Parça #{{ chunk.ordinal }}</h4></div></div><div class="relationship-body"><div><p class="mono" style="white-space:pre-wrap;overflow-wrap:anywhere;margin:0;">{{ chunk.text }}</p></div></div></div>{% endfor %}
+  {% elif chunk_view.total_chunks == 0 %}<p class="muted">Bu doküman aktif indekste parça içermiyor (henüz indekslenmemiş olabilir).</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="card"><h2>Set sürümü pinleri</h2>{% for membership in memberships %}<p><a href="{% url 'console:document_set_detail_public' set.public_id %}?version={{ membership.document_set_version_id }}#set-version-{{ membership.document_set_version_id }}">Set v{{ membership.document_set_version.version }}</a> <span class="badge {{ membership.document_set_version.status }}">{{ membership.document_set_version.status }}</span> → <a href="#document-version-{{ membership.document_version_id }}">doküman v{{ membership.document_version.version }}</a></p>{% empty %}<p class="muted">Bu set içinde pin yok.</p>{% endfor %}</div>
+
+{% endblock %}

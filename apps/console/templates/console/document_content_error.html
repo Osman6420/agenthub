@@ -1,0 +1,3 @@
+{% extends "console/base.html" %}
+{% block title %}İçerik gösterilemedi · AgentHub{% endblock %}
+{% block content %}<div class="card"><p class="eyebrow">Güvenli içerik erişimi</p><h1>İçerik gösterilemedi</h1><p>İstek güvenli biçimde durduruldu. İçerik veya depolama ayrıntısı açığa çıkarılmadı.</p><p class="mono">{{ error_code }}</p><p><a class="button secondary" href="{% url 'console:documents' %}">Doküman setlerine dön</a></p></div>{% endblock %}

@@ -1,0 +1,830 @@
+"""Bounded, guarded execution of a compiled agent's decision loop (Sprint 10 + P2.6.6).
+
+The planner proposes the next action; this runtime is the trust boundary that turns
+proposals into governed effects. Every iteration re-checks cancellation, the deadline,
+and the step cap; a decision is re-validated against the immutable compiled tool allowlist
+and action policy (schema version, kind, role, arguments, verify/escalate opt-in, and the
+composition ``allowed_actions`` attenuation); a tool proposal is executed only through the
+Sprint 9 tool proxy/approval flow (pausing the run for a required approval); token,
+per-role, and state-size caps are enforced; repeated identical actions and non-converging
+planners are bounded; and the final output must pass the release output contract and
+policy. A resource breach terminates the run deterministically with a stable code — never
+an uncontrolled requeue.
+
+Model decisions are proposals, never authorization. The runtime operates on the redacted
+durable checkpoint (raw input is redacted at ingress, per the workflow-runtime precedent),
+so no raw chain-of-thought, argument body, or unredacted payload is ever persisted or
+handed to the planner. Planner-visible observations are bounded, redacted code/count
+summaries only.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass, field
+from types import SimpleNamespace
+from typing import Any
+
+import jsonschema
+
+from apps.agents.limits import (
+    CHECKPOINT_SCHEMA_VERSION,
+    MAX_ARGUMENTS_BYTES,
+    MAX_CHECKPOINT_BYTES,
+    MAX_OBSERVATION_BYTES,
+    MAX_OBSERVATION_CONTEXT_BYTES,
+    NO_PROGRESS_LIMIT,
+    LimitError,
+    resolve_limits,
+)
+from apps.agents.planner import (
+    AGENT_DECISION_SCHEMA_VERSION,
+    DECISION_ESCALATE,
+    DECISION_KINDS,
+    DECISION_RESPOND,
+    DECISION_RETRIEVE,
+    DECISION_TOOL,
+    DECISION_VERIFY,
+    AgentDecision,
+    AgentObservation,
+    ObservationSummary,
+    get_configured_planner,
+)
+from apps.agents.policy import resolve_runtime_policy
+from apps.artifacts.validation import canonical_json, compute_checksum
+from apps.gateway.execution_context import ExecutionContextInvalid, verify_execution_context
+from apps.orchestration.providers import ModelProviderError
+from apps.releases.services import get_artifact_body_for_role
+from apps.workflows.models import RunStatus
+from apps.workflows.state_mapping import PROTECTED_WRITE_ROOTS
+
+# Verification target that re-runs the pinned release retrieval (no side effect).
+VERIFY_RETRIEVAL = "retrieval"
+
+
+def _redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _redact(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    if isinstance(value, bool) or value is None or isinstance(value, (int, float)):
+        return value
+    return "[redacted]"
+
+
+def _assert_checkpoint_size(state: dict[str, Any]) -> None:
+    size = len(json.dumps(state, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    if size > MAX_CHECKPOINT_BYTES:
+        raise AgentRuntimeError("AGENT_STATE_TOO_LARGE")
+
+
+class AgentRuntimeError(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class AgentPaused(Exception):
+    """Signals that a run is suspended awaiting a tool approval decision."""
+
+    def __init__(
+        self,
+        *,
+        invocation_id: int | None = None,
+        checkpoint: dict[str, Any] | None = None,
+    ) -> None:
+        self.invocation_id = invocation_id
+        self.checkpoint = checkpoint
+        super().__init__("agent paused")
+
+
+class AgentRetrievalBoundary(Exception):
+    """Ask the canonical owner to commit this exact decision before selecting data."""
+
+    def __init__(
+        self, *, checkpoint: dict[str, Any], step: int, query: str, profile: dict[str, Any]
+    ):
+        self.checkpoint, self.step, self.query, self.profile = checkpoint, step, query, profile
+        super().__init__("agent retrieval boundary")
+
+
+@dataclass(frozen=True)
+class AgentResult:
+    output: dict[str, Any]
+    state: dict[str, Any]
+    steps: int
+    tool_calls: int
+    input_tokens: int
+    output_tokens: int
+    tools_called: tuple[str, ...]
+    decisions: tuple[str, ...] = field(default_factory=tuple)
+    # Set when the loop terminates via a governed ``escalate`` decision (P2.6.6). Carries a
+    # closed, platform-owned envelope (stable reason code + step count); no free text.
+    escalation: dict[str, Any] | None = None
+
+
+def run_embedded_agent_loop(
+    *,
+    compiled_config: dict[str, Any],
+    release: Any,
+    workflow_run: Any,
+    state: dict[str, Any],
+    node_id: str = "agent",
+) -> AgentResult:
+    """Run a tool-free compiled agent policy inside one workflow node.
+
+    Tool/approval execution remains disabled until its pause/checkpoint ownership moves to the
+    unified Run state machine. Retrieval/model calls reuse the existing governed seams and the
+    outer workflow transition persists the node result.
+    """
+
+    try:
+        resolve_limits(compiled_config.get("limits"))
+    except LimitError:
+        raise AgentRuntimeError("AGENT_POLICY_INVALID") from None
+    embedded_state = dict(state)
+    awaiting_step = embedded_state.pop("_embedded_awaiting_step", None)
+    awaiting_invocation_id = embedded_state.pop("_embedded_invocation_id", None)
+    awaiting_role = ""
+    if isinstance(awaiting_invocation_id, int):
+        from apps.tools.models import ToolInvocation
+
+        invocation = ToolInvocation.objects.filter(
+            pk=awaiting_invocation_id,
+            organization_id=workflow_run.organization_id,
+            consumer_id=workflow_run.consumer_id,
+            release_id=workflow_run.release_id,
+        ).first()
+        if invocation is None:
+            raise AgentRuntimeError("AGENT_APPROVAL_RESUME_INVALID")
+        awaiting_role = invocation.binding_role
+    embedded_step_count = embedded_state.pop("_embedded_step_count", 0)
+    embedded_tool_call_count = embedded_state.pop("_embedded_tool_call_count", 0)
+    pending_retrieval = embedded_state.pop("_embedded_retrieval_decision", None)
+    prior_decisions = embedded_state.pop("_embedded_decisions", [])
+    embedded = SimpleNamespace(
+        agent_version=SimpleNamespace(compiled_config=compiled_config),
+        release=release,
+        execution_context=workflow_run.execution_context,
+        start_snapshot=dict(state),
+        checkpoint=embedded_state,
+        checkpoint_version=CHECKPOINT_SCHEMA_VERSION,
+        status=workflow_run.status,
+        deadline_at=workflow_run.deadline_at,
+        organization=workflow_run.organization,
+        organization_id=workflow_run.organization_id,
+        scenario_id=workflow_run.scenario_id,
+        release_id=workflow_run.release_id,
+        id=workflow_run.id,
+        public_id="",
+        consumer_id=workflow_run.consumer_id,
+        consumer=workflow_run.consumer,
+        step_count=embedded_step_count,
+        tool_call_count=embedded_tool_call_count,
+        input_tokens=0,
+        output_tokens=0,
+        awaiting_step=awaiting_step,
+        awaiting_role=awaiting_role,
+        tool_idempotency_prefix=f"run:{workflow_run.id}:agent_loop",
+        workflow_run=workflow_run,
+        workflow_node_id=node_id,
+        pending_retrieval=pending_retrieval,
+        prior_decisions=prior_decisions,
+    )
+
+    def _refresh(**kwargs: Any) -> None:
+        if getattr(workflow_run, "prepared_evaluation_id", None) is not None:
+            from apps.evaluations.prepared import prepared_run_generations
+
+            prepared_run_generations(workflow_run)
+        workflow_run.refresh_from_db(fields=["status", "deadline_at"])
+        embedded.status = workflow_run.status
+        embedded.deadline_at = workflow_run.deadline_at
+
+    embedded.refresh_from_db = _refresh
+    return execute_agent(run=embedded, verify_context=False)
+
+
+def execute_agent(*, run: Any, verify_context: bool = True) -> AgentResult:
+    if verify_context:
+        try:
+            verify_execution_context(run.execution_context)
+        except ExecutionContextInvalid:
+            raise AgentRuntimeError("EXECUTION_CONTEXT_INVALID") from None
+    if run.checkpoint_version != CHECKPOINT_SCHEMA_VERSION:
+        # Never resume a checkpoint written by an incompatible schema/code version.
+        raise AgentRuntimeError("AGENT_CHECKPOINT_INCOMPATIBLE")
+
+    config = run.agent_version.compiled_config
+    policy = resolve_runtime_policy(
+        compiled_config=config,
+        execution_context=run.execution_context if isinstance(run.execution_context, dict) else {},
+    )
+    limits = policy.limits
+    verify_roles = policy.verify_roles
+    role_call_caps = policy.role_call_caps
+    repeat_retrieval = policy.repeat_retrieval
+    escalation_enabled = policy.escalation_enabled
+    max_steps = policy.max_steps
+    allowed_actions = policy.allowed_actions
+    objective_key = policy.objective_key
+    output_key = policy.output_key
+    planner = get_configured_planner()
+
+    state = dict(run.checkpoint) if run.checkpoint else dict(run.start_snapshot)
+    objective = _objective(state, objective_key)
+    retrieved = bool(state.get("_retrieved", False))
+    tools_called = tuple(state.get("_tools_called", []))
+    role_calls: dict[str, int] = dict(state.get("_role_calls", {}))
+    action_checksums: list[str] = list(state.get("_action_checksums", []))
+    summaries: list[dict[str, Any]] = list(state.get("_summaries", []))
+    step_index = int(run.step_count)
+    tool_calls = int(run.tool_call_count)
+    in_tokens = int(run.input_tokens)
+    out_tokens = int(run.output_tokens)
+    resuming_step = run.awaiting_step
+    run_ref = str(getattr(run, "public_id", "") or "")
+    decisions: list[str] = list(getattr(run, "prior_decisions", []))
+    pending_retrieval = getattr(run, "pending_retrieval", None)
+    no_progress = 0
+
+    while True:
+        run.refresh_from_db(fields=["status", "deadline_at"])
+        if run.status == RunStatus.CANCELLED:
+            raise AgentRuntimeError("AGENT_CANCELLED")
+        if time.time() > run.deadline_at.timestamp():
+            raise AgentRuntimeError("AGENT_TIMED_OUT")
+        if step_index >= max_steps:
+            raise AgentRuntimeError("AGENT_MAX_STEPS")
+
+        observation = AgentObservation(
+            objective,
+            retrieved,
+            tools_called,
+            summaries=tuple(ObservationSummary(**s) for s in summaries),
+        )
+        is_resume = resuming_step is not None and step_index == resuming_step
+        if pending_retrieval is not None:
+            if not isinstance(pending_retrieval, dict) or set(pending_retrieval) != {
+                "kind",
+                "role",
+                "arguments",
+            }:
+                raise AgentRuntimeError("AGENT_RETRIEVAL_RESUME_INVALID")
+            decision = AgentDecision(**pending_retrieval)
+            pending_retrieval = None
+        elif is_resume:
+            decision = AgentDecision(DECISION_TOOL, role=run.awaiting_role, reason_code="resume")
+        else:
+            decision = planner.next_action(
+                config=config, observation=observation, step_index=step_index, run_ref=run_ref
+            )
+        _validate_decision(
+            decision,
+            config,
+            verify_roles=verify_roles,
+            escalation_enabled=escalation_enabled,
+            allowed_actions=allowed_actions,
+        )
+
+        if decision.kind == DECISION_RESPOND:
+            try:
+                output, delta_in, delta_out = _respond(objective, state, config, run.release)
+            except ModelProviderError as exc:
+                # A model-generation failure (timeout, upstream status, bad response) is a
+                # deterministic terminal error, not an uncaught crash: surface it as a stable
+                # AGENT_MODEL_FAILED so the task marks the run failed instead of leaving it
+                # stuck in `running`.
+                raise AgentRuntimeError("AGENT_MODEL_FAILED") from exc
+            in_tokens += delta_in
+            out_tokens += delta_out
+            if in_tokens + out_tokens > limits["max_tokens"]:
+                raise AgentRuntimeError("AGENT_MAX_TOKENS")
+            state[output_key] = output
+            _validate_output(run.release, output)
+            decisions.append(DECISION_RESPOND)
+            return AgentResult(
+                output=output,
+                state=state,
+                steps=step_index + 1,
+                tool_calls=tool_calls,
+                input_tokens=in_tokens,
+                output_tokens=out_tokens,
+                tools_called=tools_called,
+                decisions=tuple(decisions),
+            )
+
+        if decision.kind == DECISION_ESCALATE:
+            envelope = {"reason_code": _safe_reason_code(decision.reason_code), "steps": step_index}
+            state["_escalation"] = envelope
+            decisions.append(DECISION_ESCALATE)
+            return AgentResult(
+                output={},
+                state=state,
+                steps=step_index + 1,
+                tool_calls=tool_calls,
+                input_tokens=in_tokens,
+                output_tokens=out_tokens,
+                tools_called=tools_called,
+                decisions=tuple(decisions),
+                escalation=envelope,
+            )
+
+        # retrieve / tool / verify: apply the bounded repeat + per-role budget policy.
+        # A soft denial (bounded, planner may self-correct) does not consume a step; after
+        # NO_PROGRESS_LIMIT consecutive soft denials the loop terminates deterministically.
+        checksum = _action_checksum(decision)
+        if not is_resume:
+            denial = _policy_denial(
+                decision=decision,
+                checksum=checksum,
+                retrieved=retrieved,
+                repeat_retrieval=repeat_retrieval,
+                role_calls=role_calls,
+                role_call_caps=role_call_caps,
+                action_checksums=action_checksums,
+            )
+            if denial is not None:
+                no_progress += 1
+                if no_progress >= NO_PROGRESS_LIMIT:
+                    raise AgentRuntimeError("AGENT_NO_PROGRESS")
+                continue
+        no_progress = 0
+
+        if decision.kind == DECISION_RETRIEVE or (
+            decision.kind == DECISION_VERIFY and decision.role == VERIFY_RETRIEVAL
+        ):
+            workflow_run = getattr(run, "workflow_run", None)
+            if workflow_run is not None:
+                from apps.orchestration.resolver import resolve_bundle
+                from apps.workflows.models import RunRetrievalSelection
+
+                bundle = resolve_bundle(run.release)
+                if bundle.data_selection == "active_generation":
+                    selected_id = (
+                        RunRetrievalSelection.objects.filter(
+                            run_id=workflow_run.pk,
+                            organization_id=run.organization_id,
+                            step_key=f"node:{run.workflow_node_id}:agent:{step_index}",
+                        )
+                        .values_list("pk", flat=True)
+                        .first()
+                    )
+                    if selected_id is None:
+                        checkpoint = {
+                            **state,
+                            "_embedded_step_count": step_index,
+                            "_embedded_tool_call_count": tool_calls,
+                            "_embedded_decisions": decisions,
+                            "_embedded_retrieval_decision": {
+                                "kind": decision.kind,
+                                "role": decision.role,
+                                "arguments": decision.arguments,
+                            },
+                        }
+                        _assert_checkpoint_size(checkpoint)
+                        raise AgentRetrievalBoundary(
+                            checkpoint=checkpoint,
+                            step=step_index,
+                            query=objective,
+                            profile=bundle.retrieval_profile,
+                        )
+                    run.retrieval_selection_id = selected_id
+
+        if decision.kind == DECISION_RETRIEVE:
+            chunk_count, byte_count = _do_retrieve(run, state, objective)
+            retrieved = True
+            state["_retrieved"] = True
+            _append_summary(
+                summaries,
+                {
+                    "kind": DECISION_RETRIEVE,
+                    "role": "",
+                    "outcome": "ok",
+                    "count": chunk_count,
+                    "bytes": byte_count,
+                },
+            )
+        elif decision.kind == DECISION_VERIFY:
+            outcome, count, byte_count = _do_verify(
+                run=run,
+                state=state,
+                config=config,
+                objective=objective,
+                decision=decision,
+                step_index=step_index,
+                tool_calls=tool_calls,
+                role_calls=role_calls,
+            )
+            if decision.role != VERIFY_RETRIEVAL:
+                tool_calls = _bump_tool_calls(tool_calls, limits, is_resume=False)
+            role_calls[decision.role] = role_calls.get(decision.role, 0) + 1
+            _append_summary(
+                summaries,
+                {
+                    "kind": DECISION_VERIFY,
+                    "role": decision.role,
+                    "outcome": outcome,
+                    "count": count,
+                    "bytes": byte_count,
+                },
+            )
+        else:  # DECISION_TOOL
+            role = decision.role
+            if not is_resume:
+                tool_calls = _bump_tool_calls(tool_calls, limits, is_resume=False)
+                role_calls[role] = role_calls.get(role, 0) + 1
+            tool_output = _run_tool_step(
+                run=run,
+                state=state,
+                config=config,
+                objective=objective,
+                decision=decision,
+                step_index=step_index,
+                tool_calls=tool_calls,
+                role_calls=role_calls,
+                summaries=summaries,
+                retrieved=retrieved,
+                action_checksums=action_checksums,
+            )
+            state["tool_output"] = tool_output
+            state.pop("_pending_tool_input", None)
+            tools_called = tools_called + (role,)
+            state["_tools_called"] = list(tools_called)
+            byte_count = (
+                len(canonical_json(tool_output).encode("utf-8"))
+                if isinstance(tool_output, dict)
+                else 0
+            )
+            _append_summary(
+                summaries,
+                {
+                    "kind": DECISION_TOOL,
+                    "role": role,
+                    "outcome": "ok",
+                    "count": 0,
+                    "bytes": byte_count,
+                },
+            )
+            resuming_step = None
+
+        action_checksums.append(checksum)
+        state["_role_calls"] = role_calls
+        state["_action_checksums"] = action_checksums
+        state["_summaries"] = summaries
+        step_index += 1
+        _assert_checkpoint_size(state)
+        decisions.append(decision.kind)
+
+
+def _bump_tool_calls(tool_calls: int, limits: dict[str, Any], *, is_resume: bool) -> int:
+    if is_resume:
+        return tool_calls
+    tool_calls += 1
+    if tool_calls > limits["max_tool_calls"]:
+        raise AgentRuntimeError("AGENT_MAX_TOOL_CALLS")
+    return tool_calls
+
+
+def _do_retrieve(run: Any, state: dict[str, Any], objective: str) -> tuple[int, int]:
+    # Governed release-scoped retrieval (P5): the P4 document-ACL retriever behind the
+    # same provider seam as the unified generate node. Deterministic default keeps CI hermetic.
+    from apps.orchestration.rag_steps import retrieve_for_release
+
+    try:
+        selection = {}
+        if getattr(getattr(run, "workflow_run", None), "prepared_evaluation_id", None) is not None:
+            selection["workflow_run"] = run.workflow_run
+        if getattr(run, "retrieval_selection_id", None) is not None:
+            selection = {
+                "workflow_run": run.workflow_run,
+                "selection_id": run.retrieval_selection_id,
+            }
+        retrieval = retrieve_for_release(
+            release=run.release, query=objective, consumer_id=run.consumer_id, **selection
+        )
+    except Exception as exc:
+        raise AgentRuntimeError("AGENT_RETRIEVAL_FAILED") from exc
+    state["retrieval"] = retrieval
+    chunks = retrieval.get("chunks", []) if isinstance(retrieval, dict) else []
+    chunk_count = len(chunks) if isinstance(chunks, list) else 0
+    byte_count = (
+        len(canonical_json(retrieval).encode("utf-8")) if isinstance(retrieval, dict) else 0
+    )
+    return chunk_count, byte_count
+
+
+def _do_verify(
+    *,
+    run: Any,
+    state: dict[str, Any],
+    config: dict[str, Any],
+    objective: str,
+    decision: AgentDecision,
+    step_index: int,
+    tool_calls: int,
+    role_calls: dict[str, int],
+) -> tuple[str, int, int]:
+    """Execute a governed no-side-effect verification observation and derive its outcome.
+
+    A verification role is compiler-guaranteed to be either release retrieval or a pinned
+    no-side-effect, no-approval tool. The outcome is a stable code only: ``verified`` when
+    the observation returns data, ``inconclusive`` when it is empty. Errors already raise.
+    """
+    if decision.role == VERIFY_RETRIEVAL:
+        chunk_count, byte_count = _do_retrieve(run, state, objective)
+        state["_retrieved"] = True
+        return ("verified" if chunk_count else "inconclusive"), chunk_count, byte_count
+    tool_output = _run_tool_step(
+        run=run,
+        state=state,
+        config=config,
+        objective=objective,
+        decision=decision,
+        step_index=step_index,
+        tool_calls=tool_calls,
+        role_calls=role_calls,
+        summaries=None,
+        retrieved=False,
+        action_checksums=None,
+    )
+    state["verification"] = tool_output
+    state.pop("_pending_tool_input", None)
+    byte_count = (
+        len(canonical_json(tool_output).encode("utf-8")) if isinstance(tool_output, dict) else 0
+    )
+    return ("verified" if tool_output else "inconclusive"), (1 if tool_output else 0), byte_count
+
+
+def _run_tool_step(
+    *,
+    run: Any,
+    state: dict[str, Any],
+    config: dict[str, Any],
+    objective: str,
+    decision: AgentDecision,
+    step_index: int,
+    tool_calls: int,
+    role_calls: dict[str, int],
+    summaries: list[dict[str, Any]] | None,
+    retrieved: bool,
+    action_checksums: list[str] | None,
+) -> dict[str, Any]:
+    """Execute one governed tool call, pausing the run if approval is pending."""
+    from apps.tools.approvals import ToolApprovalError, execute_invocation, request_tool_invocation
+    from apps.tools.models import ToolInvocationStatus
+
+    role = decision.role
+    is_resume = run.awaiting_step is not None and step_index == run.awaiting_step
+    if is_resume and isinstance(state.get("_pending_tool_input"), dict):
+        tool_input = dict(state["_pending_tool_input"])
+    else:
+        tool_input = _tool_input(state, config, objective, decision)
+
+    # Defense in depth (P2.6.6): re-validate the planner-supplied arguments against the
+    # pinned tool contract at the runtime boundary *before* the proxy, which re-validates
+    # again. The runtime never builds authority from planner values.
+    _validate_arguments_against_contract(run.release, role, tool_input)
+
+    context = run.execution_context if isinstance(run.execution_context, dict) else {}
+    capabilities = list(context.get("capabilities", []))
+    prefix = getattr(run, "tool_idempotency_prefix", f"agent:{run.id}")
+    idempotency_key = f"{prefix}:{step_index}"
+    try:
+        invocation = request_tool_invocation(
+            release=run.release,
+            consumer=run.consumer,
+            role=role,
+            tool_input=tool_input,
+            idempotency_key=idempotency_key,
+            consumer_capabilities=capabilities,
+        )
+    except ToolApprovalError as exc:
+        raise AgentRuntimeError(f"TOOL_{exc.code}") from None
+
+    if invocation.status == ToolInvocationStatus.PENDING_APPROVAL:
+        paused_state = dict(state)
+        paused_state["_pending_tool_input"] = tool_input
+        paused_state["_embedded_awaiting_step"] = step_index
+        paused_state["_embedded_invocation_id"] = invocation.id
+        paused_state["_embedded_step_count"] = step_index
+        paused_state["_embedded_tool_call_count"] = tool_calls
+        raise AgentPaused(
+            invocation_id=invocation.id,
+            checkpoint=_redact(paused_state),
+        )
+
+    if invocation.status == ToolInvocationStatus.APPROVED:
+        try:
+            invocation = execute_invocation(
+                invocation_id=invocation.id,
+                tool_input=tool_input,
+                consumer_capabilities=capabilities,
+            )
+        except ToolApprovalError as exc:
+            raise AgentRuntimeError(f"TOOL_{exc.code}") from None
+
+    if invocation.status == ToolInvocationStatus.COMPLETED:
+        output = invocation.redacted_output if isinstance(invocation.redacted_output, dict) else {}
+        return output
+    raise AgentRuntimeError(f"TOOL_{str(invocation.status).upper()}")
+
+
+def _validate_decision(
+    decision: AgentDecision,
+    config: dict[str, Any],
+    *,
+    verify_roles: frozenset[str] = frozenset(),
+    escalation_enabled: bool = False,
+    allowed_actions: frozenset[str] | None = None,
+) -> None:
+    # Defense in depth: an untrusted planner (LangGraph or a compromised model) can never
+    # widen the tool surface, reach an out-of-band action, or emit a mismatched schema.
+    if decision.schema_version != AGENT_DECISION_SCHEMA_VERSION:
+        raise AgentRuntimeError("AGENT_DECISION_SCHEMA_MISMATCH")
+    if decision.kind not in DECISION_KINDS:
+        raise AgentRuntimeError("AGENT_DECISION_INVALID")
+    # Child-composition attenuation: the parent call-site's allowed_actions is authoritative.
+    if allowed_actions is not None and decision.kind not in allowed_actions:
+        raise AgentRuntimeError("AGENT_ACTION_NOT_ALLOWED")
+    if decision.kind == DECISION_TOOL:
+        if decision.role not in config.get("tools", []):
+            raise AgentRuntimeError("AGENT_TOOL_NOT_ALLOWED")
+    elif decision.kind == DECISION_VERIFY:
+        if decision.role not in verify_roles:
+            raise AgentRuntimeError("AGENT_VERIFY_NOT_ALLOWED")
+    elif decision.kind == DECISION_ESCALATE:
+        if not escalation_enabled:
+            raise AgentRuntimeError("AGENT_ESCALATE_NOT_ALLOWED")
+    # Arguments are only meaningful for role-addressed actions; reject them elsewhere.
+    if decision.arguments is not None:
+        if decision.kind not in (DECISION_TOOL, DECISION_VERIFY):
+            raise AgentRuntimeError("AGENT_ARGUMENTS_INVALID")
+        _validate_arguments_shape(decision.arguments)
+
+
+def _validate_arguments_shape(arguments: dict[str, Any]) -> None:
+    if not isinstance(arguments, dict):
+        raise AgentRuntimeError("AGENT_ARGUMENTS_INVALID")
+    if len(canonical_json(arguments).encode("utf-8")) > MAX_ARGUMENTS_BYTES:
+        raise AgentRuntimeError("AGENT_ARGUMENTS_INVALID")
+    for key in arguments:
+        if not isinstance(key, str) or not key or key.startswith("_"):
+            raise AgentRuntimeError("AGENT_ARGUMENTS_INVALID")
+        if key.strip().casefold() in PROTECTED_WRITE_ROOTS:
+            raise AgentRuntimeError("AGENT_ARGUMENTS_INVALID")
+
+
+def _validate_arguments_against_contract(
+    release: Any, role: str, tool_input: dict[str, Any]
+) -> None:
+    """Runtime-side pre-validation of the tool input against the pinned binding contract."""
+    from apps.tools.proxy import ToolExecutionError, resolve_release_tool, validate_tool_input
+
+    try:
+        tool = resolve_release_tool(release, role)
+        validate_tool_input(tool, tool_input)
+    except ToolExecutionError as exc:
+        raise AgentRuntimeError(f"TOOL_{exc.code}") from None
+
+
+def _policy_denial(
+    *,
+    decision: AgentDecision,
+    checksum: str,
+    retrieved: bool,
+    repeat_retrieval: bool,
+    role_calls: dict[str, int],
+    role_call_caps: dict[str, Any],
+    action_checksums: list[str],
+) -> str | None:
+    """Return a stable soft-denial code, or ``None`` if the action is admitted by policy.
+
+    Soft denials are bounded (no-progress counted): a repeated identical already-succeeded
+    action outside policy, or a per-role budget overrun. Hard structural failures are handled
+    earlier in :func:`_validate_decision`.
+    """
+    if decision.kind == DECISION_RETRIEVE:
+        # A plain retrieval repeat is governed by the repeat-retrieval flag. A verification
+        # observation (below) is a distinct governed action even when it re-runs retrieval.
+        if retrieved and not repeat_retrieval:
+            return "AGENT_REPEATED_ACTION"
+        return None
+    # tool / verify: per-role budget (default single use) governs both fresh and repeat calls.
+    role = decision.role
+    cap = int(role_call_caps.get(role, 1))
+    current = int(role_calls.get(role, 0))
+    if current >= cap:
+        return (
+            "AGENT_REPEATED_ACTION"
+            if checksum in action_checksums
+            else "AGENT_ROLE_BUDGET_EXCEEDED"
+        )
+    return None
+
+
+def _action_checksum(decision: AgentDecision) -> str:
+    return compute_checksum(
+        {"kind": decision.kind, "role": decision.role, "arguments": decision.arguments or {}}
+    )
+
+
+def _append_summary(summaries: list[dict[str, Any]], summary: dict[str, Any]) -> None:
+    """Append a bounded, redacted code/count summary, enforcing the context byte budget."""
+    if len(canonical_json(summary).encode("utf-8")) > MAX_OBSERVATION_BYTES:
+        # Structurally impossible for code/count summaries, but fail safe rather than persist.
+        summary = {
+            "kind": summary.get("kind", ""),
+            "role": "",
+            "outcome": "truncated",
+            "count": 0,
+            "bytes": 0,
+        }
+    summaries.append(summary)
+    while (
+        len(canonical_json(summaries).encode("utf-8")) > MAX_OBSERVATION_CONTEXT_BYTES
+        and len(summaries) > 1
+    ):
+        summaries.pop(0)
+
+
+def _safe_reason_code(value: str) -> str:
+    """Bound and sanitize a planner reason code for the closed escalation envelope."""
+    if not isinstance(value, str):
+        return "escalated"
+    trimmed = value[:64]
+    if trimmed and all(ch.isalnum() or ch in "._-" for ch in trimmed):
+        return trimmed
+    return "escalated"
+
+
+def _respond(
+    objective: str, state: dict[str, Any], config: dict[str, Any], release: Any
+) -> tuple[dict[str, Any], int, int]:
+    # Generate over the governed model provider using the retrieved context (P5). The prompt is the
+    # authored, release-pinned agent system prompt when present (P6), else the user objective; the
+    # objective still drives retrieval. The system prompt is input, never authorization.
+    from apps.orchestration.rag_steps import (
+        chunks_from_state,
+        citations_from_state,
+        generate_for_release,
+        grounding_fallback_answer,
+    )
+
+    fallback = grounding_fallback_answer(release=release, state=state)
+    if fallback is not None:
+        return {"answer": fallback, "sources": []}, 0, 0
+    context = chunks_from_state(state)
+    prompt = config.get("system_prompt") or objective or ""
+    response = generate_for_release(
+        release=release,
+        context=context,
+        prompt=prompt,
+        user_query=objective,
+    )
+    output = {"answer": response.text, "sources": citations_from_state(state)}
+    return output, response.input_tokens, response.output_tokens
+
+
+def _validate_output(release: Any, output: dict[str, Any]) -> None:
+    schema = get_artifact_body_for_role(release, "output_contract")
+    if schema is not None:
+        try:
+            jsonschema.validate(output, schema)
+        except jsonschema.ValidationError:
+            raise AgentRuntimeError("OUTPUT_CONTRACT_VIOLATION") from None
+    policy = get_artifact_body_for_role(release, "policy_profile")
+    if not isinstance(policy, dict):
+        return
+    output_policy = policy.get("output", {})
+    if not isinstance(output_policy, dict):
+        raise AgentRuntimeError("POLICY_VIOLATION")
+    if output_policy.get("citations") == "required":
+        sources = output.get("sources")
+        if not isinstance(sources, list) or not sources:
+            raise AgentRuntimeError("POLICY_VIOLATION")
+
+
+def _objective(state: dict[str, Any], objective_key: str) -> str:
+    payload = state.get("input")
+    if isinstance(payload, dict):
+        value = payload.get(objective_key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _tool_input(
+    state: dict[str, Any], config: dict[str, Any], objective: str, decision: AgentDecision
+) -> dict[str, Any]:
+    # Structured planner arguments take precedence (validated at the runtime boundary and
+    # again by the proxy). They are redacted for parity with the durable checkpoint so the
+    # request-checksum binding holds across an approval pause/resume. Otherwise the
+    # deterministic convention applies: agent tools receive the objective as ``query``.
+    if decision.arguments is not None:
+        return _redact(decision.arguments)
+    explicit = state.get("tool_input")
+    if isinstance(explicit, dict):
+        return explicit
+    return {"query": objective}

@@ -1,0 +1,48 @@
+{% extends "console/base.html" %}
+{% block title %}Değerlendirme · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu">
+  {% if scenario %}<a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a><span>›</span><a href="{% url 'console:scenario_test_questions' scenario.public_id %}">Test soruları</a>
+  {% else %}<a href="{% url 'console:question_sets' %}">Soru setleri</a><span>›</span><a href="{% url 'console:question_set_detail' run.question_set_version.question_set.public_id %}">{{ run.question_set_version.question_set.name }}</a>{% endif %}
+  <span>›</span><span aria-current="page">Değerlendirme</span>
+</nav>
+{# Two consecutive runs used to render identically: nothing on the page said which run this was, when it ran, or what it measured, so a fresh measurement looked like a stale one. #}
+<div class="page-heading"><div><p class="eyebrow">Exact provenance</p><h1>{{ run.get_kind_display }} değerlendirmesi</h1>
+  <p class="muted"><strong>{{ run.created_at|date:"j F Y, H:i:s" }}</strong> ·
+    çalıştırma <span class="mono">{{ run.public_id|slice:":8" }}</span>
+    {% if run.release %} · ölçülen sürüm <a href="{% url 'console:release_detail' run.release_id %}">#{{ run.release_id }}</a> ({{ run.release.get_status_display }}){% endif %}</p>
+  <p class="muted">Soru seti v{{ run.question_set_version.version }} · <span class="mono">{{ run.question_set_version.checksum|slice:":12" }}</span></p></div><span class="badge {{ run.status }}">{{ run.get_status_display }}</span></div>
+
+<div class="summary-grid">
+  <div class="summary-card"><span>İlerleme</span><strong>{{ run.completed_cases }}/{{ run.total_cases }}</strong></div>
+  <div class="summary-card"><span>Geçen</span><strong>{{ run.passed_cases }}</strong></div>
+  <div class="summary-card"><span>Unscored / error</span><strong>{{ run.unscored_cases }} / {{ run.error_cases }}</strong></div>
+</div>
+
+{% if scenario %}<p class="actions"><a class="button secondary" href="{% url 'console:scenario_test_questions' scenario.public_id %}">Test sorularına dön</a></p>{% endif %}
+
+{% if run.status == "queued" or run.status == "running" %}<form method="post" action="{% url 'console:question_evaluation_cancel' run.public_id %}" class="actions">{% csrf_token %}<button class="button danger" type="submit">İptal iste</button></form>{% endif %}
+
+<section class="card"><h2>Ayrı metrikler</h2><div class="table-scroll"><table><tbody>{% for key,value in run.metrics.items %}<tr><th>{{ key }}</th><td>{{ value|default_if_none:"—" }}</td></tr>{% empty %}<tr><td class="empty">Metrikler çalışma tamamlandığında oluşur.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="card"><h2>Immutable provenance</h2><textarea class="mono code-field" rows="10" readonly>{{ run.provenance }}</textarea></section>
+
+{% if not can_view_content %}<div class="warning-box">İçerik yetkiniz olmadığı için soru, cevap ve chunk metinleri redakte edildi. Durum, sayaç ve güvenli reason code'lar görünür.</div>{% endif %}
+
+<nav class="tabs" aria-label="Vaka sonucu filtresi">
+  <a href="{% url 'console:question_evaluation_detail' run.public_id %}"{% if not evidence_status %} aria-current="page"{% endif %}>Tüm vakalar</a>
+  <a href="?evidence_status=failed"{% if evidence_status == "failed" %} aria-current="page"{% endif %}>Failed</a>
+  <a href="?evidence_status=unscored"{% if evidence_status == "unscored" %} aria-current="page"{% endif %}>Unscored</a>
+  <a href="?evidence_status=error"{% if evidence_status == "error" %} aria-current="page"{% endif %}>Error</a>
+</nav>
+
+{% for evidence in evidence_rows %}
+<section class="card">
+  <div class="section-heading"><div><p class="eyebrow">Case {{ evidence.question_case.case_id }}</p><h2>{% if can_view_content %}{{ evidence.question_case.question }}{% else %}Redacted case{% endif %}</h2></div><span class="badge {{ evidence.status }}">{{ evidence.get_status_display }}</span></div>
+  {% if evidence.error_code %}<p class="warning-box">{{ evidence.error_code }}</p>{% endif %}
+  {% if can_view_content and evidence.generated_answer %}<h3>Cevap</h3><p>{{ evidence.generated_answer }}</p>{% endif %}
+  {% if evidence.assertions %}<h3>Assertion sonuçları</h3><div class="table-scroll"><table><thead><tr><th>Tür</th>{% if can_view_content %}<th>Beklenen</th>{% endif %}<th>Sonuç</th><th>Reason</th></tr></thead><tbody>{% for assertion in evidence.assertions %}<tr><td>{{ assertion.type }}</td>{% if can_view_content %}<td>{{ assertion.value|default:"—" }}</td>{% endif %}<td>{{ assertion.passed|default_if_none:"—" }}</td><td>{{ assertion.reason_code|default:"—" }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+  {% if evidence.judge %}<h3>LLM judge</h3><div class="table-scroll"><table><tbody><tr><th>Durum</th><td>{{ evidence.judge.status|default:"—" }}</td></tr><tr><th>Verdict</th><td>{{ evidence.judge.verdict|default:"—" }}</td></tr><tr><th>Reason</th><td>{{ evidence.judge.reason_code|default:"—" }}</td></tr><tr><th>Model checksum</th><td class="mono">{{ evidence.judge.model_checksum|default:"—" }}</td></tr><tr><th>Prompt checksum</th><td class="mono">{{ evidence.judge.prompt_checksum|default:"—" }}</td></tr></tbody></table></div>{% endif %}
+  {% if can_view_content and evidence.resolved_chunks %}<h3>Retrieved chunk'lar</h3>{% for row in evidence.resolved_chunks %}<div class="relationship-card"><div class="relationship-head"><strong>#{{ row.evidence.rank }} · {{ row.evidence.title }}</strong><span class="mono">doc {{ row.evidence.document_version_id }} / chunk {{ row.evidence.ordinal }}</span></div><div class="relationship-body"><div>{% if row.text %}<p>{{ row.text }}</p>{% else %}<p class="muted">Immutable evidence artık çözümlenemiyor.</p>{% endif %}</div><div class="mono">score={{ row.evidence.score }} · vector={{ row.evidence.vector_score }} · BM25={{ row.evidence.keyword_score }} · fused={{ row.evidence.fused_score }}</div></div></div>{% endfor %}{% endif %}
+</section>
+{% empty %}<section class="card empty">Henüz case evidence yok.</section>{% endfor %}
+{% endblock %}

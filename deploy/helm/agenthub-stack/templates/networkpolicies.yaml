@@ -1,0 +1,44 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub-stack.fullname" . }}-dependencies-deny-ingress
+  labels:
+    {{- include "agenthub-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "agenthub-stack.name" . | quote }}
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub-stack.fullname" . }}-agenthub-to-dependencies
+  labels:
+    {{- include "agenthub-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: In, values: [{{ include "agenthub-stack.name" . | quote }}] }
+      - { key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name | quote }}] }
+      - { key: app.kubernetes.io/component, operator: In, values: [postgresql, redis, minio] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name | quote }}
+              app.kubernetes.io/part-of: agenthub
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 6379 }
+        - { protocol: TCP, port: 9000 }
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "agenthub-stack.selectorLabels" (dict "root" . "component" "minio-bootstrap") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 9000 }
+{{- end }}

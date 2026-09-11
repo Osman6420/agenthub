@@ -1,0 +1,36 @@
+{% extends "console/base.html" %}
+{% block title %}Doküman setleri · AgentHub{% endblock %}
+{% block content %}
+
+<div class="page-heading"><div><p class="eyebrow">Bilgi kaynakları</p><h1>Doküman setleri</h1><p class="muted">Dokümanları tek tek değil, senaryolara bağlanan yönetilebilir setler içinde yönetin.</p></div></div>
+{% if can_start_rest_setup %}<p><a class="button" href="{% url 'console:rest_setup_start' %}">REST belgelerini bağla</a></p>{% endif %}
+{% if filter_label %}<div class="filter-note"><strong>Filtre:</strong> {{ filter_label }} <a href="?">Temizle</a></div>{% endif %}
+
+{% if can_upload %}
+<details class="card form-card">
+  <summary><strong>Yeni doküman seti oluştur</strong></summary>
+  <p class="muted">Set oluşturduktan sonra detay ekranından toplu dosya yükleyebilirsiniz.</p>
+  <form method="post" action="{% url 'console:document_set_create' %}">{% csrf_token %}{{ set_form.as_p }}<button type="submit">Set oluştur</button></form>
+</details>
+{% else %}
+<div class="card"><div class="section-heading"><div><h2>Yeni doküman seti</h2></div></div><p class="reason">{{ create_reason }}</p></div>
+{% endif %}
+
+  <form method="get" class="filter-bar" role="search" aria-label="Doküman seti ara ve filtrele">
+    <label for="set-search">Doküman seti ara<input id="set-search" name="q" type="search" value="{{ search }}" maxlength="200" placeholder="Ad veya kimlik"></label>
+    <label for="set-status">Durum<select id="set-status" name="status"><option value="">Tüm durumlar</option>{% for value,label in status_choices %}<option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <button class="button secondary" type="submit">Filtrele</button>{% if search or status_filter %}<a class="button ghost" href="{% url 'console:documents' %}">Filtreleri temizle</a>{% endif %}
+  </form>
+  <p class="muted" role="status">{{ page.paginator.count }} doküman seti</p>
+<div class="card table-card">
+  {% if sets %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki doküman setleri</caption><thead><tr><th>Doküman seti</th><th>Organizasyon</th><th>Durum</th><th>Sürüm</th></tr></thead><tbody>
+  {% for s in sets %}<tr data-href="{{ s.href }}"><td><strong><a href="{{ s.href }}">{{ s.name }}</a></strong></td><td>{{ s.org }}</td><td><span class="badge {{ s.status }}">{{ s.status_label }}</span></td><td>{{ s.versions }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="empty">{% if search or status_filter %}<h2>Eşleşen doküman seti yok</h2><p>Aramayı değiştirin veya filtreleri temizleyin.</p>{% else %}Yetki kapsamınızda doküman seti yok.{% endif %}</div>{% endif %}
+  {% if page.has_other_pages %}<nav class="pagination" aria-label="Doküman seti sayfaları">
+    {% if page.has_previous %}<a href="?q={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;page={{ page.previous_page_number }}">← Önceki</a>{% endif %}
+    <span>{{ page.number }} / {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}<a href="?q={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;page={{ page.next_page_number }}">Sonraki →</a>{% endif %}
+  </nav>{% endif %}
+</div>
+
+{% endblock %}

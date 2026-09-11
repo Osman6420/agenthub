@@ -1,0 +1,17 @@
+{{- $root := . -}}
+{{- range $service := list (dict "component" "postgresql" "port" 5432 "portName" "postgresql") (dict "component" "redis" "port" 6379 "portName" "redis") (dict "component" "minio" "port" 9000 "portName" "api") }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agenthub-stack.fullname" $root }}-{{ $service.component }}
+  labels:
+    {{- include "agenthub-stack.componentLabels" (dict "root" $root "component" $service.component) | nindent 4 }}
+spec:
+  selector:
+    {{- include "agenthub-stack.selectorLabels" (dict "root" $root "component" $service.component) | nindent 4 }}
+  ports:
+    - name: {{ $service.portName }}
+      port: {{ $service.port }}
+      targetPort: {{ $service.portName }}
+{{- end }}

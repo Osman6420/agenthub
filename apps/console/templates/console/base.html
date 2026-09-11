@@ -1,0 +1,239 @@
+<!doctype html>{% load static %}
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AgentHub{% endblock %}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #f4f6f8; --surface: #ffffff; --surface-soft: #f8fafc;
+      --ink: #18212f; --muted: #667085; --line: #e3e8ef;
+      --nav: #102a2e; --nav-soft: #173b40; --brand: #0d766e; --brand-dark: #075e58;
+      --success: #16794b; --success-bg: #eaf8f0; --warning: #9a6700; --warning-bg: #fff7db;
+      --danger: #b42318; --danger-bg: #fff0ee; --shadow: 0 8px 24px rgba(16, 42, 46, .07);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--canvas); color: var(--ink); }
+    a { color: var(--brand-dark); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    :where(a, button, input, select, textarea, summary):focus-visible { outline: 3px solid #f4b740; outline-offset: 3px; }
+    .skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; padding: 10px 14px; border-radius: 8px; background: #fff; color: var(--nav); box-shadow: var(--shadow); transform: translateY(-150%); }
+    .skip-link:focus { transform: translateY(0); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
+    .sidebar { background: var(--nav); color: #e6f4f3; padding: 24px 16px; display: flex; flex-direction: column; min-height: 100vh; position: sticky; top: 0; height: 100vh; overflow-y: auto; overscroll-behavior: contain; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 24px; font-size: 19px; font-weight: 750; letter-spacing: -.3px; color: #e6f4f3; }
+    .mobile-nav-toggle { display: none; }
+    .brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: #54d3c6; color: var(--nav); font-weight: 900; }
+    .nav-label { margin: 18px 10px 7px; color: #88aaa8; text-transform: uppercase; font-size: 10px; font-weight: 800; letter-spacing: 1.2px; }
+    .sidebar nav { display: grid; gap: 3px; }
+    .sidebar nav a { color: #cbe1df; padding: 9px 11px; border-radius: 8px; font-size: 14px; font-weight: 570; }
+    .sidebar nav a:hover { color: #fff; background: var(--nav-soft); text-decoration: none; }
+    .sidebar nav a[aria-current="page"] { color: #fff; background: var(--nav-soft); box-shadow: inset 3px 0 #54d3c6; }
+    .section-return { display: inline-flex; gap: 8px; align-items: center; margin-bottom: 18px; font-size: 13px; }
+    .org-switch-box { margin: 4px 0 8px; padding: 0 10px; }
+    .org-switch-label { margin: 0 0 5px; padding: 0; }
+    .org-menu { position: relative; }
+    .org-menu summary { cursor: pointer; list-style: none; padding: 9px 10px; border: 1px solid #315158; border-radius: 8px; background: var(--nav-soft); color: #e6f4f3; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+    .org-menu summary::-webkit-details-marker { display: none; }
+    .org-menu summary::after { content: "▾"; float: right; color: #9eb8b7; }
+    .org-menu[open] summary::after { content: "▴"; }
+    .org-menu-options { display: grid; gap: 3px; margin-top: 5px; padding: 5px; border: 1px solid #315158; border-radius: 8px; background: var(--nav-soft); }
+    .org-menu-options form { margin: 0; }
+    .org-menu-item { width: 100%; min-height: 36px; padding: 7px 8px; border: 0; border-radius: 6px; background: transparent; color: #cbe1df; text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
+    .org-menu-item:hover, .org-menu-item[aria-current="true"] { color: #fff; background: #315158; }
+    .org-static { color: #e6f4f3; font-size: 14px; font-weight: 650; }
+    tr[data-href] { cursor: pointer; }
+    .js-on tr[data-href]:hover { background: var(--surface-soft); }
+    .topbar-user { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+    .topbar-user strong { overflow-wrap: anywhere; }
+    .workspace { min-width: 0; }
+    .topbar { min-height: 64px; background: rgba(255,255,255,.92); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 32px; position: sticky; top: 0; z-index: 5; backdrop-filter: blur(8px); }
+    .topbar-title { font-weight: 700; }
+    main { max-width: 1240px; margin: 0 auto; padding: 32px; }
+    h1, h2, h3, h4 { margin-top: 0; letter-spacing: -.025em; }
+    h1 { margin-bottom: 7px; font-size: clamp(28px, 4vw, 38px); }
+    h2 { font-size: 21px; margin-bottom: 6px; }
+    h3 { font-size: 17px; margin-bottom: 5px; }
+    h4 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .eyebrow { color: var(--brand); text-transform: uppercase; letter-spacing: 1px; font-size: 11px; font-weight: 800; margin: 0 0 7px; }
+    .muted { color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+    .page-heading, .section-heading, .relationship-head, .relationship-body { display: flex; justify-content: space-between; align-items: flex-start; gap: 22px; }
+    .page-heading { margin-bottom: 24px; align-items: center; }
+    .section-heading { margin-bottom: 16px; }
+    .breadcrumbs { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 20px; flex-wrap: wrap; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin-bottom: 18px; box-shadow: var(--shadow); }
+    .summary-grid, .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .relationship-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .action-card, .button-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .summary-card, .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 17px 19px; }
+    .summary-card span, .tile .l { display: block; color: var(--muted); font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; }
+    .summary-card strong, .tile .n { display: block; font-size: 25px; margin-top: 6px; }
+    .summary-card .text-value { font-size: 15px; overflow-wrap: anywhere; }
+    .table-card { padding: 0; overflow: hidden; }
+    .table-scroll { overflow-x: auto; overscroll-behavior-inline: contain; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { color: var(--muted); background: var(--surface-soft); font-size: 11px; text-transform: uppercase; letter-spacing: .55px; }
+    tr:last-child td { border-bottom: 0; }
+    .row-action { text-align: right; white-space: nowrap; }
+    .path { color: var(--muted); font-size: 13px; }
+    .path b { padding: 0 4px; color: #98a2b3; }
+    .badge, .chip { display: inline-flex; align-items: center; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 4px 8px; background: #edf2f6; color: #475467; margin: 2px; }
+    .badge.active, .badge.succeeded, .badge.promotable { color: var(--success); background: var(--success-bg); }
+    .badge.draft, .badge.building, .badge.warning { color: var(--warning); background: var(--warning-bg); }
+    .badge.failed, .badge.disabled { color: var(--danger); background: var(--danger-bg); }
+    .button, .actions a, .form-card button { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; border: 1px solid transparent; border-radius: 9px; padding: 8px 13px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none; white-space: nowrap; }
+    .button:hover, .actions a:hover { text-decoration: none; }
+    .button.primary, .actions a, .form-card button { background: var(--brand); color: #fff; }
+    .button.primary:hover { background: var(--brand-dark); }
+    .button.secondary { background: #fff; border-color: #b7c7cc; color: var(--brand-dark); }
+    .button.ghost { background: transparent; }
+    .button.danger { color: var(--danger); border-color: #efc3bf; }
+    .button[disabled], .button:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+    .reason { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+    details.version-history { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-top: 14px; background: var(--surface-soft); }
+    details.version-history summary { cursor: pointer; font-size: 14px; }
+    details.version-history .access-row:first-of-type { border-top: 0; }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
+    .filter-bar label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .filter-bar select, .filter-bar input { padding: 8px 9px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); font: inherit; font-size: 13px; }
+    .pagination { display: flex; gap: 14px; align-items: center; justify-content: center; padding: 16px; color: var(--muted); font-size: 13px; }
+    .filter-note { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; color: var(--muted); font-size: 13px; }
+    button.link { min-height: 38px; background: none; border: none; color: var(--brand-dark); cursor: pointer; padding: 7px 4px; font: inherit; font-size: 12px; font-weight: 700; }
+    .topbar-user button.link { padding-inline: 0; }
+    form.inline { display: inline; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+    .form-card input, .form-card select, .form-card textarea, .compact-form select, .compact-form input[type="search"] { width: 100%; min-width: 0; max-width: 760px; padding: 9px 10px; border: 1px solid #cbd5df; border-radius: 8px; background: #fff; color: var(--ink); }
+    .form-card input, .form-card select, .form-card textarea { display: block; margin-top: 5px; }
+    .form-card .code-field { max-width: none; resize: vertical; line-height: 1.5; }
+    .form-card ul.errorlist { color: var(--danger); }
+    .compact-form label { display: block; color: var(--muted); font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+    .field-row { display: flex; gap: 8px; }
+    .notice, .warning-box, .error-box { padding: 13px 15px; border-radius: 9px; font-size: 13px; line-height: 1.5; }
+    .notice { background: #eef8f7; border: 1px solid #c6e7e3; color: #245c58; margin-bottom: 18px; }
+    .warning-box { background: var(--warning-bg); color: #6d4c00; margin-top: 12px; }
+    .error-box { background: #fdecec; border: 1px solid #f0bcbc; color: #8a1f1f; margin-top: 12px; }
+    ul.compact { margin: 8px 0 0; padding-left: 18px; }
+    ul.compact li { margin-top: 3px; }
+    /* Inline help for controls whose options are not visible on screen (JSON bodies, DSL
+       fields, profile pickers). Rendered by console/field_info.html. */
+    /* A jump link must not look like the action it scrolls to. */
+    .step-jump { font-size: 13px; text-decoration: underline; white-space: nowrap; }
+    .field-info { margin: 6px 0 10px; }
+    .field-info > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+    .field-info-body { margin-top: 8px; padding: 10px 12px; border-left: 3px solid var(--line); }
+    .field-info-body dt { font-weight: 600; font-size: 13px; margin-top: 8px; }
+    .field-info-body dd { margin: 2px 0 0; font-size: 13px; }
+    [data-profile-form-field] { margin-top: 10px; }
+    [data-profile-form-field][hidden] { display: none; }
+    .setup-steps { list-style: none; margin: 0 0 18px; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+    .setup-step { display: flex; gap: 14px; align-items: center; padding: 14px 16px; border-top: 1px solid var(--line); }
+    .setup-step:first-child { border-top: 0; }
+    .setup-step-body { flex: 1; min-width: 0; }
+    .setup-step-body p { margin: 2px 0 0; }
+    .setup-step-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; background: var(--surface-soft); color: var(--muted); border: 1px solid var(--line); }
+    .setup-step.done .setup-step-mark { background: #e7f6ef; border-color: #b6e3cd; color: #1c6b47; }
+    .setup-step.todo .setup-step-mark { background: #fdf3e0; border-color: #f0d5a4; color: #7a5300; }
+    .relationship-card { border: 1px solid var(--line); border-radius: 12px; margin-top: 14px; overflow: hidden; }
+    .relationship-head { background: var(--surface-soft); padding: 17px; border-bottom: 1px solid var(--line); }
+    .relationship-head p { margin: 0; }
+    .relationship-body { padding: 17px; }
+    .relationship-body > div { flex: 1; min-width: 0; }
+    .status-stack { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+    .access-row { display: grid; grid-template-columns: minmax(160px, 1fr) auto auto; gap: 12px; align-items: center; border-top: 1px solid var(--line); padding: 11px 0; }
+    .access-ok, .access-missing { font-size: 12px; font-weight: 750; }
+    .access-ok { color: var(--success); }
+    .access-missing { color: var(--warning); }
+    .meta-line { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; color: var(--muted); }
+    .task-tabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 18px; padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+    .task-tabs a { flex: 0 0 auto; padding: 9px 12px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 700; }
+    .task-tabs a:hover, .task-tabs a[aria-current="location"] { color: var(--brand-dark); background: #eaf7f5; text-decoration: none; }
+    .summary-grid[id], .card[id], section[id] { scroll-margin-top: 84px; }
+    .empty { padding: 38px 20px; text-align: center; color: var(--muted); }
+    .msg { padding: 11px 14px; border-radius: 9px; margin-bottom: 10px; border: 1px solid; }
+    .msg.error { background: var(--danger-bg); color: var(--danger); border-color: #efc3bf; }
+    .msg.success { background: var(--success-bg); color: var(--success); border-color: #b8e2ca; }
+    .login { max-width: 380px; margin: 8vh auto; }
+    .login input { width: 100%; padding: 10px; margin: 6px 0 14px; border-radius: 8px; border: 1px solid #cbd5df; background: #fff; color: var(--ink); }
+    .login button { width: 100%; padding: 10px; border: 0; border-radius: 8px; background: var(--brand); color: #fff; font-weight: 700; cursor: pointer; }
+    @media (max-width: 900px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; min-height: 0; padding: 14px; }
+      .brand { padding-bottom: 10px; }
+      .sidebar nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding-top: 8px; }
+      .sidebar nav a { white-space: normal; }
+      .js-on .mobile-nav-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 10px; background: var(--nav-soft); color: #e6f4f3; border: 1px solid #315158; border-radius: 8px; font: inherit; cursor: pointer; }
+      .js-on .sidebar nav:not(.is-open) { display: none; }
+      .nav-label { display: none; }
+      .topbar { padding: 0 18px; }
+      main { padding: 22px 16px; }
+    }
+    @media (max-width: 680px) {
+      .setup-step { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: start; gap: 10px 14px; }
+      .setup-step > form, .setup-step > button, .setup-step > a { grid-column: 2; justify-self: start; }
+      .page-heading, .section-heading, .relationship-head, .relationship-body { align-items: stretch; flex-direction: column; }
+      .summary-grid, .tiles, .relationship-grid { grid-template-columns: 1fr; }
+      .status-stack { justify-content: flex-start; }
+      .access-row { grid-template-columns: 1fr; }
+      .field-row { flex-direction: column; }
+      .topbar .muted { display: none; }
+      .button, .actions a, .form-card button, button.link { white-space: normal; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Ana içeriğe geç</a>
+  {% if user.is_authenticated %}
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="{% url 'console:dashboard' %}"><span class="brand-mark">A</span><span>AgentHub</span></a>
+      <div class="org-switch-box">
+        {% if workspace_multi_org %}
+        <div class="nav-label org-switch-label">Aktif organizasyon</div>
+        <details class="org-menu">
+          <summary>{{ active_organization.name }}</summary>
+          <div class="org-menu-options">
+            {% for org in available_organizations %}<form method="post" action="{% url 'console:switch_organization' %}">{% csrf_token %}<button class="org-menu-item" type="submit" name="organization_id" value="{{ org.id }}"{% if active_organization and active_organization.id == org.id %} aria-current="true"{% endif %}>{{ org.name }}</button></form>{% endfor %}
+          </div>
+        </details>
+        {% elif available_organizations %}
+        <div class="nav-label org-switch-label">Organizasyon</div>
+        <div class="org-static">{{ available_organizations.0.name }}</div>
+        {% endif %}
+      </div>
+      <div class="nav-label">Çalışma alanı</div>
+      <button class="mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation">Menü · {{ navigation_label }} <span aria-hidden="true">☰</span></button>
+      <nav id="primary-navigation" aria-label="Ana menü">
+        <a href="{% url 'console:dashboard' %}"{% if navigation_section == 'dashboard' %} aria-current="page"{% endif %}>Ana Sayfa</a>
+        {% if show_projects_navigation %}<a href="{% url 'console:projects' %}"{% if navigation_section == 'projects' %} aria-current="page"{% endif %}>Projeler</a>{% endif %}
+        {% if show_scenarios_navigation %}<a href="{% url 'console:scenarios' %}"{% if navigation_section == 'scenarios' %} aria-current="page"{% endif %}>Senaryolar</a>{% endif %}
+        {% if show_documents_navigation %}<a href="{% url 'console:documents' %}"{% if navigation_section == 'documents' %} aria-current="page"{% endif %}>Dokümanlar</a>{% endif %}
+        {% if show_questions_navigation %}<a href="{% url 'console:question_sets' %}"{% if navigation_section == 'questions' %} aria-current="page"{% endif %}>Testler</a>{% endif %}
+        {% if show_consumers_navigation %}<a href="{% url 'console:consumers' %}"{% if navigation_section == 'consumers' %} aria-current="page"{% endif %}>İstemciler</a>{% endif %}
+        {% if show_runs_navigation %}<a href="{% url 'console:runs' %}"{% if navigation_section == 'runs' %} aria-current="page"{% endif %}>Çalıştırmalar</a>{% endif %}
+        {% if show_approvals_navigation %}<a href="{% url 'console:tool_approvals' %}"{% if navigation_section == 'approvals' %} aria-current="page"{% endif %}>Onaylar</a>{% endif %}
+        {% if can_manage_organization_members %}<a href="{% url 'console:organization_members' %}"{% if navigation_section == 'members' %} aria-current="page"{% endif %}>Kullanıcılar ve yetkiler</a>{% endif %}
+        {% if is_platform_admin %}<a href="{% url 'console:platform_setup' %}"{% if navigation_section == 'platform' %} aria-current="page"{% endif %}>Platform kurulumu</a>{% endif %}
+      </nav>
+    </aside>
+    <div class="workspace">
+      <header class="topbar"><div><span class="topbar-title">Operasyon konsolu</span>{% if active_organization %}<span class="topbar-scope muted"> · {{ active_organization.name }}</span>{% endif %}</div><div class="topbar-user"><strong>{{ user.get_username }}</strong><form method="post" action="{% url 'console:logout' %}">{% csrf_token %}<button class="link" type="submit">Çıkış yap</button></form></div></header>
+      <main id="main-content" tabindex="-1">
+  {% else %}
+      <main id="main-content" tabindex="-1">
+  {% endif %}
+        {% if messages %}{% for m in messages %}<div class="msg {{ m.tags }}" role="{% if 'error' in m.tags %}alert{% else %}status{% endif %}">{{ m }}</div>{% endfor %}{% endif %}
+        {% if user.is_authenticated and navigation_is_child %}<a class="section-return" href="{{ navigation_url }}"><span aria-hidden="true">←</span> {{ navigation_label }} bölümüne dön</a>{% endif %}
+        {% block content %}{% endblock %}
+      </main>
+  {% if user.is_authenticated %}
+    </div>
+  </div>
+  <script src="{% static 'console/console.js' %}?v=console-2026-09-11" defer></script>
+  {% endif %}
+</body>
+</html>

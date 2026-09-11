@@ -1,0 +1,15 @@
+api_version: agenthub/v1
+kind: PolicyProfile
+metadata:
+  organization: mcm
+  logical_id: customer_grounded
+spec:
+  grounding:
+    required: true
+    min_top_score: 0.45
+    no_answer_behavior: fallback
+  output:
+    citations: required
+    max_answer_chars: 4000
+  memory:
+    long_term_enabled: false

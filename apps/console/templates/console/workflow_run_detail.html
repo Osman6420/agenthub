@@ -1,0 +1,175 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub Console{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:runs' %}">Çalıştırmalar</a><span>›</span><a href="{{ run.scenario_url }}">{{ run.scenario }}</a><span>›</span><span aria-current="page">Çalıştırma ayrıntısı</span></nav>
+<div class="card">
+  <h1>Workflow çalıştırması <span class="muted">#{{ run.id }}</span></h1>
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Çalıştırma özeti</caption>
+    <tbody>
+      <tr><th>Organizasyon</th><td>{{ run.org }}</td></tr>
+      <tr><th>Senaryo</th><td><a href="{{ run.scenario_url }}">{{ run.scenario }}</a></td></tr>
+      <tr><th>Durum</th><td><span class="badge">{{ run.status }}</span></td></tr>
+      <tr><th>Hata</th><td>{{ run.error|default:"-" }}</td></tr>
+      {% if run.awaiting_node %}<tr><th>Beklenen düğüm</th><td>{{ run.awaiting_node }}</td></tr>{% endif %}
+      <tr><th>Oluşturulma</th><td>{{ run.created }}</td></tr>
+      <tr><th>Başlama</th><td>{{ run.started|default:"-" }}</td></tr>
+      <tr><th>Tamamlanma</th><td>{{ run.finished|default:"-" }}</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted" style="font-size:13px;margin-top:12px">
+    Redacted, tenant-kapsamlı iz. Yalnız durum, neden kodu, hata sınıfı, sayaç, kısaltılmış
+    checksum/korelasyon ve zaman damgaları gösterilir; düğüm durumu, birleştirilmiş state,
+    bekleme payload'ı veya çalıştırma girdisi gösterilmez.
+  </p>
+</div>
+
+{% if can_cancel %}
+<div class="card">
+  <h2>Güvenli iptal</h2>
+  <p class="muted">İptal isteği çalışmayı zorla sonlandırmaz; kalıcı durum korunarak bir sonraki güvenli geçiş sınırında uygulanır.</p>
+  <form method="post" action="{% url 'console:workflow_run_cancel' run.id %}">
+    {% csrf_token %}
+    <button type="submit">İptal iste</button>
+  </form>
+</div>
+{% endif %}
+
+{% if can_recover %}
+<div class="card">
+  <h2>Recovery kararı</h2>
+  <p class="muted">Belirsiz dış yan etki yeniden çalıştırılmaz. Çalıştırmayı açıkça failed veya cancelled olarak kapatın.</p>
+  <form method="post" action="{% url 'console:workflow_run_recovery_decide' run.id %}" class="actions">
+    {% csrf_token %}
+    <button type="submit" name="decision" value="confirm_failed">Failed olarak kapat</button>
+    <button type="submit" name="decision" value="confirm_cancelled" class="secondary">Cancelled olarak kapat</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Paralel dallar</h2>
+  {% if branches %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Paralel dal denemeleri</caption>
+    <thead><tr><th>Bölge</th><th>Dal</th><th>Sıra</th><th>Durum</th><th>Deneme</th>
+      <th>Neden</th><th>Checksum</th><th>Başlama</th><th>Bitiş</th></tr></thead>
+    <tbody>
+      {% for b in branches %}
+      <tr><td>{{ b.region }}</td><td>{{ b.branch }}</td><td>{{ b.ordinal }}</td>
+        <td><span class="badge">{{ b.status }}</span></td><td>{{ b.attempts }}</td>
+        <td>{{ b.reason|default:"-" }}</td><td class="muted">{{ b.checksum|default:"-" }}</td>
+        <td>{{ b.started|default:"-" }}</td><td>{{ b.finished|default:"-" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Paralel dal yok.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Birleştirmeler (join)</h2>
+  {% if joins %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Join sonuçları</caption>
+    <thead><tr><th>Bölge</th><th>Join</th><th>Mod</th><th>Gerekli</th><th>Dal sayısı</th>
+      <th>Durum</th><th>Kapanma</th></tr></thead>
+    <tbody>
+      {% for j in joins %}
+      <tr><td>{{ j.region }}</td><td>{{ j.join }}</td><td>{{ j.mode }}</td>
+        <td>{{ j.required }}</td><td>{{ j.branches }}</td>
+        <td><span class="badge">{{ j.status }}</span></td><td>{{ j.closed|default:"-" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Join yok.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Beklemeler (wait)</h2>
+  {% if waits %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Bekleme durumları</caption>
+    <thead><tr><th>Tür</th><th>Düğüm</th><th>Durum</th><th>Korelasyon</th>
+      <th>Süre sonu</th><th>Eskalasyon</th><th>Tüketim</th></tr></thead>
+    <tbody>
+      {% for w in waits %}
+      <tr><td>{{ w.kind }}</td><td>{{ w.node }}</td>
+        <td><span class="badge">{{ w.status }}</span></td>
+        <td class="muted">{{ w.correlation|default:"-" }}</td><td>{{ w.deadline }}</td>
+        <td>{{ w.escalated|default:"-" }}</td><td>{{ w.consumed|default:"-" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Bekleme yok.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Düğüm denemeleri (retry)</h2>
+  {% if attempts %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Düğüm deneme kayıtları</caption>
+    <thead><tr><th>Düğüm</th><th>Sıra</th><th>Durum</th><th>Hata sınıfı</th>
+      <th>Neden</th><th>Sonraki deneme</th><th>Bitiş</th></tr></thead>
+    <tbody>
+      {% for a in attempts %}
+      <tr><td>{{ a.node }}</td><td>{{ a.ordinal }}</td>
+        <td><span class="badge">{{ a.status }}</span></td><td>{{ a.failure_class|default:"-" }}</td>
+        <td>{{ a.reason|default:"-" }}</td><td>{{ a.retry_not_before|default:"-" }}</td>
+        <td>{{ a.finished|default:"-" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Yeniden deneme kaydı yok.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Telafi (compensation)</h2>
+  {% if compensations %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Telafi kayıtları</caption>
+    <thead><tr><th>#</th><th>Kaynak düğüm</th><th>Telafi düğümü</th><th>Durum</th>
+      <th>Deneme</th><th>Neden</th><th>Bitiş</th></tr></thead>
+    <tbody>
+      {% for c in compensations %}
+      <tr><td>{{ c.sequence }}</td><td>{{ c.source }}</td><td>{{ c.compensation }}</td>
+        <td><span class="badge">{{ c.status }}</span></td><td>{{ c.attempts }}</td>
+        <td>{{ c.reason|default:"-" }}</td><td>{{ c.finished|default:"-" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Telafi kaydı yok.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Çocuk çalıştırmalar</h2>
+  {% if children %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Ebeveyn/çocuk bağlantıları</caption>
+    <thead><tr><th>Çağrı yeri</th><th>Derinlik</th><th>Tür</th><th>Durum</th><th>Neden</th></tr></thead>
+    <tbody>
+      {% for link in children %}
+      <tr><td>{{ link.call_site }}</td><td>{{ link.depth }}</td><td>{{ link.kind }}</td>
+        <td><span class="badge">{{ link.status }}</span></td><td>{{ link.reason|default:"-" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Çocuk çalıştırma yok.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Olay kaydı</h2>
+  {% if events %}
+  <div class="table-scroll"><table>
+    <caption class="sr-only">Append-only olay kaydı</caption>
+    <thead><tr><th>#</th><th>Olay</th><th>Düğüm</th></tr></thead>
+    <tbody>
+      {% for e in events %}
+      <tr><td>{{ e.sequence }}</td><td>{{ e.event_type }}</td><td>{{ e.node|default:"-" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Olay kaydı yok.</p>{% endif %}
+</div>
+
+<div class="actions"><a href="{% url 'console:workflow_runs' %}">← Tüm workflow çalıştırmaları</a></div>
+{% endblock %}

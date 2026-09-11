@@ -1,0 +1,18 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:scenarios' %}">Senaryolar</a><span>›</span><span>Release'ler</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Yayın yönetimi</p><h1>Release'ler</h1><p class="muted">Yalnız exact erişiminizdeki immutable release'ler. Lifecycle işlemleri release detayında yeniden yetkilendirilir.</p></div></div>
+<section class="card">
+  {% if rows %}<div class="table-scroll"><table><caption class="sr-only">Yetki kapsamındaki release'ler</caption>
+    <thead><tr><th>Release</th><th>Senaryo</th><th>Durum</th><th>Runtime</th><th>Manifest</th><th>Yetki</th></tr></thead>
+    <tbody>{% for row in rows %}<tr data-href="{% url 'console:release_detail' row.release.id %}">
+      <td><a href="{% url 'console:release_detail' row.release.id %}">#{{ row.release.id }}</a></td>
+      <td><a href="{% url 'console:scenario_detail_public' row.release.scenario.public_id %}">{{ row.release.scenario.name }}</a></td>
+      <td><span class="badge {{ row.release.status }}">{{ row.release.get_status_display }}</span></td>
+      <td>{{ row.release.runtime_version }}</td><td class="mono">{{ row.release.artifact_manifest_sha256|slice:':12' }}</td>
+      <td>{% if row.can_manage %}<span class="access-ok">Release manager</span>{% else %}<span class="muted">Salt okunur</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% else %}<div class="empty">Etkin organizasyonda erişebildiğiniz release yok. Senaryo sayfasından release hazırlama akışına gidin.</div>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,13 @@
+{% extends "console/base.html" %}
+{% block title %}{{ action_label }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:organization_detail' consumer.organization.slug %}">{{ consumer.organization.name }}</a><span>›</span><a href="{% url 'console:consumer_detail_public' consumer.public_id %}">{{ consumer.name }}</a><span>›</span><span>{{ action_label }}</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Bearer kimlik bilgisi</p><h1>{{ action_label }}</h1></div></div>
+<section class="card">
+  <div class="warning-box"><strong>Bu gizli değer yalnız bir kez gösterilir.</strong> Şimdi onaylı gizli-değer kasanıza kaydedin. Bu sayfadan ayrıldıktan sonra geri getirilemez; gerekirse tokenı döndürün.</div>
+  <dl><dt>İstemci</dt><dd>{{ consumer.name }}</dd><dt>Token adı</dt><dd>{{ token_name }}</dd></dl>
+  <label for="issued-token">Bearer token</label>
+  <textarea id="issued-token" class="mono" rows="4" readonly autocomplete="off" spellcheck="false">{{ raw_token }}</textarea>
+  <p><a class="button" href="{% url 'console:consumer_detail_public' consumer.public_id %}">İstemci detayına dön</a></p>
+</section>
+{% endblock %}

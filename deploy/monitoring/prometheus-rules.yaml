@@ -1,0 +1,83 @@
+groups:
+  - name: agenthub-sprint7
+    rules:
+      - alert: AgentHubGatewayHighErrorRate
+        expr: >-
+          sum(rate(agenthub_gateway_requests_total{status="server_error"}[5m]))
+          / clamp_min(sum(rate(agenthub_gateway_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: AgentHub gateway server error rate is above 5%
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#gateway-errors
+      - alert: AgentHubGatewayHighLatency
+        expr: >-
+          histogram_quantile(0.95,
+          sum by (le, transport, operation)
+          (rate(agenthub_gateway_request_duration_seconds_bucket[5m]))) > 2
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: AgentHub p95 latency is above two seconds
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#latency
+      - alert: AgentHubMcpDeniedSpike
+        expr: >-
+          sum(rate(agenthub_gateway_requests_total{transport="mcp",status="denied"}[10m])) > 1
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: MCP authorization denials are elevated
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#mcp-denials
+      - alert: AgentHubIngestionWorkerUnavailable
+        expr: agenthub_ingestion_worker_compatible == 0
+        for: 5m
+        labels: {severity: ticket}
+        annotations:
+          summary: No recent contract/config-compatible ingestion worker is visible
+          runbook_url: docs/manual-testing-guide.md#0-bring-up-the-stack
+      - alert: AgentHubSuperadminActivity
+        expr: increase(agenthub_superadmin_events_total[2m]) > 0
+        for: 0m
+        labels: {severity: page}
+        annotations:
+          summary: Exceptional superadmin identity was used
+          runbook_url: docs/operations/superadmin-recovery.md
+  - name: agenthub-p2-6-11-orchestration
+    rules:
+      - alert: AgentHubQueueSaturation
+        expr: agenthub_ingestion_oldest_queue_age_seconds > 900
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: Oldest queued work has waited over 15 minutes (queue saturation)
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#queue-saturation
+      - alert: AgentHubStuckWaits
+        expr: sum(rate(agenthub_workflow_waits_total{phase="expired"}[15m])) > 0.05
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: Durable workflow waits are expiring instead of resuming
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#stuck-waits
+      - alert: AgentHubRetryStorm
+        expr: sum(rate(agenthub_workflow_retries_total[5m])) > 1
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: Workflow node retries are elevated (possible retry storm)
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#retry-storm
+      - alert: AgentHubCompensationFailure
+        expr: sum(rate(agenthub_workflow_compensations_total{outcome="blocked"}[15m])) > 0
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: A workflow compensation is blocked and needs operator recovery
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#compensation-failure
+      - alert: AgentHubBudgetKillSwitch
+        expr: >-
+          sum(rate(agenthub_agent_runs_total{status="failed"}[10m]))
+          / clamp_min(sum(rate(agenthub_agent_runs_total[10m])), 0.001) > 0.25
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: Agent runs are failing at an elevated rate (budget/kill-switch activity)
+          runbook_url: docs/operations/sprint-7-observability-runbook.md#budget-kill-switch

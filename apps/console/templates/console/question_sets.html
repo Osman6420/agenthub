@@ -1,0 +1,45 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{% url 'console:dashboard' %}">{{ organization.name }}</a><span>›</span><span>Soru setleri</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Evaluation workspace</p><h1>Soru setleri</h1><p class="muted">Retrieval ve cevap kalitesini ayrı ölçen, exact-version olarak yeniden kullanılabilir benchmark'lar.</p></div></div>
+
+<section class="card">
+  <h2>Mevcut setler</h2>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Ad</th><th>Taslak</th><th>Yayımlanmış sürüm</th><th>Durum</th></tr></thead>
+    <tbody>
+    {% for item in question_sets %}
+      <tr>
+        <td><a href="{% url 'console:question_set_detail' item.public_id %}">{{ item.name }}</a></td>
+        <td>rev {{ item.draft_revision }} · {{ item.draft_cases|length }} vaka</td>
+        <td>{{ item.versions.first.version|default:"—" }}</td>
+        <td><span class="badge {{ item.status }}">{{ item.get_status_display }}</span></td>
+      </tr>
+    {% empty %}<tr><td colspan="4" class="empty">Henüz soru seti yok.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+{% if can_write %}
+<section class="card form-card">
+  <h2>Yeni soru seti taslağı</h2>
+  <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Taslak oluştur</button></form>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Son değerlendirmeler</h2>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Soru seti</th><th>Tür</th><th>Durum</th><th>İlerleme</th><th>Sonuç</th></tr></thead>
+    <tbody>{% for run in runs %}
+      <tr>
+        <td>{{ run.question_set_version.question_set.name }} v{{ run.question_set_version.version }}</td>
+        <td>{{ run.get_kind_display }}</td><td><span class="badge {{ run.status }}">{{ run.get_status_display }}</span></td>
+        <td>{{ run.completed_cases }}/{{ run.total_cases }}</td>
+        <td><a href="{% url 'console:question_evaluation_detail' run.public_id %}">Aç</a></td>
+      </tr>
+    {% empty %}<tr><td colspan="5" class="empty">Değerlendirme çalışması yok.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

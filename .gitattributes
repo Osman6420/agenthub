@@ -1,0 +1,10 @@
+# Normalize line endings to LF in the repository (the app runs in Linux
+# containers). Prevents CRLF/LF churn across Windows and Linux checkouts.
+* text=auto eol=lf
+
+# Binary types Git should not touch.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary

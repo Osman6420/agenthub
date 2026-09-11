@@ -1,0 +1,24 @@
+{% extends "console/base.html" %}
+{% block title %}Giriş · AgentHub{% endblock %}
+{% block content %}
+<div class="card login">
+  <p class="eyebrow">AgentHub</p>
+  <h1>Operatör girişi</h1>
+  <p class="muted" style="font-size:13px">
+    {% if ldap_enabled %}Kurumsal dizin (LDAP) bilgilerinizle giriş yapın.
+    {% else %}Bu ortamda LDAP kapalıdır; yerel hesabınızla giriş yapın.{% endif %}
+  </p>
+  {% if form.errors %}
+    <p class="msg error" role="alert">Kullanıcı adı veya parola geçersiz.</p>
+  {% endif %}
+  <form method="post">
+    {% csrf_token %}
+    <label for="id_username">Kullanıcı adı</label>
+    {{ form.username }}
+    <label for="id_password">Parola</label>
+    {{ form.password }}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit">Giriş yap</button>
+  </form>
+</div>
+{% endblock %}

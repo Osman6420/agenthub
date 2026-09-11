@@ -1,0 +1,142 @@
+releaseId: ""
+nameOverride: ""
+fullnameOverride: ""
+rolloutNonce: ""
+
+imagePullSecrets: []
+
+databaseInitialization:
+  # hooks: managed/external database exists before Helm install.
+  # jobs: bundled database is created by the same release; Jobs are Helm-managed per revision.
+  mode: hooks
+  timeoutSeconds: 900
+  probeImage:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+
+images:
+  application:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  static:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+
+route:
+  enabled: true
+  host: ""
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+objectStore:
+  endpoint: ""
+  bucket: ""
+  region: us-east-1
+  allowInsecureHttp: false
+
+provider:
+  model:
+    logicalId: primary-chat
+    revision: 1
+    host: ""
+    port: 443
+    path: /v1/chat/completions
+    name: ""
+  embedding:
+    logicalId: primary-embedding
+    revision: 1
+    host: ""
+    port: 443
+    path: /v1/embeddings
+    name: ""
+    dimensions: 1024
+    indexType: vector
+
+bootstrap:
+  enabled: true
+  actor: platform-recovery
+
+migration:
+  enabled: true
+
+existingSecrets:
+  web: agenthub-web-secrets
+  runtime: agenthub-runtime-secrets
+  ingestion: agenthub-ingestion-secrets
+  beat: agenthub-beat-secrets
+  migration: agenthub-migration-secrets
+  bootstrap: agenthub-bootstrap-credentials
+
+web:
+  replicas: 2
+  resources:
+    requests: {cpu: 250m, memory: 512Mi, ephemeral-storage: 128Mi}
+    limits: {cpu: "2", memory: 2Gi, ephemeral-storage: 512Mi}
+  tmpSizeLimit: 512Mi
+
+runtimeWorker:
+  replicas: 1
+  concurrency: 2
+  resources:
+    requests: {cpu: 250m, memory: 512Mi, ephemeral-storage: 128Mi}
+    limits: {cpu: "2", memory: 2Gi, ephemeral-storage: 512Mi}
+  tmpSizeLimit: 512Mi
+
+ingestionWorker:
+  replicas: 1
+  concurrency: 2
+  resources:
+    requests: {cpu: 250m, memory: 512Mi, ephemeral-storage: 256Mi}
+    limits: {cpu: "2", memory: 2Gi, ephemeral-storage: 1Gi}
+  tmpSizeLimit: 1Gi
+
+evalWorker:
+  replicas: 1
+  concurrency: 1
+  resources:
+    requests: {cpu: 200m, memory: 384Mi, ephemeral-storage: 128Mi}
+    limits: {cpu: "1", memory: 1Gi, ephemeral-storage: 512Mi}
+  tmpSizeLimit: 512Mi
+
+beat:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi, ephemeral-storage: 64Mi}
+    limits: {cpu: 500m, memory: 512Mi, ephemeral-storage: 256Mi}
+  tmpSizeLimit: 256Mi
+
+static:
+  replicas: 2
+  resources:
+    requests: {cpu: 25m, memory: 32Mi, ephemeral-storage: 16Mi}
+    limits: {cpu: 250m, memory: 128Mi, ephemeral-storage: 64Mi}
+  tmpSizeLimit: 64Mi
+
+hookResources:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi, ephemeral-storage: 64Mi}
+    limits: {cpu: "1", memory: 1Gi, ephemeral-storage: 256Mi}
+  tmpSizeLimit: 256Mi
+
+networkPolicy:
+  enabled: true
+  ingressNamespaceLabels:
+    network.openshift.io/policy-group: ingress
+  monitoringNamespaceLabels:
+    openshift.io/cluster-monitoring: "true"
+
+externalDemo:
+  enabled: false
+  image:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  routeHost: ""
+  credentialsSecret: agenthub-external-demo-credentials
+  resources:
+    requests: {cpu: 50m, memory: 64Mi, ephemeral-storage: 16Mi}
+    limits: {cpu: 500m, memory: 256Mi, ephemeral-storage: 64Mi}
+  tmpSizeLimit: 64Mi

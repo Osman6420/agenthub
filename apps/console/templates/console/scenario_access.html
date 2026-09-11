@@ -1,0 +1,35 @@
+{% extends "console/base.html" %}
+{% block title %}Erişim · {{ scenario.name }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu">
+  <a href="{% url 'console:project_detail_public' scenario.project.public_id %}">{{ scenario.project.name }}</a><span>›</span>
+  {% if can_view_scenario %}<a href="{% url 'console:scenario_detail_public' scenario.public_id %}">{{ scenario.name }}</a>{% else %}<span>{{ scenario.name }}</span>{% endif %}
+  <span>›</span><span>Erişim</span>
+</nav>
+<div class="page-heading"><div><p class="eyebrow">Senaryo erişimi</p><h1>{{ scenario.name }}</h1><p>Mevcut düzen: <strong>{{ scenario.get_access_mode_display }}</strong></p></div></div>
+<p class="notice">Proje yöneticisi özel senaryonun erişimini yönetebilir ve kendisini açık atamayla ekleyebilir. Özel erişim, proje yöneticisinden mutlak gizlilik sağlamaz. Doküman okuma ve araç onaylama izinleri ayrıca yönetilir.</p>
+{% if error %}<div class="warning-box" role="alert">{{ error }}</div>{% endif %}
+{% if preview %}
+<section class="card" aria-labelledby="preview-title">
+  <h2 id="preview-title">Değişiklik önizlemesi</h2><p>Yeni düzen: <strong>{{ target_mode }}</strong></p>
+  <p>Henüz erişim değişmedi. Aşağıdaki değişiklikler uygulandığında yürürlüğe girecek. Önizleme 10 dakika geçerlidir.</p>
+  <div class="table-scroll"><table><thead><tr><th>Kullanıcı</th><th>Kazanacağı yetkiler</th><th>Kaybedeceği yetkiler</th></tr></thead><tbody>
+  {% for row in changes %}<tr><td>{{ row.username }}</td><td>{{ row.gained|join:", "|default:"—" }}</td><td>{{ row.lost|join:", "|default:"—" }}</td></tr>{% empty %}<tr><td colspan="3">Mevcut kullanıcıların etkin işlem yetkileri değişmiyor.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if grant_rows %}<h3>Özel erişim atamaları</h3><ul>{% for row in grant_rows %}<li>{{ row.username }} — {{ row.role }} · {% if row.expires_at %}{{ row.expires_at|date:"d.m.Y H:i" }} tarihine kadar{% else %}Süresiz{% endif %}</li>{% endfor %}</ul>{% endif %}
+  <p>Bağımsız yayın, operasyon ve onay görevleri korunur. Atama sürelerini de kontrol edin.</p>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="apply"><input type="hidden" name="preview_token" value="{{ preview.token }}"><button class="button primary" type="submit">Bu değişiklikleri uygula</button></form>
+</section>
+{% endif %}
+{% if form %}<section class="card form-card"><h2>Erişimi düzenle</h2>
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="preview">
+  {{ form.non_field_errors }}<p>{{ form.mode.label_tag }} {{ form.mode }} {{ form.mode.errors }}</p>
+  <p>Projeden devralmada temel roller projeden gelir. Özel erişimde yalnız aşağıda seçtiğiniz kişiler temel rol alır. Yeni atamalar süresizdir; aynı kişi ve rolün mevcut bitiş zamanı korunur ve önizlemede gösterilir.</p>
+  <details {% if form.mode.value == 'private' %}open{% endif %}><summary>Özel erişim için kişileri seç</summary>
+    <div class="table-scroll"><table><thead><tr><th>Kullanıcı</th><th>Temel rol</th></tr></thead><tbody>
+    {% for field in member_fields %}<tr><td>{{ field.label_tag }}</td><td>{{ field }} {{ field.errors }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </details>
+  <p><button class="button {% if preview %}secondary{% else %}primary{% endif %}" type="submit">Değişiklikleri önizle</button> <a href="{% url 'console:project_detail_public' scenario.project.public_id %}">Projeye dön</a></p>
+</form></section>{% endif %}
+{% endblock %}

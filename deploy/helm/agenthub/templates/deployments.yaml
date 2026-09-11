@@ -1,0 +1,327 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agenthub.fullname" . }}-web
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "web") | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "web") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+      annotations:
+        checksum/config: {{ include "agenthub.configData" . | sha256sum }}
+        agenthub.io/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+    spec:
+      serviceAccountName: {{ include "agenthub.fullname" . }}-web
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.web) | nindent 8 }}
+      containers:
+        - name: web
+          image: {{ include "agenthub.applicationImage" . | quote }}
+          imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+          command: [python, -m, uvicorn]
+          args: [config.asgi:application, --host, 0.0.0.0, --port, "8000", --proxy-headers, --forwarded-allow-ips, "*"]
+          envFrom:
+            - configMapRef: {name: {{ include "agenthub.fullname" . }}-config}
+            - secretRef: {name: {{ .Values.existingSecrets.web | quote }}}
+          env:
+            - {name: HOME, value: /tmp}
+          ports:
+            - {name: http, containerPort: 8000}
+          startupProbe:
+            httpGet:
+              path: /v1/health/live
+              port: http
+              httpHeaders:
+                - {name: Host, value: {{ printf "%s-web" (include "agenthub.fullname" .) | quote }}}
+                - {name: X-Forwarded-Proto, value: https}
+            periodSeconds: 5
+            failureThreshold: 24
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: http
+              httpHeaders:
+                - {name: Host, value: {{ printf "%s-web" (include "agenthub.fullname" .) | quote }}}
+                - {name: X-Forwarded-Proto, value: https}
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /v1/health/live
+              port: http
+              httpHeaders:
+                - {name: Host, value: {{ printf "%s-web" (include "agenthub.fullname" .) | quote }}}
+                - {name: X-Forwarded-Proto, value: https}
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.web.tmpSizeLimit | quote }}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agenthub.fullname" . }}-worker-runtime
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "runtime") | nindent 4 }}
+spec:
+  replicas: {{ .Values.runtimeWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "runtime") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "runtime") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+      annotations:
+        checksum/config: {{ include "agenthub.configData" . | sha256sum }}
+        agenthub.io/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+    spec:
+      serviceAccountName: {{ include "agenthub.fullname" . }}-runtime
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.runtime) | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "agenthub.applicationImage" . | quote }}
+          imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+          command: [celery, -A, config.celery, worker]
+          args: [-Q, runtime, -l, INFO, --concurrency, {{ .Values.runtimeWorker.concurrency | quote }}, --pidfile, /tmp/celery-runtime.pid]
+          envFrom:
+            - configMapRef: {name: {{ include "agenthub.fullname" . }}-config}
+            - secretRef: {name: {{ .Values.existingSecrets.runtime | quote }}}
+          env: [{name: HOME, value: /tmp}]
+          resources:
+            {{- toYaml .Values.runtimeWorker.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.runtimeWorker.tmpSizeLimit | quote }}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agenthub.fullname" . }}-worker-ingestion
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "ingestion") | nindent 4 }}
+spec:
+  replicas: {{ .Values.ingestionWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "ingestion") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "ingestion") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+      annotations:
+        checksum/config: {{ include "agenthub.configData" . | sha256sum }}
+        agenthub.io/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+    spec:
+      serviceAccountName: {{ include "agenthub.fullname" . }}-ingestion
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.ingestion) | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "agenthub.applicationImage" . | quote }}
+          imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+          command: [celery, -A, config.celery, worker]
+          args: [-Q, ingestion, -l, INFO, --concurrency, {{ .Values.ingestionWorker.concurrency | quote }}, --pidfile, /tmp/celery-ingestion.pid]
+          envFrom:
+            - configMapRef: {name: {{ include "agenthub.fullname" . }}-config}
+            - secretRef: {name: {{ .Values.existingSecrets.ingestion | quote }}}
+          env: [{name: HOME, value: /tmp}]
+          resources:
+            {{- toYaml .Values.ingestionWorker.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.ingestionWorker.tmpSizeLimit | quote }}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agenthub.fullname" . }}-worker-eval
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "eval") | nindent 4 }}
+spec:
+  replicas: {{ .Values.evalWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "eval") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "eval") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+      annotations:
+        checksum/config: {{ include "agenthub.configData" . | sha256sum }}
+        agenthub.io/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+    spec:
+      serviceAccountName: {{ include "agenthub.fullname" . }}-eval
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.runtime) | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "agenthub.applicationImage" . | quote }}
+          imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+          command: [celery, -A, config.celery, worker]
+          args: [-Q, eval, -l, INFO, --concurrency, {{ .Values.evalWorker.concurrency | quote }}, --pidfile, /tmp/celery-eval.pid]
+          envFrom:
+            - configMapRef: {name: {{ include "agenthub.fullname" . }}-config}
+            - secretRef: {name: {{ .Values.existingSecrets.runtime | quote }}}
+          env: [{name: HOME, value: /tmp}]
+          resources:
+            {{- toYaml .Values.evalWorker.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.evalWorker.tmpSizeLimit | quote }}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agenthub.fullname" . }}-beat
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "beat") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "beat") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "beat") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+      annotations:
+        checksum/config: {{ include "agenthub.configData" . | sha256sum }}
+        agenthub.io/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+    spec:
+      serviceAccountName: {{ include "agenthub.fullname" . }}-beat
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.deploymentDatabaseGateInit" (dict "root" . "secretName" .Values.existingSecrets.beat) | nindent 8 }}
+      containers:
+        - name: beat
+          image: {{ include "agenthub.applicationImage" . | quote }}
+          imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+          command: [celery, -A, config.celery, beat]
+          args: [-l, INFO, --schedule, /tmp/celerybeat-schedule, --pidfile, /tmp/celerybeat.pid]
+          envFrom:
+            - configMapRef: {name: {{ include "agenthub.fullname" . }}-config}
+            - secretRef: {name: {{ .Values.existingSecrets.beat | quote }}}
+          env: [{name: HOME, value: /tmp}]
+          resources:
+            {{- toYaml .Values.beat.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.beat.tmpSizeLimit | quote }}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agenthub.fullname" . }}-static
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "static") | nindent 4 }}
+spec:
+  replicas: {{ .Values.static.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" (dict "root" . "component" "static") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "static") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+      annotations:
+        agenthub.io/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+    spec:
+      serviceAccountName: {{ include "agenthub.fullname" . }}-static
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: static
+          image: {{ include "agenthub.staticImage" . | quote }}
+          imagePullPolicy: {{ .Values.images.static.pullPolicy }}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.static.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.static.tmpSizeLimit | quote }}}

@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ document.title|default:document.logical_id }} v{{ version.version }} · güvenli önizleme</title>
+  <style>body{margin:0;padding:24px;background:#f4f6f8;color:#18212f;font-family:system-ui,sans-serif}main{max-width:960px;margin:auto}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;border:1px solid #d8dee8;border-radius:10px;padding:18px;line-height:1.5}a{color:#075e58}:focus-visible{outline:3px solid #f4b740;outline-offset:3px}</style>
+</head>
+<body><main><p><a href="{% url 'console:document_set_document_detail' document_set.public_id document.public_id %}">Dokümana dön</a></p><h1>{{ document.title|default:document.logical_id }} · v{{ version.version }}</h1><p>Salt okunur, UTF-8 ve boyut sınırlandırılmış metin önizlemesi. Aktif içerik çalıştırılmaz.</p><pre>{{ content_text }}</pre></main></body>
+</html>

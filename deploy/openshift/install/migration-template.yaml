@@ -1,0 +1,59 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: agenthub-migration-restricted
+parameters:
+  - {name: APPLICATION_IMAGE, required: true}
+  - {name: RELEASE_ID, required: true}
+objects:
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: agenthub-migrate
+      labels: {app.kubernetes.io/part-of: agenthub}
+    automountServiceAccountToken: false
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: agenthub-migrate-${RELEASE_ID}
+      labels:
+        app.kubernetes.io/name: agenthub-migrate
+        app.kubernetes.io/part-of: agenthub
+        app.kubernetes.io/version: ${RELEASE_ID}
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: agenthub-migrate
+            app.kubernetes.io/part-of: agenthub
+        spec:
+          restartPolicy: Never
+          serviceAccountName: agenthub-migrate
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: migrate
+              image: ${APPLICATION_IMAGE}
+              imagePullPolicy: IfNotPresent
+              command: [python, manage.py, migrate, --noinput]
+              envFrom:
+                - configMapRef: {name: agenthub-config}
+                - secretRef: {name: agenthub-migration-secrets}
+              env:
+                - {name: HOME, value: /tmp}
+              resources:
+                requests: {cpu: 100m, memory: 256Mi, ephemeral-storage: 64Mi}
+                limits: {cpu: "1", memory: 1Gi, ephemeral-storage: 256Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: {drop: [ALL]}
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+              volumeMounts:
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: tmp
+              emptyDir: {sizeLimit: 256Mi}

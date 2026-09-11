@@ -1,0 +1,207 @@
+{% extends "console/base.html" %}
+{% load static document_labels %}
+{% block title %}{{ set.name }} · AgentHub{% endblock %}
+{% block content %}
+
+<div class="breadcrumbs"><a href="{% url 'console:organization_detail' organization.slug %}">{{ organization.name }}</a><span>›</span><a href="{% url 'console:documents' %}">Doküman setleri</a><span>›</span><span>{{ set.name }}</span></div>
+<div class="page-heading">
+  <div><p class="eyebrow">{{ set.org }} · Doküman seti</p><h1>{{ set.name }}</h1><details><summary>Set kimliği</summary><p class="muted mono">{{ set.logical_id }}</p></details></div>
+  <span class="badge {{ set.status }}">{{ set.status|document_label }}</span>
+</div>
+
+<nav class="task-tabs" aria-label="Doküman seti bölümleri">
+  <a href="#overview" aria-current="location">Genel</a>
+  <a href="#documents">Dokümanlar</a>
+  <a href="#versions">Sürümler ve indeks</a>
+  <a href="#sources">Kaynaklar</a>
+  <a href="#access">Erişim</a>
+</nav>
+
+<div class="summary-grid" id="overview">
+  <div class="summary-card"><span>Son set sürümü</span><strong>{% if latest_version %}v{{ latest_version.version }}{% else %}—{% endif %}</strong><small class="muted">{% if latest_version %}{{ latest_version.status|set_version_label }}{% else %}Henüz taslak yok{% endif %}</small></div>
+  <div class="summary-card"><span>Aktif indeks</span><strong>{% if active_index %}<a href="?version={{ active_index.document_set_version_id }}#index-version-{{ active_index.id }}">v{{ active_index.version }}</a>{% else %}—{% endif %}</strong><small class="muted">{% if active_index %}Set v{{ active_index.document_set_version.version }} · {{ active_index.chunk_count }} parça{% else %}Henüz kullanıma alınmadı{% endif %}</small></div>
+  <div class="summary-card"><span>Bağlı senaryo</span><strong>{{ bindings|length }}</strong><small class="muted">Veri bağları senaryo yayınında kaydedilir</small></div>
+</div>
+
+{% if can_quarantine %}
+<section class="card">
+  <h2>Veri alımını duraklat</h2>
+  <p class="muted">Karantina yeni kaynak yenilemelerini ve indeks hazırlama işlemlerini durdurur. Erişim izinlerini değiştirmez.</p>
+  <form method="post" action="{% url 'console:document_set_quarantine_change' set.public_id %}" class="actions">
+    {% csrf_token %}
+    <input type="hidden" name="reason" value="Operatör güvenlik incelemesi">
+    {% if set.status == "quarantined" %}
+      <button class="button secondary" type="submit" name="action" value="restore">Karantinadan çıkar</button>
+    {% else %}
+      <button class="button secondary" type="submit" name="action" value="quarantine">Karantinaya al</button>
+    {% endif %}
+  </form>
+</section>
+{% endif %}
+
+{% if can_evaluate and active_index %}
+<section class="card form-card">
+  <div class="section-heading"><div><p class="eyebrow">Tek seferlik test</p><h2>İndeksi dene</h2><p class="muted">Aktif sürümün indeksinin çalışıp çalışmadığını gösterir: sabit tanı ayarıyla (hibrit, en iyi 5) sorgular. Senaryonuz kendi arama profilini kullanır, dolayısıyla bu sonuç senaryonun davranışı değildir. Soru seti veya toplu değerlendirme sonucu oluşturmaz.</p></div><a class="button secondary" href="{% url 'console:question_sets' %}">Soru setleri</a></div>
+  <form method="post" action="{% url 'console:document_set_ask' set.public_id %}">{% csrf_token %}<label for="document-one-off-question">Soru</label><textarea id="document-one-off-question" name="question" rows="3" maxlength="4000" required></textarea><button type="submit">Belgelerde ara</button></form>
+</section>
+{% endif %}
+
+<div class="card" id="access">
+  {% if can_manage_shared_access %}<p><a href="{% url 'console:document_shared_access' set.public_id %}">Senaryoların ortak veri kullanımını yönet</a></p>{% endif %}
+  <div class="section-heading"><div><h2>Doküman seti erişimi</h2><p class="muted">Atanmış yöneticiler bu setin içerik ve indeks operasyonlarını yönetebilir.</p></div>{% if can_manage_access %}<a class="button secondary" href="{% url 'console:organization_members' %}">Erişimi yönet</a>{% endif %}</div>
+  {% for assignment in manager_assignments %}<div class="access-row"><strong>{{ assignment.membership.user.get_username }}</strong><span class="badge">{{ assignment.responsibility|document_label }}</span></div>{% empty %}<p class="muted">Atanmış doküman seti sorumluluğu yok.</p>{% endfor %}
+</div>
+
+<div class="card" id="documents">
+  <div class="section-heading"><div><h2>Uçtan uca yaşam döngüsü</h2><p class="muted">Her aşama mevcut durumu, engeli ve yetkiniz varsa yapılacak işlemi gösterir.</p></div></div>
+  {% for step in lifecycle_steps %}<div class="access-row"><div><strong>{{ forloop.counter }}. {{ step.label }}</strong><p class="muted">{{ step.detail }}</p></div>{% if step.complete %}<span class="access-ok">Hazır</span>{% else %}<span class="access-missing">Bekliyor</span>{% endif %}{% if step.action %}{% if step.action.type == 'post' %}<form class="inline" method="post" action="{{ step.action.url }}">{% csrf_token %}<button class="button primary" type="submit">{{ step.action.label }}</button></form>{% else %}<a class="step-jump" href="{{ step.action.href }}">{{ step.action.label }} ↓</a>{% endif %}{% else %}<span></span>{% endif %}</div>{% endfor %}
+</div>
+
+{% if can_write %}
+<div class="card">
+  <div class="section-heading"><div><h2>Toplu doküman yükle</h2><p class="muted">Dosya adından başlık ve kalıcı kimlik üretilir; yükleme son taslağı günceller, yayına çıkmaz.</p></div></div>
+  <form class="form-card" method="post" action="{% url 'console:document_set_bulk_upload_public' set.public_id %}" enctype="multipart/form-data">
+    {% csrf_token %}
+    <label for="{{ bulk_upload_form.uploads.id_for_label }}">Yüklenecek dosyalar</label>
+    {{ bulk_upload_form.uploads }}
+    <p class="muted">Tek seferde en fazla {{ max_batch_files }} dosya. Desteklenen türler: PDF, DOCX, XLSX, TXT, Markdown, CSV, HTML ve JSON.</p>
+    <button type="submit">Dosyaları taslağa ekle</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card" id="versions">
+  {% if can_write %}<p><a class="button secondary" href="{% url 'console:document_set_preparation_settings' set.public_id %}">Hazırlama ayarlarını düzenle</a></p>{% endif %}
+  <div class="section-heading">
+    <div><h2>İçerik ve indeks yaşam döngüsü</h2><p class="muted">Yükleme → taslak → hazırlamaya hazır sürüm → indeks hazırlama → kullanıma alma.</p></div>
+    {% if can_write and current_version and not current_version.is_draft %}
+    <form method="post" action="{% url 'console:document_set_version_branch' current_version.id %}">{% csrf_token %}<button class="button primary" type="submit">Bu sürümden yeni sürüm hazırla</button></form>
+    {% endif %}
+  </div>
+  {% if can_write and current_version and not current_version.is_draft %}
+  <p class="muted">Yayımlanmış bir sürüm değişmez. “Bu sürümden yeni sürüm hazırla” dokümanlarını
+    kopyalayarak taslak açar; tek bir dokümanı veya ayarı değiştirip hemen yayımlayabilirsiniz.</p>
+  {% endif %}
+
+  {% with v=current_version %}
+  {% if v %}
+  <div class="relationship-card" id="set-version-{{ v.id }}">
+    <div class="relationship-head">
+      <div><h3>{% if latest_version and v.id == latest_version.id %}Güncel {% endif %}set sürümü v{{ v.version }}</h3><p class="muted">{{ v.member_total }} doküman sürümü</p></div>
+      <div class="status-stack"><span class="badge {{ v.status }}">{{ v.status|set_version_label }}</span></div>
+    </div>
+    <div class="relationship-body">
+      <div>
+        <h4>Dokümanlar</h4>
+        <form class="compact-form" method="get" action="#set-version-{{ v.id }}">
+          <input type="hidden" name="version" value="{{ v.id }}">
+          <label for="member-search">Bu sürümde doküman ara</label>
+          <div class="field-row"><input id="member-search" name="member_q" value="{{ v.member_query }}" maxlength="200" type="search"><button class="button secondary" type="submit">Ara</button></div>
+        </form>
+        {% for m in v.members %}<div class="access-row"><div>{% if m.can_view_detail %}<a href="{% url 'console:document_set_document_detail' set.public_id m.public_id %}"><strong>{{ m.title|default:m.logical_id }}</strong></a>{% else %}<strong>{{ m.title|default:m.logical_id }}</strong>{% endif %}<p><span class="mono">{{ m.logical_id }}</span> <span class="badge">v{{ m.version }}</span> <span class="badge {{ m.parse_status }}">{{ m.parse_status|document_label }}</span>{% if m.tombstoned %} <span class="badge disabled">Kullanımdan kaldırıldı</span>{% endif %}</p></div><span></span>{% if can_write and v.can_edit_members %}<form method="post" action="{% url 'console:document_set_remove_member' v.id m.membership_id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Taslak sürümden çıkar</button></form>{% endif %}</div>{% empty %}<p class="muted">{% if v.member_query %}Aramanızla eşleşen doküman bulunamadı.{% else %}Bu sürüm boş.{% endif %}</p>{% endfor %}
+        {% if v.members_page.has_other_pages %}<nav class="actions" aria-label="Doküman sayfaları">
+          {% if v.members_page.has_previous %}<a href="?version={{ v.id }}&amp;member_q={{ v.member_query|urlencode }}&amp;member_page={{ v.members_page.previous_page_number }}#set-version-{{ v.id }}">Önceki</a>{% endif %}
+          <span>{{ v.members_page.number }} / {{ v.members_page.paginator.num_pages }} · {{ v.members_page.paginator.count }} sonuç</span>
+          {% if v.members_page.has_next %}<a href="?version={{ v.id }}&amp;member_q={{ v.member_query|urlencode }}&amp;member_page={{ v.members_page.next_page_number }}#set-version-{{ v.id }}">Sonraki</a>{% endif %}
+        </nav>{% endif %}
+        {% if v.is_draft and not v.can_edit_members %}<p class="notice">Bu belge sürümü tamamlanmış bir kaynak yenilemesine aittir; belgeleri burada değiştirilemez. Hazırlamayı kaynaklar ekranından başlatabilirsiniz.</p>{% endif %}
+        {% if can_write and v.can_edit_members %}
+        <form class="compact-form" method="get" action="#set-version-{{ v.id }}">
+          <input type="hidden" name="version" value="{{ v.id }}">
+          <label for="existing-document-search">Eklenecek dokümanı ara</label>
+          <div class="field-row"><input id="existing-document-search" name="document_q" value="{{ document_query }}" maxlength="200" type="search"><button class="button secondary" type="submit">Ara</button></div>
+          <p class="muted">Okuma izniniz olan dokümanlardan en fazla 100 sonuç gösterilir. Sonuçları daraltmak için arama yapın.</p>
+        </form>
+        {% if candidate_docs %}
+        <form class="compact-form" method="post" action="{% url 'console:document_set_add_member' v.id %}">
+          {% csrf_token %}<label for="document-{{ v.id }}">Mevcut dokümanı ekle</label><div class="field-row"><select id="document-{{ v.id }}" name="document_id" required>{% for d in candidate_docs %}<option value="{{ d.id }}">{{ d.logical_id }} (v{{ d.version }})</option>{% endfor %}</select><button class="button secondary" type="submit">Ekle</button></div>
+        </form>
+        {% else %}<p class="muted">Eklenebilecek doküman bulunamadı.</p>{% endif %}
+        {% endif %}
+        {% if can_write and v.is_draft %}
+        <form method="post" action="{% url 'console:document_set_version_publish' v.id %}" style="margin-top:12px;">{% csrf_token %}<button class="button primary" type="submit">Taslağı yayımla</button></form>
+        {% endif %}
+      </div>
+      <div id="build" data-profile-publish-url="{{ profile_artifact_publish_url }}">
+        <h4>İndeksler</h4>
+        {% for index in v.indexes %}
+        <div class="access-row" id="index-version-{{ index.id }}"><div><strong>{{ index.profile }}</strong><p class="muted">İndeks v{{ index.version }} · {{ index.documents }} doküman · {{ index.chunks }} parça{% if index.reused_documents %} · {{ index.reused_documents }} yeniden kullanıldı{% endif %}</p>{% if index.affected_active_scenarios %}<p class="notice">Bu işlem şu aktif senaryoların belge aramasını etkileyecek: {{ index.affected_active_scenarios|join:", " }}.</p>{% endif %}</div><span class="badge {{ index.status }}">{{ index.status|document_label }}</span>{% if index.can_promote %}<form method="post" action="{% url 'console:document_set_promote_index' index.id %}">{% csrf_token %}{% if index.affected_active_scenarios %}<label><input type="checkbox" name="confirm_active_release_impact" value="1" required> Etkilenen senaryolar olsa bile aktif et</label>{% endif %}<button class="button primary" type="submit">Aktif et</button></form>{% endif %}</div>
+        {% empty %}<p class="muted">Bu set sürümü için indeks yok.</p>{% endfor %}
+        {% if v.indexes_page.has_other_pages %}<nav class="actions" aria-label="İndeks sayfaları">
+          {% if v.indexes_page.has_previous %}<a href="?version={{ v.id }}&amp;index_page={{ v.indexes_page.previous_page_number }}#build">Önceki</a>{% endif %}
+          <span>{{ v.indexes_page.number }} / {{ v.indexes_page.paginator.num_pages }}</span>
+          {% if v.indexes_page.has_next %}<a href="?version={{ v.id }}&amp;index_page={{ v.indexes_page.next_page_number }}#build">Sonraki</a>{% endif %}
+        </nav>{% endif %}
+
+        {% for job in v.jobs %}
+        <div class="access-row"><div><strong>{{ job.label }}</strong><p class="muted">{{ job.documents }} doküman · {{ job.chunks }} parça · deneme {{ job.attempt }}/{{ job.max_attempts }}{% if job.error_code %} · {{ job.error_code }}{% endif %}</p><small class="muted">{{ job.next }}</small></div><span class="badge {{ job.status }}">{{ job.label }}</span><div>{% if job.can_cancel %}<form class="inline" method="post" action="{% url 'console:document_set_cancel_build_job' job.public_id %}">{% csrf_token %}<button class="button ghost danger" type="submit">İptal et</button></form>{% endif %}{% if job.can_retry %}<form class="inline" method="post" action="{% url 'console:document_set_retry_build_job' job.public_id %}">{% csrf_token %}<button class="button secondary" type="submit">Yeniden dene</button></form>{% endif %}</div></div>
+        {% empty %}<p class="muted">Kalıcı indeks işi henüz yok.</p>{% endfor %}
+
+        {% if can_write and v.can_build %}
+        <form class="compact-form" method="post" action="{% url 'console:document_set_build_index' v.id %}">
+          {% csrf_token %}
+          <div class="profile-field" data-profile-field><label for="{{ build_form.embedding_profile.id_for_label }}">Embedding profili</label>{{ build_form.embedding_profile }}{% include "console/document_profile_inspector.html" with label="Embedding profili" items=build_profile_details.embedding platform_managed=True platform_profile_manage_url=platform_profile_manage_url %}</div>
+          <div class="profile-field" data-profile-field data-artifact-type="chunking_profile"><label for="{{ build_form.chunking_profile.id_for_label }}" style="margin-top:8px;">Parçalama profili</label>{{ build_form.chunking_profile }}{% include "console/document_profile_inspector.html" with label="Parçalama profili" items=build_profile_details.chunking authorable=True artifact_type="chunking_profile" new_body_json=document_profile_new_bodies.chunking_profile form_schema=profile_schemas.chunking_profile %}</div>
+          <div class="profile-field" data-profile-field><label for="{{ build_form.ocr_profile.id_for_label }}" style="margin-top:8px;">OCR profili</label>{{ build_form.ocr_profile }}{% include "console/document_profile_inspector.html" with label="OCR profili" items=build_profile_details.ocr platform_managed=True platform_profile_manage_url=platform_profile_manage_url %}</div>
+          <div class="profile-field" data-profile-field data-artifact-type="model_profile"><label for="{{ build_form.summary_model_profile.id_for_label }}" style="margin-top:8px;">Özet model profili</label>{{ build_form.summary_model_profile }}{% include "console/document_profile_inspector.html" with label="Özet model profili" items=build_profile_details.summary_model authorable=True artifact_type="model_profile" %}</div>
+          <div class="profile-field" data-profile-field data-artifact-type="prompt_template"><label for="{{ build_form.summary_prompt_contract.id_for_label }}" style="margin-top:8px;">Özet prompt sözleşmesi</label>{{ build_form.summary_prompt_contract }}{% include "console/document_profile_inspector.html" with label="Özet prompt sözleşmesi" items=build_profile_details.summary_prompt authorable=True artifact_type="prompt_template" %}</div>
+          <details style="margin-top:8px;"><summary class="muted">Gelişmiş</summary>
+            <label>{{ build_form.auto_prepare }} Sonraki sürümlerde indeksi otomatik hazırla</label>
+            <p class="muted">Açıkken, bu setin bundan sonra yayımladığınız her sürümü için aynı
+              profillerle staged indeks kendiliğinden hazırlanır ve düğmeye basmanız gerekmez.
+              Hazırlanan indeks <strong>servis edilmez</strong> — aktif etmek yine ayrı bir
+              karardır. Ücretli bir embedding profili kullanıyorsanız her yayımın maliyeti
+              olacağını unutmayın.</p>
+          </details>
+          <button class="button primary" type="submit" style="margin-top:10px;">İndeks hazırla</button>
+        </form>
+        {% elif v.is_draft %}<p class="notice">İndeks oluşturmak için önce taslağı yayımlayın.</p>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% else %}<div class="empty">Henüz bir set sürümü yok. Toplu yükleme ilk taslağı otomatik açar.</div>{% endif %}
+  {% endwith %}
+
+  {% if other_versions %}
+  <details class="version-history" id="version-history" open>
+    <summary><strong>Diğer sürümler ({{ history_page.paginator.count }})</strong></summary>
+    <p class="muted">Bir sürüme tıklayınca o sürüm açılır: dokümanları, indeksleri ve o sürümün
+      kendi profil seçimleri gelir. Yayımlanmış bir sürüm değişmez; oradan
+      <em>“Bu sürümden yeni sürüm hazırla”</em> ile taslak açıp tek bir şeyi değiştirebilirsiniz.</p>
+    {% for v in other_versions %}<div class="access-row"><div><strong><a href="?version={{ v.id }}#set-version-{{ v.id }}">Set sürümü v{{ v.version }}</a></strong><p class="muted">{{ v.member_count }} doküman sürümü{% if v.is_latest %} · en yeni{% endif %}</p></div><span class="badge {{ v.status }}">{{ v.status|set_version_label }}</span>{% if can_write and v.status != "draft" %}<form method="post" action="{% url 'console:document_set_version_branch' v.id %}">{% csrf_token %}<button class="button ghost" type="submit">Bundan yeni sürüm</button></form>{% endif %}</div>{% endfor %}
+    {% if history_page.has_other_pages %}<nav class="actions" aria-label="Sürüm sayfaları">
+      {% if history_page.has_previous %}<a href="?version={{ current_version.id }}&amp;history_page={{ history_page.previous_page_number }}#version-history">Önceki</a>{% endif %}
+      <span>{{ history_page.number }} / {{ history_page.paginator.num_pages }}</span>
+      {% if history_page.has_next %}<a href="?version={{ current_version.id }}&amp;history_page={{ history_page.next_page_number }}#version-history">Sonraki</a>{% endif %}
+    </nav>{% endif %}
+  </details>
+  {% endif %}
+  {% if can_write %}
+  <details class="version-history">
+    <summary class="muted">Gelişmiş</summary>
+    <form method="post" action="{% url 'console:document_set_version_create_public' set.public_id %}">{% csrf_token %}<button class="button ghost" type="submit">Boş taslak aç</button>
+      <span class="muted">Hiçbir doküman kopyalanmaz; setin içeriğini sıfırdan kurmak içindir.</span></form>
+  </details>
+  {% endif %}
+</div>
+
+<div class="card" id="sources">
+  <div class="section-heading"><div><h2>Kaynaklar</h2><p class="muted">Bu sete içerik sağlayan manuel yüklemeler ve bağlı veri kaynakları.</p></div><a class="button secondary" href="{% url 'console:document_set_connectors_public' set.public_id %}">Kaynakları yönet</a></div>
+  <p><span class="badge active">Manuel yükleme</span> Dosya yükleme ve mevcut dosyaları güncelleme</p>
+  {% for source in sources %}<p><strong><a href="{% url 'console:connector_source_detail' source.id %}">{{ source.name }}</a></strong> <span class="badge">{{ source.connector_type|document_label }}</span> <span class="badge {{ source.status }}">{{ source.status|document_label }}</span></p>{% empty %}<p class="muted">Bağlı veri kaynağı yok.</p>{% endfor %}
+</div>
+
+<div class="card">
+  <h2>Senaryo bağları</h2><p class="muted">Bağ değişiklikleri senaryo yeniden yayınlandığında etkili olur.</p>
+  {% for binding in bindings %}<p>{% if binding.scenario_id in readable_scenario_ids %}<a href="{% url 'console:scenario_detail_public' binding.scenario.public_id %}">{{ binding.scenario.name }}</a>{% else %}{{ binding.scenario.name }}{% endif %}{% if can_write and binding.scenario_id in editable_scenario_ids %} <form class="inline" method="post" action="{% url 'console:document_set_unbind_scenario' binding.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">Bağı kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Bağlı senaryo yok; senaryolardan belge araması yapılamaz.</p>{% endfor %}
+  {% if can_write and candidate_scenarios %}<form class="compact-form" method="post" action="{% url 'console:document_set_bind_scenario_public' set.public_id %}">{% csrf_token %}<div class="field-row"><select name="scenario_id" aria-label="Bağlanacak senaryo" required>{% for scenario in candidate_scenarios %}<option value="{{ scenario.id }}">{{ scenario.name }} · {{ scenario.project.name }}</option>{% endfor %}</select><button class="button secondary" type="submit">Senaryoya bağla</button></div></form>{% endif %}
+</div>
+
+<div class="card">
+  <h2>İstemcilerin belge arama izinleri</h2>
+  {% for grant in grants %}<p>{% if grant.consumer %}<a href="{% url 'console:consumer_detail_public' grant.consumer.public_id %}">{{ grant.consumer.name }}</a>{% else %}Bilinmeyen istemci #{{ grant.principal_ref }}{% endif %}{% if can_write %} <form class="inline" method="post" action="{% url 'console:document_set_revoke_grant' grant.id %}">{% csrf_token %}<button class="button ghost danger" type="submit">İzni kaldır</button></form>{% endif %}</p>{% empty %}<p class="muted">Belge arama izni olan istemci yok.</p>{% endfor %}
+  {% if can_write %}<form class="compact-form" method="post" action="{% url 'console:document_set_grant_consumer_public' set.public_id %}">{% csrf_token %}<div class="field-row"><select name="consumer_id" aria-label="İzin verilecek istemci" required>{% for consumer in candidate_consumers %}<option value="{{ consumer.id }}">{{ consumer }}</option>{% endfor %}</select><button class="button secondary" type="submit">Belge arama izni ver</button></div></form>{% endif %}
+</div>
+
+<script type="module" src="{% static 'console/document-profiles.js' %}?v=document-authoring-1"></script>
+{% endblock %}

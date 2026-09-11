@@ -1,0 +1,123 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agenthub.fullname" . }}-migrate{{- if eq .Values.databaseInitialization.mode "jobs" }}-r{{ .Release.Revision }}{{- end }}
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "migrate") | nindent 4 }}
+  {{- if eq .Values.databaseInitialization.mode "hooks" }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: {{ add .Values.databaseInitialization.timeoutSeconds 300 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "migrate") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.waitForPostgresInit" (dict "root" . "secretName" .Values.existingSecrets.migration) | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "agenthub.applicationImage" . | quote }}
+          imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+          command: [python, manage.py, migrate, --noinput]
+          envFrom:
+            - secretRef: {name: {{ .Values.existingSecrets.migration | quote }}}
+          env:
+            {{- include "agenthub.hookCommonEnv" . | nindent 12 }}
+            - {name: HOME, value: /tmp}
+          resources:
+            {{- toYaml .Values.hookResources.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.hookResources.tmpSizeLimit | quote }}}
+{{- end }}
+{{- if .Values.bootstrap.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agenthub.fullname" . }}-bootstrap{{- if eq .Values.databaseInitialization.mode "jobs" }}-r{{ .Release.Revision }}{{- end }}
+  labels:
+    {{- include "agenthub.componentLabels" (dict "root" . "component" "bootstrap") | nindent 4 }}
+  {{- if eq .Values.databaseInitialization.mode "hooks" }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: {{ add .Values.databaseInitialization.timeoutSeconds 300 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" (dict "root" . "component" "bootstrap") | nindent 8 }}
+        app.kubernetes.io/part-of: agenthub
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "agenthub.podSecurityContext" . | nindent 8 }}
+      {{- include "agenthub.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        {{- include "agenthub.waitForPostgresInit" (dict "root" . "secretName" .Values.existingSecrets.runtime) | nindent 8 }}
+        {{- if eq .Values.databaseInitialization.mode "jobs" }}
+        {{- include "agenthub.waitForMigrationsInit" . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: bootstrap
+          image: {{ include "agenthub.applicationImage" . | quote }}
+          imagePullPolicy: {{ .Values.images.application.pullPolicy }}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              python manage.py shell -c '
+              import os
+              from django.contrib.auth import get_user_model
+              username = os.environ["PLATFORM_ACTOR"]
+              user, created = get_user_model().objects.get_or_create(
+                  username=username,
+                  defaults={"is_active": True, "is_staff": True, "is_superuser": True},
+              )
+              if not created and (not user.is_active or not user.is_superuser):
+                  raise SystemExit("existing bootstrap actor is not an active recovery superuser")
+              if created:
+                  user.set_password(os.environ["BOOTSTRAP_ADMIN_PASSWORD"])
+                  user.save()
+              '
+              python manage.py ensure_deployment_profiles
+          envFrom:
+            - secretRef: {name: {{ .Values.existingSecrets.runtime | quote }}}
+            - secretRef:
+                name: {{ .Values.existingSecrets.bootstrap | quote }}
+                optional: true
+          env:
+            {{- include "agenthub.hookCommonEnv" . | nindent 12 }}
+            {{- include "agenthub.providerEnv" . | nindent 12 }}
+            - {name: HOME, value: /tmp}
+          resources:
+            {{- toYaml .Values.hookResources.resources | nindent 12 }}
+          securityContext:
+            {{- include "agenthub.containerSecurityContext" . | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: {{ .Values.hookResources.tmpSizeLimit | quote }}}
+{{- end }}

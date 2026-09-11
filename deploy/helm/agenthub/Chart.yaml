@@ -1,0 +1,10 @@
+apiVersion: v2
+name: agenthub
+description: Restricted-SCC-compatible AgentHub deployment for OpenShift
+type: application
+version: 0.2.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.27.0-0"
+annotations:
+  charts.openshift.io/name: AgentHub
+  charts.openshift.io/provider: AgentHub

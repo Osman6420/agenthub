@@ -1,0 +1,30 @@
+<section class="card" aria-labelledby="publication-title">
+  <div class="section-heading">
+    <div>
+      <h2 id="publication-title">{% if publication.resuming %}Yayını sürdür{% else %}Senaryoyu yayına al{% endif %}</h2>
+      <p class="muted">Kaydettiğiniz akış ve test soruları birlikte değerlendirilir. Tüm kontroller geçince yeni sürüm yayına alınır. Başarısızlıkta mevcut yayın korunur.</p>
+      {% if publication.resuming %}<p>Önceki işlemin tamamlanan testleri korunarak devam edilecek.</p>{% endif %}
+    </div>
+    {% if publication.enabled %}
+    <form method="post" action="{% url 'console:scenario_publish' scenario.public_id %}">{% csrf_token %}
+      <input type="hidden" name="intent" value="{{ publication.intent }}">
+      <input type="hidden" name="expected" value="{{ publication.expected }}">
+      <button class="button primary" type="submit">{% if publication.resuming %}Yayını sürdür{% else %}Yayına al{% endif %}</button>
+    </form>
+    {% else %}<button type="button" disabled aria-disabled="true">Yayına al</button>{% endif %}
+  </div>
+  {% if publication.reason %}<p class="muted">{{ publication.reason }}</p>{% endif %}
+  {% if publication.rows %}
+  <details><summary>Son yayın işlemleri ({{ publication.rows|length }})</summary>
+    {% for row in publication.rows %}
+    <div class="access-row">
+      <div>
+        <strong>{% if row.completed_at %}Yayın tamamlandı{% elif row.evaluation.status == 'pending' %}Testler tamamlanmadı{% elif row.evaluation.status == 'passed' %}Testler geçti; yayın tamamlanmadı{% else %}Testler geçmedi{% endif %}</strong>
+        <p class="muted">{% if row.source_job_id %}Kaynak yenilemesi · {% endif %}{{ row.created_at|date:"d.m.Y H:i" }} · {{ row.evaluation.passed_cases }}/{{ row.evaluation.total_cases }} test geçti</p>
+      </div>
+      <a href="{% url 'console:release_detail' row.release_id %}">Sürüm #{{ row.release_id }} ve test sonuçları</a>
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+</section>

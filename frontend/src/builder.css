@@ -1,0 +1,85 @@
+.ah-builder-org-row,
+.ah-builder-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ah-builder-org-row {
+  margin-bottom: 16px;
+}
+
+.ah-builder-create input {
+  max-width: 100%;
+}
+
+.ah-builder-toolbar-row {
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.ah-builder-editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.ah-builder-palette {
+  width: 180px;
+  flex: 0 0 180px;
+  border-right: 1px solid #262b36;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.ah-builder-canvas {
+  flex: 1;
+  min-width: 0;
+}
+
+.ah-builder-config {
+  width: 280px;
+  flex: 0 0 280px;
+  border-left: 1px solid #262b36;
+  overflow-y: auto;
+}
+
+@media (max-width: 760px) {
+  .ah-builder-editor-body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .ah-builder-palette,
+  .ah-builder-config {
+    width: 100%;
+    flex: 0 0 auto;
+    max-height: 240px;
+    border-inline: 0;
+  }
+
+  .ah-builder-palette {
+    border-bottom: 1px solid #262b36;
+  }
+
+  .ah-builder-canvas {
+    min-height: 420px;
+  }
+
+  .ah-builder-config {
+    border-top: 1px solid #262b36;
+  }
+
+  .ah-builder-draft-row {
+    align-items: stretch !important;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .ah-builder-create input,
+  .ah-builder-create button {
+    width: 100%;
+    margin: 0 0 8px !important;
+  }
+}

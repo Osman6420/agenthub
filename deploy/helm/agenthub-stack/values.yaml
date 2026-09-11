@@ -1,0 +1,86 @@
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
+
+agenthub:
+  releaseId: ""
+  databaseInitialization:
+    mode: jobs
+    timeoutSeconds: 900
+    probeImage: {repository: "", digest: "", pullPolicy: IfNotPresent}
+  images:
+    application: {repository: "", digest: "", pullPolicy: IfNotPresent}
+    static: {repository: "", digest: "", pullPolicy: IfNotPresent}
+  route: {enabled: true, host: ""}
+  objectStore:
+    endpoint: http://agenthub-stack-minio:9000
+    bucket: agenthub-demo
+    region: us-east-1
+    allowInsecureHttp: true
+  provider:
+    model:
+      logicalId: primary-chat
+      revision: 1
+      host: ""
+      port: 443
+      path: /v1/chat/completions
+      name: ""
+    embedding:
+      logicalId: primary-embedding
+      revision: 1
+      host: ""
+      port: 443
+      path: /v1/embeddings
+      name: ""
+      dimensions: 1024
+      indexType: vector
+  existingSecrets:
+    web: agenthub-web-secrets
+    runtime: agenthub-runtime-secrets
+    ingestion: agenthub-ingestion-secrets
+    beat: agenthub-beat-secrets
+    migration: agenthub-migration-secrets
+    bootstrap: agenthub-bootstrap-credentials
+  externalDemo: {enabled: false}
+
+postgresql:
+  image: {repository: "", digest: "", pullPolicy: IfNotPresent}
+  existingSecret: agenthub-stack-postgresql
+  persistence:
+    storageClass: ""
+    size: 10Gi
+  resources:
+    requests: {cpu: 250m, memory: 512Mi, ephemeral-storage: 128Mi}
+    limits: {cpu: "2", memory: 2Gi, ephemeral-storage: 512Mi}
+  tmpSizeLimit: 256Mi
+  runtimeSocketSizeLimit: 16Mi
+  sharedMemorySizeLimit: 256Mi
+
+redis:
+  image: {repository: "", digest: "", pullPolicy: IfNotPresent}
+  existingSecret: agenthub-stack-redis
+  persistence:
+    storageClass: ""
+    size: 2Gi
+  resources:
+    requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi}
+    limits: {cpu: "1", memory: 512Mi, ephemeral-storage: 256Mi}
+  tmpSizeLimit: 64Mi
+
+minio:
+  image: {repository: "", digest: "", pullPolicy: IfNotPresent}
+  clientImage: {repository: "", digest: "", pullPolicy: IfNotPresent}
+  existingSecret: agenthub-stack-minio
+  persistence:
+    storageClass: ""
+    size: 10Gi
+  resources:
+    requests: {cpu: 200m, memory: 256Mi, ephemeral-storage: 128Mi}
+    limits: {cpu: "1", memory: 1Gi, ephemeral-storage: 512Mi}
+  tmpSizeLimit: 128Mi
+  clientResources:
+    requests: {cpu: 25m, memory: 32Mi, ephemeral-storage: 16Mi}
+    limits: {cpu: 250m, memory: 128Mi, ephemeral-storage: 64Mi}
+
+networkPolicy:
+  enabled: true

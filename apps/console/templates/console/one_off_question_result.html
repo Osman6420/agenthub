@@ -1,0 +1,10 @@
+{% extends "console/base.html" %}
+{% block title %}{{ title }} · AgentHub{% endblock %}
+{% block content %}
+<nav class="breadcrumbs" aria-label="İçerik yolu"><a href="{{ back_url }}">Geri dön</a><span>›</span><span>Tek seferlik soru</span></nav>
+<div class="page-heading"><div><p class="eyebrow">Aggregate dışı</p><h1>{{ title }}</h1><p class="muted">Bu sonuç soru setine kaydedilmedi ve benchmark metriklerini değiştirmedi.</p></div></div>
+<section class="card"><h2>Soru</h2><p>{{ question }}</p></section>
+{% if result.answer %}<section class="card"><h2>Cevap</h2><p>{{ result.answer }}</p></section>{% endif %}
+{% if result.chunks %}<section class="card"><h2>Retrieved chunk'lar</h2>{% for chunk in result.chunks %}<div class="relationship-card"><div class="relationship-head"><strong>#{{ forloop.counter }} · {{ chunk.title }}</strong>{% if chunk.document_version_id is not None or chunk.ordinal is not None %}<span class="mono">{% if chunk.document_version_id is not None %}doc {{ chunk.document_version_id }}{% endif %}{% if chunk.document_version_id is not None and chunk.ordinal is not None %} / {% endif %}{% if chunk.ordinal is not None %}chunk {{ chunk.ordinal }}{% endif %}</span>{% endif %}</div><div class="relationship-body"><div><p>{{ chunk.text }}</p></div><div class="mono">score={{ chunk.score }}{% if chunk.vector_score is not None %} · vector={{ chunk.vector_score }}{% endif %}{% if chunk.keyword_score is not None %} · BM25={{ chunk.keyword_score }}{% endif %}{% if chunk.fused_score is not None %} · fused={{ chunk.fused_score }}{% endif %}</div></div></div>{% endfor %}</section>{% endif %}
+<a class="button secondary" href="{{ back_url }}">Geri dön</a>
+{% endblock %}

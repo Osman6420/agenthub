@@ -1,0 +1,32 @@
+{
+  "fixture_status": "target_not_importable",
+  "scenario_id": "S01",
+  "target_contract": {
+    "api_version": "agenthub/v1",
+    "kind": "Workflow",
+    "metadata": {"id": "regulatory_evidence_exception"},
+    "spec": {
+      "input_node": "input",
+      "nodes": [
+        {"id": "input", "type": "input"},
+        {"id": "evidence_parallel", "type": "parallel", "config": {"join": "evidence_join", "max_concurrency": 2}},
+        {"id": "policy_evidence", "type": "retrieve", "output_mapping": [{"from": "/output", "to": "/branches/policy/output"}]},
+        {"id": "case_evidence", "type": "retrieve", "output_mapping": [{"from": "/output", "to": "/branches/case/output"}]},
+        {"id": "evidence_join", "type": "join", "config": {"mode": "all", "branches": ["policy", "case"], "merge": [{"from": "/branches/policy/output", "to": "/evidence/policy"}, {"from": "/branches/case/output", "to": "/evidence/case"}]}},
+        {"id": "exception_decision", "type": "human_task", "config": {"decision_roles": ["approver"], "self_approval_allowed": false, "expires_in_seconds": 86400, "decision_schema": {"type": "string", "enum": ["approve", "reject", "request_more_information"]}}},
+        {"id": "validate", "type": "validate_contract"},
+        {"id": "end", "type": "end"}
+      ],
+      "edges": [
+        {"from": "input", "to": "evidence_parallel"},
+        {"from": "evidence_parallel", "to": "policy_evidence", "branch": "policy"},
+        {"from": "evidence_parallel", "to": "case_evidence", "branch": "case"},
+        {"from": "policy_evidence", "to": "evidence_join", "branch": "policy"},
+        {"from": "case_evidence", "to": "evidence_join", "branch": "case"},
+        {"from": "evidence_join", "to": "exception_decision"},
+        {"from": "exception_decision", "to": "validate"},
+        {"from": "validate", "to": "end"}
+      ]
+    }
+  }
+}
